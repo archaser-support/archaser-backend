@@ -1,0 +1,65 @@
+import { All, Body, Controller, Param, Post } from "@nestjs/common";
+import { ApiOperation, ApiParam, ApiTags } from "@nestjs/swagger";
+import { PortalService } from "./portal.service";
+
+/**
+ * Public Customer Portal routes. No DualAuthGuard — Nest-native handlers
+ * enforce their own portal UUID lookups (captcha/rate-limiting stays out of
+ * scope for this pragmatic port).
+ */
+@ApiTags("portal")
+@Controller("api/portal")
+export class PortalDomainController {
+    constructor(private readonly portal: PortalService) {}
+
+    @Post("create-dispute")
+    @ApiOperation({ summary: "Portal create-dispute (public, Nest-native)" })
+    async createDispute(@Body() body: Record<string, unknown>) {
+        return this.portal.createPublicDispute(body);
+    }
+
+    @Post("update-promise-to-pay")
+    @ApiOperation({
+        summary: "Portal update-promise-to-pay (public, Nest-native)",
+    })
+    async updatePromise(@Body() body: Record<string, unknown>) {
+        return this.portal.updatePromiseToPay(body);
+    }
+}
+
+const PORTAL_SUFFIXES = [
+    "portal-data",
+    "agent-portal",
+    "invoices",
+    "bank-details",
+    "banks",
+    "disputes",
+    "create-dispute",
+    "view-disputes",
+    "wrong-contact",
+    "top-ups",
+] as const;
+
+@ApiTags("portal-customers")
+@Controller("api/customers")
+export class PortalCustomersDomainController {
+    constructor(private readonly portal: PortalService) {}
+
+    @All(":customerUUID/:suffix")
+    @ApiParam({ name: "customerUUID", description: "Portal customer UUID" })
+    @ApiParam({
+        name: "suffix",
+        enum: PORTAL_SUFFIXES,
+        description: "Public portal leaf",
+    })
+    @ApiOperation({
+        summary: "Public portal customer UUID routes (Nest-native)",
+    })
+    async publicPortalRoute(
+        @Param("customerUUID") customerUUID: string,
+        @Param("suffix") suffix: string,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.portal.handleSuffix(customerUUID, suffix, body);
+    }
+}

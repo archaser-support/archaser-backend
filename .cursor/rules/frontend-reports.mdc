@@ -1,0 +1,778 @@
+---
+alwaysApply: false
+---
+# Reports and Saved Views
+
+## Summary
+
+This document provides comprehensive guidelines for implementing reports (saved views) in the application. Reports allow users to save custom column configurations, filters, sorting, and grouping preferences that persist across sessions. It covers:
+
+- **Report Selector**: Enabling and configuring the report selector for saved views
+- **ViewBasedDataGrid**: Using the report-based grid component (automatically enables report selector)
+- **Default Views**: Setting and managing default reports per user or system-wide
+- **System Reports**: Creating and managing read-only system reports
+- **Report Management**: Creating, editing, deleting, and sharing custom reports
+- **Column Customization**: Controlling column widths, visibility, and rendering
+- **Automatic Rendering**: Boolean fields as switches, enum field translations
+
+Reports are built on top of `EndlessScrollDataGrid` - see [EndlessScrollDataGrid Usage](./frontend-grid.mdc) for core grid functionality.
+
+## 📋 Purpose and Usage
+
+**Reports (saved views) provide a flexible, user-configurable way to display and manage data in grids. They allow users to save custom column configurations, filters, sorting, and grouping preferences that persist across sessions.**
+
+**Key Features:**
+- ✅ **Saved Views**: Users can create, edit, and delete custom report configurations
+- ✅ **System Reports**: Pre-defined reports available to all users (read-only)
+- ✅ **Default Views**: Automatic selection of preferred reports per user or system-wide
+- ✅ **Column Customization**: Control column widths, visibility, and rendering
+- ✅ **Automatic Rendering**: Boolean fields automatically render as switches, enum fields are translated
+- ✅ **Context-Based**: Reports are scoped to specific contexts (customers, disputes, invoices, etc.)
+
+**Usage:**
+- Use `ViewBasedDataGrid` for report-based views (automatically enables report selector)
+- Use `EndlessScrollDataGrid` with `reportSelector={true}` for manual report integration
+- Reports are built on top of `EndlessScrollDataGrid` - see [EndlessScrollDataGrid Usage](./frontend-grid.mdc) for core grid functionality
+
+### Report Selector (Advanced)
+
+**The grid supports report selector for saved views. When using `ViewBasedDataGrid`, the report selector is automatically enabled:**
+
+```typescript
+// Using ViewBasedDataGrid (recommended for report-based views)
+<ViewBasedDataGrid
+    context="disputes"
+    searchValue={search}
+    onSearchChange={setSearch}
+    defaultViewId={null}
+    onViewChange={setSelectedViewId}
+    onDeleteView={handleDeleteView}
+    // ... other props
+/>
+```
+
+**Or using `EndlessScrollDataGrid` directly:**
+
+```typescript
+<EndlessScrollDataGrid
+    reportSelector={true}
+    selectedReportId={selectedReportId}
+    onReportChange={setSelectedReportId}
+    hasCreateReportPermission={hasPermission}
+    onCreateReport={handleCreateReport}
+    hasEditReportPermission={hasPermission}
+    onEditReport={handleEditReport}
+    hasDeleteReportPermission={hasPermission}
+    onDeleteReport={handleDeleteReport}
+    systemReports={systemReports}
+    // ... other props
+/>
+```
+
+**Key Points:**
+- ✅ Report selector appears in toolbar when `reportSelector={true}` (or automatically with `ViewBasedDataGrid`)
+- ✅ Supports creating, editing, and deleting saved reports
+- ✅ System reports are read-only
+- ✅ Requires permission props for each action
+- ✅ Report names are cached - invalidate cache when reports are renamed
+
+### Default View Handling
+
+**The report dropdown automatically marks reports as default based on two criteria:**
+
+1. **User-specific defaults**: Reports set by the user via `UserDefaultReport` table
+2. **System defaults**: Reports with `is_default: true` field (set in database)
+
+**⚠️ CRITICAL: User-specific defaults take precedence over system defaults**
+
+**The dropdown prioritizes user-specific defaults - if a user has set a personal default, only that report shows the default icon. System defaults are only shown when there's no user-specific default:**
+
+```typescript
+// In EndlessScrollToolbar component
+const { data: userDefaultReportData } = useQuery<{
+    report: { id: number } | null;
+}>({
+    queryKey: ["user-default-report", session?.user?.id, reportContext],
+    queryFn: async () => {
+        if (!session?.user?.id || !reportContext) return { report: null };
+        const response = await axios.get(
+            `/api/reports/user-default?context=${reportContext}`
+        );
+        return response.data;
+    },
+    enabled: reportSelector && !!session?.user?.id && !!reportContext,
+    staleTime: 30 * 1000, // Cache for 30 seconds
+    refetchOnMount: false, // Use cached data if available
+    refetchOnWindowFocus: false, // Disable to prevent excessive refetching
+});
+
+const userDefaultReportId = userDefaultReportData?.report?.id || null;
+
+// Process reports - user-specific defaults take precedence
+const allReports = useMemo(() => {
+    const reports =
+        reportsData?.reports?.map((r) => ({
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            isSystem: r.is_system === true,
+            isShared: r.is_shared === true,
+            isSharedByMe: r.is_shared_by_me === true,
+            // User-specific defaults take precedence over system defaults
+            // If user has a default, only that report is marked as default
+            // Otherwise, show system defaults (is_default === true)
+            isDefault: userDefaultReportId 
+                ? userDefaultReportId === r.id 
+                : r.is_default === true,
+            group: r.is_system === true ? "system" : "custom",
+        })) || [];
+    return reports;
+}, [reportsData, userDefaultReportId]);
+```
+
+### Cache Invalidation for Default Views
+
+**When setting or clearing a default view, invalidate both the user-default-report query AND the reports-list query to ensure icons update immediately:**
+
+```typescript
+// In ViewBasedDataGrid handleSetAsDefault
+const handleSetAsDefault = useCallback(async (reportId: number) => {
+    try {
+        const response = await fetch(
+            `/api/reports/user-default?context=${context}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ reportId }),
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error("Failed to set report as default");
+        }
+
+        // Invalidate queries to refresh the UI
+        await queryClient.invalidateQueries({
+            queryKey: ["user-default-report", session?.user?.id, context],
+        });
+        // ✅ CRITICAL: Invalidate reports list to refresh default icons
+        await queryClient.invalidateQueries({
+            queryKey: ["reports-list", session?.user?.account_id, context],
+        });
+        // Invalidate default view query
+        await queryClient.invalidateQueries({
+            queryKey: [
+                "default-view",
+                context,
+                session?.user?.account_id,
+                session?.user?.id,
+            ],
+        });
+    } catch (error) {
+        // Handle error
+    }
+}, [context, queryClient, session?.user?.id, session?.user?.account_id]);
+
+// In ViewBasedDataGrid handleClearDefault
+const handleClearDefault = useCallback(async () => {
+    try {
+        const response = await fetch(
+            `/api/reports/user-default?context=${context}`,
+            { method: "DELETE" }
+        );
+
+        if (!response.ok) {
+            throw new Error("Failed to clear default report");
+        }
+
+        // Invalidate queries to refresh the UI
+        await queryClient.invalidateQueries({
+            queryKey: ["user-default-report", session?.user?.id, context],
+        });
+        // ✅ CRITICAL: Invalidate reports list to refresh default icons
+        await queryClient.invalidateQueries({
+            queryKey: ["reports-list", session?.user?.account_id, context],
+        });
+        // Invalidate default view query
+        await queryClient.invalidateQueries({
+            queryKey: [
+                "default-view",
+                context,
+                session?.user?.account_id,
+                session?.user?.id,
+            ],
+        });
+    } catch (error) {
+        // Handle error
+    }
+}, [context, queryClient, session?.user?.id, session?.user?.account_id]);
+```
+
+### Default View Validation
+
+**When auto-selecting a default view, validate that it exists in the user's accessible reports list to prevent selecting inaccessible reports:**
+
+```typescript
+// In useViewExecution hook
+// Fetch accessible reports to validate default view
+const { data: accessibleReportsData } = useQuery<{
+    reports: Array<{ id: number }>;
+}>({
+    queryKey: ["reports-list-for-validation", context, session?.user?.account_id],
+    queryFn: async () => {
+        const params = new URLSearchParams();
+        if (context) {
+            params.append("context", context);
+        }
+        const url = `/api/reports${params.toString() ? `?${params.toString()}` : ""}`;
+        const response = await fetch(url);
+        if (!response.ok) return { reports: [] };
+        return response.json();
+    },
+    enabled: !!defaultViewData && !!session?.user && !!context,
+    staleTime: 30 * 1000,
+});
+
+const accessibleReportIds = useMemo(() => {
+    return new Set(accessibleReportsData?.reports?.map((r: any) => r.id) || []);
+}, [accessibleReportsData]);
+
+// Auto-select default view only if it's accessible
+useEffect(() => {
+    if (defaultViewData) {
+        const newDefaultId = defaultViewData.id;
+        const isDefaultViewAccessible = accessibleReportIds.has(newDefaultId);
+        
+        // Only auto-select if default view is accessible
+        if (!isDefaultViewAccessible) {
+            console.warn("Default view not accessible, skipping auto-selection");
+            return;
+        }
+
+        // If no view is selected, auto-select the default
+        if (!selectedViewId) {
+            setSelectedViewId(newDefaultId);
+        }
+    }
+}, [defaultViewData, selectedViewId, accessibleReportIds]);
+```
+
+### TypeScript Interface Requirements
+
+**When fetching reports from the API, ensure the TypeScript interface includes `is_default`:**
+
+```typescript
+const { data: reportsData, isLoading: reportsLoading } = useQuery<{
+    reports: Array<{
+        id: number;
+        name: string;
+        description?: string;
+        is_system?: boolean;
+        is_shared?: boolean;
+        is_shared_by_me?: boolean;
+        is_default?: boolean; // ✅ Required for default view detection
+        context?: string;
+    }>;
+}>({
+    queryKey: ["reports-list", session?.user?.account_id, reportContext],
+    queryFn: async () => {
+        const params = new URLSearchParams();
+        if (reportContext) {
+            params.append("context", reportContext);
+        }
+        const url = `/api/reports${params.toString() ? `?${params.toString()}` : ""}`;
+        const response = await axios.get(url);
+        return response.data;
+    },
+});
+```
+
+### Translation for Dropdown Sections
+
+**The report dropdown automatically groups reports into "System Views" and "Custom Views" sections. Translation keys are required:**
+
+**Translation files (`locales/en/reports.json` and `locales/he/reports.json`):**
+
+```json
+{
+    "sections": {
+        "system_views": "System Views",
+        "custom_views": "Custom Views"
+    }
+}
+```
+
+**The dropdown uses these translation keys:**
+
+```typescript
+// In EndlessScrollToolbar component
+const { t, i18n } = useTranslation(["common", "reports"]);
+
+<Autocomplete
+    options={allReports}
+    groupBy={(option) => {
+        return option.isSystem
+            ? t("sections.system_views", { ns: "reports" })
+            : t("sections.custom_views", { ns: "reports" });
+    }}
+    // ... other props
+/>
+```
+
+**Key Points:**
+- ✅ **User-specific defaults take precedence** - If user has set a personal default, ONLY that report shows the default icon (system defaults are hidden)
+- ✅ **System defaults are fallback** - System defaults (`is_default: true`) are only shown when no user-specific default exists
+- ✅ **Proper precedence logic**: `isDefault: userDefaultReportId ? userDefaultReportId === r.id : r.is_default === true`
+- ✅ **Cache invalidation**: Always invalidate both `user-default-report` AND `reports-list` queries when setting/clearing defaults
+- ✅ **Default view validation**: Validate that default view exists in accessible reports before auto-selecting
+- ✅ Include `is_default?: boolean` in TypeScript interface for reports data
+- ✅ Translation keys: `sections.system_views` and `sections.custom_views` in `reports` namespace
+- ✅ Ensure translation hook includes `"reports"` namespace: `useTranslation(["common", "reports"])`
+- ✅ Default reports show a star icon (⭐) in the dropdown
+- ✅ Only ONE report should show the default icon at a time (user default if exists, otherwise system default)
+
+### Cache Invalidation for Report Names
+
+**When reports are renamed or modified, invalidate the cache to show updated names:**
+
+```typescript
+import { useQueryClient } from "@tanstack/react-query";
+
+const queryClient = useQueryClient();
+
+// Invalidate reports cache when component mounts or reports change
+useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ["reports-list"] });
+    queryClient.invalidateQueries({ queryKey: ["default-view"] });
+    queryClient.invalidateQueries({ queryKey: ["view"] });
+}, [queryClient]);
+
+// After deleting a report
+const handleDeleteView = useCallback(async (viewId: number) => {
+    // ... delete logic
+    await queryClient.invalidateQueries({ queryKey: ["reports-list"] });
+}, [queryClient]);
+```
+
+### Preventing Grid Refreshes During Column Resizing
+
+**⚠️ CRITICAL: To prevent the grid from refreshing and resetting column widths during column resizing, ensure props passed to `ViewBasedDataGrid` use stable references:**
+
+**✅ CORRECT Pattern (prevents refresh):**
+```typescript
+<ViewBasedDataGrid
+    context="customer_banks"
+    searchValue={search}
+    onSearchChange={handleSearchChange}
+    // ✅ Use inline JSX for customButtons (not memoized)
+    customButtons={
+        <AddBankButton
+            onAddClick={handleOpenModal}
+            disabled={!hasAvailableBanks}
+        />
+    }
+    // ✅ Use inline useMemo for additionalFilters
+    additionalFilters={useMemo(
+        () => [
+            {
+                table: "CustomerBanks",
+                field: "customer_id",
+                operator: "equals",
+                value: customer.id,
+            },
+        ],
+        [customer.id]
+    )}
+    customCellRenderers={customCellRenderers}
+    actionsColumn={actionsColumnRenderer}
+    // ✅ Use inline object for actionsColumnConfig (not memoized)
+    actionsColumnConfig={{
+        headerName: t("actions.actions", { ns: "common" }),
+        flex: 0,
+        minWidth: 120,
+    }}
+    // ✅ Use setSelectedViewId directly (stable from useState)
+    onViewChange={setSelectedViewId}
+    // ✅ Use setRows directly (stable from useState)
+    onRowsChange={setRows}
+    onDeleteView={handleDeleteView}
+    exportDisabled={false}
+    allowAddEditViews={false}
+/>
+```
+
+**❌ INCORRECT Pattern (causes refresh):**
+```typescript
+// ❌ DON'T: Memoize customButtons, actionsColumnConfig, or wrap setState functions
+const customButtonsMemo = useMemo(() => <AddBankButton ... />, [deps]);
+const actionsColumnConfigMemo = useMemo(() => ({ ... }), [deps]);
+const handleViewChange = useCallback((viewId) => setSelectedViewId(viewId), []);
+const handleRowsChange = useCallback((rows) => setRows(rows), []);
+
+<ViewBasedDataGrid
+    customButtons={customButtonsMemo}  // ❌ Causes refresh
+    actionsColumnConfig={actionsColumnConfigMemo}  // ❌ Causes refresh
+    onViewChange={handleViewChange}  // ❌ Causes refresh
+    onRowsChange={handleRowsChange}  // ❌ Causes refresh
+/>
+```
+
+**Key Points:**
+- ✅ **Use inline props**: `customButtons`, `actionsColumnConfig` should be inline (not memoized)
+- ✅ **Use setState directly**: `onViewChange={setSelectedViewId}` and `onRowsChange={setRows}` - these are already stable from `useState`
+- ✅ **Memoize only `additionalFilters`**: Use inline `useMemo` with proper dependencies
+- ✅ **Memoize complex components**: `customCellRenderers` and `actionsColumn` should be memoized with `useMemo`/`useCallback`
+- ✅ **Never use `key` prop**: Don't add a `key` prop to `ViewBasedDataGrid` that changes - this forces remount and resets column widths
+- ✅ **Stable references prevent refresh**: When props have stable references, column resizing won't trigger grid refresh
+
+### Container Structure for Report-Based Views
+
+**When using `ViewBasedDataGrid` with content above (charts, stats), ensure proper container structure:**
+
+```typescript
+import InternalPageWrapper from "@/components/InternalPageWrapper";
+import PageHeader from "@/components/PageHeader";
+import { ViewBasedDataGrid } from "@/shared/components/ViewBasedDataGrid";
+import { useTheme } from "@mui/material/styles";
+import { useQueryClient } from "@tanstack/react-query";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+
+const MyList: React.FC = () => {
+    const { t, i18n } = useTranslation(["your-namespace", "common", "reports"]);
+    const queryClient = useQueryClient();
+    const theme = useTheme();
+    
+    // State management
+    const [search, setSearch] = useState("");
+    const [selectedViewId, setSelectedViewId] = useState<number | null>(null);
+    const [selectedRows, setSelectedRows] = useState<number[]>([]);
+    const [rows, setRows] = useState<any[]>([]);
+    const tableContainerRef = useRef<HTMLDivElement>(null);
+    
+    // Delete confirmation state
+    const [deleteConfirmation, setDeleteConfirmation] = useState<{
+        isOpen: boolean;
+        viewId: number | null;
+        viewName: string | null;
+    }>({
+        isOpen: false,
+        viewId: null,
+        viewName: null,
+    });
+
+    // Handle delete view - two-step process
+    const handleDeleteView = useCallback(
+        async (viewId: number) => {
+            try {
+                const response = await fetch(`/api/reports/${viewId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.report?.is_system) {
+                        showError(
+                            t("reports.cannot_delete_system_report", {
+                                defaultValue: "System views cannot be deleted",
+                            })
+                        );
+                        return;
+                    }
+                    const viewName = data.report?.name || "";
+                    setDeleteConfirmation({
+                        isOpen: true,
+                        viewId,
+                        viewName,
+                    });
+                }
+            } catch {
+                setDeleteConfirmation({
+                    isOpen: true,
+                    viewId,
+                    viewName: "",
+                });
+            }
+        },
+        [showError, t]
+    );
+
+    // Confirm delete
+    const handleConfirmDelete = useCallback(async () => {
+        if (!deleteConfirmation.viewId) return;
+
+        try {
+            const response = await fetch(
+                `/api/reports/${deleteConfirmation.viewId}`,
+                { method: "DELETE" }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || "Failed to delete view");
+            }
+
+            // Reset selected view if deleting current view
+            if (selectedViewId === deleteConfirmation.viewId) {
+                setSelectedViewId(null);
+            }
+
+            // Invalidate cache after delete
+            await queryClient.invalidateQueries({
+                queryKey: ["reports-list"],
+            });
+
+            setDeleteConfirmation({
+                isOpen: false,
+                viewId: null,
+                viewName: null,
+            });
+            success(
+                t("reports.delete_report_success", {
+                    defaultValue: "View deleted successfully",
+                })
+            );
+        } catch (error) {
+            showError(
+                error instanceof Error
+                    ? error.message
+                    : t("reports.delete_report_error", {
+                          defaultValue: "Failed to delete view",
+                      })
+            );
+        }
+    }, [
+        deleteConfirmation,
+        selectedViewId,
+        queryClient,
+        success,
+        showError,
+        t,
+    ]);
+
+    const handleCancelDelete = useCallback(() => {
+        setDeleteConfirmation({
+            isOpen: false,
+            viewId: null,
+            viewName: null,
+        });
+    }, []);
+
+    // Bulk action button component - memoize only if needed
+    const BulkActionButtonComponent = useMemo(
+        () => (
+            <BulkActionButton
+                selectedRowsCount={selectedRows.length}
+                onClick={() => {
+                    // Implement bulk actions
+                }}
+            />
+        ),
+        [selectedRows.length]
+    );
+
+    return (
+        <InternalPageWrapper>
+            <Box
+                sx={{
+                    bgcolor: "background.default",
+                    borderRadius: theme.shape.borderRadius,
+                    position: "relative",
+                    isolation: "isolate",
+                }}
+            >
+                <PageHeader
+                    title={t("sections.title")}
+                    description={t("sections.description")}
+                    icon={<YourIcon />}
+                />
+
+                {/* Virtual Grid - simple container structure */}
+                <Box
+                    ref={tableContainerRef}
+                    sx={{
+                        position: "relative",
+                        isolation: "isolate",
+                    }}
+                >
+                    <ViewBasedDataGrid
+                        context="your-context"
+                        searchValue={search}
+                        onSearchChange={setSearch}
+                        bulkActionButton={BulkActionButtonComponent}
+                        defaultViewId={null}
+                        onViewChange={setSelectedViewId}
+                        exportDisabled={false}
+                        onSelectedRowsChange={setSelectedRows}
+                        onRowsChange={setRows}
+                        onDeleteView={handleDeleteView}
+                    />
+                </Box>
+
+                {/* Delete View Confirmation Dialog */}
+                <DeleteDialog
+                    isOpen={deleteConfirmation.isOpen}
+                    onClose={handleCancelDelete}
+                    onConfirm={handleConfirmDelete}
+                    title={t("reports.delete_report", {
+                        defaultValue: "Delete View",
+                    })}
+                    description={
+                        deleteConfirmation.viewName
+                            ? `${t("reports.delete_report_confirmation", {
+                                  defaultValue:
+                                      "Are you sure you want to delete this view?",
+                              })} "${deleteConfirmation.viewName}"?`
+                            : t("reports.delete_report_confirmation", {
+                                  defaultValue:
+                                      "Are you sure you want to delete this view?",
+                              })
+                    }
+                    confirmLabel={t("actions.delete", { ns: "common" })}
+                    cancelLabel={t("actions.cancel", { ns: "common" })}
+                    type="delete"
+                    locale={i18n.language}
+                />
+            </Box>
+        </InternalPageWrapper>
+    );
+};
+```
+
+**Key Points:**
+- ✅ Keep grid container Box simple - only `position: "relative"` and `isolation: "isolate"`
+- ✅ Use `ViewBasedDataGrid` for report-based views (automatically handles report selector)
+- ✅ Never add toolbar override styles or width constraints to the grid container Box
+- ✅ Implement two-step delete process: fetch report details, then show confirmation
+- ✅ Check for system reports before allowing delete
+- ✅ Reset `selectedViewId` if deleting the currently selected view
+- ✅ Use `useCallback` for all event handlers (delete, confirm, cancel)
+- ✅ Use inline props for `customButtons` and `actionsColumnConfig` to prevent refresh during column resize
+- ✅ Use `setState` functions directly (`setSelectedViewId`, `setRows`) - they're already stable
+
+### Column Width Configuration
+
+**Column widths can be controlled through the report configuration by adding `width`, `flex`, and `minWidth` properties to field definitions:**
+
+**FieldConfig Interface:**
+```typescript
+interface FieldConfig {
+    table: string;
+    field: string;
+    alias?: string;
+    aggregation?: "SUM" | "AVG" | "COUNT" | "MIN" | "MAX";
+    width?: number;      // Fixed width in pixels (if set, flex will be 0)
+    flex?: number;       // Flex value (default: 1 if width not set, 0 if width is set)
+    minWidth?: number;   // Minimum width in pixels (default: 150)
+}
+```
+
+**Example in SQL Report Configuration:**
+```sql
+-- Narrow status column (50px fixed width)
+'{"tables":["Contact"],"fields":[
+    {"table":"Contact","field":"status","width":50,"flex":0,"minWidth":50},
+    {"table":"Contact","field":"first_name"},
+    {"table":"Contact","field":"last_name"}
+]}'::jsonb
+```
+
+**Example in Report Builder:**
+```json
+{
+    "tables": ["Contact"],
+    "fields": [
+        {
+            "table": "Contact",
+            "field": "status",
+            "width": 50,
+            "flex": 0,
+            "minWidth": 50
+        },
+        {
+            "table": "Contact",
+            "field": "first_name"
+            // Uses defaults: flex: 1, minWidth: 150
+        }
+    ]
+}
+```
+
+**Width Behavior:**
+- **If `width` is set**: Column uses fixed width, `flex` defaults to `0` (no flex growth)
+- **If `flex` is set**: Column uses flex sizing (default: `1` if `width` not set)
+- **If `minWidth` is set**: Column has that minimum width (default: `150px`)
+- **Defaults**: `flex: 1`, `minWidth: 150` if not specified
+
+**Key Points:**
+- ✅ Width settings are applied to all column types (custom renderers, boolean switches, regular columns)
+- ✅ Width configuration is stored in the report's `report_config` JSON field
+- ✅ Can be set via SQL scripts for system reports or through the report builder UI
+- ✅ Fixed width columns (`width` set) don't grow with available space
+- ✅ Flex columns (`flex` set) distribute remaining space proportionally
+
+### Boolean Fields as Switches
+
+**Boolean fields are automatically detected and rendered as read-only switches in all reports. This is a generic solution that works across all contexts without configuration.**
+
+**Automatic Detection:**
+The system detects boolean fields through:
+1. **Metadata Type**: Fields with `type: "boolean"`, `"Boolean"`, or `"bool"` in table metadata
+2. **Field Name Patterns**: Fields starting with:
+   - `receives_` (e.g., `receives_standard_reminder`)
+   - `is_` (e.g., `is_active`)
+   - `has_` (e.g., `has_permission`)
+   - `enabled` or `disabled`
+
+**Exclusions:**
+The following enum fields are excluded from switch rendering (they use enum translation instead):
+- `status`
+- `type`
+- `category`
+- `collection_status`
+
+**Example Fields That Use Switches:**
+```typescript
+// Contact table
+receives_standard_reminder: boolean    // ✅ Renders as switch
+receives_escalated_reminder: boolean   // ✅ Renders as switch
+
+// Any table with boolean type
+is_active: boolean                      // ✅ Renders as switch
+has_permission: boolean                // ✅ Renders as switch
+enabled: boolean                        // ✅ Renders as switch
+```
+
+**Switch Rendering:**
+```typescript
+// Automatically rendered as:
+<Switch 
+    checked={!!boolValue}  // Converts 1/0, true/false, "true"/"false" to boolean
+    disabled               // Read-only in reports
+    color="primary"        // Matches modal switch styling
+/>
+```
+
+**Value Conversion:**
+The switch handles various value formats:
+- `true` / `false` (boolean)
+- `1` / `0` (number)
+- `"true"` / `"false"` (string)
+- `"1"` / `"0"` (string)
+
+**Custom Renderer Override:**
+If a custom cell renderer is provided for a boolean field, it takes precedence over the automatic switch rendering:
+
+```typescript
+const customCellRenderers = {
+    receives_standard_reminder: (params) => {
+        // Custom renderer takes precedence - switch won't be used
+        return <Chip label="Custom" />;
+    }
+};
+```
+
+**Key Points:**
+- ✅ **Automatic**: No configuration needed - works for all boolean fields in all reports
+- ✅ **Metadata-Driven**: Uses table metadata to detect boolean types
+- ✅ **Pattern-Based**: Also detects by field name patterns
+- ✅ **Respects Custom Renderers**: Custom renderers override automatic switch rendering
+- ✅ **Works Across Contexts**: Customers, contacts, invoices, disputes, etc.
+- ✅ **Read-Only**: Switches are disabled (cannot be toggled in reports)
+- ✅ **Consistent Styling**: Matches switch styling from modals (`color="primary"`)

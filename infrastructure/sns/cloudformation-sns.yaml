@@ -1,0 +1,714 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ARChaser Alert SNS Infrastructure - Grafana webhook to SNS with HTML email and detailed alerts'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - production
+      - staging
+    Description: Environment name
+
+  AlertEmailAddress:
+    Type: String
+    Default: nilotpal@archaser.com,ofir@cloudial.io
+    Description: Email addresses for alert notifications (comma-separated for multiple, e.g., user1@example.com,user2@example.com)
+
+  SESFromAddress:
+    Type: String
+    Default: alerts@archaser.com
+    Description: Verified SES email address to send from
+
+  AlertDetailsApiUrl:
+    Type: String
+    Default: https://portal.archaser.com/api/alert-details
+    Description: URL of the application API for fetching alert details
+
+  AlertDetailsApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: API key for authenticating with the alert details API
+
+Resources:
+  # SNS Topic for System Alerts (for Slack and other subscribers)
+  AlertSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'archaser-system-alerts-${Environment}'
+      DisplayName: 'ARChaser System Alerts'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: archaser
+
+  # SNS Topic Policy - allows Lambda to publish
+  AlertSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlertSNSTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowLambdaPublish
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlertSNSTopic
+            Condition:
+              ArnLike:
+                aws:SourceArn: !GetAtt AlertWebhookLambda.Arn
+
+  # IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'archaser-alert-lambda-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SNSAndSESPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref AlertSNSTopic
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt AlertCooldownTable.Arn
+
+  # Lambda Function - Grafana Webhook to SNS + SES Bridge with Details
+  AlertWebhookLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'archaser-alert-webhook-${Environment}'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref AlertSNSTopic
+          ALERT_EMAIL: !Ref AlertEmailAddress
+          SES_FROM_ADDRESS: !Ref SESFromAddress
+          AWS_SES_REGION: !Ref AWS::Region
+          ALERT_DETAILS_API_URL: !Ref AlertDetailsApiUrl
+          ALERT_DETAILS_API_KEY: !Ref AlertDetailsApiKey
+          ENVIRONMENT: !Ref Environment
+          COOLDOWN_TABLE_NAME: !Ref AlertCooldownTable
+      Code:
+        ZipFile: |
+          const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns');
+          const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
+          const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+          const { DynamoDBDocumentClient, GetCommand, PutCommand } = require('@aws-sdk/lib-dynamodb');
+          const https = require('https');
+          const http = require('http');
+          
+          const snsClient = new SNSClient({});
+          const sesClient = new SESClient({ region: process.env.AWS_SES_REGION || 'eu-north-1' });
+          const ddbClient = new DynamoDBClient({});
+          const docClient = DynamoDBDocumentClient.from(ddbClient);
+          
+          // Alert type mapping for API calls
+          const ALERT_TYPE_MAP = {
+            'automation-stuck-no-contacts': 'automation_stuck_no_contacts',
+            'AutomationStuck-NoContacts': 'automation_stuck_no_contacts',
+            'Automation Stuck - No Contacts': 'automation_stuck_no_contacts',
+            'cron-jobs-overdue': 'cron_jobs_overdue',
+            'CronJobsOverdue': 'cron_jobs_overdue',
+            'Cron Jobs Overdue': 'cron_jobs_overdue',
+            'cron-jobs-not-run-24h': 'cron_jobs_not_run_24h',
+            'CronJobsNotRun24h': 'cron_jobs_not_run_24h',
+            'Cron Jobs Not Run in 24 Hours': 'cron_jobs_not_run_24h',
+            'stuck-activities': 'stuck_activities',
+            'StuckActivities': 'stuck_activities',
+            'Stuck Activities Detected': 'stuck_activities',
+            'periods-without-activities': 'periods_without_activities',
+            'PeriodsWithoutActivities': 'periods_without_activities',
+            'Automated Periods Without Activities': 'periods_without_activities',
+            'overdue-activity-creation': 'overdue_activity_creation',
+            'OverdueActivityCreation': 'overdue_activity_creation',
+            'Overdue Activity Creation': 'overdue_activity_creation',
+            'high-application-errors': 'high_application_errors',
+            'HighApplicationErrors': 'high_application_errors',
+            'High Application Error Rate': 'high_application_errors',
+            'high-email-bounces': 'high_email_bounces',
+            'HighEmailBounces': 'high_email_bounces',
+            'High Email Bounce Rate': 'high_email_bounces',
+            'high-sms-failures': 'high_sms_failures',
+            'HighSmsFailures': 'high_sms_failures',
+            'High SMS Failure Rate': 'high_sms_failures',
+            'stuck-import-jobs': 'stuck_import_jobs',
+            'StuckImportJobs': 'stuck_import_jobs',
+            'Stuck Import Jobs': 'stuck_import_jobs',
+            'stale-disputes': 'stale_disputes',
+            'StaleDisputes': 'stale_disputes',
+            'Stale Disputes Detected': 'stale_disputes',
+            'no-system-activities-24h': 'no_system_activities_24h',
+            'NoSystemActivities24h': 'no_system_activities_24h',
+            'No System Activities Created in 24 Hours': 'no_system_activities_24h',
+          };
+          
+          // Fetch alert details from the application API
+          async function fetchAlertDetails(alertName) {
+            const apiUrl = process.env.ALERT_DETAILS_API_URL;
+            const apiKey = process.env.ALERT_DETAILS_API_KEY;
+            
+            if (!apiUrl || !apiKey) {
+              console.log('Alert details API not configured, skipping details fetch');
+              return null;
+            }
+            
+            // Find matching alert type
+            const alertType = ALERT_TYPE_MAP[alertName];
+            if (!alertType) {
+              console.log(`No mapping found for alert: ${alertName}`);
+              return null;
+            }
+            
+            try {
+              const url = `${apiUrl}?type=${alertType}&limit=5`;
+              console.log(`Fetching alert details from: ${url}`);
+              
+              const response = await new Promise((resolve, reject) => {
+                const protocol = url.startsWith('https') ? https : http;
+                const req = protocol.get(url, {
+                  headers: { 'x-api-key': apiKey }
+                }, (res) => {
+                  let data = '';
+                  res.on('data', chunk => data += chunk);
+                  res.on('end', () => {
+                    if (res.statusCode === 200) {
+                      resolve(JSON.parse(data));
+                    } else {
+                      reject(new Error(`API returned ${res.statusCode}: ${data}`));
+                    }
+                  });
+                });
+                req.on('error', reject);
+                req.setTimeout(5000, () => {
+                  req.destroy();
+                  reject(new Error('Request timeout'));
+                });
+              });
+              
+              return response;
+            } catch (error) {
+              console.error('Failed to fetch alert details:', error.message);
+              return null;
+            }
+          }
+          
+          // Generate HTML for alert details section
+          function generateDetailsHtml(details) {
+            if (!details || !details.details || details.details.length === 0) {
+              return '';
+            }
+            
+            const rows = details.details.map(item => {
+              const cells = Object.entries(item)
+                .filter(([key]) => key !== 'period_id' && key !== 'activity_id')
+                .map(([key, value]) => {
+                  const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                  const displayValue = value === null || value === undefined ? 'N/A' : value;
+                  return `<td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-size: 12px;">${displayValue}</td>`;
+                }).join('');
+              return `<tr>${cells}</tr>`;
+            }).join('');
+            
+            const headers = Object.keys(details.details[0])
+              .filter(key => key !== 'period_id' && key !== 'activity_id')
+              .map(key => {
+                const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                return `<th style="padding: 8px; border-bottom: 2px solid #374151; text-align: left; font-size: 12px; color: #374151;">${label}</th>`;
+              }).join('');
+            
+            return `
+              <div style="margin-top: 20px; padding: 15px; background-color: #f9fafb; border-radius: 8px;">
+                <h4 style="margin: 0 0 10px 0; color: #374151; font-size: 14px;">📋 Affected Records (${details.count} total, showing top ${details.details.length})</h4>
+                <div style="overflow-x: auto;">
+                  <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                    <thead>
+                      <tr style="background-color: #e5e7eb;">${headers}</tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                  </table>
+                </div>
+              </div>
+            `;
+          }
+          
+          function classifyDeliveryTier(alerts, commonLabels) {
+            if (commonLabels?.delivery === 'digest') {
+              return 'digest';
+            }
+            const severities = alerts.map(a => (a.labels?.severity || '').toLowerCase());
+            if (severities.some(s => s === 'critical')) {
+              return 'critical';
+            }
+            return 'digest';
+          }
+
+          function buildSubject(envName, alertStatus, deliveryTier, alertName, alertCount) {
+            const statusPrefix = alertStatus === 'resolved' ? '[RESOLVED] ' : '';
+            const tierPrefix = deliveryTier === 'critical' ? '[CRITICAL] ' : '[Digest] ';
+            return `[${envName}] ${statusPrefix}${tierPrefix}${alertName} (${alertCount} alert${alertCount !== 1 ? 's' : ''})`;
+          }
+
+          function generateDigestSummaryHtml(alerts) {
+            if (alerts.length <= 1) {
+              return '';
+            }
+            const items = alerts.map((alert, index) => {
+              const severity = (alert.labels?.severity || 'unknown').toUpperCase();
+              const summary = alert.annotations?.summary || alert.labels?.alertname || `Alert ${index + 1}`;
+              const status = (alert.status || 'unknown').toUpperCase();
+              return `<li style="margin-bottom: 6px;"><strong>${summary}</strong> — ${severity} — ${status}</li>`;
+            }).join('');
+            return `
+              <div style="margin-bottom: 24px; padding: 16px; background-color: #eff6ff; border-radius: 8px; border: 1px solid #bfdbfe;">
+                <h4 style="margin: 0 0 12px 0; color: #1e40af; font-size: 14px;">📬 Digest summary — ${alerts.length} alerts in this batch</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #1f2937; font-size: 13px;">${items}</ul>
+              </div>
+            `;
+          }
+
+          function generateDigestSummaryText(alerts) {
+            if (alerts.length <= 1) {
+              return '';
+            }
+            let text = `Digest summary (${alerts.length} alerts):\n`;
+            alerts.forEach((alert, index) => {
+              const severity = alert.labels?.severity || 'unknown';
+              const summary = alert.annotations?.summary || alert.labels?.alertname || `Alert ${index + 1}`;
+              text += `  ${index + 1}. ${summary} [${severity}] (${alert.status})\n`;
+            });
+            text += '\n';
+            return text;
+          }
+
+          // HTML Email Template with details support
+          const generateHtmlEmail = (alertStatus, alertName, alerts, alertDetails, deliveryTier) => {
+            const statusColor = alertStatus === 'firing' ? '#dc3545' : '#28a745';
+            const statusEmoji = alertStatus === 'firing' ? '🚨' : '✅';
+            const headerTitle = deliveryTier === 'critical' ? 'Critical Alert' : 'Alert Digest';
+            const digestSummaryHtml = deliveryTier === 'digest' ? generateDigestSummaryHtml(alerts) : '';
+            
+            const alertsHtml = alerts.map((alert, index) => {
+              const severity = alert.labels?.severity || 'low';
+              const severityColors = {
+                critical: { bg: '#fef2f2', border: '#dc3545', text: '#991b1b' },
+                high: { bg: '#fff7ed', border: '#fd7e14', text: '#9a3412' },
+                medium: { bg: '#fefce8', border: '#ffc107', text: '#854d0e' },
+                low: { bg: '#f8f9fa', border: '#6c757d', text: '#495057' }
+              };
+              const colors = severityColors[severity] || severityColors.low;
+              
+              // Include details table if available
+              const detailsHtml = alertDetails ? generateDetailsHtml(alertDetails) : '';
+              
+              // Construct dashboard URL based on environment
+              const env = process.env.ENVIRONMENT || 'production';
+              const dashboardUid = env === 'staging' ? 'alert-drilldown-staging' : 'alert-drilldown-prod';
+              const dashboardSlug = env === 'staging' ? 'alert-data-drilldown-staging' : 'alert-data-drilldown-production';
+              const dashboardUrl = `https://grafana.archaser.com/d/${dashboardUid}/${dashboardSlug}?orgId=1&from=now-24h&to=now&timezone=browser&refresh=1m`;
+              
+              return `
+                <div style="margin-bottom: 20px; background-color: ${colors.bg}; padding: 20px; border-radius: 8px; border-left: 4px solid ${colors.border};">
+                  <h3 style="margin: 0 0 15px 0; color: #1f2937; font-size: 16px;">
+                    ${alert.annotations?.summary || 'Alert Details'}
+                  </h3>
+                  
+                  <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                      <td style="padding: 8px 0; color: #6b7280; width: 120px;">Status:</td>
+                      <td style="padding: 8px 0; font-weight: bold; color: ${statusColor};">${alert.status?.toUpperCase()}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #6b7280;">Severity:</td>
+                      <td style="padding: 8px 0;">
+                        <span style="background-color: ${colors.border}; color: white; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: bold;">
+                          ${severity.toUpperCase()}
+                        </span>
+                      </td>
+                    </tr>
+                    ${alert.annotations?.description ? `
+                    <tr>
+                      <td style="padding: 8px 0; color: #6b7280; vertical-align: top;">Description:</td>
+                      <td style="padding: 8px 0; color: #374151;">${alert.annotations.description}</td>
+                    </tr>
+                    ` : ''}
+                    ${alert.labels?.instance ? `
+                    <tr>
+                      <td style="padding: 8px 0; color: #6b7280;">Instance:</td>
+                      <td style="padding: 8px 0; color: #374151; font-family: monospace;">${alert.labels.instance}</td>
+                    </tr>
+                    ` : ''}
+                    <tr>
+                      <td style="padding: 8px 0; color: #6b7280;">Dashboard:</td>
+                      <td style="padding: 8px 0;">
+                        <a href="${dashboardUrl}" style="color: #2563eb; text-decoration: none;">View in Grafana →</a>
+                      </td>
+                    </tr>
+                  </table>
+                  
+                  ${detailsHtml}
+                </div>
+              `;
+            }).join('');
+            
+            return `
+              <!DOCTYPE html>
+              <html>
+              <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              </head>
+              <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+                <div style="max-width: 700px; margin: 0 auto; padding: 20px;">
+                  
+                  <!-- Header -->
+                  <div style="background: linear-gradient(135deg, ${statusColor} 0%, ${alertStatus === 'firing' ? '#b91c1c' : '#16a34a'} 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+                    <div style="font-size: 48px; margin-bottom: 10px;">${statusEmoji}</div>
+                    <h1 style="margin: 0; color: white; font-size: 24px; font-weight: 600;">
+                      ${headerTitle}
+                    </h1>
+                    <p style="margin: 10px 0 0 0; color: rgba(255,255,255,0.9); font-size: 16px;">
+                      ${alertStatus.toUpperCase()} - ${alertName}
+                    </p>
+                    <p style="margin: 5px 0 0 0; color: rgba(255,255,255,0.7); font-size: 14px;">
+                      ${alerts.length} alert${alerts.length !== 1 ? 's' : ''} in this notification
+                    </p>
+                  </div>
+                  
+                  <!-- Content -->
+                  <div style="background-color: white; padding: 30px; border-radius: 0 0 12px 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    ${digestSummaryHtml}
+                    ${alertsHtml}
+                    
+                    <!-- Footer -->
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center;">
+                      <p style="margin: 0; color: #9ca3af; font-size: 12px;">
+                        Generated by ARChaser System Monitor
+                      </p>
+                      <p style="margin: 5px 0 0 0; color: #9ca3af; font-size: 12px;">
+                        ${new Date().toISOString()}
+                      </p>
+                    </div>
+                  </div>
+                  
+                </div>
+              </body>
+              </html>
+            `;
+          };
+          
+          // Plain text version with details
+          const generatePlainText = (alertStatus, alertName, alerts, alertDetails, deliveryTier) => {
+            const statusEmoji = alertStatus === 'firing' ? '🚨' : '✅';
+            const tierLabel = deliveryTier === 'critical' ? 'CRITICAL' : 'DIGEST';
+            let text = `${statusEmoji} [${tierLabel}] ${alertName} - ${alertStatus.toUpperCase()}\n\n`;
+            text += generateDigestSummaryText(alerts);
+            
+            const env = process.env.ENVIRONMENT || 'production';
+            const dashboardUid = env === 'staging' ? 'alert-drilldown-staging' : 'alert-drilldown-prod';
+            const dashboardSlug = env === 'staging' ? 'alert-data-drilldown-staging' : 'alert-data-drilldown-production';
+            const dashboardUrl = `https://grafana.archaser.com/d/${dashboardUid}/${dashboardSlug}?orgId=1&from=now-24h&to=now&timezone=browser&refresh=1m`;
+
+            alerts.forEach((alert, index) => {
+              const severity = alert.labels?.severity || 'unknown';
+              const summary = alert.annotations?.summary || 'No summary provided';
+              const description = alert.annotations?.description || '';
+              
+              text += `Alert ${index + 1}:\n`;
+              text += `  Status: ${alert.status}\n`;
+              text += `  Severity: ${severity}\n`;
+              text += `  Summary: ${summary}\n`;
+              if (description) text += `  Description: ${description}\n`;
+              text += `  Dashboard: ${dashboardUrl}\n`;
+              text += '\n';
+            });
+            
+            // Add details if available
+            if (alertDetails && alertDetails.details && alertDetails.details.length > 0) {
+              text += `\n📋 Affected Records (${alertDetails.count} total):\n`;
+              text += '─'.repeat(50) + '\n';
+              alertDetails.details.forEach((item, i) => {
+                text += `\n${i + 1}. `;
+                Object.entries(item).forEach(([key, value]) => {
+                  if (key !== 'period_id' && key !== 'activity_id') {
+                    const label = key.replace(/_/g, ' ');
+                    text += `${label}: ${value || 'N/A'}, `;
+                  }
+                });
+                text = text.slice(0, -2) + '\n';
+              });
+            }
+            
+            text += `\n---\nGenerated by ARChaser System Monitor`;
+            return text;
+          };
+          
+          exports.handler = async (event) => {
+            console.log('Received Grafana webhook:', JSON.stringify(event));
+            
+            try {
+              // Parse the incoming Grafana alert
+              const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
+              
+              // Extract alert details
+              const alertStatus = body.status || 'unknown';
+              const alerts = body.alerts || [];
+              const groupLabels = body.groupLabels || {};
+              const commonLabels = body.commonLabels || {};
+              const alertName = groupLabels.alertname || commonLabels.alertname || 'System Alert';
+
+              // Cooldown Check
+              if (alertStatus === 'firing') {
+                try {
+                  const getCmd = new GetCommand({
+                    TableName: process.env.COOLDOWN_TABLE_NAME,
+                    Key: { AlertName: alertName }
+                  });
+                  const data = await docClient.send(getCmd);
+                  if (data.Item && data.Item.LastSentAt) {
+                    const lastSent = new Date(data.Item.LastSentAt);
+                    const now = new Date();
+                    const hoursDiff = (now - lastSent) / (1000 * 60 * 60);
+                    if (hoursDiff < 24) {
+                      console.log(`Skipping alert ${alertName} due to cooldown. Last sent: ${lastSent.toISOString()}, Hours diff: ${hoursDiff.toFixed(2)}`);
+                      return {
+                        statusCode: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ success: true, message: 'Alert suppressed due to cooldown' })
+                      };
+                    }
+                  }
+                } catch (err) {
+                  console.error('Error checking cooldown:', err);
+                }
+              }
+              
+              // Fetch detailed information from the application API
+              let alertDetails = null;
+              if (alertStatus === 'firing') {
+                alertDetails = await fetchAlertDetails(alertName);
+                if (alertDetails) {
+                  console.log(`Fetched ${alertDetails.count} detail records for ${alertName}`);
+                }
+              }
+              
+              const deliveryTier = classifyDeliveryTier(alerts, commonLabels);
+
+              // Generate messages
+              const htmlBody = generateHtmlEmail(alertStatus, alertName, alerts, alertDetails, deliveryTier);
+              const textBody = generatePlainText(alertStatus, alertName, alerts, alertDetails, deliveryTier);
+              const envName = process.env.ENVIRONMENT ? process.env.ENVIRONMENT.charAt(0).toUpperCase() + process.env.ENVIRONMENT.slice(1) : 'Production';
+              const subject = buildSubject(envName, alertStatus, deliveryTier, alertName, alerts.length);
+              
+              // Send HTML email via SES
+              const sesCommand = new SendEmailCommand({
+                Source: process.env.SES_FROM_ADDRESS,
+                Destination: {
+                  ToAddresses: process.env.ALERT_EMAIL.split(',').map(e => e.trim())
+                },
+                Message: {
+                  Subject: {
+                    Data: subject,
+                    Charset: 'UTF-8'
+                  },
+                  Body: {
+                    Html: {
+                      Data: htmlBody,
+                      Charset: 'UTF-8'
+                    },
+                    Text: {
+                      Data: textBody,
+                      Charset: 'UTF-8'
+                    }
+                  }
+                }
+              });
+              
+              await sesClient.send(sesCommand);
+              console.log('Successfully sent HTML email via SES');
+              
+              // Also publish to SNS for Slack and other subscribers
+              const snsCommand = new PublishCommand({
+                TopicArn: process.env.SNS_TOPIC_ARN,
+                Subject: subject,
+                Message: textBody,
+                MessageAttributes: {
+                  'alertStatus': { DataType: 'String', StringValue: alertStatus },
+                  'alertName': { DataType: 'String', StringValue: alertName },
+                  'deliveryTier': { DataType: 'String', StringValue: deliveryTier },
+                  'source': { DataType: 'String', StringValue: 'grafana' }
+                }
+              });
+              
+              await snsClient.send(snsCommand);
+              console.log('Successfully published to SNS');
+
+              // Update Cooldown Timestamp
+              if (alertStatus === 'firing') {
+                try {
+                  const putCmd = new PutCommand({
+                    TableName: process.env.COOLDOWN_TABLE_NAME,
+                    Item: {
+                      AlertName: alertName,
+                      LastSentAt: new Date().toISOString()
+                    }
+                  });
+                  await docClient.send(putCmd);
+                  console.log(`Updated cooldown timestamp for ${alertName}`);
+                } catch (err) {
+                  console.error('Error updating cooldown timestamp:', err);
+                }
+              }
+              
+              return {
+                statusCode: 200,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                  success: true, 
+                  message: 'Alert sent via SES and published to SNS',
+                  detailsFetched: !!alertDetails,
+                  deliveryTier,
+                  subject
+                })
+              };
+              
+            } catch (error) {
+              console.error('Error processing webhook:', error);
+              
+              return {
+                statusCode: 500,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                  success: false, 
+                  error: error.message 
+                })
+              };
+            }
+          };
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: archaser
+
+  # Cooldown Table for Alerts
+  AlertCooldownTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'archaser-alert-cooldown-${Environment}'
+      AttributeDefinitions:
+        - AttributeName: AlertName
+          AttributeType: S
+      KeySchema:
+        - AttributeName: AlertName
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: archaser
+
+  # API Gateway REST API
+  AlertWebhookApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub 'archaser-alert-webhook-${Environment}'
+      Description: 'Webhook endpoint for Grafana alerts'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Resource
+  WebhookResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref AlertWebhookApi
+      ParentId: !GetAtt AlertWebhookApi.RootResourceId
+      PathPart: alert
+
+  # API Gateway Method
+  WebhookMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref AlertWebhookApi
+      ResourceId: !Ref WebhookResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AlertWebhookLambda.Arn}/invocations'
+
+  # Lambda Permission for API Gateway
+  LambdaApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AlertWebhookLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${AlertWebhookApi}/*/*/*'
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: WebhookMethod
+    Properties:
+      RestApiId: !Ref AlertWebhookApi
+
+  # API Gateway Stage
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref AlertWebhookApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: v1
+      Description: 'Production stage for alert webhook'
+
+Outputs:
+  SNSTopicArn:
+    Description: 'ARN of the SNS Topic for alerts (use for Slack integration)'
+    Value: !Ref AlertSNSTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-SNSTopicArn'
+
+  WebhookUrl:
+    Description: 'Webhook URL for Grafana to send alerts'
+    Value: !Sub 'https://${AlertWebhookApi}.execute-api.${AWS::Region}.amazonaws.com/v1/alert'
+    Export:
+      Name: !Sub '${AWS::StackName}-WebhookUrl'
+
+  LambdaFunctionArn:
+    Description: 'ARN of the Lambda function'
+    Value: !GetAtt AlertWebhookLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaArn'

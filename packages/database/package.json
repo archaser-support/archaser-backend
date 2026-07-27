@@ -1,0 +1,26 @@
+{
+  "name": "@archaser/database",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared Prisma client for Nest services. Schema/migrations currently live at repo-root prisma/ until package extract (Stage 1B).",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1"
+  },
+  "peerDependencies": {
+    "@prisma/client": "^6.4.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

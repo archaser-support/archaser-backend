@@ -1,0 +1,140 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Function to output to stderr (terminal) instead of stdout (which Cursor captures)
+log() {
+    echo "$@" >&2
+}
+
+log ""
+log "🔍 Running pre-commit checks..."
+log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+log "⚠️  All checks must pass - commit will be blocked on any failure"
+log ""
+
+# Protect translation files - Only Ofir Amitai can modify
+eREMOTE_NAME="$1"
+
+# Authorized user information
+AUTHORIZED_NAME="Ofir Amitai"
+AUTHORIZED_EMAIL="support@cloudial.io"
+
+# Get current Git user identity
+CURRENT_NAME=$(git config user.name || echo "")
+CURRENT_EMAIL=$(git config user.email || echo "")
+
+# Check if current user is authorized
+IS_AUTHORIZED=false
+if [ "$CURRENT_NAME" = "$AUTHORIZED_NAME" ] || [ "$CURRENT_EMAIL" = "$AUTHORIZED_EMAIL" ]; then
+    IS_AUTHORIZED=true
+fi
+
+# Process each ref being pushed
+while read -r LOCAL_REF LOCAL_SHA1 REMOTE_REF REMOTE_SHA1; do
+    # Skip if any ref is missing (e.g., deleting a branch)
+    [ -z "$LOCAL_REF" ] || [ -z "$LOCAL_SHA1" ] || [ -z "$REMOTE_REF" ] || [ -z "$REMOTE_SHA1" ] && continue
+    
+    # Extract branch name from remote ref
+    REMOTE_BRANCH=$(echo "$REMOTE_REF" | sed 's|refs/heads/||')
+    
+    # Only check on staging and main branches
+    if [ "$REMOTE_BRANCH" != "staging" ] && [ "$REMOTE_BRANCH" != "main" ]; then
+        continue
+    fi
+    
+    # If REMOTE_SHA1 is all zeros, it's a new branch - compare against the remote branch
+    # Otherwise, compare the range of commits being pushed
+    if [ "$REMOTE_SHA1" = "0000000000000000000000000000000000000000" ]; then
+        # New branch - compare all commits in the branch
+        # Try to find the base by comparing with remote branch
+        REMOTE_BRANCH_REF="$REMOTE_NAME/$REMOTE_BRANCH"
+        if git rev-parse --verify "$REMOTE_BRANCH_REF" >/dev/null 2>&1; then
+            # Remote branch exists - compare against it
+            RANGE="$REMOTE_BRANCH_REF..$LOCAL_SHA1"
+        else
+            # Remote branch doesn't exist, compare entire branch
+            # Get the first commit in the branch (its root)
+            FIRST_COMMIT=$(git rev-list --reverse "$LOCAL_SHA1" | head -1)
+            # Compare from first commit to HEAD
+            RANGE="$FIRST_COMMIT^..$LOCAL_SHA1" 2>/dev/null || RANGE="$LOCAL_SHA1"
+        fi
+    else
+        # Existing branch - compare only the commits being pushed
+        RANGE="$REMOTE_SHA1..$LOCAL_SHA1"
+    fi
+    
+    # Get all translation files changed in commits being pushed
+    TRANSLATION_FILES=$(git diff --name-only --diff-filter=ACMR "$RANGE" 2>/dev/null | grep "^locales/.*\.json$" || true)
+
+    if [ -n "$TRANSLATION_FILES" ]; then
+        # Translation files are being pushed
+        if [ "$IS_AUTHORIZED" != "true" ]; then
+            log ""
+            log "❌ TRANSLATION FILES PUSH PROTECTION"
+            log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log "You are attempting to push translation file changes to '$REMOTE_BRANCH' branch."
+            log ""
+            log "Current Git user: $CURRENT_NAME <$CURRENT_EMAIL>"
+            log ""
+            log "Only '$AUTHORIZED_NAME' can push translation files to 'staging' and 'main' branches."
+            log ""
+            log "Protected translation files being pushed:"
+            echo "$TRANSLATION_FILES" | sed 's/^/  - /' >&2
+            log ""
+            log "If you need to push translation changes, contact Ofir Amitai first."
+            log ""
+            log "To proceed, you can:"
+            log "  1. Remove translation file changes from your commits"
+            log "  2. Contact Ofir Amitai to push these changes"
+            log "  3. Push to a different branch first, then create a PR for review"
+            log ""
+            exit 1
+        fi
+    fi
+done
+
+# Step 1: Auto-fix linting and formatting issues
+log "🔧 Auto-fixing linting and formatting issues..."
+if ! npx lint-staged >&2; then
+    log ""
+    log "❌ Auto-fix failed"
+    log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log "Some issues could not be auto-fixed. Please fix them manually."
+    log ""
+    exit 1
+fi
+log "✅ Auto-fix completed"
+log ""
+
+# Step 2: Run type checking (fast check)
+log "📝 Type checking TypeScript..."
+if ! npm run type-check >&2; then
+    log ""
+    log "❌ Type checking failed"
+    log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log "Fix TypeScript errors before committing"
+    log "All errors must be resolved - commit blocked"
+    log ""
+    exit 1
+fi
+log "✅ Type checking passed"
+log ""
+
+# Step 3: Skip unit tests in pre-commit (too slow - run manually before pushing)
+# Tests can take 5+ minutes and block commits
+# Run tests manually: npm run test:unit
+# Or run tests in CI/CD pipeline
+log "⏭️  Skipping unit tests in pre-commit (run manually: npm run test:unit)"
+log ""
+
+# Step 4: Skip build in pre-commit (too slow - run manually before pushing)
+# Build can take 3+ minutes and block commits
+# Run build manually: npm run build
+# Or run build in CI/CD pipeline
+log "⏭️  Skipping build in pre-commit (run manually: npm run build)"
+log ""
+
+log "✅ All pre-commit checks passed!"
+log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+log "Proceeding with commit..."
+log ""

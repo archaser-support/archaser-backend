@@ -1,0 +1,37 @@
+{
+    "projectSettings": {
+        "name": "Archaser",
+        "description": "Debt collection management system",
+        "framework": "Next.js",
+        "database": "PostgreSQL",
+        "orm": "Prisma"
+    },
+    "codeStyle": {
+        "typescript": {
+            "semi": true,
+            "singleQuote": false,
+            "tabWidth": 2,
+            "trailingComma": "es5"
+        },
+        "naming": {
+            "api": "kebab-case",
+            "components": "PascalCase",
+            "functions": "camelCase",
+            "variables": "camelCase",
+            "constants": "UPPER_SNAKE_CASE"
+        }
+    },
+    "documentation": {
+        "required": false,
+        "format": "markdown",
+        "sections": [
+            "Overview",
+            "API",
+            "Components",
+            "Database",
+            "Authentication",
+            "Internationalization"
+        ],
+        "note": "Documentation should only be created when explicitly requested by the user"
+    }
+}

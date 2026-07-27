@@ -1,0 +1,27 @@
+# Environment files with sensitive data
+.env
+.env.local
+.env*.local
+.env.production
+.env.development
+
+# Database connection strings and secrets
+**/secrets/**
+**/*secret*
+**/*password*
+**/*credential*
+
+# Private keys
+*.pem
+*.key
+*.p12
+*.pfx
+
+# AWS credentials
+.aws/
+aws-credentials
+
+# Other sensitive files
+*.log
+node_modules/
+

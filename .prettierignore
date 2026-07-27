@@ -1,0 +1,11 @@
+# Ignore test files - they use ES modules and are handled by Vitest
+tests/**
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+vitest.config.*
+
+# Ignore template files
+**/*.template
+

@@ -1,0 +1,527 @@
+---
+alwaysApply: false
+---
+# Hebrew/RTL Support
+
+## Summary
+
+This document provides detailed patterns for implementing Hebrew and Right-to-Left (RTL) support in form components, dialogs, and navigation elements. It covers:
+
+- **Critical Requirements**: Always implementing RTL support for forms, dialogs, and navigation
+- **TextField Hebrew Support**: Using `data-hebrew` prop and RTL-aware styling
+- **Autocomplete RTL Support**: Complete implementation with `data-hebrew` and `data-rtl` props, endAdornment positioning, and renderOption RTL handling
+- **Direction and Alignment**: Setting `dir` prop and text alignment based on language
+- **Theme Variants**: Using Hebrew typography variants from theme
+- **Progress Bar (LinearProgress)**: Container direction, label alignment, and bar fill direction (scaleX) for RTL
+- **Component Patterns**: TextField, Autocomplete, Select, and other form components with full RTL support
+
+This is a specialized guide for form components. For comprehensive RTL layout patterns, see [Hebrew Language & RTL Support](./hebrew-support.mdc).
+
+## 🇮🇱 Hebrew/RTL Support
+
+### ⚠️ Critical Requirement
+
+**ALWAYS implement Hebrew/RTL support for all form components, dialogs, and navigation elements:**
+
+- ✅ **TextField**: Use `data-hebrew` prop when `i18n.language === "he"`
+- ✅ **Autocomplete**: Use both `data-hebrew` and `data-rtl` props for Hebrew
+- ✅ **Direction**: Always set `dir` prop to `"rtl"` or `"ltr"` based on language
+- ✅ **Text Alignment**: Use `textAlign` with RTL condition
+- ✅ **Theme Variants**: Use Hebrew typography variants from `app/theme.ts` when appropriate
+
+### TextField Hebrew Support
+
+**ALWAYS use `data-hebrew` prop for TextField components in Hebrew:**
+
+```typescript
+import { TextField } from "@mui/material";
+import { useTranslation } from "react-i18next";
+
+const { i18n } = useTranslation();
+
+<TextField
+    label={t("fields.first_name")}
+    value={value}
+    onChange={(e) => handleChange(e.target.value)}
+    {...(i18n.language === "he" && { "data-hebrew": true })}
+    dir={i18n.language === "he" ? "rtl" : "ltr"}
+/>
+```
+
+**Key Points:**
+- ✅ Use `data-hebrew={true}` when `i18n.language === "he"`
+- ✅ Always set `dir` prop: `dir={i18n.language === "he" ? "rtl" : "ltr"}`
+- ✅ Theme automatically handles RTL label positioning, text alignment, and outline direction
+- ✅ Works with all TextField variants (outlined, filled, standard)
+- ✅ Supports multiline TextFields (theme has specific variant for this)
+
+**Reference:** See `app/theme.ts` lines 662-777 for `data-hebrew` variant styling.
+
+### Autocomplete Hebrew Support
+
+**ALWAYS use both `data-hebrew` and `data-rtl` props for Autocomplete components:**
+
+```typescript
+import { Autocomplete, TextField } from "@mui/material";
+import { useTranslation } from "react-i18next";
+
+const { i18n } = useTranslation();
+const isHebrew = i18n.language === "he";
+
+<Autocomplete
+    options={options}
+    value={value}
+    onChange={(_, newValue) => handleChange(newValue)}
+    getOptionLabel={(option) => option.label}
+    dir={isHebrew ? "rtl" : "ltr"}
+    {...(isHebrew && {
+        "data-hebrew": true,
+        "data-rtl": true,
+    })}
+    sx={{
+        "& .MuiAutocomplete-endAdornment": {
+            right: isHebrew ? "auto" : "9px",
+            left: isHebrew ? "9px" : "auto",
+        },
+    }}
+    renderInput={(params) => (
+        <TextField
+            {...params}
+            label={t("fields.business_unit")}
+            {...(isHebrew && { "data-hebrew": true })}
+            dir={isHebrew ? "rtl" : "ltr"}
+        />
+    )}
+    renderOption={(props, option) => {
+        const { key, ...otherProps } = props;
+        return (
+            <li
+                key={key}
+                {...otherProps}
+                style={{
+                    direction: isHebrew ? "rtl" : "ltr",
+                    textAlign: isHebrew ? "right" : "left",
+                    paddingRight: isHebrew ? "16px" : "14px",
+                    paddingLeft: isHebrew ? "14px" : "16px",
+                }}
+            >
+                <Typography
+                    sx={{
+                        direction: isHebrew ? "rtl" : "ltr",
+                        textAlign: isHebrew ? "right" : "left",
+                        width: "100%",
+                    }}
+                >
+                    {option.label}
+                </Typography>
+            </li>
+        );
+    }}
+/>
+```
+
+**Key Points:**
+- ✅ Use both `data-hebrew` and `data-rtl` props on Autocomplete root
+- ✅ Use `data-hebrew` prop on TextField inside `renderInput`
+- ✅ Always set `dir` prop on both Autocomplete and TextField
+- ✅ Override `endAdornment` positioning in `sx` prop (left/right swap)
+- ✅ **CRITICAL**: Always style `renderOption` with RTL-aware inline styles
+- ✅ Use RTL-aware padding in `renderOption` (swap left/right)
+- ✅ Wrap option content in Typography with RTL direction
+
+**Reference:** See `app/theme.ts` lines 929-986 for `data-rtl` variant styling.
+
+### Breadcrumbs RTL Support
+
+**ALWAYS implement RTL support for Breadcrumbs:**
+
+```typescript
+import { Breadcrumbs, Link, Typography } from "@mui/material";
+import { useTranslation } from "react-i18next";
+
+const { i18n } = useTranslation();
+const isHebrew = i18n.language === "he";
+
+<Breadcrumbs
+    sx={{
+        mb: 2,
+        width: "100%",
+        direction: isHebrew ? "rtl" : "ltr",
+        "& .MuiBreadcrumbs-ol": {
+            flexWrap: "nowrap",
+            overflow: "hidden",
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            flexDirection: isHebrew ? "row-reverse" : "row",
+            justifyContent: isHebrew ? "flex-end" : "flex-start",
+        },
+        "& .MuiBreadcrumbs-separator": {
+            marginLeft: isHebrew ? 0 : theme.spacing(0.5),
+            marginRight: isHebrew ? theme.spacing(0.5) : theme.spacing(0.5),
+        },
+    }}
+>
+    {(() => {
+        const breadcrumbItems = [
+            <Link key="parent" component="button" onClick={() => router.back()}>
+                {t("sections.parent")}
+            </Link>,
+            <Typography key="current" color="text.primary">
+                {currentPage}
+            </Typography>,
+        ];
+        // Reverse items for Hebrew
+        return isHebrew ? breadcrumbItems.slice().reverse() : breadcrumbItems;
+    })()}
+</Breadcrumbs>
+```
+
+**Key Points:**
+- ✅ Set `direction` on Breadcrumbs root
+- ✅ Use `flexDirection: "row-reverse"` for Hebrew
+- ✅ Swap `justifyContent` (flex-end for Hebrew, flex-start for English)
+- ✅ Adjust separator margins (swap left/right)
+- ✅ **CRITICAL**: Reverse breadcrumb items array for Hebrew: `isHebrew ? items.slice().reverse() : items`
+- ✅ Apply RTL direction and textAlign to each Link/Typography item
+
+### Button Icon Spacing RTL Support
+
+**ALWAYS handle icon spacing for buttons in RTL:**
+
+```typescript
+import { Button, CircularProgress } from "@mui/material";
+import { useTranslation } from "react-i18next";
+
+const { i18n } = useTranslation();
+const isRTL = i18n.language === "he";
+
+<Button
+    variant="contained"
+    disabled={isLoading}
+    endIcon={isLoading ? (
+        <CircularProgress size={16} sx={{ color: "inherit" }} />
+    ) : undefined}
+    sx={{
+        direction: isRTL ? "rtl" : "ltr",
+        "& .MuiButton-endIcon": {
+            marginLeft: isRTL ? 0 : theme.spacing(1),
+            marginRight: isRTL ? theme.spacing(1) : 0,
+        },
+        "& .MuiButton-startIcon": {
+            marginRight: isRTL ? 0 : theme.spacing(1),
+            marginLeft: isRTL ? theme.spacing(1) : 0,
+        },
+    }}
+>
+    {t("actions.save", { ns: "common" })}
+</Button>
+```
+
+**Key Points:**
+- ✅ Set `direction` on Button `sx` prop
+- ✅ Swap `marginLeft` and `marginRight` for `endIcon` in RTL
+- ✅ Swap `marginRight` and `marginLeft` for `startIcon` in RTL
+- ✅ Use `startIcon` for Hebrew, `endIcon` for English (when appropriate)
+
+### Switch Component RTL Support
+
+**ALWAYS use `data-rtl` prop for Switch components in Hebrew:**
+
+```typescript
+import { Switch, FormControlLabel } from "@mui/material";
+import { useTranslation } from "react-i18next";
+
+const { i18n } = useTranslation();
+const isHebrew = i18n.language === "he";
+
+<FormControlLabel
+    control={
+        <Switch
+            checked={checked}
+            onChange={(e) => handleChange(e.target.checked)}
+            color="primary"
+            {...(isHebrew && { "data-rtl": true })}
+        />
+    }
+    label={t("fields.status")}
+/>
+```
+
+**Key Points:**
+- ✅ Use `data-rtl={true}` when `i18n.language === "he"`
+- ✅ Theme automatically handles RTL transform (`scaleX(-1)`)
+- ✅ Works with both regular and small size switches
+
+**Reference:** See `app/theme.ts` lines 1966-2015 for `data-rtl` Switch variant styling.
+
+### Progress Bar (LinearProgress) RTL Support
+
+**ALWAYS implement RTL support for progress indicators (e.g. upload progress) that include a label and LinearProgress:**
+
+```typescript
+import { Box, LinearProgress, Paper, Typography, CircularProgress } from "@mui/material";
+import { useTranslation } from "react-i18next";
+
+const { t, i18n } = useTranslation(["common"]);
+const isRTL = i18n.language === "he";
+
+<Paper
+    sx={{
+        p: theme.spacing(2),
+        direction: isRTL ? "rtl" : "ltr",
+        textAlign: isRTL ? "right" : "left",
+        // ... other styles
+    }}
+>
+    <Box
+        sx={{
+            display: "flex",
+            alignItems: "center",
+            flexDirection: isRTL ? "row-reverse" : "row",
+            gap: theme.spacing(1),
+            mb: theme.spacing(1),
+        }}
+    >
+        <CircularProgress size={16} color="primary" />
+        <Typography
+            variant="body2"
+            sx={{
+                flex: 1,
+                minWidth: 0,
+                direction: isRTL ? "rtl" : "ltr",
+                textAlign: isRTL ? "right" : "left",
+            }}
+        >
+            {t("messages.uploading")}
+        </Typography>
+    </Box>
+    <Box sx={{ direction: isRTL ? "rtl" : "ltr" }}>
+        <LinearProgress
+            sx={{
+                height: 6,
+                borderRadius: 3,
+                ...(isRTL && { transform: "scaleX(-1)" }),
+                // ... other styles
+            }}
+        />
+    </Box>
+</Paper>
+```
+
+**Key Points:**
+- ✅ Set `direction` and `textAlign` on the progress container (e.g. Paper) so the block flows RTL
+- ✅ Use `flexDirection: isRTL ? "row-reverse" : "row"` on the row that contains icon + label so the icon appears on the right in Hebrew
+- ✅ Give the label `flex: 1` and `minWidth: 0` so it takes remaining space; set `textAlign: isRTL ? "right" : "left"` so the label text aligns to the right in Hebrew
+- ✅ **Bar fill direction**: In RTL, apply `transform: "scaleX(-1)"` to `LinearProgress` so the bar fills from right to left (progress toward the left)
+- ✅ Wrap `LinearProgress` in a `Box` with `direction: isRTL ? "rtl" : "ltr"` so the flipped bar aligns correctly within the layout
+
+**Reference:** See `shared/layout-components/activity/ActivityFileUploader.tsx` for upload progress with LinearProgress RTL.
+
+### RadioButton and RadioGroup RTL Support
+
+**ALWAYS implement RTL support for RadioGroup and FormControlLabel components:**
+
+```typescript
+import { RadioGroup, FormControlLabel, Radio, Box, Typography } from "@mui/material";
+import { Person as PersonIcon, Group as GroupIcon } from "@mui/icons-material";
+import { useTranslation } from "react-i18next";
+
+const { i18n } = useTranslation();
+const isRTL = i18n.language === "he";
+
+// Container Box for alignment
+<Box sx={{ 
+    display: "flex",
+    flexDirection: "column",
+    alignItems: isRTL ? "flex-end" : "flex-start",
+    direction: isRTL ? "rtl" : "ltr",
+}}>
+    <Typography variant="body2" sx={{ 
+        mb: 1,
+        textAlign: isRTL ? "right" : "left",
+        direction: isRTL ? "rtl" : "ltr",
+        width: "100%",
+    }}>
+        {t("sections.share_with")}
+    </Typography>
+    
+    <RadioGroup
+        row={true}
+        value={value}
+        onChange={(e) => handleChange(e.target.value)}
+        sx={{
+            direction: isRTL ? "rtl" : "ltr",
+            flexDirection: isRTL ? "row-reverse" : "row",
+            gap: 2,
+            justifyContent: isRTL ? "flex-end" : "flex-start",
+            width: "100%",
+        }}
+    >
+        <FormControlLabel
+            value="option1"
+            control={<Radio />}
+            label={
+                <Box sx={{ 
+                    display: "flex", 
+                    alignItems: "center", 
+                    gap: 0.5,
+                    direction: isRTL ? "rtl" : "ltr",
+                    flexDirection: "row",
+                }}>
+                    {isRTL ? (
+                        <>
+                            <Icon fontSize="small" />
+                            <Typography sx={{
+                                direction: isRTL ? "rtl" : "ltr",
+                                textAlign: isRTL ? "right" : "left",
+                            }}>{t("fields.option1")}</Typography>
+                        </>
+                    ) : (
+                        <>
+                            <Icon fontSize="small" />
+                            <Typography sx={{
+                                direction: isRTL ? "rtl" : "ltr",
+                                textAlign: isRTL ? "right" : "left",
+                            }}>{t("fields.option1")}</Typography>
+                        </>
+                    )}
+                </Box>
+            }
+            sx={{
+                direction: isRTL ? "rtl" : "ltr",
+                justifyContent: isRTL ? "flex-end" : "flex-start",
+                "& .MuiFormControlLabel-label": {
+                    marginLeft: isRTL ? 0 : theme.spacing(1),
+                    marginRight: isRTL ? theme.spacing(1) : 0,
+                },
+            }}
+        />
+    </RadioGroup>
+</Box>
+```
+
+**Key Points:**
+- ✅ **Container Box**: Use `alignItems: isRTL ? "flex-end" : "flex-start"` to align RadioGroup to the right for Hebrew
+- ✅ **RadioGroup**: Always use `row={true}` (not conditional)
+- ✅ **RadioGroup sx**: Set `direction`, `flexDirection: isRTL ? "row-reverse" : "row"`, and `justifyContent: isRTL ? "flex-end" : "flex-start"`
+- ✅ **FormControlLabel sx**: Set `direction`, `justifyContent: isRTL ? "flex-end" : "flex-start"` to position radio button on the right for Hebrew
+- ✅ **Label margins**: Swap `marginLeft` and `marginRight` for `.MuiFormControlLabel-label` in RTL
+- ✅ **Label content**: For labels with icons, place icon first in DOM for RTL to appear on the right side of text
+- ✅ **Typography in label**: Always set `direction` and `textAlign` for Typography within labels
+- ✅ **Label Box**: Set `direction` and `flexDirection: "row"` (not reversed) for proper icon/text positioning
+
+**Icon Positioning in Labels:**
+- For Hebrew (RTL): Icon first in DOM order, then Typography (icon appears on right of text)
+- For LTR: Icon first in DOM order, then Typography (icon appears on left of text)
+- Use conditional rendering if icon order needs to differ between RTL/LTR
+
+**Reference:** See `components/reports/ShareReportModal.tsx` for complete RadioGroup RTL implementation.
+
+### Hebrew Typography Variants
+
+**Use Hebrew-specific typography variants from theme:**
+
+```typescript
+import { Typography } from "@mui/material";
+import { useTranslation } from "react-i18next";
+
+const { i18n } = useTranslation();
+const isHebrew = i18n.language === "he";
+
+// Use Hebrew variants when appropriate
+<Typography variant={isHebrew ? "hebrewTitle" : "h4"}>
+    {t("sections.title")}
+</Typography>
+
+<Typography variant={isHebrew ? "hebrewSubtitle" : "subtitle1"}>
+    {t("sections.subtitle")}
+</Typography>
+
+<Typography variant={isHebrew ? "hebrewCardTitle" : "h6"}>
+    {t("sections.card_title")}
+</Typography>
+
+<Typography variant={isHebrew ? "hebrewBodyText" : "body1"}>
+    {t("sections.body")}
+</Typography>
+```
+
+**Available Hebrew Variants:**
+- ✅ `hebrewTitle` - Large title (1.75rem, right-aligned, RTL)
+- ✅ `hebrewSubtitle` - Subtitle (1rem, right-aligned, RTL)
+- ✅ `hebrewCardTitle` - Card title (0.8rem, uppercase, right-aligned, RTL)
+- ✅ `hebrewCardSubtitle` - Card subtitle (1.75rem, bold, right-aligned, RTL)
+- ✅ `hebrewBodyText` - Body text (0.875rem, right-aligned, RTL)
+
+**Reference:** See `app/theme.ts` lines 272-313 for Hebrew typography variants.
+
+### General RTL Patterns
+
+**Common RTL-aware patterns for containers and layouts:**
+
+```typescript
+import { Box, Stack } from "@mui/material";
+import { useTranslation } from "react-i18next";
+
+const { i18n } = useTranslation();
+const isRTL = i18n.language === "he";
+
+// Container with RTL support
+<Box
+    sx={{
+        direction: isRTL ? "rtl" : "ltr",
+        textAlign: isRTL ? "right" : "left",
+        // RTL-aware margins
+        ml: isRTL ? 0 : theme.spacing(2),
+        mr: isRTL ? theme.spacing(2) : 0,
+    }}
+>
+    {/* Content */}
+</Box>
+
+// Stack with RTL support
+<Stack
+    direction="row"
+    spacing={2}
+    sx={{
+        direction: isRTL ? "rtl" : "ltr",
+        "& > * + *": {
+            marginLeft: isRTL ? "0 !important" : theme.spacing(2),
+            marginRight: isRTL ? theme.spacing(2) : "0 !important",
+        },
+    }}
+>
+    {/* Items */}
+</Stack>
+```
+
+**Key Points:**
+- ✅ Always set `direction` and `textAlign` on containers
+- ✅ Swap `marginLeft` and `marginRight` for RTL
+- ✅ Use conditional spacing: `ml: isRTL ? 0 : spacing, mr: isRTL ? spacing : 0`
+- ✅ For Stack/Box with children, use `"& > * + *"` selector for spacing
+
+### Common Mistakes to Avoid
+
+- ❌ **Don't forget `data-hebrew` prop** - Required for TextField RTL styling
+- ❌ **Don't forget `data-rtl` prop** - Required for Autocomplete RTL styling
+- ❌ **Don't skip `dir` prop** - Always set direction on form components
+- ❌ **Don't forget `renderOption` RTL styling** - Autocomplete options need inline RTL styles
+- ❌ **Don't forget to reverse breadcrumb items** - Use `items.slice().reverse()` for Hebrew
+- ❌ **Don't use fixed margins** - Always swap left/right margins for RTL
+- ❌ **Don't forget button icon spacing** - Swap marginLeft/marginRight for icons
+- ❌ **Don't assume text alignment** - Always set `textAlign` with RTL condition
+- ❌ **Don't forget Switch `data-rtl` prop** - Required for RTL transform
+- ❌ **Don't use inline styles for TextField/Autocomplete** - Use theme props instead
+- ❌ **Don't forget RadioGroup container alignment** - Use `alignItems: isRTL ? "flex-end" : "flex-start"` on parent Box
+- ❌ **Don't use conditional `row` prop on RadioGroup** - Always use `row={true}`, control direction with `flexDirection` in sx
+- ❌ **Don't forget to swap FormControlLabel margins** - Swap `marginLeft` and `marginRight` for label in RTL
+- ❌ **Don't forget LinearProgress RTL** - Use `transform: "scaleX(-1)"` in RTL so the bar progresses toward the left; set direction and textAlign on the progress container and label
+
+### Reference Implementations
+
+- **User Details Form**: See `app/[locale]/app/settings/users/[userId]/UserDetails.tsx` for comprehensive Hebrew support
+- **Theme Configuration**: See `app/theme.ts` for all Hebrew/RTL theme variants
+- **Autocomplete Pattern**: See `shared/components/ToolbarDropdownFilter.tsx` for Autocomplete RTL pattern
+- **Progress Bar (LinearProgress)**: See `shared/layout-components/activity/ActivityFileUploader.tsx` for upload progress with RTL

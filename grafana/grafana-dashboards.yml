@@ -1,0 +1,42 @@
+apiVersion: 1
+
+providers:
+  - name: 'Application Dashboards'
+    orgId: 1
+    folder: 'Dashboards'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards_files/current_env
+
+  - name: 'Nest API'
+    orgId: 1
+    folder: 'api'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards_files/current_env
+
+  - name: 'Nest Worker'
+    orgId: 1
+    folder: 'worker'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards_files/current_env
+
+  - name: 'Peel services'
+    orgId: 1
+    folder: 'peels'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards_files/current_env

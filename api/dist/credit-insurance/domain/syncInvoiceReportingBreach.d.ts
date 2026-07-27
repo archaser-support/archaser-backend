@@ -1,0 +1,11 @@
+import { prisma } from "../domain-db";
+type DbClient = typeof prisma;
+export declare function syncInvoiceReportingBreach(invoiceId: number, db?: DbClient): Promise<void>;
+export declare function clearReportingBreachWhenReportedForInvoiceIds(invoiceIds: number[], db?: DbClient): Promise<number>;
+export declare function sweepReportingBreachForOverdueInvoiceIds(invoiceIds: number[], db?: DbClient): Promise<number>;
+export declare function refreshInsuranceTargetDatesForInvoiceIds(invoiceIds: number[], db?: DbClient): Promise<number>;
+export declare function refreshPaymentTermBreachForInvoiceIds(invoiceIds: number[], db?: DbClient): Promise<number>;
+export declare function refreshCtvSnapshotsForInvoiceIds(invoiceIds: number[], db?: DbClient): Promise<number>;
+export declare function clearCustomerExcludedFromPolicyFlagWhenIncluded(customerId: number, db?: DbClient): Promise<number>;
+export declare function refreshTermsBreachFlagsForCustomer(customerId: number, db?: DbClient): Promise<number>;
+export {};

@@ -1,0 +1,13 @@
+{
+  "name": "@archaser/e2e",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Cross-system Playwright e2e against staging Amplify + Nest (never ship in Amplify/Nest prod artifacts)",
+  "scripts": {
+    "test": "playwright test",
+    "test:smoke": "playwright test --grep @smoke"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

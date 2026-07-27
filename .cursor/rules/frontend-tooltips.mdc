@@ -1,0 +1,68 @@
+---
+alwaysApply: false
+---
+# Tooltip Styling
+
+## Summary
+
+This document provides the standard tooltip pattern to match navigation menu styling. It covers:
+
+- **Standard Pattern**: Complete tooltip implementation with RTL support
+- **RTL Support**: Direction-aware text in tooltip content
+- **Styling**: Global theme styles, delays, and arrow configuration
+- **Cursor on Hover**: Use a distinct cursor when hovering the tooltip trigger (e.g. `cursor: "help"` for info icons)
+- **Key Points**: Always include arrow, proper delays, `placement="bottom"`, and cursor where appropriate
+
+Tooltips should match the navigation menu styling and include full RTL support for Hebrew language.
+
+## 🎨 Tooltip Styling
+
+### Standard Tooltip Pattern
+
+**ALWAYS use this pattern to match navigation menu styling:**
+
+```typescript
+import { Tooltip } from "@mui/material";
+import { useTranslation } from "react-i18next";
+
+const { i18n } = useTranslation();
+const isHebrewUser = i18n.language === "he";
+
+<Tooltip
+    title={t("tooltip.text")}
+    arrow
+    enterDelay={300}
+    leaveDelay={100}
+    placement="bottom"
+    PopperProps={{
+        sx: {
+            "& .MuiTooltip-tooltip": {
+                direction: isHebrewUser ? "rtl" : "ltr",
+            },
+        },
+    }}
+>
+    {/* Your component - add cursor for icon/trigger */}
+    <IconComponent sx={{ cursor: "help" }} />
+</Tooltip>
+```
+
+For report builder and shared report UI, prefer `getRTLTooltipProps(i18n)` from `@/utils/reportFieldUtils` — it applies the same defaults (`placement="bottom"`, delays, arrow, RTL text direction).
+
+**Key Points:**
+- ✅ Global theme styles defined in `app/theme.ts` (don't override)
+- ✅ Always include `arrow` prop
+- ✅ Use `enterDelay={300}` and `leaveDelay={100}`
+- ✅ **Always use `placement="bottom"`** — do not default to `top`, `left`, or `right`
+- ✅ RTL support via `PopperProps` with `direction` on tooltip content
+- ✅ **Cursor on hover**: Set `cursor: "help"` on the tooltip trigger (e.g. info icon) so users see a help cursor when hovering; use `cursor: "pointer"` for clickable triggers
+
+**Reference:** See `app/[locale]/app/AppShell.tsx` for navigation menu tooltip implementation.
+
+### Cursor on Hover
+
+When the tooltip wraps an icon or other trigger that only shows information (no click action), set a distinct cursor so users know they can hover for details:
+
+- **Info / help tooltips**: Use `cursor: "help"` on the trigger (e.g. `<InfoIcon sx={{ cursor: "help" }} />`).
+- **Clickable triggers**: Use `cursor: "pointer"` if the element also has an onClick.
+- **Navigation / buttons**: Rely on default cursor or `pointer` as appropriate; no need to add `help` unless the primary affordance is “hover for tooltip”.

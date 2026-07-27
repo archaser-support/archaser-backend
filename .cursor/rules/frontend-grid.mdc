@@ -1,0 +1,827 @@
+---
+alwaysApply: false
+---
+# EndlessScrollDataGrid Usage
+
+## Summary
+
+This document provides comprehensive guidelines for using the `EndlessScrollDataGrid` component, a virtual scrolling grid with infinite scroll capabilities. It covers:
+
+- **Critical Requirements**: Mandatory search and sorting implementation, debounced search, stable row IDs
+- **GET Endpoints**: Using `createQueryFn` helper for fetch-based requests
+- **POST Endpoints**: Handling POST requests with search and sorting
+- **Column Configuration**: Field definitions, renderers, formatters, and RTL support
+- **Virtual Scrolling**: Performance optimization with stable IDs and proper row height
+- **State Management**: Search, sorting, filtering, and pagination state handling
+- **RTL Support**: Right-to-left layout for Hebrew language
+
+## 📊 EndlessScrollDataGrid Usage
+
+### ⚠️ Critical Requirements
+
+**ALWAYS implement search and sorting when using `EndlessScrollDataGrid`:**
+
+- ✅ **Search**: Provide `searchValue`, `onSearchChange`, `searchPlaceholder` props
+- ✅ **Sorting**: Provide `sortModel` and `onSortModelChange` props
+- ✅ **Debounced Search**: Use `useDebounce` hook (500ms standard)
+- ✅ **Query Integration**: Include search and sort in query key and API parameters
+- ✅ **Stable Row IDs**: Every row must have a stable `id` field for virtual scrolling
+
+### GET Endpoints (Recommended Pattern)
+
+**ALWAYS use `createQueryFn` helper for fetch-based GET requests:**
+
+```typescript
+import { useVirtualInfiniteScroll, createQueryFn } from "@/shared/layout-components/grid/EndlessScrollDataGrid";
+import { useState, useMemo } from "react";
+import { useDebounce } from "use-debounce";
+import { GridSortModel } from "@mui/x-data-grid";
+
+// State setup
+const [search, setSearch] = useState("");
+const [debouncedSearch] = useDebounce(search, 500);
+const [sortModel, setSortModel] = useState<GridSortModel>([{ field: "name", sort: "asc" }]);
+const [queryKeyVersion, setQueryKeyVersion] = useState(0);
+
+const sortField = sortModel[0]?.field;
+const sortDirection = sortModel[0]?.sort;
+
+// Query key - all parameters in a single object
+const queryKey = useMemo(
+    () => [
+        "your-entity-name",
+        {
+            search: debouncedSearch,
+            filter: filterValue,
+            status: statusFilter,
+            sortField,
+            sortDirection,
+            version: queryKeyVersion,
+        },
+    ],
+    [debouncedSearch, filterValue, statusFilter, sortField, sortDirection, queryKeyVersion]
+);
+
+// Use createQueryFn for fetch-based GET requests
+const { data, totalRecords, isLoading, hasMore, loadMore, reset } = useVirtualInfiniteScroll({
+    queryKey,
+    queryFn: createQueryFn(
+        "/api/your-endpoint",
+        {
+            search: debouncedSearch,
+            filter: filterValue,
+            status: statusFilter,
+            sortField: sortField || "",
+            sortDirection: sortDirection || "asc",
+        },
+        "dataKey" // Response key containing data array (e.g., "customers", "data", "results")
+    ),
+});
+
+// Grid component
+<EndlessScrollDataGrid
+    key={`${entityId}-${debouncedSearch}-${queryKeyVersion}`}
+    rows={rows}
+    columns={columns}
+    totalRecords={totalRecords}
+    isLoading={isLoading}
+    onLoadMore={loadMore}
+    hasMore={hasMore}
+    sortModel={sortModel}
+    onSortModelChange={setSortModel}
+    searchValue={search}
+    onSearchChange={setSearch}
+    searchPlaceholder={t("fields.search_placeholder", { ns: "common" })}
+    searchDebounceMs={500}
+    searchDirection={i18n.language === "he" ? "rtl" : "ltr"}
+    language={i18n.language}
+    fillViewport={true}
+/>
+```
+
+**Key Points:**
+- ✅ Query key structure: `["entity-name", { param1, param2, ... }]` - single object as second element
+- ✅ `createQueryFn` handles query params, pagination, and response parsing automatically
+- ✅ Third parameter is the data key in API response
+- ✅ Default page size is **20 records** (not configurable)
+- ✅ Include `queryKeyVersion` in query key and grid `key` prop
+
+### API-Based GET Endpoints (Alternative Pattern)
+
+**Use `createApiQueryFn` helper for API-based GET requests (using `api.get`):**
+
+```typescript
+import { useVirtualInfiniteScroll, createApiQueryFn } from "@/shared/layout-components/grid/EndlessScrollDataGrid";
+import { useState, useMemo } from "react";
+import { useDebounce } from "use-debounce";
+import { GridSortModel } from "@mui/x-data-grid";
+import api from "@/app/api";
+
+// State setup (same as above)
+const [search, setSearch] = useState("");
+const [debouncedSearch] = useDebounce(search, 500);
+const [sortModel, setSortModel] = useState<GridSortModel>([{ field: "name", sort: "asc" }]);
+const [queryKeyVersion, setQueryKeyVersion] = useState(0);
+
+const sortField = sortModel[0]?.field;
+const sortDirection = sortModel[0]?.sort;
+
+// Query key (same pattern)
+const queryKey = useMemo(
+    () => [
+        "your-entity-name",
+        {
+            search: debouncedSearch,
+            filter: filterValue,
+            status: statusFilter,
+            sortField,
+            sortDirection,
+            version: queryKeyVersion,
+        },
+    ],
+    [debouncedSearch, filterValue, statusFilter, sortField, sortDirection, queryKeyVersion]
+);
+
+// Use createApiQueryFn for API-based GET requests
+const queryFn = useMemo(
+    () =>
+        createApiQueryFn(
+            async (params: any) => {
+                const queryParams = new URLSearchParams();
+                queryParams.append("page", params.page.toString());
+                queryParams.append("limit", params.limit.toString());
+                if (params.sortField) queryParams.append("sortField", params.sortField);
+                if (params.sortDirection) queryParams.append("sortDirection", params.sortDirection);
+                if (params.search) queryParams.append("query", params.search);
+                if (params.status) queryParams.append("status", params.status);
+
+                const response = await api.get(`/your-endpoint?${queryParams.toString()}`);
+                return response.data;
+            },
+            {
+                search: debouncedSearch,
+                status: filterValue,
+                sortField: sortField || "",
+                sortDirection: sortDirection || "asc",
+            },
+            "dataKey", // Response key containing data array
+            "totalRecords" // Response key containing total count (default: "totalRecords")
+        ),
+    [debouncedSearch, filterValue, sortField, sortDirection]
+);
+
+const { data, totalRecords, isLoading, hasMore, loadMore, reset } = useVirtualInfiniteScroll({
+    queryKey,
+    queryFn,
+});
+```
+
+**Key Points:**
+- ✅ Use `createApiQueryFn` when using `api.get` instead of `fetch`
+- ✅ First parameter is the API call function that receives params
+- ✅ Second parameter is the params object (will be filtered for empty values)
+- ✅ Third parameter is the data key in API response (default: "data")
+- ✅ Fourth parameter is the total records key (default: "totalRecords")
+- ✅ Default page size is **20 records** (not configurable)
+
+### POST Endpoints (Custom Implementation)
+
+**Only use custom `queryFn` when POST is required:**
+
+```typescript
+// Query key - same pattern as GET
+const queryKey = useMemo(
+    () => [
+        "your-entity-name",
+        {
+            entityId,
+            search: debouncedSearch,
+            sortField,
+            sortDirection,
+            version: queryKeyVersion,
+        },
+    ],
+    [entityId, debouncedSearch, sortField, sortDirection, queryKeyVersion]
+);
+
+// Custom queryFn for POST - use useCallback (it's a function)
+const executeQueryFn = useCallback(
+    async (page: number = 1) => {
+        const response = await fetch(`/api/your-endpoint/${entityId}/execute`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                page,
+                limit: 20, // Default page size is 20
+                search: debouncedSearch,
+                sortField,
+                sortDirection,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const limit = 20; // Default page size is 20
+        const returnedData = data.data || [];
+        const total = data.totalRecords || 0;
+
+        return {
+            data: returnedData,
+            totalRecords: total,
+            hasMore: returnedData.length > 0 && (page * limit) < total,
+        };
+    },
+    [entityId, debouncedSearch, sortField, sortDirection] // Include all dependencies
+);
+
+const { data, totalRecords, isLoading, hasMore, loadMore, reset } = useVirtualInfiniteScroll({
+    queryKey,
+    queryFn: executeQueryFn,
+});
+```
+
+**Key Points:**
+- ⚠️ Only use custom `queryFn` when POST is required
+- ✅ Use `useCallback` for query functions (not `useMemo`)
+- ✅ Include all dependencies in dependency array
+- ✅ Default page size is **20 records** (use `limit: 20` in POST body)
+- ✅ Accurate `hasMore`: `returnedData.length > 0 && (page * limit) < total`
+- ✅ Return structure: `{ data: T[], totalRecords: number, hasMore: boolean }`
+
+### Reset Logic Pattern
+
+**Prevent unnecessary resets on initial mount:**
+
+```typescript
+const prevDebouncedSearchRef = useRef(debouncedSearch);
+const prevFilterRef = useRef(filterValue);
+
+React.useEffect(() => {
+    const searchChanged = prevDebouncedSearchRef.current !== debouncedSearch;
+    const filterChanged = prevFilterRef.current !== filterValue;
+
+    if (searchChanged || filterChanged) {
+        prevDebouncedSearchRef.current = debouncedSearch;
+        prevFilterRef.current = filterValue;
+
+        // Increment version to force new query
+        setQueryKeyVersion((prev) => prev + 1);
+        reset();
+    }
+}, [debouncedSearch, filterValue, reset]);
+```
+
+**When to increment `queryKeyVersion`:**
+- ✅ When filters/search change (in reset effect)
+- ✅ After data mutations (mass updates, creates, updates, deletes)
+
+### Data Transformation Pattern
+
+**Transform API data to grid row format:**
+
+```typescript
+// Transformation function - use useCallback
+const mapEntityToRow = useCallback((entity: any) => {
+    const firstName = getNestedValue(entity, "Person.first_name") || "";
+    const lastName = getNestedValue(entity, "Person.last_name") || "";
+    const name = `${firstName} ${lastName}`.trim();
+
+    const collectionPeriod = Array.isArray(entity?.CustomerCollectionPeriod)
+        ? entity.CustomerCollectionPeriod[0]
+        : null;
+
+    const amount = collectionPeriod?.total_outstanding_amount ?? 0;
+    const currency = collectionPeriod?.currency ?? "";
+
+    return {
+        id: entity.id, // CRITICAL: Stable ID required for virtual scrolling
+        name: name || `Entity ${entity.id}`,
+        amount_formatted: amount === 0
+            ? `0.00 ${currency}`
+            : `${formatAmountWithoutSymbol(amount)} ${currency}`,
+        amount: amount, // Raw value for sorting/export
+        raw: entity, // Original entity for nested data access
+    };
+}, []);
+
+// Transform rows - use useMemo
+const rows = useMemo(() => {
+    return entities.map(mapEntityToRow);
+}, [entities, mapEntityToRow]);
+```
+
+**Key Points:**
+- ✅ Use `useCallback` for transformation function
+- ✅ Use `useMemo` for transformed rows array
+- ✅ **CRITICAL**: Every row must have stable `id` field
+- ✅ If API doesn't return `id`, generate stable one: `id: row.id || \`entity-${entityId}-row-${index}\``
+- ✅ Include both formatted (display) and raw (sorting/export) values
+- ✅ Include `raw` property with original entity
+- ✅ **Backend**: Always include `id` field in API responses
+
+### Client-Side Sorting Pattern
+
+**Handle fields that can't be sorted on the server:**
+
+```typescript
+const sortedRows = useMemo(() => {
+    const needsClientSorting =
+        sortField === "no_of_overdue_invoices" ||
+        sortField === "total_outstanding_amount" ||
+        sortField === "current_category" ||
+        sortField === "collection_status";
+
+    if (!needsClientSorting || !sortField || !sortDirection) {
+        return rows;
+    }
+
+    return [...rows].sort((a, b) => {
+        if (sortField === "current_category") {
+            const comparison = (a[sortField] ?? "").localeCompare(b[sortField] ?? "");
+            return sortDirection === "asc" ? comparison : -comparison;
+        } else if (sortField === "collection_status") {
+            // Active first logic
+            if (a[sortField] === "Active" && b[sortField] !== "Active") {
+                return sortDirection === "asc" ? -1 : 1;
+            }
+            if (a[sortField] !== "Active" && b[sortField] === "Active") {
+                return sortDirection === "asc" ? 1 : -1;
+            }
+            return (a[sortField] ?? "").localeCompare(b[sortField] ?? "");
+        } else {
+            // Numeric comparison
+            return sortDirection === "asc"
+                ? (a[sortField] ?? 0) - (b[sortField] ?? 0)
+                : (b[sortField] ?? 0) - (a[sortField] ?? 0);
+        }
+    });
+}, [rows, sortField, sortDirection]);
+```
+
+### Export Functionality Pattern
+
+```typescript
+const handleExport = useCallback(async () => {
+    const params = new URLSearchParams({
+        search: debouncedSearch,
+        filter: filterValue,
+        status: statusFilter,
+        sortField: sortField || "",
+        sortDirection: sortDirection || "asc",
+        export: "true",
+        limit: "10000",
+    });
+
+    const response = await fetch(`/api/your-endpoint?${params.toString()}`);
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+    const data = await response.json();
+    const rawEntities = data.entities || [];
+
+    // Apply same transformation as grid rows
+    return rawEntities.map((entity: any) => ({
+        id: entity.id,
+        name: name || `Entity ${entity.id}`,
+        amount: formatCurrencyWithCode(amount, currency),
+        raw: entity,
+    }));
+}, [debouncedSearch, filterValue, statusFilter, sortField, sortDirection]);
+
+<EndlessScrollDataGrid
+    onExport={handleExport}
+    exportContextInfo={{
+        pageName: "your-page-name",
+        customPrefix: "your_export_prefix",
+    }}
+    currencyColumns={{
+        total_outstanding_amount: {
+            amountField: "total_outstanding_amount_value",
+            currencyField: "total_outstanding_amount_currency",
+        },
+    } as CurrencyColumnsConfig}
+/>
+```
+
+### Responsive Column Visibility
+
+```typescript
+import { BREAKPOINTS, useWindowWidth } from "@/shared/layout-components/grid/EndlessScrollDataGrid";
+
+const windowWidth = useWindowWidth();
+
+<EndlessScrollDataGrid
+    columnVisibilityModel={{
+        checkbox: true, // Always visible
+        name: true,
+        status: windowWidth >= BREAKPOINTS.MOBILE,
+        code: windowWidth >= BREAKPOINTS.MOBILE,
+        parent: windowWidth >= BREAKPOINTS.TABLET,
+        amount: windowWidth >= BREAKPOINTS.DESKTOP,
+    }}
+/>
+```
+
+### Column Resizing
+
+**Enable column resizing for better UX:**
+
+```typescript
+<EndlessScrollDataGrid
+    resizableColumns={true}
+    // ... other props
+/>
+```
+
+**Key Points:**
+- ✅ Set `resizableColumns={true}` to enable column resizing
+- ✅ Users can drag column borders to resize
+- ✅ Column widths are automatically synced between header and body
+- ✅ Resizing works with virtual scrolling
+- ✅ Column width sync happens automatically when scrolling stops (150ms delay)
+- ✅ Column widths are preserved during virtual scrolling
+
+**⚠️ CRITICAL: Container Layout Requirements for Column Alignment**
+
+**When using `EndlessScrollDataGrid` with content above it (charts, stats, etc.), ensure proper container structure:**
+
+```typescript
+// ✅ CORRECT: Simple container structure
+<Box
+    ref={tableContainerRef}
+    sx={{
+        position: "relative",
+        isolation: "isolate",
+    }}
+>
+    <EndlessScrollDataGrid
+        // ... props
+    />
+</Box>
+```
+
+**If you have content above the grid (charts, stats sections), ensure the content container has layout constraints:**
+
+```typescript
+// ✅ CORRECT: Charts/stats container with layout constraints
+<Box sx={{ mb: 3, mt: 3 }}>
+    <Box
+        sx={{
+            display: "grid",
+            gridTemplateColumns: {
+                xs: "1fr",
+                md: "1fr 1fr",
+                lg: "1fr 1fr 1fr",
+            },
+            gap: { xs: 2, sm: 3 },
+            mb: 3,
+            width: "100%",           // ✅ Prevent width fluctuations
+            boxSizing: "border-box", // ✅ Include padding/borders in width
+            contain: "layout",        // ✅ Isolate layout calculations
+        }}
+    >
+        {/* Charts/stats content */}
+    </Box>
+</Box>
+
+{/* Virtual Grid */}
+<Box
+    ref={tableContainerRef}
+    sx={{
+        position: "relative",
+        isolation: "isolate",
+    }}
+>
+    <EndlessScrollDataGrid
+        // ... props
+    />
+</Box>
+```
+
+**Common Issues and Solutions:**
+
+- ❌ **Problem**: Column alignment breaks when scrolling up
+  - **Cause**: Content above grid (charts/stats) causing layout shifts
+  - **Solution**: Add `width: "100%"`, `boxSizing: "border-box"`, and `contain: "layout"` to content container
+
+- ❌ **Problem**: Columns resize unexpectedly during scroll
+  - **Cause**: Container width recalculations from responsive grid layouts
+  - **Solution**: Use `contain: "layout"` to isolate layout calculations
+
+- ❌ **Problem**: Header and body columns misaligned
+  - **Cause**: Parent container width changes affecting grid container
+  - **Solution**: Ensure grid container has stable width (`position: "relative"`, `isolation: "isolate"`)
+
+**Key Points:**
+- ✅ Keep grid container Box simple - only `position: "relative"` and `isolation: "isolate"`
+- ✅ Add layout constraints to content containers above the grid
+- ✅ Use `contain: "layout"` on responsive grid containers to prevent layout shifts
+- ✅ Never add toolbar override styles or width constraints to the grid container Box
+- ✅ Column width sync is automatic - don't manually trigger sync during scroll
+
+### Row Number Column
+
+**The grid automatically adds a row number column (`#`) at the beginning:**
+
+- ✅ Row numbers are automatically added (no configuration needed)
+- ✅ Positioned before checkbox column (if present) or at the start
+- ✅ Fixed width: 40px
+- ✅ Not sortable or resizable
+
+### Search Highlighting
+
+**The grid automatically highlights search terms in cell content:**
+
+- ✅ Search highlighting is automatic when `searchValue` is provided
+- ✅ Highlights both text and numeric matches
+- ✅ Works with custom `renderCell` functions
+- ✅ Supports RTL languages
+- ✅ Highlight style: yellow background (`#ffeb3b`), bold text
+
+### Row Highlighting
+
+**Highlight a specific row (e.g., after navigation or selection):**
+
+```typescript
+const [highlightedRowId, setHighlightedRowId] = useState<number | string | null>(null);
+
+// Set highlighted row (e.g., after navigation)
+useEffect(() => {
+    if (invoiceIdFromRoute) {
+        setHighlightedRowId(invoiceIdFromRoute);
+    }
+}, [invoiceIdFromRoute]);
+
+<EndlessScrollDataGrid
+    highlightedRowId={highlightedRowId}
+    // ... other props
+/>
+```
+
+**Key Points:**
+- ✅ Pass `highlightedRowId` prop with the row ID to highlight
+- ✅ Grid automatically scrolls to highlighted row when loaded
+- ✅ Row is visually highlighted (check theme for highlight style)
+- ✅ Set to `null` to remove highlighting
+
+### Hide Toolbar
+
+**Hide the toolbar when not needed:**
+
+```typescript
+<EndlessScrollDataGrid
+    hideToolbar={true}
+    // ... other props
+/>
+```
+
+**Key Points:**
+- ✅ Set `hideToolbar={true}` to hide the entire toolbar
+- ✅ Useful for embedded grids or custom layouts
+- ✅ Search, export, and other toolbar features are hidden
+
+### Error Handling Pattern
+
+```typescript
+if (error) {
+    return (
+        <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: theme.spacing(50), flexDirection: "column", gap: theme.spacing(2) }}>
+            <Typography variant="h6" color="error">
+                {t("messages.error_fetching_data")}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+                {error instanceof Error ? error.message : "Unknown error occurred"}
+            </Typography>
+            <Button variant="outlined" color="primary" onClick={reset}>
+                {t("actions.retry", { ns: "common" })}
+            </Button>
+        </Box>
+    );
+}
+```
+
+### Row Selection Pattern
+
+```typescript
+const [selectedRows, setSelectedRows] = useState<number[]>([]);
+
+const columns: GridColDef[] = [
+    {
+        field: "checkbox",
+        headerName: "",
+        width: 40, // Grid automatically reduces to 40px if specified
+        minWidth: 40,
+        maxWidth: 40,
+        sortable: false,
+        filterable: false,
+        disableColumnMenu: true,
+        resizable: false,
+        renderCell: (params: GridRenderCellParams) => (
+            <Box
+                onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }}
+                sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", width: "100%", cursor: "default" }}
+            >
+                <Checkbox
+                    checked={selectedRows.includes(params.row.id)}
+                    onChange={(e) => {
+                        e.stopPropagation();
+                        if (e.target.checked) {
+                            setSelectedRows((prev) => [...prev, params.row.id]);
+                        } else {
+                            setSelectedRows((prev) => prev.filter((id) => id !== params.row.id));
+                        }
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    sx={{ padding: 0, color: theme.palette.primary.main, "&.Mui-checked": { color: theme.palette.primary.main } }}
+                />
+            </Box>
+        ),
+    },
+];
+```
+
+**Key Points:**
+- ✅ Grid automatically reduces checkbox column width to 40px if present
+- ✅ Checkbox column is positioned before row number column
+- ✅ Use `width: 40, minWidth: 40, maxWidth: 40` for consistency
+
+### Custom Toolbar Buttons
+
+**⚠️ IMPORTANT: Toolbar buttons must be icon-only - NO text labels**
+
+- ✅ Use `IconButton` component (not `Button` with text)
+- ✅ Icon only - tooltip provides the label text
+- ✅ Use proper Tooltip with RTL support (see [Tooltip Styling](./frontend-tooltips.mdc))
+- ✅ Apply primary color with subtle hover background
+- ✅ Use square hover: `borderRadius: 2` (not round/circular)
+- ✅ **PRESERVE original icons** - When converting from `Button` to `IconButton`, keep the existing icon (don't replace it)
+
+```typescript
+import { IconButton, Tooltip, Badge, Box } from "@mui/material";
+import { useTheme, alpha } from "@mui/material/styles";
+import { PostAdd, MoreVert } from "@mui/icons-material";
+import { useTranslation } from "react-i18next";
+
+const FilterComponent = () => {
+    const { t, i18n } = useTranslation(["common"]);
+    const theme = useTheme();
+    
+    return (
+    <Box sx={{ display: "flex", gap: theme.spacing(2), alignItems: "center", direction: i18n.language === "he" ? "rtl" : "ltr" }}>
+        <ToolbarDropdownFilter<FilterOption>
+            value={currentValue}
+            onChange={(newValue) => setFilterStatus(newValue?.value as FilterType)}
+            options={filterOptions}
+            getOptionLabel={(option) => option.label}
+            isOptionEqualToValue={(option, value) => option.value === value.value}
+            placeholder={t("values.status_filter")}
+        />
+        {selectedRows.length > 0 && (
+            <Tooltip 
+                title={t("actions.bulk_actions", { ns: "common" })} 
+                arrow 
+                enterDelay={300}
+                leaveDelay={100}
+                placement={i18n.language === "he" ? "left" : "right"}
+                PopperProps={{
+                    sx: {
+                        "& .MuiTooltip-tooltip": {
+                            direction: i18n.language === "he" ? "rtl" : "ltr",
+                        },
+                        "& .MuiTooltip-arrow": {
+                            ...(i18n.language === "he" && { transform: "scaleX(-1)" }),
+                        },
+                    },
+                }}
+            >
+                <Badge badgeContent={selectedRows.length} color="primary">
+                    <IconButton 
+                        color="primary" 
+                        onClick={handleActionsMenuOpen}
+                        className="toolbar-button"
+                    >
+                        <MoreVert />
+                    </IconButton>
+                </Badge>
+            </Tooltip>
+        )}
+        {hasCreatePermission && (
+            <Tooltip
+                title={t("actions.create")}
+                arrow
+                enterDelay={300}
+                leaveDelay={100}
+                placement={i18n.language === "he" ? "left" : "right"}
+                PopperProps={{
+                    sx: {
+                        "& .MuiTooltip-tooltip": {
+                            direction: i18n.language === "he" ? "rtl" : "ltr",
+                        },
+                        "& .MuiTooltip-arrow": {
+                            ...(i18n.language === "he" && { transform: "scaleX(-1)" }),
+                        },
+                    },
+                }}
+            >
+                <IconButton
+                    color="primary"
+                    size="small"
+                    onClick={handleCreate}
+                    className="toolbar-button"
+                >
+                    {/* Use appropriate icon for the action - e.g., PostAdd, PersonAdd, or custom icon overlays */}
+                    <PostAdd />
+                </IconButton>
+            </Tooltip>
+        )}
+    </Box>
+    );
+};
+
+<EndlessScrollDataGrid customButtons={<FilterComponent />} />
+```
+
+**Key Points:**
+- ✅ Always use `IconButton` (not `Button` with text)
+- ✅ Icon only - tooltip shows the action label
+- ✅ Use `color="primary"` for icon color
+- ✅ Use `size="small"` to match toolbar height (32px button in 42px toolbar)
+- ✅ Use `className="toolbar-button"` to apply theme styles (square hover, primary color, subtle hover background)
+- ✅ Always wrap in Tooltip with proper RTL support
+- ✅ **KEEP original icons** - When converting from `Button` to `IconButton`, preserve the existing icon (e.g., `PersonAdd`, `AccountBalanceIcon` with `AddIcon` overlay, `DescriptionIcon` with `AddIcon` overlay, etc.)
+- ❌ **NEVER** add text labels to toolbar buttons
+- ❌ **NEVER** use inline `sx` styles for toolbar buttons - use the theme class instead
+- ❌ **NEVER** replace existing icons when applying toolbar button styles - only apply the styling changes
+
+### Loading States
+
+**The hook provides `isLoadingMore` state for loading indicators:**
+
+```typescript
+const { data, totalRecords, isLoading, isLoadingMore, hasMore, loadMore, reset } = useVirtualInfiniteScroll({
+    queryKey,
+    queryFn,
+});
+
+// Grid automatically shows loading indicator at bottom when loading more
+// You can also use isLoadingMore for custom loading states
+{isLoadingMore && (
+    <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+        <CircularProgress size={24} />
+    </Box>
+)}
+```
+
+**Key Points:**
+- ✅ `isLoading`: true when loading initial data (first page)
+- ✅ `isLoadingMore`: true when loading additional pages
+- ✅ Grid automatically shows loading indicator at bottom when `isLoadingMore` is true
+- ✅ Use `isLoading` to show full-page loading state when `rows.length === 0`
+
+### Empty State
+
+**The grid automatically shows an empty state when there are no rows:**
+
+```typescript
+<EndlessScrollDataGrid
+    noRowsMessage={t("messages.no_rows_found")}
+    noRowsDescription={t("messages.try_adjusting_filters")}
+    // ... other props
+/>
+```
+
+**Key Points:**
+- ✅ Empty state is shown automatically when `rows.length === 0` and `!isLoading`
+- ✅ Customize with `noRowsMessage` and `noRowsDescription` props
+- ✅ Empty state is centered and responsive
+- ✅ Supports RTL languages
+
+### Reports and Saved Views
+
+**For report selector, saved views, default view handling, and report management patterns, see [Reports and Saved Views](./frontend-reports.mdc).**
+
+### Common Mistakes to Avoid
+
+- ❌ **Don't skip search and sorting** - Always implement both
+- ❌ Don't use `useMemo` for query functions - use `useCallback` (it's a function)
+- ❌ Don't put parameters as separate array elements in query key - use a single object
+- ❌ Don't call `reset()` on every render - track previous values and only reset when they change
+- ❌ Don't create custom `queryFn` for GET requests - use `createQueryFn` or `createApiQueryFn` helpers
+- ❌ Don't forget to include search and sort in query key and API parameters
+- ❌ Don't forget to include all dependencies in `useCallback` dependency array
+- ❌ Don't forget to increment `queryKeyVersion` after data mutations
+- ❌ Don't transform data in render - use `useMemo` for transformed rows
+- ❌ Don't use incorrect `hasMore` calculation - use `(page * limit) < total`
+- ❌ Don't forget to include `queryKeyVersion` in grid `key` prop
+- ❌ Don't forget stable row `id` fields - required for virtual scrolling
+- ❌ Don't assume page size is configurable - default is **20 records** (fixed)
+- ❌ Don't forget to use `limit: 20` in POST requests (matches default page size)
+
+### Reference Implementation
+
+See `app/[locale]/app/customers/CustomerList.tsx` for a complete example.

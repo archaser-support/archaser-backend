@@ -1,0 +1,72 @@
+services:
+  api:
+    image: node:20-alpine
+    working_dir: /workspace/backend
+    command: sh -lc "npm run start:api"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      NEST_PORT: 3010
+      PORT: 3010
+      SERVICE_NAME: archaser-api-staging
+    volumes:
+      - /home/ubuntu/staging:/workspace
+    ports:
+      - "3010:3010"
+    restart: unless-stopped
+
+  worker:
+    image: node:20-alpine
+    working_dir: /workspace/backend
+    command: sh -lc "npm run start -w @archaser/worker"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      WORKER_PORT: 3003
+      REDIS_URL: redis://127.0.0.1:6379
+      BULLMQ_QUEUE: archaser-cron
+      CONNECTION_LIMIT_WORKER: 5
+    volumes:
+      - /home/ubuntu/staging:/workspace
+    restart: unless-stopped
+
+  sms:
+    image: node:20-alpine
+    working_dir: /workspace/backend
+    command: sh -lc "npm run start -w @archaser/sms"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      SMS_PORT: 3004
+    volumes:
+      - /home/ubuntu/staging:/workspace
+    restart: unless-stopped
+
+  connectors:
+    image: node:20-alpine
+    working_dir: /workspace/backend
+    command: sh -lc "npm run start -w @archaser/connectors"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      CONNECTORS_PORT: 3005
+    volumes:
+      - /home/ubuntu/staging:/workspace
+    restart: unless-stopped
+
+  reports:
+    image: node:20-alpine
+    working_dir: /workspace/backend
+    command: sh -lc "npm run start -w @archaser/reports"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      REPORTS_PORT: 3006
+    volumes:
+      - /home/ubuntu/staging:/workspace
+    restart: unless-stopped

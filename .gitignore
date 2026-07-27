@@ -1,0 +1,87 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+node_modules/
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+backend/api/dist/
+backend/packages/database/dist/
+frontend/build/
+frontend/.next/
+frontend/node_modules/
+backend/node_modules/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+.env
+.env.staging
+.env*
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+.next
+.history
+.sfdx
+.swc
+
+# lock files
+# package-lock.json  # Keep this file for consistent dependency versions
+yarn.lock
+
+.vscode/
+DevData
+
+/test-result
+.cursor/personal-instructions.md
+
+.yarn/
+backend/scripts/datafix/
+TODO.md
+Ofir TODO
+
+# uploads
+public/uploads/backups/
+frontend/public/uploads/backups/
+
+# playwright test artifacts
+test-results/
+playwright-report/
+.playwright-artifacts-*/
+
+# debug logs
+debug-logs/*.jsonl
+debug-logs/*.log
+
+# temp build files
+*.tar.gz
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+
+# ephemeral vertical-slice issues from /to-issues
+.scratch/
+frontend/.scratch/
+backend/.scratch/

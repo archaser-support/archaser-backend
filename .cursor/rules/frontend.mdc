@@ -1,0 +1,134 @@
+---
+alwaysApply: false
+---
+# Frontend Guidelines
+
+## Summary
+
+This document provides core frontend guidelines and references to specialized rule files. It covers:
+
+- **Component Organization**: File structure and placement conventions
+- **TypeScript & React Query**: Technology stack requirements
+- **Theme-Based Styling**: Using theme references instead of hardcoded values
+- **Locale-Aware Navigation**: Critical requirement for including locale prefix in URLs
+- **Specialized Rules**: Links to detailed patterns for grids, modals, reports, RTL support, tooltips, and logging
+
+For detailed patterns and examples, see the specialized rule files referenced in this document. All navigation URLs must include locale prefixes to prevent "Failed to fetch" errors.
+
+## 🖥️ Frontend Guidelines
+
+- Place components under `app/[locale]/(components)`
+- Use TypeScript, React Query, error handling, translations
+- ❌ NEVER use inline styles - create typography variants in `app/portalTheme.ts`
+- ✅ ALWAYS check for existing theme styles first
+
+## 📚 Specialized Frontend Rules
+
+This file contains core frontend guidelines. For detailed patterns and examples, see the specialized rule files:
+
+- **[Design System & Styling](./design-system.mdc)** - Theme tokens, Account Details section cards, RTL, grids
+- **[EndlessScrollDataGrid Usage](./frontend-grid.mdc)** - Complete guide for using the virtual scrolling grid component
+- **[Reports and Saved Views](./frontend-reports.mdc)** - Report selector, saved views, default view handling, and report management
+- **[Modal/Dialog Patterns](./frontend-modals.mdc)** - Standard dialog structures, form modals, and RTL support
+- **[Hebrew/RTL Support](./frontend-rtl.mdc)** - Comprehensive Hebrew and RTL implementation patterns
+- **[Tooltip Styling](./frontend-tooltips.mdc)** - Standard tooltip patterns with RTL support
+- **[Console Logging Guidelines](./console-logging.mdc)** - Best practices for debugging logs and preventing duplicate console output
+
+## 🌐 Locale-Aware Navigation
+
+### ⚠️ Critical Requirement
+
+**ALWAYS include locale prefix in navigation URLs when using `router.push()` or `router.replace()` with `AppUrls`:**
+
+Next.js internationalized routing requires all navigation URLs to include the locale prefix (e.g., `/en/app/reports/123` instead of `/app/reports/123`). Missing the locale prefix will cause "Failed to fetch" errors.
+
+### Standard Pattern
+
+**ALWAYS extract locale from route params and prepend it to navigation URLs:**
+
+```typescript
+import { useRouter, useParams } from "next/navigation";
+import AppUrls from "@/utils/appUrls";
+
+const MyComponent: React.FC = () => {
+    const router = useRouter();
+    const params = useParams();
+    const locale = (params?.locale as string) || "en";
+
+    // ✅ CORRECT: Include locale prefix
+    const handleNavigate = () => {
+        router.push(`/${locale}${AppUrls.REPORT_DETAILS(reportId)}`);
+    };
+
+    // ✅ CORRECT: For URLs with query parameters
+    const handleNavigateWithQuery = () => {
+        router.push(`/${locale}${AppUrls.REPORT_BUILDER}?id=${reportId}`);
+    };
+
+    // ✅ CORRECT: For router.replace
+    const handleReplace = () => {
+        router.replace(`/${locale}${AppUrls.ACCOUNT_DETAILS(accountId)}`);
+    };
+
+    // ❌ WRONG: Missing locale prefix
+    const handleNavigateWrong = () => {
+        router.push(AppUrls.REPORT_DETAILS(reportId)); // Will cause "Failed to fetch" error
+    };
+};
+```
+
+### Pattern for Dashboard Cards and Chart Components
+
+**For components that navigate to dashboard or chart details:**
+
+```typescript
+import { useRouter, useParams } from "next/navigation";
+import AppUrls from "@/utils/appUrls";
+
+const DashboardCard: React.FC = () => {
+    const router = useRouter();
+    const params = useParams();
+    const locale = (params?.locale as string) || "en";
+
+    const handleCardClick = () => {
+        // Navigate to dashboard with tab parameter
+        router.push(`/${locale}${AppUrls.DASHBOARD}?tab=overdue`);
+
+        // Then navigate to chart details after a short delay
+        setTimeout(() => {
+            const searchParams = new URLSearchParams({
+                type: "chart-type",
+                period: new Date().toISOString().slice(0, 7),
+            });
+            router.push(
+                `/${locale}${AppUrls.DASHBOARD}/chart-details?${searchParams.toString()}`
+            );
+        }, 0);
+    };
+};
+```
+
+### Files That Need This Pattern
+
+**Apply this pattern to ALL navigation calls in:**
+- ✅ All pages in `app/[locale]/app/**/page.tsx`
+- ✅ All dashboard card components in `app/[locale]/app/dashboard/(cards)/*.tsx`
+- ✅ All components that use `router.push()` or `router.replace()` with `AppUrls`
+- ✅ All navigation handlers in list pages, detail pages, and builder pages
+
+### Common Mistakes to Avoid
+
+- ❌ **Don't forget to import `useParams`** - Required to get locale from route
+- ❌ **Don't use `AppUrls` directly in `router.push()`** - Always prepend locale
+- ❌ **Don't extract locale from `window.location.pathname`** - Use `useParams()` instead (more reliable)
+- ❌ **Don't forget locale prefix in `router.replace()`** - Same requirement as `router.push()`
+- ❌ **Don't forget locale prefix in setTimeout callbacks** - All navigation URLs need locale
+- ❌ **Don't assume locale is always "en"** - Use fallback: `(params?.locale as string) || "en"`
+
+### Reference Implementation
+
+See the following files for correct implementations:
+- `app/[locale]/app/reports/page.tsx` - Report list navigation
+- `app/[locale]/app/reports/[id]/page.tsx` - Report details navigation
+- `app/[locale]/app/dashboard/(cards)/DueTodayCard.tsx` - Dashboard card navigation
+- `app/[locale]/app/admin/accounts/AccountList.tsx` - Account list navigation

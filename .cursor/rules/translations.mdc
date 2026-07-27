@@ -1,0 +1,396 @@
+---
+alwaysApply: false
+---
+# Internationalization (i18n) Rules
+
+## Summary
+
+This document provides comprehensive guidelines for implementing internationalization (i18n) in the application. It covers:
+
+- **Core Rules**: Modular namespaces, snake_case keys, simultaneous EN/HE updates, alphabetical ordering
+- **Usage Patterns**: Component and page-level translation implementation
+- **Translation Files**: Structure, organization, and maintenance of locale files
+- **Key Naming**: snake_case convention (never camelCase) for all translation keys
+- **Namespace Management**: Organizing translations by feature/context (dashboard, customers, common, etc.)
+- **Best Practices**: Reusing existing keys, maintaining identical structure across languages
+
+All translation keys must use snake_case (underscores), and both English and Hebrew files must be updated simultaneously with identical structure.
+
+## 🌐 Internationalization
+
+### Core Rules
+
+- Use modular namespaces: `["dashboard", "common"]`, `["customers", "common"]`, etc.
+- Update BOTH en/he files simultaneously
+- Maintain alphabetical order and identical structure
+- Add keys in EXACT same location in both files
+- Prefer reusing existing keys
+- **ALWAYS use snake_case (underscores) for all translation keys** - NEVER use camelCase
+
+### Usage Pattern
+
+```typescript
+// Component usage
+const { t } = useTranslation(["dashboard", "common"]);
+t("fields.customer_name");
+t("actions.save");
+t("messages.error_loading");
+```
+
+### Using Translations in Pages
+
+Pages in this project are client components that use the `useTranslation` hook from `react-i18next`. Here's how to properly implement translations in a page:
+
+#### 1. Import the Hook
+
+```typescript
+import { useTranslation } from "react-i18next";
+```
+
+#### 2. Initialize the Hook with Namespaces
+
+Always include the page-specific namespace and `"common"` for shared translations:
+
+```typescript
+// For a disputes page
+const { t } = useTranslation(["disputes", "common"]);
+
+// For an admin page
+const { t } = useTranslation(["admin", "common"]);
+
+// For a dashboard page
+const { t } = useTranslation(["dashboard", "common"]);
+```
+
+#### 3. Use Translations in JSX
+
+Access translations using the category prefix (fields, actions, messages, etc.):
+
+```typescript
+export default function Page() {
+    const { t } = useTranslation(["disputes", "common"]);
+
+    return (
+        <>
+            <Seo title={t("sections.disputes_title")} />
+            <InternalPageWrapper>
+                <Alert severity="error">
+                    {t("messages.error_loading")}
+                </Alert>
+                <Button onClick={handleSave}>
+                    {t("actions.save")}
+                </Button>
+                <TextField 
+                    label={t("fields.customer_name")}
+                />
+            </InternalPageWrapper>
+        </>
+    );
+}
+```
+
+#### 4. Complete Page Example
+
+```typescript
+"use client";
+
+import { Box, Alert, CircularProgress } from "@mui/material";
+import { useQuery } from "@tanstack/react-query";
+import React, { useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
+
+import InternalPageWrapper from "@/components/InternalPageWrapper";
+import Seo from "@/shared/layout-components/seo/seo";
+
+export default function Page() {
+    // Initialize translation hook with page namespace + common
+    const { t } = useTranslation(["disputes", "common"]);
+
+    const { data, isLoading, error } = useQuery({
+        queryKey: ["disputeStats"],
+        queryFn: fetchDisputeStats,
+    });
+
+    // Use translations in error messages
+    const errorComponent = useMemo(
+        () =>
+            error instanceof Error ? (
+                <Alert severity="error">
+                    {t("messages.error_loading")}: {error.message}
+                </Alert>
+            ) : null,
+        [error, t]
+    );
+
+    if (isLoading) {
+        return <CircularProgress />;
+    }
+
+    if (error) {
+        return errorComponent;
+    }
+
+    return (
+        <>
+            {/* Use translations for SEO */}
+            <Seo title={t("sections.disputes_title")} />
+            <InternalPageWrapper>
+                {/* Page content using translations */}
+                <Box>
+                    <Typography variant="h4">
+                        {t("sections.disputes_overview")}
+                    </Typography>
+                </Box>
+            </InternalPageWrapper>
+        </>
+    );
+}
+```
+
+#### 5. Key Points for Pages
+
+- **Always use `"use client"`** directive at the top of page files (Next.js App Router requirement)
+- **Include `"common"` namespace** in addition to the page-specific namespace
+- **Use category prefixes**: Always use `fields.`, `actions.`, `messages.`, `sections.`, etc.
+- **Memoize translated content** when used in useMemo/useCallback dependencies
+- **Use in SEO components**: Pass translated strings to `<Seo>` component for page titles
+- **Error messages**: Use `messages.*` keys for error states
+- **Button labels**: Use `actions.*` keys for button text
+- **Form fields**: Use `fields.*` keys for labels and placeholders
+
+### Layout Translation Namespace Requirements
+
+**CRITICAL**: Translation namespaces must be included in the layout's `i18nNamespaces` array for the `TranslationsProvider` to load them. This is required even if components use `useTranslation` with those namespaces.
+
+#### Why This Matters
+
+The `TranslationsProvider` in layout files loads translation resources based on the `i18nNamespaces` array. If a namespace is not included in the layout's `i18nNamespaces`, the translation resources won't be loaded, and translations will show as raw keys (e.g., `"sections.view_settings"` instead of the translated text).
+
+#### Layout File Structure
+
+Every layout file that uses `TranslationsProvider` must include all required namespaces:
+
+```typescript
+// app/[locale]/app/customers/[customerId]/layout.tsx
+import initTranslations from "@/app/i18n";
+import TranslationsProvider from "@/components/TranslationsProvider";
+
+// ✅ Include ALL namespaces used by child components
+const i18nNamespaces = [
+    "customers",
+    "common",
+    "activity_sequences",
+    "contacts",
+    "bank_accounts",
+    "invoices",
+    "activities",
+    "disputes",
+    "reports", // ← Required if any child component uses "reports" namespace
+];
+
+const Layout = async ({ children, params }: LayoutProps) => {
+    const { locale } = await params;
+    const { resources } = await initTranslations(locale, i18nNamespaces);
+
+    return (
+        <TranslationsProvider
+            namespaces={i18nNamespaces}
+            locale={locale}
+            resources={resources}
+        >
+            {children}
+        </TranslationsProvider>
+    );
+};
+```
+
+#### Common Namespaces to Include
+
+When creating or updating a layout, include these common namespaces:
+
+- **Always include**: `"common"` (used by most components)
+- **If using ViewBasedDataGrid or EndlessScrollToolbar**: `"reports"` (required for report selector and view settings)
+- **Page-specific**: Include the namespace matching the page context (e.g., `"customers"`, `"invoices"`, `"disputes"`)
+- **Component-specific**: Include namespaces used by child components (e.g., `"contacts"`, `"activities"`, `"bank_accounts"`)
+
+#### Troubleshooting Missing Translations
+
+If translations show as raw keys (e.g., `"sections.view_settings"` instead of translated text):
+
+1. **Check the layout file**: Verify the namespace is included in `i18nNamespaces` array
+2. **Check component usage**: Verify components use `useTranslation` with the namespace
+3. **Check translation files**: Verify the key exists in `locales/en/` and `locales/he/` files
+4. **Check namespace order**: The first namespace in `useTranslation` is searched first
+
+#### Example: Fixing Missing "reports" Namespace
+
+**Problem**: View Settings tooltip shows `"sections.view_settings"` instead of translated text.
+
+**Solution**: Add `"reports"` to the layout's `i18nNamespaces`:
+
+```typescript
+// Before (missing "reports")
+const i18nNamespaces = ["customers", "common", "contacts"];
+
+// After (includes "reports")
+const i18nNamespaces = ["customers", "common", "contacts", "reports"];
+```
+
+**Why**: Even though `EndlessScrollToolbar` calls `useTranslation(["reports", "common"])`, the `TranslationsProvider` must load the "reports" namespace resources first.
+
+### File Structure
+
+**REQUIRED CATEGORIES - ALL translation files MUST include these categories:**
+
+```json
+{
+  "fields": {
+    "customer_name": "Customer Name",
+    "charts_collection_stats_customers": "Customers",
+    "load_data": "Load Data",
+    "import_data": "Import Data"
+  },
+  "actions": {
+    "save": "Save",
+    "export_to_excel": "Export to Excel",
+    "load_data": "Load Data"
+  },
+  "messages": {
+    "error_loading": "Error loading data",
+    "no_results": "No results found"
+  },
+  "values": {
+    "status_active": "Active",
+    "categories_automated": "Automated"
+  },
+  "sections": {},
+  "tooltips": {},
+  "validation": {}
+}
+```
+
+**CRITICAL RULES**: 
+1. Every translation file MUST contain ALL 7 categories:
+   - `fields` - UI field labels, descriptions, form elements
+   - `actions` - Buttons, actions, commands
+   - `messages` - User-facing messages, errors, success notifications
+   - `values` - Enumerated values, status options, dropdown choices
+   - `sections` - Section titles, page sections
+   - `tooltips` - Help text, tooltips, hints
+   - `validation` - Validation error messages
+
+2. **NEVER add new categories** - only use the 7 standard categories above
+
+3. **If a category has no keys, include it as an empty object `{}`** to maintain consistency across all translation files
+
+**Example with empty categories:**
+```json
+{
+  "fields": {
+    "user_name": "User Name"
+  },
+  "actions": {
+    "save": "Save"
+  },
+  "messages": {
+    "error": "Error occurred"
+  },
+  "values": {
+    "status_active": "Active"
+  },
+  "sections": {},
+  "tooltips": {},
+  "validation": {}
+}
+```
+
+**Translation Key Naming Convention:**
+- ✅ **CORRECT**: `load_data`, `import_data`, `customer_name`, `charts_collection_stats_customers`
+- ❌ **INCORRECT**: `loadData`, `importData`, `customerName`, `chartsCollectionStatsCustomers`
+
+### Finding Missing Translations
+
+#### 1. Visual Inspection (Most Effective)
+- Look for raw translation keys showing in UI screenshots/images
+- Identify malformed concatenated keys like `amountdashboard.charts.collectionStats.customers`
+- Spot missing chart titles, descriptions, and labels
+
+#### 2. Pattern Search Commands
+```bash
+# Find raw translation keys showing in UI
+grep -r "t(\"" app/[locale]/app/ | grep -E "(dashboard\.|customer\.|invoice\.)" | head -10
+
+# Find components using old namespace
+grep -r "useTranslation(\"translation\")" app/[locale]/app/
+
+# Find specific problematic patterns
+grep -r "dashboard\." app/[locale]/app/dashboard/
+
+# Find malformed concatenated keys
+grep -r "amount.*dashboard" app/[locale]/app/dashboard/
+```
+
+#### 3. Component Analysis
+```bash
+# List all components using translations
+find app/[locale]/app/dashboard -name "*.tsx" -exec grep -l "t(" {} \;
+
+# Check specific components for issues
+grep -n "dashboard\." app/[locale]/app/dashboard/(cards)/CollectionStats.tsx
+```
+
+#### 4. File Validation
+```bash
+# Check if specific keys exist
+node -e "
+const fs = require('fs');
+const dashboardEn = JSON.parse(fs.readFileSync('locales/en/dashboard.json', 'utf8'));
+const criticalKeys = ['charts_collection_stats_customers', 'charts_collection_stats_invoices'];
+criticalKeys.forEach(key => {
+  if (dashboardEn.fields[key]) {
+    console.log('✓ Found', key);
+  } else {
+    console.log('✗ Missing', key);
+  }
+});
+"
+
+# Compare EN/HE file structures
+node -e "
+const fs = require('fs');
+const en = JSON.parse(fs.readFileSync('locales/en/dashboard.json', 'utf8'));
+const he = JSON.parse(fs.readFileSync('locales/he/dashboard.json', 'utf8'));
+console.log('EN keys:', Object.keys(en.fields).length);
+console.log('HE keys:', Object.keys(he.fields).length);
+console.log('Missing in HE:', Object.keys(en.fields).filter(k => !he.fields[k]));
+"
+```
+
+### Common Issues & Fixes
+
+#### Missing Translation Patterns
+- **Raw keys in UI**: `dashboard.charts.collectionStats.customers` → `fields.charts_collection_stats_customers`
+- **Malformed concatenated keys**: `amountdashboard.charts.collectionStats.customers` → fix component logic
+- **Wrong namespace references**: `invoices.invoice_number` → `fields.invoice_number`
+- **Missing chart descriptions**: Add `charts_*_description` keys
+- **Missing "no data" messages**: Add `charts_*_no_data` keys
+- **Missing aging ranges**: Add `aging_ranges_*` keys for date ranges
+- **Missing category labels**: Add `categories_*` keys for status values
+
+#### Real-World Examples Fixed
+- **CollectionStats component**: `dashboard.charts.collectionStats.*` → `fields.charts_collection_stats_*`
+- **AutomatedPhaseSplit component**: `dashboard.charts.automatedPhaseSplit.*` → `fields.charts_automated_phase_split_*`
+- **AgingOverduePortfolio component**: `dashboard.charts.agingOverduePortfolio.*` → `fields.charts_aging_overdue_portfolio_*`
+- **Dynamic key construction**: `dashboard.agingRanges.${daysRange}` → `fields.aging_ranges_${daysRange}`
+- **Cross-namespace references**: `invoices.invoice_number` → `fields.invoice_number`
+
+### Systematic Fix Process
+
+1. **Identify the issue**: Raw keys showing in UI vs proper translations
+2. **Check namespace usage**: Ensure `useTranslation(["namespace", "common"])`
+3. **Add missing keys**: Add to appropriate namespace file (dashboard.json, common.json, etc.)
+4. **Update component references**: Change `t("old.key")` to `t("fields.new_key")`
+5. **Verify both languages**: Ensure EN and HE files have identical structure
+6. **Test systematically**: Check each component/page for proper translations
+7. **Fix dynamic key construction**: Update template literals and concatenations
+8. **Validate file structure**: Ensure both languages have same key count and structure

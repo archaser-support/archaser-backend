@@ -1,0 +1,150 @@
+# Design System & Styling
+
+## Summary
+
+This document provides guidelines for using the design system and styling components. It covers:
+
+- **Theme-Based Styling**: Always use theme references (colors, spacing, typography) - never hardcode values
+- **Hebrew RTL Layout**: Flexbox patterns, conditional margins, Hebrew typography variants, direction handling
+- **DataGrid Styling**: Always use StyledDataGrid component, never create custom DataGrid components
+- **Account Details section cards**: Flat cards with icon + title header (see below)
+- **Theme References**: Color palette, spacing system, typography variants, and icon styling
+
+All styling must use theme references from `app/theme.ts`. Never hardcode colors, spacing, or other design tokens. RTL layouts must use flexbox with conditional margins, never CSS Grid.
+
+## 🎨 Design System
+
+### No New Styles Without Approval
+
+- ❌ Do **not** add new theme overrides, global CSS, or one-off styling hooks without **explicit user approval**
+- ✅ Prefer existing patterns: `app/theme/components.ts`, `toolbarStyles.ts`, `data-hebrew`, `endless-scroll-toolbar`, `ToolbarDropdownFilter`, `input-toolbar-labeled`, **`accountCardStyles.ts`** + **`AccountSectionCardHeader`** on Account Details tabs
+- ✅ Minimal per-component `sx` is OK for layout only (flex, gap, width); ask before new visual tokens or duplicated style objects
+- If nothing in the theme fits, ask the user before adding new styles
+
+### Theme-Based Styling
+
+**ALWAYS use theme references - NEVER hardcode values**
+
+```typescript
+// ✅ CORRECT
+sx={{
+  backgroundColor: theme.palette.primary.main,
+  borderRadius: theme.shape.borderRadius,
+  padding: theme.spacing(2),
+  color: theme.palette.text.primary,
+}}
+
+// ❌ INCORRECT
+sx={{ backgroundColor: '#6B46C1', borderRadius: 4, padding: '16px' }}
+```
+
+**Theme References:**
+
+- Colors: `theme.palette.*` (primary: #6B46C1, secondary: #8B5CF6)
+- Spacing: `theme.spacing()`
+- Typography: `theme.typography.*` or variant prop
+- Icons (no records): `color: 'secondary.main'`
+
+### Hebrew RTL Layout
+
+**RTL Implementation Rules:**
+
+1. Use simple flexbox - NEVER CSS Grid for RTL
+2. NO parent `textAlign` or `alignItems` - let Typography handle it
+3. Use Hebrew theme variants: `hebrewTitle`, `hebrewSubtitle`, `hebrewBodyText`
+4. Use conditional margins: `mr: i18n.language === "he" ? 0 : 2`
+5. Apply `direction: "rtl"` for Hebrew containers
+6. Button spacing: `mr` for English, `ml` for Hebrew (NEVER rely on gap alone)
+
+```typescript
+// ✅ CORRECT RTL pattern
+<Box sx={{ display: "flex", direction: i18n.language === "he" ? "rtl" : "ltr" }}>
+  <Box sx={{ mr: i18n.language === "he" ? 0 : 2, ml: i18n.language === "he" ? 2 : 0 }}>
+    <Icon />
+  </Box>
+  <Typography variant={i18n.language === "he" ? "hebrewTitle" : "h4"}>
+    {text}
+  </Typography>
+</Box>
+
+// ❌ INCORRECT - CSS Grid, no RTL support
+<Box sx={{ display: "grid" }}>
+  <Icon sx={{ mr: 2 }} />
+  <Typography>{text}</Typography>
+</Box>
+```
+
+### Account Details section cards
+
+When adding cards under **Account Details** (General, Users, Billing integration, SSO, etc.), **do not invent a new title style**. Reuse the shared section-card pattern:
+
+| Piece | Source |
+|-------|--------|
+| Card shell | `accountCardSx` from `app/[locale]/app/admin/accounts/[AccountId]/details/accountCardStyles.ts` |
+| Section header | `AccountSectionCardHeader` (`components/AccountSectionCardHeader.tsx`) — primary icon + `subtitle1` title |
+| Content padding | `accountCardContentSx` |
+
+```tsx
+import { accountCardContentSx, accountCardSx } from "../accountCardStyles";
+import AccountSectionCardHeader from "./AccountSectionCardHeader";
+
+<Card elevation={0} sx={accountCardSx}>
+  <AccountSectionCardHeader icon={SettingsIcon} title="Section title" />
+  <CardContent sx={accountCardContentSx}>{/* body */}</CardContent>
+</Card>
+```
+
+**Title typography (required):** `fontWeight: 500`, `fontSize: { xs: "0.875rem", sm: "1rem" }` — **not** `fontWeight: 600` inside `CardContent`.
+
+**Avoid:**
+- `Typography variant="subtitle1" sx={{ fontWeight: 600 }}` as an in-content card title
+- Default `Card` / `CardContent` without `accountCardSx` (adds visual weight vs sibling sections)
+- Title in `CardContent` without the icon header row used elsewhere on Account Details
+
+Reference implementation: `AccountDetails.tsx` (General, Address, …) and `BillingIntegrationSettings.tsx`.
+
+### Account Details section cards
+
+**Use on Account Details tabs and any nested settings panels (e.g. Billing integration, SSO).** Do **not** put section titles inside `CardContent` with ad-hoc `fontWeight: 600`.
+
+**Source of truth:**
+
+- Styles: `app/[locale]/app/admin/accounts/[AccountId]/details/accountCardStyles.ts`
+- Header component: `.../details/components/AccountSectionCardHeader.tsx`
+
+```tsx
+import {
+  accountCardContentSx,
+  accountCardSx,
+} from "../accountCardStyles";
+import AccountSectionCardHeader from "./AccountSectionCardHeader";
+import { Sync as SyncIcon } from "@mui/icons-material";
+
+<Card elevation={0} sx={accountCardSx}>
+  <AccountSectionCardHeader icon={SyncIcon} title="Connection" />
+  <CardContent sx={accountCardContentSx}>
+    {/* body only — no section title Typography here */}
+  </CardContent>
+</Card>
+```
+
+**Title spec (do not deviate):** `variant="subtitle1"`, `fontWeight: 500`, `fontSize: { xs: "0.875rem", sm: "1rem" }`, primary icon `{ xs: 18, sm: 20 }`, flat card (no border/shadow).
+
+**Before adding a new settings card:** search Account Details for `AccountSectionCardHeader` or `accountCardStyles` and copy that structure.
+
+### DataGrid Styling
+
+**ALWAYS use StyledDataGrid - NEVER create custom DataGrid components**
+
+```typescript
+import StyledDataGrid, { BREAKPOINTS } from "@/shared/layout-components/grid/StyledDataGrid";
+
+// Minimize custom renderCell, use default rendering when possible
+initialState={{
+  columns: {
+    columnVisibilityModel: {
+      customer_number: windowWidth >= BREAKPOINTS.MOBILE,
+    },
+  },
+}}
+```

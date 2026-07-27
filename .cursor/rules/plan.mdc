@@ -1,0 +1,778 @@
+# Implementation Plan Guidelines
+
+## Summary
+
+This document provides comprehensive guidelines for generating implementation plans. It defines the required structure and sections that must be included in all implementation plans to ensure thorough feature development. It covers:
+
+- **Plan Structure**: Required sections including Overview & Objectives, Technical Architecture, Implementation Steps, Testing Strategy, and more
+- **Section Requirements**: Detailed requirements for each section (what to include, examples, format)
+- **Testing Strategy**: Mandatory test planning with business requirement mapping
+- **Risk Assessment**: Identifying potential issues and mitigation strategies
+- **Documentation**: Code comments, API documentation, and user guides
+- **Deployment**: Rollout strategy, migration scripts, and rollback plans
+
+All implementation plans must follow this structure and include a Testing Strategy section with test units mapped to business requirements. See [Testing Guidelines](./testing.mdc) for test planning details.
+
+## 📋 Plan Structure Requirements
+
+When generating implementation plans, ALWAYS follow this comprehensive structure to ensure all aspects of the feature are properly addressed.
+
+## Required Plan Sections
+
+### 1. Overview & Objectives
+
+**Purpose**: Provide a clear summary of what the plan aims to achieve.
+
+**Must Include**:
+- Feature description and business value
+- High-level goals and success criteria
+- Scope boundaries (what's included/excluded)
+- Key stakeholders and user personas
+
+**Example**:
+```markdown
+## Overview
+
+This plan implements a [Feature Name] that allows [user type] to [primary action]. 
+The feature addresses [business need] and provides [key benefits].
+
+### Objectives
+- Enable [specific capability]
+- Improve [metric/outcome]
+- Support [use case]
+
+### Scope
+- ✅ Included: [features]
+- ❌ Excluded: [out of scope items]
+```
+
+### 2. Impact Analysis
+
+**Purpose**: Identify ALL areas of the codebase that will be affected.
+
+**Must Include**:
+- Comprehensive codebase search results using `codebase_search`
+- All affected files and components
+- Indirect impacts (permissions, translations, tests, etc.)
+- Breaking changes and migration needs
+- Dependencies that need updates
+
+**Required Searches**:
+```markdown
+## Impact Analysis
+
+### Codebase Search Results
+- [Search query 1]: Found X files affected
+- [Search query 2]: Found Y components using similar patterns
+- [Search query 3]: Identified Z services with related logic
+
+### Affected Areas
+- **Frontend Components**: [list files]
+- **Backend Services**: [list files]
+- **API Endpoints**: [list files]
+- **Database Schema**: [list changes]
+- **Permissions**: [list new/modified permissions]
+- **Translations**: [list affected locales]
+- **Tests**: [list test files needing updates]
+```
+
+**Reference**: See `.cursor/rules/planning.mdc` for detailed impact analysis guidelines.
+
+### 3. Database Schema Changes
+
+**Purpose**: Document all database modifications required.
+
+**Must Include**:
+- New Prisma models with full schema definitions
+- Modified models and field changes
+- Indexes and constraints
+- Relationships and foreign keys
+- Migration strategy (SQL files or Prisma migrations)
+- Data migration scripts if needed
+
+**Format**:
+```markdown
+## Database Schema Changes
+
+### New Models
+```prisma
+model NewModel {
+  id          Int      @id @default(autoincrement())
+  // ... full schema
+}
+```
+
+### Modified Models
+- `ExistingModel`: Added field `new_field`
+- `AnotherModel`: Modified relationship
+
+### Indexes
+- `idx_model_field`: Index on `field` for performance
+
+### Migrations
+- `prisma/migrations/add_new_feature.sql`: SQL migration script
+- Run: `npx prisma db push` (or migration command)
+```
+
+**Reference**: See `.cursor/rules/database.mdc` for Prisma conventions.
+
+### 4. Permissions & Access Control
+
+**Purpose**: Define all permission requirements and role assignments.
+
+**Must Include**:
+- New permission keys (snake_case)
+- Permission descriptions
+- Role assignments (which roles get which permissions)
+- Permission migration script updates
+- PermissionService.ts updates (category/subcategory structure)
+- Translation file updates (security_roles.json for both languages)
+- Access control checks in services/APIs
+
+**Format**:
+```markdown
+## Permissions & Access Control
+
+### New Permissions
+- `view_feature`: View feature content
+- `create_feature`: Create new items
+- `edit_feature`: Edit existing items
+- `delete_feature`: Delete items
+
+### Role Assignments
+- **System_Administrator**: All permissions
+- **Manager**: `view_feature`, `create_feature`, `edit_feature`
+- **User**: `view_feature` only
+
+### Permission Service Updates
+Update `server/services/PermissionService.ts`:
+- Add new category to `getPermissionsByCategory()` method
+- Structure: `category_name: { subcategory_name: [permission_keys] }`
+- Example:
+```typescript
+feature_management: {
+    features: [
+        "view_feature",
+        "create_feature",
+        "edit_feature",
+        "delete_feature",
+    ],
+},
+```
+
+### Translation Files Updates
+Update permission translations in `locales/en/security_roles.json` and `locales/he/security_roles.json`:
+
+1. **Add permission labels** in `fields` section:
+```json
+"fields": {
+    "view_feature": "View Feature",
+    "create_feature": "Create Feature",
+    "edit_feature": "Edit Feature",
+    "delete_feature": "Delete Feature"
+}
+```
+
+2. **Add category label** in `values` section:
+```json
+"values": {
+    "category_feature_management": "Feature Management"
+}
+```
+
+3. **Add subcategory label** in `values` section:
+```json
+"values": {
+    "subcategory_features": "Features"
+}
+```
+
+**Hebrew translations** (`locales/he/security_roles.json`):
+- Use appropriate Hebrew translations for all labels
+- Maintain same structure as English file
+
+### Permission Migration
+Update `scripts/database/migrate-role-permissions.ts`:
+- Add permissions to `ALL_PERMISSIONS` array
+- Update `DEFAULT_ROLE_PERMISSIONS` for each role
+- Run migration: `npx tsx scripts/database/migrate-role-permissions.ts`
+
+### Access Control Implementation
+- Add permission checks in API endpoints
+- Add permission checks in frontend components
+- Use `PermissionService.hasPermission()` for backend checks
+- Use `userPermissions.includes("permission_key")` for frontend checks
+```
+
+### 5. API Endpoints
+
+**Purpose**: Document all API routes and their functionality.
+
+**Must Include**:
+- Endpoint paths and HTTP methods
+- Request/response schemas
+- Authentication/authorization requirements
+- Error handling
+- Validation rules
+
+**Format**:
+```markdown
+## API Endpoints
+
+### `POST /api/feature`
+- **Purpose**: Create new feature item
+- **Auth**: Required, `create_feature` permission
+- **Request**: `{ name: string, ... }`
+- **Response**: `{ data: { id, name, ... } }`
+- **Errors**: 400 (validation), 401 (unauthorized), 403 (forbidden)
+
+### `GET /api/feature/[id]`
+- **Purpose**: Get feature item by ID
+- **Auth**: Required, `view_feature` permission
+- **Response**: `{ data: { id, name, ... } }`
+```
+
+**Reference**: See `.cursor/rules/api.mdc` for API patterns.
+
+### 6. Frontend Components
+
+**Purpose**: Document all UI components and pages.
+
+**Must Include**:
+- Component hierarchy and structure
+- Page routes and navigation
+- Component props and state management
+- Data fetching (React Query)
+- Form validation
+- Error handling
+- Loading states
+
+**Format**:
+```markdown
+## Frontend Components
+
+### Pages
+- `app/[locale]/app/feature/page.tsx`: Main feature list page
+- `app/[locale]/app/feature/[id]/page.tsx`: Feature detail page
+- `app/[locale]/app/feature/builder/page.tsx`: Feature builder page
+
+### Components
+- `components/feature/FeatureList.tsx`: List component
+- `components/feature/FeatureForm.tsx`: Create/edit form
+- `components/feature/FeatureCard.tsx`: Display card
+
+### Navigation
+- Add menu item to `app/[locale]/app/layout.tsx`
+- Permission check: `view_feature`
+- Translation key: `actions.navigation_feature`
+```
+
+**Reference**: See `.cursor/rules/frontend.mdc` and `.cursor/rules/design-system.mdc` for styling guidelines.
+
+### 7. Backend Services
+
+**Purpose**: Document all service layer implementations.
+
+**Must Include**:
+- Service class structure
+- Method signatures and return types
+- Business logic and validation
+- Error handling
+- Logging (MongoDB via LogService)
+- Dependencies on other services
+
+**Format**:
+```markdown
+## Backend Services
+
+### `server/services/FeatureService.ts`
+- `createFeature(data)`: Create new feature
+- `getFeature(id)`: Get feature by ID
+- `listFeatures(filters)`: List features with filters
+- `updateFeature(id, data)`: Update feature
+- `deleteFeature(id)`: Delete feature
+
+### Business Logic
+- Validation: [rules]
+- Calculations: [formulas]
+- Constraints: [limitations]
+```
+
+### 8. Internationalization (i18n)
+
+**Purpose**: Document all translation requirements.
+
+**Must Include**:
+- New translation files or updates
+- All required categories (fields, actions, messages, values, sections, tooltips, validation)
+- English and Hebrew translations
+- Translation key naming (snake_case)
+
+**Format**:
+```markdown
+## Internationalization
+
+### New Translation Files
+- `locales/en/feature.json`: English translations
+- `locales/he/feature.json`: Hebrew translations
+
+### Translation Keys
+- `fields.feature_name`: "Feature Name" / "שם התכונה"
+- `actions.create_feature`: "Create Feature" / "צור תכונה"
+- `messages.error_loading`: "Error loading features" / "שגיאה בטעינת תכונות"
+- `validation.name_required`: "Name is required" / "שם נדרש"
+
+### Usage
+```typescript
+const { t } = useTranslation(["feature", "common"]);
+t("fields.feature_name");
+```
+```
+
+**Reference**: See `.cursor/rules/translations.mdc` for i18n guidelines.
+
+### 9. Testing Strategy
+
+**Purpose**: Define comprehensive test coverage for all business requirements.
+
+**Must Include**:
+- Test files with full paths
+- Test descriptions mapping to business requirements
+- Specific test cases for each scenario
+- Test categories (business logic, integration, validation, error handling, permissions, data integrity)
+
+**Format**:
+```markdown
+## Testing Strategy
+
+### 1. Business Logic Tests
+
+#### `__tests__/services/FeatureService.test.ts`
+- **Purpose**: Validates feature creation and business rules
+- **Test Cases**:
+  - Creates feature with valid data
+  - Rejects feature with invalid data
+  - Enforces business constraints
+
+### 2. Integration Tests
+
+#### `__tests__/api/feature/index.integration.test.ts`
+- **Purpose**: Validates end-to-end API workflows
+- **Test Cases**:
+  - POST /api/feature creates feature successfully
+  - GET /api/feature returns feature list
+  - Permission checks work correctly
+```
+
+**Reference**: See `.cursor/rules/testing.mdc` for detailed testing guidelines.
+
+### 10. Cron Jobs & Background Tasks
+
+**Purpose**: Document any scheduled tasks or background processing.
+
+**Must Include**:
+- Cron job name and schedule
+- Integration with cron manager
+- Execution function signature
+- Error handling and logging
+
+**Format**:
+```markdown
+## Cron Jobs
+
+### Feature Scheduler
+- **Name**: "Feature Scheduler"
+- **Schedule**: `0 * * * *` (every hour)
+- **Function**: `server/cron-jobs/feature-scheduler.ts`
+- **Integration**: Add case to `server/services/cronManager.ts`
+- **Purpose**: Process scheduled feature tasks
+```
+
+### 11. Security Considerations
+
+**Purpose**: Document security measures and potential vulnerabilities.
+
+**Must Include**:
+- Authentication requirements
+- Authorization checks
+- Input validation and sanitization
+- SQL injection prevention
+- XSS prevention
+- CSRF protection
+- Rate limiting (if applicable)
+
+**Format**:
+```markdown
+## Security Considerations
+
+### Authentication
+- All endpoints require valid session
+- Session validation via NextAuth.js
+
+### Authorization
+- Permission checks at API level
+- Role-based access control
+- Account isolation (multi-tenant)
+
+### Input Validation
+- Schema validation using [library]
+- Sanitization of user inputs
+- Type checking
+```
+
+### 12. Performance Considerations
+
+**Purpose**: Document performance optimizations and considerations.
+
+**Must Include**:
+- Database query optimization
+- Indexing strategy
+- Caching strategy
+- Pagination requirements
+- Lazy loading
+- Bundle size considerations
+
+**Format**:
+```markdown
+## Performance Considerations
+
+### Database
+- Indexes on frequently queried fields
+- Pagination for large datasets
+- Query optimization (avoid N+1)
+
+### Frontend
+- React Query caching
+- Lazy loading of components
+- Virtual scrolling for large lists
+```
+
+### 13. Installation & Deployment Documentation
+
+**Purpose**: Provide step-by-step instructions for deploying the feature to production.
+
+**CRITICAL**: This section MUST be generated as a separate installation documentation file.
+
+**Must Include**:
+
+#### 13.1 Pre-Deployment Checklist
+- Environment variable requirements
+- Database backup instructions
+- Dependency updates
+- Feature flags (if applicable)
+
+#### 13.2 Database Migration Steps
+- Migration script execution order
+- Prisma client regeneration
+- Data migration steps (if any)
+- Rollback procedures
+
+#### 13.3 Permission Migration Steps
+- Permission script execution
+- Role permission updates
+- Verification steps
+
+#### 13.4 Code Deployment Steps
+- Build process
+- Deployment commands
+- Environment configuration
+- Service restart procedures
+
+#### 13.5 Post-Deployment Verification
+- Health checks
+- Feature verification steps
+- Monitoring setup
+- Error log checks
+
+#### 13.6 Rollback Procedures
+- Rollback steps if issues occur
+- Database rollback commands
+- Code rollback process
+
+**Format for Installation Documentation**:
+
+```markdown
+# Installation Documentation: [Feature Name]
+
+## Prerequisites
+- Node.js version: >=20.0.0
+- Database: PostgreSQL
+- Environment: Production
+
+## Pre-Deployment Checklist
+
+### 1. Backup Database
+```bash
+pg_dump -h [host] -U [user] -d [database] > backup_$(date +%Y%m%d_%H%M%S).sql
+```
+
+### 2. Verify Environment Variables
+- [ ] `DATABASE_URL` is set
+- [ ] `NEXTAUTH_SECRET` is set
+- [ ] [Other required variables]
+
+### 3. Update Dependencies
+```bash
+npm install
+```
+
+## Database Migration
+
+### Step 1: Run Prisma Migration
+```bash
+npx prisma db push
+# OR
+npx prisma migrate deploy
+```
+
+### Step 2: Regenerate Prisma Client
+```bash
+npx prisma generate
+```
+
+### Step 3: Update Permission Service
+Update `server/services/PermissionService.ts`:
+- Add new category/subcategory to `getPermissionsByCategory()` method
+- Ensure permissions are properly categorized
+
+### Step 4: Update Translation Files
+Update permission translations:
+- `locales/en/security_roles.json`: Add permission labels, category, and subcategory
+- `locales/he/security_roles.json`: Add Hebrew translations
+
+### Step 5: Run Permission Migration
+```bash
+npx tsx scripts/database/migrate-role-permissions.ts
+```
+
+### Step 6: Verify Permissions
+```sql
+-- Check permissions exist
+SELECT permission_key FROM "RolePermission" 
+WHERE permission_key LIKE 'feature%';
+
+-- Check role assignments
+SELECT role, permission_key FROM "RolePermission" 
+WHERE permission_key LIKE 'feature%' 
+ORDER BY role, permission_key;
+```
+
+### Step 4: Verify Migration
+```sql
+-- Check tables exist
+SELECT table_name FROM information_schema.tables 
+WHERE table_schema = 'public' AND table_name LIKE 'Feature%';
+
+-- Check permissions
+SELECT role, permission_key FROM "RolePermission" 
+WHERE permission_key LIKE 'feature%';
+```
+
+## Code Deployment
+
+### Step 1: Build Application
+```bash
+npm run build
+```
+
+### Step 2: Deploy to Server
+[Deployment-specific commands]
+
+### Step 3: Restart Services
+```bash
+# PM2
+pm2 restart archaser
+
+# Or systemd
+sudo systemctl restart archaser
+```
+
+## Post-Deployment Verification
+
+### 1. Health Checks
+- [ ] Application starts without errors
+- [ ] Database connections work
+- [ ] API endpoints respond
+
+### 2. Feature Verification
+- [ ] Navigation menu appears (if applicable)
+- [ ] Feature pages load correctly
+- [ ] Permissions work as expected
+- [ ] Translations display correctly
+
+### 3. Monitoring
+- [ ] Check application logs for errors
+- [ ] Monitor database performance
+- [ ] Verify cron jobs are running (if applicable)
+
+## Rollback Procedures
+
+### If Issues Occur:
+
+#### 1. Rollback Code
+```bash
+git checkout [previous-commit]
+npm run build
+[deploy commands]
+```
+
+#### 2. Rollback Database (if needed)
+```bash
+# Restore from backup
+psql -h [host] -U [user] -d [database] < backup_[timestamp].sql
+```
+
+#### 3. Verify Rollback
+- [ ] Application works with previous version
+- [ ] No data corruption
+- [ ] All services operational
+
+## Troubleshooting
+
+### Common Issues
+
+#### Issue: Feature not appearing in navigation
+**Solution**: 
+1. Verify user has `view_feature` permission
+2. Check user role assignments
+3. Refresh browser session
+
+#### Issue: Database migration fails
+**Solution**:
+1. Check database connection
+2. Verify schema conflicts
+3. Review migration logs
+
+[Add more troubleshooting steps as needed]
+```
+
+**IMPORTANT**: 
+- Generate installation documentation as a separate file: `docs/installation/[feature-name]-installation.md`
+- Include all commands with exact syntax
+- Provide verification steps for each major operation
+- Include rollback procedures for safety
+- Document all environment-specific configurations
+
+### 14. Implementation Order
+
+**Purpose**: Provide a logical sequence for implementing the feature.
+
+**Must Include**:
+- Step-by-step implementation order
+- Dependencies between steps
+- Testing checkpoints
+- Integration points
+
+**Format**:
+```markdown
+## Implementation Order
+
+1. **Database Schema** (Foundation)
+   - Create Prisma models
+   - Run migrations
+   - Regenerate Prisma client
+
+2. **Permissions** (Access Control)
+   - Add permission keys
+   - Update role permissions
+   - Run permission migration
+
+3. **Backend Services** (Business Logic)
+   - Implement service classes
+   - Add validation logic
+   - Implement error handling
+
+4. **API Endpoints** (Interface)
+   - Create API routes
+   - Add authentication/authorization
+   - Implement request/response handling
+
+5. **Frontend Components** (User Interface)
+   - Create pages and components
+   - Implement data fetching
+   - Add form validation
+
+6. **Translations** (Internationalization)
+   - Add translation files
+   - Update navigation
+   - Test both languages
+
+7. **Testing** (Quality Assurance)
+   - Write unit tests
+   - Write integration tests
+   - Test permissions
+
+8. **Documentation** (Deployment)
+   - Generate installation docs
+   - Document API usage
+   - Update user guides
+```
+
+### 15. Dependencies & Requirements
+
+**Purpose**: List all external dependencies and requirements.
+
+**Must Include**:
+- NPM packages (new or updated)
+- Database requirements
+- External services
+- Environment variables
+- System requirements
+
+**Format**:
+```markdown
+## Dependencies & Requirements
+
+### NPM Packages
+- `package-name@version`: Purpose
+
+### Database
+- PostgreSQL >= [version]
+- Required extensions: [list]
+
+### Environment Variables
+- `NEW_VAR`: Description and default value
+
+### External Services
+- [Service name]: Purpose and configuration
+```
+
+## Plan Quality Checklist
+
+Before finalizing a plan, verify:
+
+- [ ] All sections are complete
+- [ ] Impact analysis covers entire codebase
+- [ ] Database schema is fully defined
+- [ ] All permissions are documented
+- [ ] API endpoints have complete specifications
+- [ ] Frontend components are mapped
+- [ ] Translations include all required categories
+- [ ] Testing strategy maps to business requirements
+- [ ] Security considerations are addressed
+- [ ] Performance optimizations are planned
+- [ ] Installation documentation is comprehensive
+- [ ] Implementation order is logical
+- [ ] Dependencies are listed
+
+## Plan Generation Best Practices
+
+1. **Always Search First**: Use `codebase_search` extensively before planning
+2. **Reference Existing Patterns**: Follow established patterns in the codebase
+3. **Be Specific**: Include file paths, function names, and exact implementations
+4. **Consider Edge Cases**: Plan for error scenarios and edge cases
+5. **Think Multi-Tenant**: Consider account isolation and permissions
+6. **Plan for Scale**: Consider performance and scalability from the start
+7. **Document Everything**: Better to over-document than under-document
+8. **Include Rollback**: Always plan for safe rollback procedures
+
+## Related Rules
+
+- **Impact Analysis**: `.cursor/rules/planning.mdc`
+- **Testing**: `.cursor/rules/testing.mdc`
+- **Database**: `.cursor/rules/database.mdc`
+- **API**: `.cursor/rules/api.mdc`
+- **Frontend**: `.cursor/rules/frontend.mdc`
+- **Design System**: `.cursor/rules/design-system.mdc`
+- **Translations**: `.cursor/rules/translations.mdc`
+- **Critical Rules**: `.cursor/rules/critical-rules.mdc`

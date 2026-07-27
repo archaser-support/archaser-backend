@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ARChaser RDS PostgreSQL logging parameter group (production-safe profile).
+  Attach via configure-rds-logging.sh; do not reboot immediately — use the
+  instance maintenance window for pending-reboot parameters.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - production
+      - staging
+    Description: Environment label used in resource names and tags
+
+  Family:
+    Type: String
+    Default: postgres16
+    Description: >
+      DB parameter group family matching the RDS engine major version
+      (e.g. postgres15, postgres16, postgres17). Confirm with
+      aws rds describe-db-instances before deploy.
+
+  LogDestination:
+    Type: String
+    Default: jsonlog
+    AllowedValues:
+      - jsonlog
+      - stderr
+    Description: >
+      Prefer jsonlog when engine >= 15. Use stderr for older engines and
+      configure LogLinePrefix for downstream parsing.
+
+  LogLinePrefix:
+    Type: String
+    Default: '%m [%p] %u@%d,%e,%c:%l:%x:%v:%a '
+    Description: >
+      Used only when LogDestination=stderr. Include %e (SQLSTATE/severity
+      context) so lambda-promtail regex stages can extract error_severity.
+
+  SlowQueryMs:
+    Type: Number
+    Default: 1000
+    MinValue: 0
+    Description: log_min_duration_statement in milliseconds (0 = log all)
+
+Conditions:
+  UseJsonLog: !Equals [!Ref LogDestination, jsonlog]
+
+Resources:
+  PostgresLoggingParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: !Sub 'ARChaser Postgres logging profile (${Environment}) — errors, slow ${SlowQueryMs}ms, connections, lock waits; no log_statement=all'
+      Family: !Ref Family
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: archaser
+        - Key: Purpose
+          Value: postgres-logs-to-grafana
+      Parameters:
+        # Format — jsonlog when supported; otherwise stderr + explicit prefix
+        log_destination: !Ref LogDestination
+        log_line_prefix: !If
+          - UseJsonLog
+          - '%m [%p] '
+          - !Ref LogLinePrefix
+        # Content profile (production-safe)
+        log_min_messages: warning
+        log_min_error_statement: error
+        log_error_verbosity: default
+        log_min_duration_statement: !Ref SlowQueryMs
+        log_connections: '1'
+        log_disconnections: '1'
+        log_lock_waits: '1'
+        # Explicitly keep statement logging off (volume + PII)
+        log_statement: none
+
+Outputs:
+  ParameterGroupName:
+    Description: Custom DB parameter group name to attach to the RDS instance
+    Value: !Ref PostgresLoggingParameterGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ParameterGroupName'
+
+  ParameterGroupArn:
+    Description: ARN of the custom DB parameter group
+    Value: !GetAtt PostgresLoggingParameterGroup.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ParameterGroupArn'
+
+  LogDestinationChosen:
+    Description: log_destination applied in this stack
+    Value: !Ref LogDestination
+
+  FallbackNote:
+    Description: Reminder for engines below Postgres 15
+    Value: >
+      If engine < 15, redeploy with LogDestination=stderr and configure
+      LOKI_STAGE_CONFIGS regex stages in the lambda-promtail stack
+      (see README Fallback section).

@@ -1,0 +1,11 @@
+{
+  "watch": ["src"],
+  "ext": "ts,json",
+  "ignore": ["src/**/*.spec.ts", "src/**/*.test.ts", "dist"],
+  "exec": "nest build && node --enable-source-maps dist/main.js",
+  "env": {
+    "FORCE_NEST_DEV": "1"
+  },
+  "delay": 800,
+  "legacyWatch": true
+}

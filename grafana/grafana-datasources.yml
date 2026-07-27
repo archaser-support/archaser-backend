@@ -1,0 +1,35 @@
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    uid: Loki
+    jsonData:
+      derivedFields:
+        - datasourceUid: Loki
+          matcherRegex: "trace_id=(\\w+)"
+          name: TraceID
+          url: "${__value.raw}"
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    uid: Prometheus
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      manageAlerts: true
+  - name: Postgres
+    type: postgres
+    uid: Postgres
+    url: ${GRAFANA_DB_HOST}:${GRAFANA_DB_PORT}
+    database: ${GRAFANA_DB_NAME}
+    user: ${GRAFANA_DB_USER}
+    isDefault: false
+    jsonData:
+      sslmode: ${GRAFANA_DB_SSLMODE}
+      database: ${GRAFANA_DB_NAME}
+    secureJsonData:
+      password: ${GRAFANA_DB_PASSWORD}

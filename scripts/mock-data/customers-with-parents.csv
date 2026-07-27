@@ -1,0 +1,30 @@
+name,customer_number,country_iso2,state_iso2,city,address_line1,address_line2,postal_code,owner_email,business_unit,parent_customer_number
+Parent Corp A,PARENT-A,US,NY,New York,100 Broadway,Floor 10,10001,admin@example.com,BU-001,
+Parent Corp B,PARENT-B,US,CA,Los Angeles,200 Main St,Suite 500,90001,manager@example.com,BU-002,
+Parent Corp C,PARENT-C,IL,,Tel Aviv,50 Rothschild Blvd,Floor 5,65201,admin@example.com,BU-003,
+Parent Corp D,PARENT-D,US,TX,Houston,300 Commerce St,Building A,77002,manager@example.com,,
+Child Company A1,CHILD-A1,US,NY,New York,101 Broadway,Floor 11,10001,user1@example.com,BU-001,PARENT-A
+Child Company A2,CHILD-A2,US,NY,New York,102 Broadway,Floor 12,10001,user2@example.com,BU-001,PARENT-A
+Child Company A3,CHILD-A3,US,NJ,Newark,103 Main St,Suite 200,07101,user1@example.com,BU-001,PARENT-A
+Child Company B1,CHILD-B1,US,CA,Los Angeles,201 Main St,Suite 501,90001,user3@example.com,BU-002,PARENT-B
+Child Company B2,CHILD-B2,US,CA,San Francisco,202 Market St,Floor 3,94102,user4@example.com,BU-002,PARENT-B
+Child Company B3,CHILD-B3,US,CA,Sacramento,203 Capitol Ave,Suite 100,95814,user3@example.com,BU-002,PARENT-B
+Child Company C1,CHILD-C1,IL,,Tel Aviv,51 Rothschild Blvd,Floor 6,65201,user5@example.com,BU-003,PARENT-C
+Child Company C2,CHILD-C2,IL,,Haifa,52 Herzl St,Building B,31000,user6@example.com,BU-003,PARENT-C
+Child Company C3,CHILD-C3,IL,,Jerusalem,53 Jaffa St,Floor 2,91000,user5@example.com,BU-003,PARENT-C
+Child Company D1,CHILD-D1,US,TX,Houston,301 Commerce St,Building B,77002,user7@example.com,,PARENT-D
+Child Company D2,CHILD-D2,US,TX,Dallas,302 Elm St,Suite 300,75201,user8@example.com,,PARENT-D
+Child Company D3,CHILD-D3,US,TX,Austin,303 Congress Ave,Floor 4,78701,user7@example.com,,PARENT-D
+Standalone Company 1,STANDALONE-1,US,FL,Miami,400 Ocean Dr,Suite 100,33139,user9@example.com,BU-001,
+Standalone Company 2,STANDALONE-2,US,WA,Seattle,401 Pike St,Floor 5,98101,user10@example.com,BU-002,
+Standalone Company 3,STANDALONE-3,IL,,Beer Sheva,54 Ben Gurion Blvd,Building C,84100,user11@example.com,BU-003,
+Standalone Company 4,STANDALONE-4,US,CO,Denver,402 Colfax Ave,Suite 200,80202,user12@example.com,,
+Child Company A4,CHILD-A4,US,CT,Hartford,104 Main St,Floor 2,06103,user1@example.com,BU-001,PARENT-A
+Child Company B4,CHILD-B4,US,OR,Portland,204 Burnside St,Suite 400,97209,user4@example.com,BU-002,PARENT-B
+Child Company C4,CHILD-C4,IL,,Rishon LeZion,55 Herzl St,Building D,75200,user6@example.com,BU-003,PARENT-C
+Child Company D4,CHILD-D4,US,TX,San Antonio,304 Alamo St,Floor 3,78205,user8@example.com,,PARENT-D
+Parent Corp E,PARENT-E,GB,,London,500 Oxford St,Floor 8,W1D 1BS,admin@example.com,BU-004,
+Child Company E1,CHILD-E1,GB,,London,501 Oxford St,Floor 9,W1D 1BT,user13@example.com,BU-004,PARENT-E
+Child Company E2,CHILD-E2,GB,,Manchester,502 Deansgate,Suite 600,M1 3BD,user14@example.com,BU-004,PARENT-E
+Child Company E3,CHILD-E3,GB,,Birmingham,503 New St,Building E,B2 4QA,user13@example.com,BU-004,PARENT-E
+

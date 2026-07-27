@@ -1,0 +1,262 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ARChaser lambda-promtail: CloudWatch RDS postgresql logs → Loki (VPC-private).
+  Uses Grafana lambda-promtail zip from S3. Parameterized for production and staging.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - production
+      - staging
+    Description: Environment label pushed to Loki (EXTRA_LABELS)
+
+  WriteAddress:
+    Type: String
+    Description: >
+      Loki push URL on the EC2 private interface
+      (e.g. http://10.0.1.20:3100/loki/api/v1/push)
+
+  RdsLogGroupName:
+    Type: String
+    Description: >
+      CloudWatch log group for RDS postgresql export
+      (e.g. /aws/rds/instance/archaser-prod/postgresql)
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC shared by Lambda and the Loki EC2 host
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnet IDs for the Lambda ENIs (no public IP required)
+
+  LokiSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group attached to the EC2 host running Loki
+
+  S3BucketName:
+    Type: String
+    Description: S3 bucket containing lambda-promtail-v1.0.0.zip (upload via deploy script)
+
+  S3KeyName:
+    Type: String
+    Default: lambda-promtail/lambda-promtail-v1.0.0.zip
+    Description: S3 object key for the lambda-promtail zip
+
+  ReservedConcurrency:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    Description: Reserved concurrent executions for the Lambda
+
+  KeepStream:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Keep CloudWatch log stream as a Loki label (high cardinality — leave false)
+
+  OmitExtraLabelsPrefix:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: When true, EXTRA_LABELS become job/environment without __extra_ prefix
+
+  LokiStageConfigs:
+    Type: String
+    Default: >-
+      [{"json":{"expressions":{"error_severity":"error_severity"}}},{"labels":{"error_severity":""}}]
+    Description: >
+      JSON array of Promtail pipeline stages (LOKI_STAGE_CONFIGS). Default extracts
+      error_severity from Postgres jsonlog. For stderr fallback see README.
+
+  DropLabels:
+    Type: String
+    Default: ''
+    Description: Optional comma-separated labels to drop before push
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - Environment
+          - WriteAddress
+          - RdsLogGroupName
+      - Label:
+          default: Networking
+        Parameters:
+          - VpcId
+          - PrivateSubnetIds
+          - LokiSecurityGroupId
+      - Label:
+          default: Lambda package
+        Parameters:
+          - S3BucketName
+          - S3KeyName
+          - ReservedConcurrency
+      - Label:
+          default: Loki labeling
+        Parameters:
+          - KeepStream
+          - OmitExtraLabelsPrefix
+          - LokiStageConfigs
+          - DropLabels
+
+Resources:
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'lambda-promtail (${Environment}) egress to Loki:3100'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 3100
+          ToPort: 3100
+          DestinationSecurityGroupId: !Ref LokiSecurityGroupId
+          Description: Push logs to Loki private endpoint
+        # Lambda needs HTTPS to CloudWatch Logs API for its own function logs.
+        # Prefer a logs VPC interface endpoint in the VPC; this allows HTTPS if NAT/endpoint exists.
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS for CloudWatch Logs API / VPC endpoints
+      Tags:
+        - Key: Name
+          Value: !Sub 'archaser-lambda-promtail-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: archaser
+
+  LokiIngressFromLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref LokiSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 3100
+      ToPort: 3100
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      Description: !Sub 'Allow lambda-promtail (${Environment}) → Loki:3100 only'
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'archaser-lambda-promtail-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ReadRdsCloudWatchLogGroup
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:GetLogEvents
+                  - logs:FilterLogEvents
+                Resource: !Sub
+                  - 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroup}:*'
+                  - LogGroup: !Ref RdsLogGroupName
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: archaser
+
+  LambdaPromtailFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'archaser-lambda-promtail-${Environment}'
+      Description: !Sub 'Forward RDS postgresql CloudWatch logs to Loki (${Environment})'
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures:
+        - x86_64
+      MemorySize: 256
+      Timeout: 60
+      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3KeyName
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds: !Ref PrivateSubnetIds
+      Environment:
+        Variables:
+          WRITE_ADDRESS: !Ref WriteAddress
+          KEEP_STREAM: !Ref KeepStream
+          OMIT_EXTRA_LABELS_PREFIX: !Ref OmitExtraLabelsPrefix
+          EXTRA_LABELS: !Sub 'job,rds-postgres,environment,${Environment}'
+          LOKI_STAGE_CONFIGS: !Ref LokiStageConfigs
+          DROP_LABELS: !Ref DropLabels
+          PRINT_LOG_LINE: 'false'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: archaser
+        - Key: Purpose
+          Value: postgres-logs-to-grafana
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaPromtailFunction
+      Action: lambda:InvokeFunction
+      Principal: !Sub 'logs.${AWS::Region}.amazonaws.com'
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub
+        - 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroup}:*'
+        - LogGroup: !Ref RdsLogGroupName
+
+  RdsPostgresqlSubscriptionFilter:
+    Type: AWS::Logs::SubscriptionFilter
+    DependsOn: LambdaInvokePermission
+    Properties:
+      FilterName: !Sub 'archaser-rds-postgres-to-loki-${Environment}'
+      LogGroupName: !Ref RdsLogGroupName
+      FilterPattern: ''
+      DestinationArn: !GetAtt LambdaPromtailFunction.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of lambda-promtail
+    Value: !GetAtt LambdaPromtailFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaArn'
+
+  LambdaFunctionName:
+    Description: Lambda function name
+    Value: !Ref LambdaPromtailFunction
+
+  LambdaSecurityGroupId:
+    Description: Security group ID of lambda-promtail
+    Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaSgId'
+
+  SubscriptionFilterName:
+    Description: CloudWatch subscription filter name
+    Value: !Sub 'archaser-rds-postgres-to-loki-${Environment}'
+
+  ExploreQuery:
+    Description: Grafana Explore LogQL to validate ingest
+    Value: !Sub '{job="rds-postgres", environment="${Environment}"} | json'

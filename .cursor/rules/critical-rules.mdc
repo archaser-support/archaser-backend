@@ -1,0 +1,68 @@
+---
+alwaysApply: true
+---
+
+# Critical Rules
+
+## Summary
+
+This document defines critical rules that must always be followed during development. It covers:
+
+- **Critical Restrictions**: Never create .md files or run destructive commands without approval, never modify translations without permission
+- **Development Workflow**: Pre-commit checklist, code standards, and testing requirements
+- **Database Guidelines**: Safe schema changes and verification practices
+- **Security & Performance**: NextAuth.js, error boundaries, environment variables, query optimization
+- **Current Features**: Overview of existing application features
+
+These rules take precedence over all other guidelines. Always follow the pre-commit checklist and use static analysis tools before committing.
+
+## 🚫 CRITICAL RULES
+
+- ❌ NEVER create .md files, READMEs, or run commands without approval (except plans/PRDs under `.cursor/plans/` and `/to-issues` slices under `.scratch/`)
+- ❌ NEVER modify translation files without explicit permission
+- ❌ NEVER add new styles without explicit user approval (see Styling below)
+- ❌ NEVER run `npx prisma db push --force-reset` or `npx prisma migrate dev`
+- ❌ NEVER run `npm run dev` or any development server commands automatically
+- ✅ Use `search_replace` with 3-5 lines context, `read_file`, `grep_search`
+- ✅ Use static analysis: `npx tsc --noEmit`, `npm run test:unit`, `npm run lint`
+
+## 🏗️ Development Workflow
+
+### Pre-Commit Checklist
+
+1. Remove development logs (console.log, debug, info)
+2. Keep only error logging and critical failures
+3. Remove commented code, unused variables, outdated TODOs
+
+### Styling (requires explicit approval for new styles)
+
+- **Default**: Reuse existing theme — `app/theme/components.ts`, `app/theme/toolbarStyles.ts`, MUI `data-hebrew` variants, `endless-scroll-toolbar`, `ToolbarDropdownFilter`, `input-toolbar-labeled`, and component layout props (`fullWidth`, `dir`, `slotProps`) — before adding anything new
+- ❌ Do **not** add new global theme blocks, new CSS class hooks (e.g. feature-specific `#id` or one-off class names in `MuiCssBaseline`), duplicated `sx` style objects, or new entries in `toolbarStyles.ts` / `components.ts` unless the user explicitly approves
+- ✅ Allowed without asking: wiring existing classes (e.g. `endless-scroll-toolbar`, `data-hebrew`), minimal layout-only `sx` (flex, gap, width on a single component), and extending an **existing** theme selector when the user asked to fix styling using the theme
+- If existing theme cannot cover the case, **stop and ask** before inventing new styles
+
+### Code Standards
+
+- Use TypeScript, proper error handling, React Query
+- Use NextAuth.js with role-based access control
+- Create feature branches, write tests, review before merging
+- **When generating plans**: Always include a Testing Strategy section with test units mapped to business requirements (see Testing Guidelines)
+
+### Database Guidelines
+
+- Check Prisma schema before creating scripts
+- Never assume field names - verify in schema
+- Test scripts with small data subsets
+- Use `npx prisma db push` for safe schema changes
+
+## 🔒 Security & Performance
+
+- Use NextAuth.js with role-based access control
+- Implement error boundaries and user-friendly error messages
+- Use environment variables for sensitive information
+- Optimize queries, use proper indexing and pagination
+
+## 📋 Current Features
+
+- User, Customer, Invoice, Activity, Dispute management
+- Collection period tracking, Multi-language support, Role-based access control

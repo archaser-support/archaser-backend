@@ -1,0 +1,652 @@
+---
+alwaysApply: false
+---
+# Modal/Dialog Patterns
+
+## Summary
+
+This document provides comprehensive patterns and guidelines for implementing modal dialogs in the application. It covers:
+
+- **AppDialog and useAppDialog**: One shared component and hook for **slide**, **drag**, **align**, and **resize** — use these instead of manual Slide/draggable/resizable implementations
+- **Standard Dialog Structure**: Basic centered dialogs with Fade transitions, proper accessibility, and RTL support (when not using AppDialog)
+- **Form Modal Pattern**: Organizing create/edit forms with logical sections and responsive layouts
+- **Memoized RTL Styles**: Performance-optimized RTL-aware styling patterns
+- **Loading and Error States**: Handling async operations and validation errors
+- **Custom Scrollbar Styling**: Use **ModalScrollBox** for the scroll area and **scrollContainerId** on AppDialog; keep title and actions fixed via paperSx so only the inner scroll area scrolls
+- **Scroll Prevention Pattern**: Preventing background scrolling when fixed-position dialogs are open
+
+All patterns include RTL (Right-to-Left) support for Hebrew language, accessibility considerations, and follow Material-UI best practices.
+
+## AppDialog and useAppDialog (slide, drag, align, resize)
+
+**For slide, drag, align, and resize behavior**, use **AppDialog** from `shared/layout-components/modal/AppDialog` and the **useAppDialog** hook from `shared/hooks/useAppDialog`. Do not reimplement Slide transition, draggable title bar, edge alignment, or resize handles manually — AppDialog and useAppDialog provide all of this.
+
+- **AppDialog** is the preferred API: it uses `useAppDialog` internally and renders Dialog, DialogTitle (with DragHandle when `drag` is true), DialogContent, DialogActions, and optional resize handles.
+- **Options:** `drag`, `align`, `slide` (defaults: true), `resize` (default: false). Pass `isRTL` and, when `resize` is true, `resizeOptions` (see `UseAppDialogResizeOptions` in `useAppDialog.ts`: `initialWidth`, `initialHeight` / `heightFraction`, `minWidth`, `maxWidth`, `minHeight`, `maxHeight`).
+- **Props:** `open`, `onClose`, `title`, `titleIcon?`, `children`, `actions?`, `ariaLabelledBy`, `ariaDescribedBy`, `paperWidth?` (fixed width when not resize, e.g. `"380px"`), `paperMaxHeight?`, `paperSx?`, `scrollContainerId?` (id of the inner scroll container, e.g. ModalScrollBox; when set, AppDialog calls useModalScrollPrevention internally), and any MUI Dialog props.
+- **Resize:** When `resize` is true, AppDialog renders three handles (width, height from bottom, height from top). The hook handles top-resize using `rect.top` when bottom-aligned to avoid jump, and the top handle uses an 8–48px skip so the title bar remains draggable.
+- **Hook only:** For a custom dialog layout that still needs slide/drag/align/resize logic, use `useAppDialog({ drag, align, slide, resize, isRTL, isOpen, resizeOptions })` and wire `dialogRef`, `handleDragStart`, `resetOnExited`, `slideDirection`, `getPaperPositionSx`, and resize handlers to your own Dialog/Paper/Title. For backward compatibility, `useDragDialog` from `shared/hooks/useDragDialog` re-exports `useAppDialog`; prefer importing `useAppDialog` for new code.
+
+**Example — AppDialog (no resize):**
+
+```typescript
+import AppDialog from "@/shared/layout-components/modal/AppDialog";
+
+<AppDialog
+    open={isOpen}
+    onClose={onClose}
+    drag
+    align
+    slide
+    isRTL={isRTL}
+    paperWidth="380px"
+    paperMaxHeight="90vh"
+    title={title}
+    titleIcon={<Icon />}
+    ariaLabelledBy="my-dialog-title"
+    ariaDescribedBy="my-dialog-description"
+    actions={<><Button cancel /><Button confirm /></>}
+>
+    {content}
+</AppDialog>
+```
+
+**Example — AppDialog with resize:**
+
+```typescript
+<AppDialog
+    open={isOpen}
+    onClose={onClose}
+    drag
+    align
+    slide
+    resize
+    isRTL={isRTL}
+    resizeOptions={{
+        initialWidth: 440,
+        heightFraction: 0.6,
+        minWidth: 360,
+        maxWidth: 900,
+        minHeight: 300,
+    }}
+    title={title}
+    titleIcon={<Icon />}
+    ariaLabelledBy="my-dialog-title"
+    ariaDescribedBy="my-dialog-description"
+    actions={<><Button cancel /><Button confirm /></>}
+>
+    {content}
+</AppDialog>
+```
+
+**Example — useAppDialog for custom dialog:** Use when you need the same behavior (slide, drag, align, resize) but a different structure. Call `useAppDialog({ drag, align, slide, resize, isRTL, isOpen, resizeOptions })`, then use `dialogRef`, `handleDragStart`, `resetOnExited`, `slideDirection`, `getPaperPositionSx(theme, opts)`, and when `resize` is true: `handleResizeWidthStart`, `handleResizeHeightBottomStart`, `handleResizeHeightTopStart` (with the 8–48px skip on top handle). Pass `TransitionProps={{ onExited: resetOnExited }}` and when using Slide, `TransitionProps={{ direction: slideDirection, onExited: resetOnExited }}`.
+
+## 🪟 Modal/Dialog Patterns
+
+### Standard Dialog Structure (centered, no slide/drag/align/resize)
+
+**When you need a simple centered dialog (Fade transition, no drag/align/slide/resize), use this structure. For edge-aligned, draggable, or resizable dialogs, use AppDialog instead (see above).**
+
+```typescript
+import { Dialog, DialogTitle, DialogContent, DialogActions, Button, Box, useTheme } from "@mui/material";
+import Fade from "@mui/material/Fade";
+import { useTranslation } from "react-i18next";
+
+const { t, i18n } = useTranslation(["namespace", "common"]);
+const theme = useTheme();
+const isRTL = i18n.language === "he";
+
+<Dialog
+    open={isOpen}
+    onClose={onClose}
+    TransitionComponent={Fade as any}
+    transitionDuration={{ enter: 300, exit: 200 }}
+    maxWidth="sm" // or "md", "lg", "xl"
+    fullWidth
+    disableEnforceFocus={false}
+    disableAutoFocus={false}
+    keepMounted
+    aria-labelledby="dialog-title"
+    aria-describedby="dialog-description"
+    PaperProps={{
+        elevation: 24,
+        role: "dialog",
+        "aria-modal": "true",
+        dir: isRTL ? "rtl" : "ltr",
+        sx: {
+            borderRadius: typeof theme.shape.borderRadius === "number" ? theme.shape.borderRadius : 4,
+            maxHeight: { xs: "95vh", sm: "90vh" },
+            zIndex: 1300,
+            direction: isRTL ? "rtl" : "ltr",
+            // Remove bottom padding from DialogTitle
+            "& > .MuiDialogTitle-root": {
+                paddingBottom: "0 !important",
+            },
+        },
+    }}
+    sx={{
+        "& .MuiBackdrop-root": {
+            zIndex: 1299,
+        },
+    }}
+>
+    <DialogTitle
+        id="dialog-title"
+        component="h2"
+        aria-label={t("dialog.title")}
+        sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: theme.spacing(1),
+            background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
+            color: "white",
+            fontSize: { xs: "1rem", sm: "1.25rem" },
+            fontWeight: 400,
+            textAlign: isRTL ? "right" : "left",
+            direction: isRTL ? "rtl" : "ltr",
+            // Theme automatically handles RTL-aware padding via [dir='rtl'] selector
+            // Theme has: "10px 24px 0px 40px" (desktop) / "10px 20px 0px 40px" (mobile) for LTR
+            // Theme automatically swaps to: "10px 40px 0px 24px" / "10px 40px 0px 20px" for RTL
+            // No need to override padding unless using custom top padding (see ConfirmResolutionDialog example)
+            "& .MuiTypography-root": {
+                fontWeight: 400,
+            },
+            "& .MuiSvgIcon-root": {
+                fontSize: { xs: "1.5rem", sm: "1.75rem" },
+                color: "white",
+            },
+        }}
+    >
+        <Box
+            sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: theme.spacing(1),
+                flex: 1,
+                pb: "10px",
+            }}
+        >
+            <IconComponent aria-hidden="true" />
+            {t("dialog.title")}
+        </Box>
+    </DialogTitle>
+    
+    <DialogContent
+        id="dialog-description"
+        sx={{
+            "&:first-of-type": {
+                paddingTop: theme.spacing(2),
+            },
+            pl: "40px", // 40px left padding
+            direction: isRTL ? "rtl" : "ltr",
+        }}
+    >
+        {/* Content sections */}
+    </DialogContent>
+    
+    <DialogActions
+        sx={{
+            direction: isRTL ? "rtl" : "ltr",
+            gap: theme.spacing(1),
+            px: theme.spacing(3),
+            pb: theme.spacing(2),
+        }}
+    >
+        <Button
+            onClick={onClose}
+            variant="outlined"
+            fullWidth={false}
+            disabled={isLoading}
+            sx={{
+                px: 2,
+                py: 0.75,
+                borderRadius: 1,
+                color: "text.primary",
+                borderColor: "divider",
+                mr: isRTL ? 0 : theme.spacing(1),
+                ml: isRTL ? theme.spacing(1) : 0,
+                "&:hover": {
+                    borderColor: "primary.main",
+                    backgroundColor: "action.hover",
+                },
+            }}
+        >
+            {t("actions.cancel", { ns: "common" })}
+        </Button>
+        <Button
+            onClick={onConfirm}
+            variant="contained"
+            fullWidth={false}
+            disabled={isLoading || !canConfirm}
+            sx={{
+                direction: isRTL ? "rtl" : "ltr",
+                "& .MuiButton-endIcon": {
+                    marginLeft: isRTL ? 0 : theme.spacing(1),
+                    marginRight: isRTL ? theme.spacing(1) : 0,
+                },
+            }}
+        >
+            {t("actions.confirm", { ns: "common" })}
+        </Button>
+    </DialogActions>
+</Dialog>
+```
+
+**Key Points:**
+- ✅ Always use `Fade` transition with `enter: 300, exit: 200` for centered dialogs
+- ✅ Set `elevation: 24` and `zIndex: 1300` for dialog, `1299` for backdrop
+- ✅ **DialogTitle**: Theme automatically handles RTL-aware padding
+  - Theme has: `padding: "10px 24px 0px 40px"` (desktop) / `"10px 20px 0px 40px"` (mobile) for LTR
+  - Theme automatically swaps to: `"10px 40px 0px 24px"` / `"10px 40px 0px 20px"` for RTL via `[dir='rtl']` selector
+  - **No need to override padding** - theme handles it automatically when `dir="rtl"` is set on Dialog's PaperProps
+  - Theme provides `fontSize: { xs: "1rem", sm: "1.25rem" }` and `fontWeight: 400` - no need to override these
+  - **Exception**: If using custom top padding (e.g., `pt: theme.spacing(2)`), override left/right padding with RTL-aware values
+- ✅ **DialogTitle background**: Use primary and secondary colors with `background: linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)` for consistent branding
+- ✅ **DialogTitle content**: Wrap icon and text in a `Box` with `pb: "10px"` and use `justifyContent: "space-between"` for layout
+- ✅ **DialogContent**: Use `pl: "40px"` for 40px left padding (RTL-aware if needed)
+- ✅ **Remove DialogTitle bottom padding**: Add `paddingBottom: "0 !important"` in PaperProps `"& > .MuiDialogTitle-root"` selector
+- ✅ Always include `aria-labelledby` and `aria-describedby` for accessibility
+- ✅ RTL support: Add `dir` prop to `PaperProps` and use `direction`/`textAlign` on all sections
+- ✅ Button styling: Cancel (`variant="outlined"`), Confirm (`variant="contained"`), use `px: 2, py: 0.75` for padding
+
+### Form Modal Pattern
+
+**For create/edit forms, organize content into logical sections:**
+
+```typescript
+<form
+    onSubmit={(e) => {
+        e.preventDefault();
+        handleSubmit();
+    }}
+    dir={isRTL ? "rtl" : "ltr"}
+>
+    <DialogContent
+        sx={{
+            direction: isRTL ? "rtl" : "ltr",
+        }}
+    >
+        <Box
+            sx={{
+                display: "flex",
+                flexDirection: "column",
+                gap: { xs: 0.75, sm: 1 },
+                width: "100%",
+                mx: "auto",
+                direction: isRTL ? "rtl" : "ltr",
+            }}
+        >
+            {/* Section with header */}
+            <Box>
+                <Typography variant="subtitle2" sx={{ mb: 0.5, color: "primary.main" }}>
+                    {t("sections.status")}
+                </Typography>
+                <Box sx={{
+                    display: "grid",
+                    gap: 1,
+                    "@media (min-width: 600px)": {
+                        gridTemplateColumns: "repeat(2, 1fr)",
+                        padding: "8px",
+                    },
+                    "@media (max-width: 599px)": {
+                        gridTemplateColumns: "1fr",
+                        padding: "6px",
+                    },
+                }}>
+                    {/* Form fields */}
+                </Box>
+            </Box>
+        </Box>
+    </DialogContent>
+    
+    <DialogActions>
+        {/* Buttons - see Standard Dialog Structure */}
+    </DialogActions>
+</form>
+```
+
+**Key Points:**
+- ✅ Wrap form in `<form>` tag with `onSubmit` handler and `dir` prop
+- ✅ Organize content into logical sections with headers
+- ✅ Use responsive grid layout for form fields
+- ✅ Use `gap` spacing for consistent spacing
+- ✅ Memoize complex styles with `useMemo` for performance
+
+### Memoized RTL Styles
+
+**For reusable RTL-aware styles, use memoization:**
+
+```typescript
+const isRTL = i18n.language === "he";
+
+const textFieldSx = useMemo(
+    () => ({
+        "& .MuiInputBase-input": {
+            textAlign: isRTL ? "right" : "left",
+            direction: isRTL ? "rtl" : "ltr",
+        },
+        "& .MuiInputLabel-root": {
+            textAlign: isRTL ? "right" : "left",
+            direction: isRTL ? "rtl" : "ltr",
+        },
+    }),
+    [isRTL]
+);
+
+const tooltipPopperProps = useMemo(
+    () => ({
+        sx: {
+            "& .MuiTooltip-tooltip": {
+                direction: isRTL ? "rtl" : "ltr",
+                textAlign: isRTL ? "right" : "left",
+            },
+        },
+    }),
+    [isRTL]
+);
+```
+
+**Key Points:**
+- ✅ Memoize styles that depend on RTL state
+- ✅ Apply `direction` and `textAlign` consistently
+- ✅ Use `useMemo` to prevent unnecessary recalculations
+
+### Loading and Error States
+
+**Handle loading states in buttons and content:**
+
+```typescript
+// Button loading state: disable during loading
+<Button
+    type="submit"
+    variant="contained"
+    disabled={isLoading}
+>
+    {t("actions.save", { ns: "common" })}
+</Button>
+
+// Content loading state
+{isLoadingData ? (
+    <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+        <CircularProgress size={24} />
+    </Box>
+) : (
+    // Content
+)}
+```
+
+**Display validation and API errors:**
+
+```typescript
+// Field-level errors
+<TextField
+    error={!!errors.fieldName}
+    helperText={errors.fieldName || undefined}
+    // ... other props
+/>
+
+// Section-level errors
+{errors.sectionName && (
+    <Box sx={{ mb: 1 }}>
+        <Typography variant="body2" color="error.main" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <InfoIcon color="error" fontSize="small" />
+            {errors.sectionName}
+        </Typography>
+    </Box>
+)}
+
+// API error messages
+{errorMessage && (
+    <Typography variant="body2" sx={{ color: "error.main", mt: 2, direction: isRTL ? "rtl" : "ltr" }}>
+        {errorMessage}
+    </Typography>
+)}
+```
+
+**Key Points:**
+- ✅ Disable buttons during loading
+- ✅ Use `error` and `helperText` props for TextField errors
+- ✅ Display section-level errors with error color and icon
+- ✅ Always include RTL direction for error messages
+
+### Slide, drag, align, and resize (use AppDialog / useAppDialog)
+
+**Do not implement Slide transition, draggable title bar, edge alignment, or resize handles manually.** Use **AppDialog** (or **useAppDialog** for custom layout) as described in the "AppDialog and useAppDialog" section above.
+
+- **Slide + align:** Use AppDialog with `slide` and `align` (defaults). It uses Slide with `slideDirection` from useAppDialog and positions the paper via `getPaperPositionSx`.
+- **Drag:** Use AppDialog with `drag` (default). It wires `handleDragStart` to the title and shows the DragHandle; position is reset on close via `resetOnExited`.
+- **Resize:** Use AppDialog with `resize` and `resizeOptions`. The hook and component handle width, height-from-bottom, and height-from-top (with 8–48px skip on top for drag), and reset on `onExited`.
+- **Custom layout:** If you need a different Dialog structure, use `useAppDialog({ drag, align, slide, resize, isRTL, isOpen, resizeOptions })` and connect its return values to your Dialog/Paper/Title and optional resize handles. See `shared/hooks/useAppDialog.ts` and `shared/layout-components/modal/AppDialog.tsx` for the canonical implementation.
+
+### Custom Scrollbar Styling
+
+**When the app hides scrollbars globally (`*::-webkit-scrollbar { display: none }`), dialogs with a scrollable area must override that so the scrollbar is visible. Use a dedicated scroll container with an ID and inject a `<style>` tag when the modal is open so the override wins in the cascade. For AppDialog, also keep the title and actions fixed so only the middle content scrolls.**
+
+**Pattern (from UpsertContactModal):**
+
+0. **Fixed header and actions (AppDialog only):** So the scrollbar appears only in the content area and the title/buttons stay fixed, pass `paperSx` that pins the title and actions and makes DialogContent a non-scrolling flex column. The scroll must happen inside a **single inner scroll area** (use **ModalScrollBox** in step 1), not on DialogContent.
+
+```typescript
+paperSx={{
+    sx: {
+        "& > .MuiDialogTitle-root": {
+            flexShrink: 0,
+        },
+        "& > .MuiDialogContent-root": {
+            flex: "1 1 auto",
+            minHeight: 0,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+        },
+        "& > .MuiDialogActions-root": {
+            flexShrink: 0,
+            // optional: backgroundColor, borderTop, etc.
+        },
+    },
+}}
+```
+
+**Content wrapper:** The direct child of AppDialog (e.g. a `<form>` or `Box`) must be a flex column that fills DialogContent and constrains the scroll to the inner scroll area: `display: "flex"`, `flexDirection: "column"`, `flex: "1 1 auto"`, `minHeight: 0`, `overflow: "hidden"`. Put **ModalScrollBox** (step 1) as the scrollable child inside this wrapper.
+
+1. **Scroll container and scroll prevention:** Use the shared **ModalScrollBox** component (`shared/layout-components/modal/ModalScrollBox.tsx`) for the scroll area. Pass the same `id` to ModalScrollBox and to AppDialog’s **`scrollContainerId`**; AppDialog will call `useModalScrollPrevention(open, scrollContainerId)` internally so you do not call the hook yourself. ModalScrollBox provides the scrollbar styling (thin, primary-based) and RTL-aware layout.
+
+2. **Scrollbar visibility override (optional):** When the app hides scrollbars globally (`*::-webkit-scrollbar { display: none }`), ModalScrollBox’s `sx` may not win. In that case, in a `useEffect` when the modal is open, create a `<style id="...">` element, append it to `document.body`, and set its `textContent` to CSS that targets the scroll container by ID with `!important`. Remove the style element on cleanup (when the modal closes).
+
+```typescript
+useEffect(() => {
+    if (!isOpen || typeof document === "undefined") return;
+    const trackBg = alpha(theme.palette.primary.main, 0.1);
+    const thumbBg = alpha(theme.palette.primary.main, 0.6);
+    const thumbHover = theme.palette.primary.main;
+    const id = "contact-modal-scrollbar-override";
+    let el = document.getElementById(id) as HTMLStyleElement | null;
+    if (!el) {
+        el = document.createElement("style");
+        el.id = id;
+        document.body.appendChild(el);
+    }
+    el.textContent = `
+#contact-modal-scroll { scrollbar-width: thin; scrollbar-color: ${thumbBg} ${trackBg}; }
+#contact-modal-scroll::-webkit-scrollbar { display: block !important; width: 12px !important; -webkit-appearance: none !important; }
+#contact-modal-scroll::-webkit-scrollbar-track { background-color: ${trackBg} !important; border-radius: 6px !important; }
+#contact-modal-scroll::-webkit-scrollbar-thumb { background-color: ${thumbBg} !important; border-radius: 6px !important; }
+#contact-modal-scroll::-webkit-scrollbar-thumb:hover { background-color: ${thumbHover} !important; }
+`;
+    return () => {
+        const styleEl = document.getElementById(id);
+        if (styleEl) styleEl.remove();
+    };
+}, [isOpen, theme.palette.primary.main]);
+```
+
+**ModalScrollBox usage:**
+
+```typescript
+<AppDialog
+    scrollContainerId="contact-modal-scroll"
+    ...
+>
+    <form style={{ display: "flex", flexDirection: "column", flex: "1 1 auto", minHeight: 0, overflow: "hidden" }}>
+        <ModalScrollBox id="contact-modal-scroll" isRTL={isRTL}>
+            {/* modal content */}
+        </ModalScrollBox>
+    </form>
+</AppDialog>
+```
+
+**Key Points:**
+- ✅ **AppDialog:** Pass `scrollContainerId` with the id of the scroll container; use **ModalScrollBox** for the scroll area with the same id.
+- ✅ **AppDialog:** Use `paperSx` to set `flexShrink: 0` on title and actions, and `overflow: "hidden"` + flex column on DialogContent, so only the inner scroll area scrolls.
+- ✅ **Content wrapper:** Form or Box wrapping the scroll area must have `flex: "1 1 auto"`, `minHeight: 0`, `overflow: "hidden"` so height is constrained and scroll happens only in ModalScrollBox.
+- ✅ Use a unique ID on the scroll container (ModalScrollBox) and the same id in AppDialog’s `scrollContainerId`.
+- ✅ Reference: `app/[locale]/app/customers/[customerId]/UpsertContactModal.tsx`, `shared/layout-components/modal/ModalScrollBox.tsx`
+
+### Scroll Prevention Pattern
+
+**Prevent background scrolling when dialog is open (for fixed-position dialogs).** When using **AppDialog** with **`scrollContainerId`**, scroll prevention is handled internally; you do not need to call `useModalScrollPrevention` or implement the pattern below. The pattern below applies to custom Dialog implementations that do not use AppDialog.
+
+```typescript
+useEffect(() => {
+    if (isOpen) {
+        // Save current scroll position
+        const scrollY = window.scrollY;
+        const originalStyle = window.getComputedStyle(document.body).overflow;
+        const originalOverflowY = window.getComputedStyle(document.body).overflowY;
+        const originalPosition = window.getComputedStyle(document.body).position;
+        
+        // Lock body scroll
+        document.body.style.overflow = "hidden";
+        document.body.style.overflowY = "hidden";
+        document.body.style.position = "fixed";
+        document.body.style.top = `-${scrollY}px`;
+        document.body.style.width = "100%";
+        document.documentElement.style.overflow = "hidden";
+        
+        // Prevent scroll events from propagating to body when over dialog
+        const handleWheel = (e: WheelEvent) => {
+            const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+            if (!dialog) return;
+            
+            const target = e.target as HTMLElement;
+            const isInsideDialog = dialog.contains(target);
+            
+            if (isInsideDialog) {
+                // Identify scrollable elements by ID (e.g., id="dialog-column-list")
+                const scrollableContainer = document.getElementById('dialog-column-list');
+                const isTargetScrollable = target.id === 'dialog-column-list';
+                
+                // Traverse up DOM tree to find scrollable container
+                let isInsideScrollable = isTargetScrollable;
+                if (!isInsideScrollable && target.parentElement) {
+                    let currentElement: HTMLElement | null = target.parentElement;
+                    while (currentElement && currentElement !== dialog) {
+                        if (currentElement.id === 'dialog-column-list') {
+                            isInsideScrollable = true;
+                            break;
+                        }
+                        currentElement = currentElement.parentElement;
+                    }
+                }
+                
+                // Handle scrollable container
+                if (isInsideScrollable && scrollableContainer) {
+                    const canScroll = scrollableContainer.scrollHeight > scrollableContainer.clientHeight;
+                    const isAtTop = scrollableContainer.scrollTop <= 0;
+                    const isAtBottom = scrollableContainer.scrollTop >= scrollableContainer.scrollHeight - scrollableContainer.clientHeight - 1;
+                    
+                    // Only prevent if at boundary
+                    if ((e.deltaY < 0 && isAtTop) || (e.deltaY > 0 && isAtBottom)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    } else if (!canScroll) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
+                } else {
+                    // Check dialog content scrolling
+                    const dialogContent = document.getElementById('dialog-description');
+                    if (dialogContent && dialogContent.contains(target)) {
+                        const canScroll = dialogContent.scrollHeight > dialogContent.clientHeight;
+                        if (canScroll) {
+                            const isAtTop = dialogContent.scrollTop <= 0;
+                            const isAtBottom = dialogContent.scrollTop >= dialogContent.scrollHeight - dialogContent.clientHeight - 1;
+                            if ((e.deltaY < 0 && isAtTop) || (e.deltaY > 0 && isAtBottom)) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Always prevent scrolling on backdrop
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        };
+        
+        const handleBackdropWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        
+        window.addEventListener('wheel', handleWheel, { passive: false, capture: true });
+        const backdrop = document.querySelector('.MuiBackdrop-root');
+        if (backdrop) {
+            backdrop.addEventListener('wheel', handleBackdropWheel, { passive: false });
+        }
+        
+        // Cleanup
+        return () => {
+            document.body.style.overflow = originalStyle;
+            document.body.style.overflowY = originalOverflowY;
+            document.body.style.position = originalPosition;
+            document.body.style.width = "";
+            document.documentElement.style.overflow = "";
+            
+            if (originalPosition === 'static' || originalPosition === '') {
+                window.scrollTo(0, scrollY);
+            }
+            
+            window.removeEventListener('wheel', handleWheel, { capture: true });
+            if (backdrop) {
+                backdrop.removeEventListener('wheel', handleBackdropWheel);
+            }
+        };
+    }
+}, [isOpen]);
+```
+
+**Key Points:**
+- ✅ Save scroll position before locking body
+- ✅ Lock body with `position: "fixed"` and `top: -${scrollY}px`
+- ✅ Prevent scroll on both `document.body` and `document.documentElement`
+- ✅ **Identify scrollable elements by ID** - Add unique IDs to scrollable containers
+- ✅ **Traverse up DOM tree** - If target is not the container, traverse up to find it
+- ✅ **Only prevent scrolling at boundaries** - Check `isAtTop` and `isAtBottom` before preventing
+- ✅ Always prevent scrolling on backdrop
+- ✅ Restore scroll position and styles on cleanup
+- ✅ Use `{ passive: false, capture: true }` for wheel event listeners
+
+### Common Mistakes to Avoid
+
+- ❌ **Don't reimplement slide/drag/align/resize** — use AppDialog or useAppDialog from `shared/layout-components/modal/AppDialog` and `shared/hooks/useAppDialog.ts`
+- ❌ **Don't override DialogTitle padding unnecessarily** - Theme automatically handles RTL-aware padding when `dir="rtl"` is set on Dialog's PaperProps
+- ❌ **Don't add marginLeft/marginRight to the DialogTitle content Box** (icon+text) in draggable dialogs — the theme's padding handles spacing from the DragHandle; extra margin creates inconsistent spacing
+- ❌ Don't override DialogTitle fontSize/fontWeight - theme provides defaults
+- ❌ Don't forget RTL support - always include `direction`, `textAlign`, and `dir` prop on `PaperProps` (theme uses this for automatic padding)
+- ❌ Don't use inline styles - use `sx` prop or memoized styles
+- ❌ Don't skip accessibility - always include `aria-labelledby` and `aria-describedby`
+- ❌ Don't forget loading states - disable buttons and show spinners
+- ❌ Don't use wrong transition - use `Fade` for centered dialogs, `Slide` for edge-aligned (AppDialog does this via `slide` prop)
+- ❌ Don't forget `minHeight: 0` on flex scrollable content for proper scrolling
+
+### Reference Implementations
+
+- **AppDialog and useAppDialog**: `shared/layout-components/modal/AppDialog.tsx`, `shared/hooks/useAppDialog.ts`
+- **Upsert Modal (scrollbar + resizable with AppDialog/useAppDialog)**: See `app/[locale]/app/customers/[customerId]/UpsertContactModal.tsx`
+- **Delete Dialog**: See `app/[locale]/app/admin/accounts/[AccountId]/details/components/DeleteBusinessUnitDialog.tsx`
+- **Generic Delete Dialog**: See `shared/layout-components/modal/DeleteDialog.tsx`
+- **Dialogs using AppDialog**: See `shared/layout-components/grid/ExportDialog.tsx`, `app/[locale]/app/customers/components/MassSendEmailModal.tsx`
+- **useDragDialog** (re-exports useAppDialog): `shared/hooks/useDragDialog.ts`

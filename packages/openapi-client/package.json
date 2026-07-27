@@ -1,0 +1,11 @@
+{
+  "name": "@archaser/openapi-client",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Browser Nest OpenAPI client stub for Amplify UI (no Prisma)",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "echo \"stub — run openapi:export + openapi-typescript for full types\""
+  }
+}
