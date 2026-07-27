@@ -1,6 +1,7 @@
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { DatabaseService } from "../database/database.service";
+import { RealtimeHubService } from "../realtime/realtime-hub.service";
 export type OperationsListQuery = {
     page?: string;
     limit?: string;
@@ -13,7 +14,8 @@ export type OperationsListQuery = {
 export declare class OperationsService {
     private readonly db;
     private readonly accessScope;
-    constructor(db: DatabaseService, accessScope: AccessScopeService);
+    private readonly realtime;
+    constructor(db: DatabaseService, accessScope: AccessScopeService, realtime: RealtimeHubService);
     list(operationType: string, user: JwtPayload, query: OperationsListQuery): Promise<{
         disputes: ({
             DisputeReason: {

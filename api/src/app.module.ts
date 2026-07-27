@@ -24,6 +24,7 @@ import { PermissionsModule } from "./permissions/permissions.module";
 import { PlatformLeavesModule } from "./platform-leaves/platform-leaves.module";
 import { PortalModule } from "./portal/portal.module";
 import { QueueModule } from "./queue/queue.module";
+import { RealtimeModule } from "./realtime/realtime.module";
 import { ReferenceDataModule } from "./reference-data/reference-data.module";
 import { ReportsModule } from "./reports/reports.module";
 import { RolesModule } from "./roles/roles.module";
@@ -45,6 +46,7 @@ import { UserPreferencesModule } from "./user-preferences/user-preferences.modul
         AuthModule,
         MetricsModule,
         GatewayModule,
+        RealtimeModule,
         QueueModule,
         CustomersModule,
         InvoicesModule,

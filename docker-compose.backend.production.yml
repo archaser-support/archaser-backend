@@ -1,4 +1,18 @@
 services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - archaser-redis-production-data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   api:
     image: node:20-alpine
     working_dir: /workspace/backend
@@ -9,10 +23,16 @@ services:
       NODE_ENV: production
       NEST_PORT: 3010
       PORT: 3010
+      REDIS_URL: redis://redis:6379
+      BULLMQ_ENABLED: "true"
+      BULLMQ_QUEUE: archaser-cron
     volumes:
       - /home/ubuntu/production:/workspace
     ports:
       - "3010:3010"
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   worker:
@@ -24,11 +44,14 @@ services:
     environment:
       NODE_ENV: production
       WORKER_PORT: 3003
-      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_URL: redis://redis:6379
       BULLMQ_QUEUE: archaser-cron
       CONNECTION_LIMIT_WORKER: 5
     volumes:
       - /home/ubuntu/production:/workspace
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   sms:
@@ -69,3 +92,6 @@ services:
     volumes:
       - /home/ubuntu/production:/workspace
     restart: unless-stopped
+
+volumes:
+  archaser-redis-production-data:

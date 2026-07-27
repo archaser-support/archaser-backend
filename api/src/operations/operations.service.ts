@@ -8,6 +8,7 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+import { RealtimeHubService } from "../realtime/realtime-hub.service";
 
 export type OperationsListQuery = {
     page?: string;
@@ -23,7 +24,8 @@ export type OperationsListQuery = {
 export class OperationsService {
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
+        private readonly accessScope: AccessScopeService,
+        private readonly realtime: RealtimeHubService
     ) {}
 
     async list(
@@ -304,6 +306,10 @@ export class OperationsService {
         if (result.count === 0) {
             throw new NotFoundException({ error: "Notification not found" });
         }
+        await this.realtime.notifyNotificationChange(
+            userInfo.userId,
+            "notification-deleted"
+        );
         return { success: true };
     }
 
@@ -334,6 +340,10 @@ export class OperationsService {
         if (result.count === 0) {
             throw new NotFoundException({ error: "Notification not found" });
         }
+        await this.realtime.notifyNotificationChange(
+            userInfo.userId,
+            "notification-updated"
+        );
         return { success: true, read };
     }
 
@@ -351,6 +361,10 @@ export class OperationsService {
 
         if (action === "deleteAll") {
             await this.db.notification.deleteMany({ where: baseWhere });
+            await this.realtime.notifyNotificationChange(
+                userInfo.userId,
+                "notifications-cleared"
+            );
             return { success: true };
         }
 
@@ -358,6 +372,10 @@ export class OperationsService {
             await this.db.notification.deleteMany({
                 where: { ...baseWhere, type: body.type as never },
             });
+            await this.realtime.notifyNotificationChange(
+                userInfo.userId,
+                "notifications-cleared-by-type"
+            );
             return { success: true };
         }
 
@@ -375,6 +393,10 @@ export class OperationsService {
                     created_at: { lt: cutoff },
                 },
             });
+            await this.realtime.notifyNotificationChange(
+                userInfo.userId,
+                "notifications-cleared-read"
+            );
             return { success: true };
         }
 

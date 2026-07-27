@@ -1,3 +1,9 @@
+# Standalone Redis for local/dev. Staging/production compose already
+# includes Redis (`docker-compose.backend.*.yml`). Prefer those for EC2.
+#
+# Local: docker compose -f backend/docker-compose.redis.yml up -d
+# Then set REDIS_URL=redis://127.0.0.1:6379 in backend/.env
+
 services:
   redis:
     image: redis:7-alpine
@@ -7,6 +13,11 @@ services:
       - archaser-redis-data:/data
     command: ["redis-server", "--appendonly", "yes"]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   archaser-redis-data:

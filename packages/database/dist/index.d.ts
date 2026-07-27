@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
  * @archaser/database — shared Postgres access for Nest (and later worker/services).
  *
  * Schema / migrations ownership (Stage 0 path):
- * - Source of truth today: repo-root `prisma/schema.prisma` + `prisma/migrations/`.
+ * - Source of truth today: `backend/prisma/schema.prisma` + `backend/prisma/migrations/`.
  * - Next.js continues to generate `@prisma/client` from that tree.
  * - This package is the Nest consumption seam: create a labeled PrismaClient against
  *   the same `DATABASE_URL` / Postgres instance.

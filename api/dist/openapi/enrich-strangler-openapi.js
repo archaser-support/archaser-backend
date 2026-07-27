@@ -86,11 +86,11 @@ function enrichStranglerOpenApi(document) {
     }
     mergePath(document, "/api/ws/{path}", {
         get: {
-            tags: ["proxy-keep-on-next"],
-            summary: "WebSocket — keep on Next at reverse proxy (D2=A); Nest does not own upgrades",
+            tags: ["realtime"],
+            summary: "SSE realtime on Nest (notifications, control-center). EventSource may use ?access_token=.",
             responses: {
-                "501": {
-                    description: "Must terminate on Next, not Nest",
+                "200": {
+                    description: "text/event-stream from Nest RealtimeWsController",
                 },
             },
         },
@@ -113,5 +113,5 @@ function enrichStranglerOpenApi(document) {
 }
 exports.SWAGGER_DESCRIPTION = "Archaser Nest API — Nest-native product HTTP (reports, system, activities, search, " +
     "roles/permissions, entities, operations, import, portal, credit-insurance, gateway, and more). " +
-    "D2=A: reverse proxy keeps /api/ws and /api/auth on Next.";
+    "Nest owns /api/ws SSE; reverse proxy keeps /api/auth on Next until Amplify-only.";
 //# sourceMappingURL=enrich-strangler-openapi.js.map
