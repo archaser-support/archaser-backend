@@ -33,6 +33,7 @@ const permissions_module_1 = require("./permissions/permissions.module");
 const platform_leaves_module_1 = require("./platform-leaves/platform-leaves.module");
 const portal_module_1 = require("./portal/portal.module");
 const queue_module_1 = require("./queue/queue.module");
+const realtime_module_1 = require("./realtime/realtime.module");
 const reference_data_module_1 = require("./reference-data/reference-data.module");
 const reports_module_1 = require("./reports/reports.module");
 const roles_module_1 = require("./roles/roles.module");
@@ -57,6 +58,7 @@ exports.AppModule = AppModule = __decorate([
             auth_module_1.AuthModule,
             metrics_module_1.MetricsModule,
             gateway_module_1.GatewayModule,
+            realtime_module_1.RealtimeModule,
             queue_module_1.QueueModule,
             customers_module_1.CustomersModule,
             invoices_module_1.InvoicesModule,

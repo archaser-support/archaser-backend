@@ -81,10 +81,18 @@ let DualAuthGuard = class DualAuthGuard {
     }
     extractBearer(req) {
         const header = req.headers.authorization;
-        if (!header?.startsWith("Bearer ")) {
-            return null;
+        if (header?.startsWith("Bearer ")) {
+            return header.slice("Bearer ".length).trim() || null;
         }
-        return header.slice("Bearer ".length).trim() || null;
+        const query = req.query;
+        const fromQuery = query?.access_token;
+        if (typeof fromQuery === "string" && fromQuery.trim()) {
+            return fromQuery.trim();
+        }
+        if (Array.isArray(fromQuery) && typeof fromQuery[0] === "string") {
+            return fromQuery[0].trim() || null;
+        }
+        return null;
     }
     async injectNextAuthCookie(req, user, secret) {
         const cookieName = sessionCookieName();

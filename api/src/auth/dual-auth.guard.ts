@@ -104,10 +104,19 @@ export class DualAuthGuard implements CanActivate {
 
     private extractBearer(req: Request): string | null {
         const header = req.headers.authorization;
-        if (!header?.startsWith("Bearer ")) {
-            return null;
+        if (header?.startsWith("Bearer ")) {
+            return header.slice("Bearer ".length).trim() || null;
         }
-        return header.slice("Bearer ".length).trim() || null;
+        // EventSource cannot set Authorization; Amplify UI passes Nest JWT here.
+        const query = req.query as { access_token?: string | string[] };
+        const fromQuery = query?.access_token;
+        if (typeof fromQuery === "string" && fromQuery.trim()) {
+            return fromQuery.trim();
+        }
+        if (Array.isArray(fromQuery) && typeof fromQuery[0] === "string") {
+            return fromQuery[0].trim() || null;
+        }
+        return null;
     }
 
     private async injectNextAuthCookie(

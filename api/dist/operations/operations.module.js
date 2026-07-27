@@ -10,6 +10,7 @@ exports.OperationsModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const database_module_1 = require("../database/database.module");
+const realtime_module_1 = require("../realtime/realtime.module");
 const operations_controller_1 = require("./operations.controller");
 const operations_service_1 = require("./operations.service");
 let OperationsModule = class OperationsModule {
@@ -17,7 +18,7 @@ let OperationsModule = class OperationsModule {
 exports.OperationsModule = OperationsModule;
 exports.OperationsModule = OperationsModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule],
+        imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule, realtime_module_1.RealtimeModule],
         controllers: [operations_controller_1.OperationsDomainController],
         providers: [operations_service_1.OperationsService],
         exports: [operations_service_1.OperationsService],

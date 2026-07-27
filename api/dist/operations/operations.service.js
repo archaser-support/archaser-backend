@@ -14,10 +14,12 @@ const common_1 = require("@nestjs/common");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
+const realtime_hub_service_1 = require("../realtime/realtime-hub.service");
 let OperationsService = class OperationsService {
-    constructor(db, accessScope) {
+    constructor(db, accessScope, realtime) {
         this.db = db;
         this.accessScope = accessScope;
+        this.realtime = realtime;
     }
     async list(operationType, user, query) {
         if (operationType === "disputes") {
@@ -253,6 +255,7 @@ let OperationsService = class OperationsService {
         if (result.count === 0) {
             throw new common_1.NotFoundException({ error: "Notification not found" });
         }
+        await this.realtime.notifyNotificationChange(userInfo.userId, "notification-deleted");
         return { success: true };
     }
     async updateNotification(user, notificationId, body) {
@@ -277,6 +280,7 @@ let OperationsService = class OperationsService {
         if (result.count === 0) {
             throw new common_1.NotFoundException({ error: "Notification not found" });
         }
+        await this.realtime.notifyNotificationChange(userInfo.userId, "notification-updated");
         return { success: true, read };
     }
     async deleteNotificationsBulk(user, body) {
@@ -289,12 +293,14 @@ let OperationsService = class OperationsService {
         const action = typeof body.action === "string" ? body.action : "";
         if (action === "deleteAll") {
             await this.db.notification.deleteMany({ where: baseWhere });
+            await this.realtime.notifyNotificationChange(userInfo.userId, "notifications-cleared");
             return { success: true };
         }
         if (action === "deleteByType" && typeof body.type === "string") {
             await this.db.notification.deleteMany({
                 where: { ...baseWhere, type: body.type },
             });
+            await this.realtime.notifyNotificationChange(userInfo.userId, "notifications-cleared-by-type");
             return { success: true };
         }
         if (action === "deleteRead") {
@@ -310,6 +316,7 @@ let OperationsService = class OperationsService {
                     created_at: { lt: cutoff },
                 },
             });
+            await this.realtime.notifyNotificationChange(userInfo.userId, "notifications-cleared-read");
             return { success: true };
         }
         throw new common_1.BadRequestException({ error: "Unsupported bulk action" });
@@ -432,6 +439,7 @@ exports.OperationsService = OperationsService;
 exports.OperationsService = OperationsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
-        access_scope_service_1.AccessScopeService])
+        access_scope_service_1.AccessScopeService,
+        realtime_hub_service_1.RealtimeHubService])
 ], OperationsService);
 //# sourceMappingURL=operations.service.js.map
