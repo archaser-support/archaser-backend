@@ -1,0 +1,82 @@
+# Impact Analysis & Planning
+
+## Summary
+
+This document provides guidelines for performing comprehensive impact analysis when creating implementation plans. It covers:
+
+- **Codebase Search**: Using `codebase_search` to identify ALL affected areas (not just explicitly mentioned ones)
+- **Affected Areas**: Identifying related functionality, services, components, API endpoints, database schema, translations, tests, and permissions
+- **Documentation**: Listing all files that need modification, indirect impacts, breaking changes, and dependencies
+- **Search Patterns**: Example patterns for finding related functionality across the codebase
+
+When creating implementation plans, always perform project-wide searches to identify all potential impacts. Never assume only mentioned areas need updates.
+
+## Impact Analysis & Planning
+
+**When creating implementation plans, ALWAYS perform comprehensive project-wide search:**
+
+1. **Search Entire Codebase** - Use `codebase_search` to identify ALL areas that might be affected by the new requirement:
+   - Search for related functionality, services, components, and API endpoints
+   - Look for similar patterns, shared utilities, and dependencies
+   - Identify indirect impacts (e.g., validation, permissions, data flow)
+
+2. **Identify All Affected Areas** - Beyond explicitly mentioned areas, search for:
+   - Related API endpoints that might need updates
+   - Components that use similar functionality
+   - Services that share business logic
+   - Database schema changes that might affect other features
+   - Translation files that might need new keys
+   - Test files that might need updates
+   - Import/export functionality that might be affected
+   - Permission/access control logic that might need changes
+
+3. **Document All Findings** - In the implementation plan, list:
+   - All files that need to be modified (not just the obvious ones)
+   - All areas that might be indirectly affected
+   - Potential breaking changes or migration needs
+   - Dependencies that might need updates
+
+**Example Search Patterns:**
+```typescript
+// When adding parent customer feature, search for:
+- "How are customer relationships handled?"
+- "Where is customer data validated?"
+- "How are customer permissions checked?"
+- "Where are customers imported/exported?"
+- "What components display customer information?"
+- "What APIs interact with customer data?"
+```
+
+**CRITICAL**: Never assume only the mentioned areas need updates. Always search the entire project to find all potential impacts.
+
+## Plan prompts — codebase scan & plan improvements (required)
+
+Before finalizing any implementation plan (initial draft or after user feedback), **always scan the project** for additional files to update — do not rely only on the files the user named.
+
+### Codebase scan (required)
+
+1. Search for the entity/field/API name, related types, enums, and similar existing patterns (`grep`, semantic search, and/or explore subagents in parallel).
+2. Trace the full stack: Prisma schema/migrations → API handlers → services → UI forms → list/grid → export/import → i18n (EN/HE) → tests → report metadata.
+3. For each candidate file, classify as **required**, **optional/out of scope**, or **no change needed** (with a one-line reason).
+4. Include a **“Codebase scan”** section in the plan listing all three buckets — not just the obvious files.
+5. Re-run the scan when the user asks to review the plan or says “what else needs updating?”; update the plan document accordingly.
+
+### Suggest plan improvements (required)
+
+- Call out easy-to-miss touchpoints (e.g. manual export mappers, row/API types, sort allowlists, validation parity client/server, conditional required fields).
+- Note incorrect assumptions (e.g. “export auto-picks grid columns” when a handler maps fields manually).
+- Propose optional follow-ups (unit tests, report builder fields, edge cases) clearly labeled **out of scope unless requested**.
+- Flag cross-cutting rules that affect the plan (translations, styling approval, migration safety).
+- If the scan reveals gaps or better approaches, update the plan before asking the user to approve execution.
+
+## Plan persistence (repo copy)
+
+When you create or finalize an implementation plan (including via `CreatePlan`):
+
+1. **Copy the plan file into the repository** at `.cursor/plans/`, using the **same filename** as the Cursor plan (e.g. `feature_name_abc123.plan.md`).
+2. Source path is typically `~/.cursor/plans/<filename>.plan.md`; destination is `<workspace>/.cursor/plans/<filename>.plan.md`.
+3. **Do not** leave plans only under the user home Cursor directory — other developers and git cannot see them there.
+4. Reference plans in ClickUp, PRs, and comments with the **repo-relative** path: `.cursor/plans/<filename>.plan.md`.
+5. Commit the copied plan with the feature work (or when the user explicitly asks to commit documentation).
+
+This is the project-standard exception to “do not create .md files without approval.”

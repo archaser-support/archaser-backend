@@ -1,0 +1,65 @@
+{
+  "name": "archaser-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Archaser backend workspace (Nest services). Becomes its own git repo.",
+  "workspaces": [
+    "api",
+    "worker",
+    "sms",
+    "connectors",
+    "reports",
+    "e2e",
+    "packages/database",
+    "packages/openapi-client"
+  ],
+  "overrides": {
+    "esbuild": "0.24.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
+  },
+    "scripts": {
+        "postinstall": "prisma generate --schema=./prisma/schema.prisma && node ./scripts/sync-prisma-client.js",
+    "dev:api": "npm run start:dev -w @archaser/api",
+    "start:api": "npm run start:prod -w @archaser/api",
+    "build:api": "npm run build -w @archaser/database && npm run build -w @archaser/api",
+    "build:database": "npm run build -w @archaser/database",
+    "test:api": "npm run test -w @archaser/api",
+    "dev:worker": "npm run start:dev -w @archaser/worker",
+    "dev:sms": "npm run start:dev -w @archaser/sms",
+    "dev:connectors": "npm run start:dev -w @archaser/connectors",
+    "dev:reports": "npm run start:dev -w @archaser/reports",
+    "openapi:export": "npm run build -w @archaser/api && npx tsx ./scripts/openapi/export-nest-openapi.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "migrate:activity-keys": "npx tsx scripts/database/run-migration.ts",
+    "migrate:activity-keys:dry": "npx tsx scripts/database/run-migration.ts --dry-run",
+    "fix:currency-corruption": "npx tsx scripts/database/fix-currency-corruption.ts",
+    "fix:currency-corruption:dry-run": "npx tsx scripts/database/fix-currency-corruption.ts --dry-run",
+    "backfill:invoice-capacity-gap-amounts": "npx tsx scripts/backfill-invoice-capacity-gap-amounts.ts",
+    "backfill:invoice-capacity-gap-amounts:dry": "npx tsx scripts/backfill-invoice-capacity-gap-amounts.ts --dry-run",
+    "datafix:customer-policy-capacity-gap:dry": "npx tsx scripts/datafixes/repair-customer-policy-capacity-gap-amounts.ts --dry-run",
+    "datafix:customer-policy-capacity-gap": "npx tsx scripts/datafixes/repair-customer-policy-capacity-gap-amounts.ts --fix",
+    "credit-reporting-sample-data:dry-run": "npx tsx scripts/testing/generate-credit-reporting-sample-data.ts --dry-run --days 30",
+    "credit-reporting-sample-data:smoke": "npx tsx scripts/testing/generate-credit-reporting-sample-data.ts --confirm --days 7",
+    "credit-reporting-sample-data:verify": "npx tsx scripts/testing/generate-credit-reporting-sample-data.ts --verify",
+    "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js",
+    "debug:logs": "npx tsx scripts/debug/analyze-console-logs.ts",
+    "debug:logs:analyze": "npx tsx scripts/debug/analyze-console-logs.ts analyze",
+    "debug:logs:clear": "npx tsx scripts/debug/analyze-console-logs.ts clear",
+    "debug:logs:tail": "npx tsx scripts/debug/analyze-console-logs.ts tail"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5",
+    "prettier": "^3.0.0",
+    "prisma": "^6.4.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.2",
+    "husky": "^8.0.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1"
+  }
+}

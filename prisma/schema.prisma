@@ -1,0 +1,2657 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.0.x", "rhel-openssl-3.0.x", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
+}
+
+// Note: The `url` property is correct for Prisma 6.x (project uses ^6.1.0)
+// Prisma 7+ requires moving this to prisma.config.ts, but this project uses Prisma 6
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model Account {
+  id                                    Int                             @id(map: "Customer_pkey") @unique(map: "account_id_key") @default(autoincrement())
+  created_at                            DateTime                        @default(now()) @db.Timestamptz(6)
+  name                                  String?                         @db.VarChar
+  address_line1                         String?
+  city                                  String?
+  postal_code                           String?
+  address_line2                         String?
+  country_id                            Int?                            @db.SmallInt
+  promise_to_pay                        Int                             @default(0) @db.SmallInt
+  modified_at                           DateTime                        @default(now()) @db.Timestamptz(6)
+  state_id                              Int?
+  company_number                        String?
+  client_type                           customer_client_type            @default(All)
+  sms_from_name                         String?                         @db.VarChar
+  status                                record_status                   @default(Active)
+  sub_domain                            String?                         @db.VarChar
+  no_of_auomated_steps                  Int                             @default(10) @db.SmallInt
+  category_after_automated              category?
+  allow_partial_payment                 Boolean                         @default(true)
+  bank_comments                         String?
+  logo                                  String?
+  primary_color                         String?                         @db.VarChar(7)
+  secondary_color                       String?                         @db.VarChar(7)
+  chart_palette_color                   String?                         @db.VarChar(7)
+  default_language                      language?
+  start_days_after_due                  Int                             @default(1) @db.SmallInt
+  email_from_name                       String?                         @db.VarChar
+  email_server_host                     String?                         @db.VarChar
+  email_from                            String?                         @db.VarChar
+  email_server_user                     String?                         @db.VarChar
+  email_server_password                 String?                         @db.VarChar
+  email_server_port                     Int?                            @db.SmallInt
+  currency                              String?                         @db.VarChar
+  wait_days_after_automated             Int                             @default(1) @db.SmallInt
+  max_promise_to_pay_allowed_per_cycle  Int?                            @default(0) @db.SmallInt
+  locale                                String?                         @default("en-US") @db.VarChar(10)
+  next_activity_date                    DateTime?                       @db.Timestamptz(6)
+  beneficiary_name                      String?                         @db.VarChar
+  bank_name                             String?                         @db.VarChar
+  branch_number                         String?                         @db.VarChar
+  branch_name                           String?                         @db.VarChar
+  swift                                 String?                         @db.VarChar
+  iban                                  String?                         @db.VarChar
+  account_number                        String?                         @db.VarChar
+  balance_evaluation_method             String?                         @default("Invoice-Based") @db.VarChar
+  generic_field_config                  Json?
+  use_customer_language                 Boolean?                        @default(true)
+  last_sync_date                        DateTime?                       @db.Timestamptz(6)
+  default_first_activity_delay_days     Int?                            @db.SmallInt
+  sms_fallback_enabled                  Boolean?                        @default(true)
+  unlisted_country_sms_policy           String?                         @default("block") @db.VarChar(20)
+  intelligent_channel_selection_enabled Boolean?                        @default(false)
+  category_for_new_collection           category?
+  portal_verification_enabled           Boolean?                        @default(true)
+  sso_enabled                           Boolean?                        @default(false)
+  sso_providers                         String?                         @db.VarChar(100)
+  has_collection                        Boolean                         @default(true)
+  has_credit_insurance                  Boolean                         @default(false)
+  enable_customer_checkpoints           Boolean                         @default(false)
+  /// AR coverage percentage threshold to include a customer in limit warnings (e.g. 95).
+  credit_limit_warning_threshold_pct    Int?                            @db.SmallInt
+  /// Number of days before credit-score validity expiry to include customer in warnings.
+  credit_score_validity_warning_days    Int?                            @db.SmallInt
+  /// Number of days before target reporting date to include invoices in reporting countdown.
+  reporting_date_warning_days           Int?                            @db.SmallInt
+  /// Number of days before approved_limit_expiration_date to start showing the customer in limit warnings.
+  customer_limit_expiration_warning_days Int?                           @db.SmallInt
+  created_by                            String?                         @db.VarChar
+  modified_by                           String?                         @db.VarChar
+  deleted_at                            DateTime?                       @db.Timestamptz(6)
+  deleted_by                            String?                         @db.VarChar
+  User_Account_created_byToUser         User?                           @relation("Account_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountCreatedBy_fkey")
+  User_Account_modified_byToUser        User?                           @relation("Account_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountModifiedBy_fkey")
+  User_Account_deleted_byToUser         User?                           @relation("Account_deleted_byToUser", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountDeletedBy_fkey")
+  Country                               Country?                        @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "account_country_id_fkey")
+  State                                 State?                          @relation(fields: [state_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "account_state_id_fkey")
+  AccountBankAccounts                   AccountBankAccounts[]
+  AccountSMSProviderPreferences         AccountSMSProviderPreferences[]
+  ActivitiesSequence                    ActivitiesSequence[]
+  ActivitiesTemplate                    ActivitiesTemplate[]
+  Activity                              Activity[]
+  ActivityAttachment                    ActivityAttachment[]
+  // ActivityTemplateLanguage relation removed (account_id column dropped from that table)
+  BusinessUnitBankAccounts              BusinessUnitBankAccounts[]
+  CustomerBanks                         CustomerBanks[]
+  DisputeReason                         DisputeReason[]
+  // DisputeReasonLanguage relation removed (account_id column dropped from that table)
+  ImportJob                             ImportJob[]
+  InternalEmailTemplate                 InternalEmailTemplate[]
+  Invoice                               Invoice[]
+  InvoicePayment                        InvoicePayment[]
+  Log                                   Log[]
+  Notification                          Notification[]
+  NotificationRuleSet                   NotificationRuleSet[]
+  NotificationDeliveryLog               NotificationDeliveryLog[]
+  Payment                               Payment[]
+  SequenceContainer                     SequenceContainer[]
+  User_User_account_idToAccount         User[]                          @relation("User_account_idToAccount")
+  BusinessUnit                          BusinessUnit[]
+  RolePermission                        RolePermission[]                @relation("RolePermission_account_idToAccount")
+  Customer                              Customer[]
+  InsurancePolicy                       InsurancePolicy[]
+  Report                                Report[]
+  BillingConnector                      BillingConnector?
+  CustomerCheckpoint                    CustomerCheckpoint[]
+
+  @@index([country_id], map: "idx_account_country_id")
+  @@index([country_id, state_id], map: "idx_account_country_state")
+  @@index([created_by], map: "idx_account_created_by")
+  @@index([modified_by], map: "idx_account_modified_by")
+  @@index([deleted_by], map: "idx_account_deleted_by")
+  @@index([state_id], map: "idx_account_state_id")
+  @@index([status], map: "idx_account_status")
+  @@index([status, name], map: "idx_account_status_name")
+  @@index([name], map: "idx_name")
+  @@index([deleted_at], map: "idx_account_deleted_at")
+}
+
+model AccountBankAccounts {
+  id                                         Int                        @id(map: "pk_customerbankaccounts_id") @default(autoincrement())
+  created_at                                 DateTime                   @default(now()) @db.Timestamptz(6)
+  modified_at                                DateTime                   @default(now()) @db.Timestamptz(6)
+  account_id                                 Int
+  beneficiary_name                           String?                    @db.VarChar
+  branch_number                              String?                    @db.VarChar
+  account_number                             String?                    @db.VarChar
+  bank_name                                  String?                    @db.VarChar
+  branch_name                                String?                    @db.VarChar
+  swift                                      String?                    @db.VarChar
+  iban                                       String?                    @db.VarChar
+  comments                                   String?                    @db.VarChar
+  status                                     Boolean                    @default(true)
+  address_line1                              String?
+  city                                       String?
+  postal_code                                String?
+  address_line2                              String?
+  country_id                                 Int?                       @db.SmallInt
+  primary                                    Boolean                    @default(false)
+  state_id                                   Int?
+  created_by                                 String?                    @db.VarChar
+  modified_by                                String?                    @db.VarChar
+  User_AccountBankAccounts_created_byToUser  User?                      @relation("AccountBankAccounts_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountBankAccountsCreatedBy_fkey")
+  User_AccountBankAccounts_modified_byToUser User?                      @relation("AccountBankAccounts_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountBankAccountsModifiedBy_fkey")
+  Account                                    Account                    @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "accountbankaccounts_account_fk")
+  Country                                    Country?                   @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "accountbankaccounts_country_fk")
+  State                                      State?                     @relation(fields: [state_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "accountbankaccounts_state_fk")
+  BusinessUnitBankAccounts                   BusinessUnitBankAccounts[]
+  CustomerBanks                              CustomerBanks[]
+
+  @@index([created_by], map: "idx_customer_bank_accounts_created_by")
+  @@index([modified_by], map: "idx_customer_bank_accounts_modified_by")
+}
+
+model AccountSMSProviderPreferences {
+  id                                                   Int       @id(map: "CustomerSMSProviderPreferences_pkey") @default(autoincrement())
+  account_id                                           Int
+  country_id                                           Int
+  vendor_id                                            Int
+  is_enabled                                           Boolean?  @default(true)
+  priority                                             Int?      @default(1)
+  created_at                                           DateTime? @default(now()) @db.Timestamptz(6)
+  modified_at                                          DateTime? @default(now()) @db.Timestamptz(6)
+  created_by                                           String?   @db.VarChar
+  modified_by                                          String?   @db.VarChar
+  User_AccountSMSProviderPreferences_created_byToUser  User?     @relation("AccountSMSProviderPreferences_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountSMSProviderPreferencesCreatedBy_fkey")
+  User_AccountSMSProviderPreferences_modified_byToUser User?     @relation("AccountSMSProviderPreferences_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountSMSProviderPreferencesModifiedBy_fkey")
+  Account                                              Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_account_sms_pref_account")
+  Country                                              Country   @relation(fields: [country_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_account_sms_pref_country")
+  SMSVendor                                            SMSVendor @relation(fields: [vendor_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_account_sms_pref_vendor")
+
+  @@unique([account_id, country_id, vendor_id], map: "unique_account_country_vendor")
+  @@index([account_id], map: "idx_account_sms_provider_account")
+  @@index([country_id], map: "idx_account_sms_provider_country")
+  @@index([created_by], map: "idx_customer_sms_provider_pref_created_by")
+  @@index([modified_by], map: "idx_customer_sms_provider_pref_modified_by")
+  @@index([vendor_id], map: "idx_customer_sms_provider_vendor")
+}
+
+model BusinessUnit {
+  id                                  Int                        @id @default(autoincrement())
+  account_id                          Int
+  name                                String                     @db.VarChar
+  parent_id                           Int?
+  external_id                         String?                    @db.VarChar
+  status                              record_status              @default(Active)
+  is_primary                          Boolean                    @default(false)
+  created_at                          DateTime                   @default(now()) @db.Timestamptz(6)
+  modified_at                         DateTime                   @default(now()) @db.Timestamptz(6)
+  created_by                          String?                    @db.VarChar
+  modified_by                         String?                    @db.VarChar
+  Account                             Account                    @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Parent                              BusinessUnit?              @relation("BusinessUnitHierarchy", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Children                            BusinessUnit[]             @relation("BusinessUnitHierarchy")
+  User_BusinessUnit_created_byToUser  User?                      @relation("BusinessUnit_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  User_BusinessUnit_modified_byToUser User?                      @relation("BusinessUnit_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  BusinessUnitBankAccounts            BusinessUnitBankAccounts[]
+  Customer                            Customer[]
+  User                                User[]
+  CreditDashboardDailySnapshot        CreditDashboardDailySnapshot[]
+
+  @@index([account_id], map: "idx_business_unit_account_id")
+  @@index([parent_id], map: "idx_business_unit_parent_id")
+  @@index([external_id], map: "idx_business_unit_external_id")
+  @@index([status], map: "idx_business_unit_status")
+  @@index([is_primary], map: "idx_business_unit_is_primary")
+  @@index([created_by], map: "idx_business_unit_created_by")
+  @@index([modified_by], map: "idx_business_unit_modified_by")
+}
+
+model BusinessUnitBankAccounts {
+  id                  Int                 @id @default(autoincrement())
+  business_unit_id    Int
+  account_id          Int
+  bank_account_id     Int
+  created_at          DateTime            @default(now()) @db.Timestamptz(6)
+  modified_at         DateTime            @default(now()) @db.Timestamptz(6)
+  created_by          String?             @db.VarChar
+  modified_by         String?             @db.VarChar
+  BusinessUnit        BusinessUnit        @relation(fields: [business_unit_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Account             Account             @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  AccountBankAccounts AccountBankAccounts @relation(fields: [bank_account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([business_unit_id, bank_account_id], map: "unique_business_unit_bank_account")
+  @@index([business_unit_id], map: "idx_business_unit_bank_accounts_bu")
+  @@index([account_id], map: "idx_business_unit_bank_accounts_account")
+  @@index([bank_account_id], map: "idx_business_unit_bank_accounts_bank")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model ActivitiesSequence {
+  id                                        Int                 @id(map: "ActivitesSequence_pkey") @unique(map: "ActivitesSequence_id_key") @default(autoincrement())
+  created_at                                DateTime            @default(now()) @db.Timestamptz(6)
+  modified_at                               DateTime            @default(now()) @db.Timestamptz(6)
+  step                                      Int?                @db.SmallInt
+  active                                    Boolean
+  activity_type                             activity_type
+  category                                  category
+  days_from_prev_step                       Int?                @db.SmallInt
+  step_type                                 step_type?          @default(overdue)
+  days_before_due                           Int?                @db.SmallInt
+  account_id                                Int
+  activity_template_id                      Int?                @db.SmallInt
+  master_template                           Boolean?
+  last_category_step                        Boolean             @default(false)
+  time_of_day                               String?             @db.VarChar(5)
+  days_after_start                          Int?                @db.SmallInt
+  send_to_escalated_contacts                Boolean?
+  send_to_standard_contacts                 Boolean?            @default(false)
+  sequence_container_id                     Int?
+  created_by                                String?             @db.VarChar
+  modified_by                               String?             @db.VarChar
+  User_ActivitiesSequence_created_byToUser  User?               @relation("ActivitiesSequence_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivitiesSequenceCreatedBy_fkey")
+  User_ActivitiesSequence_modified_byToUser User?               @relation("ActivitiesSequence_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivitiesSequenceModifiedBy_fkey")
+  Account                                   Account             @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  ActivitiesTemplate                        ActivitiesTemplate? @relation(fields: [activity_template_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  SequenceContainer                         SequenceContainer?  @relation(fields: [sequence_container_id], references: [id], onDelete: Cascade)
+  Activity                                  Activity[]
+
+  @@index([created_by], map: "idx_activities_sequence_created_by")
+  @@index([account_id, category, active, sequence_container_id, step], map: "idx_activities_sequence_customer_category_active")
+  @@index([modified_by], map: "idx_activities_sequence_modified_by")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model ActivitiesTemplate {
+  id                                        Int                        @id(map: "Template_pkey") @unique(map: "Template_id_key") @default(autoincrement()) @db.SmallInt
+  created_at                                DateTime                   @default(now()) @db.Timestamptz(6)
+  modified_at                               DateTime                   @default(now()) @db.Timestamptz(6)
+  name                                      String                     @db.VarChar
+  category                                  category?
+  language                                  language?
+  active                                    Boolean?
+  account_id                                Int
+  master_template                           Boolean?
+  dispute_resolution                        dispute_resolution?
+  created_by                                String?                    @db.VarChar
+  modified_by                               String?                    @db.VarChar
+  ActivitiesSequence                        ActivitiesSequence[]
+  Account                                   Account                    @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "ActivitesTemplate_account_id_fkey")
+  User_ActivitiesTemplate_created_byToUser  User?                      @relation("ActivitiesTemplate_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivitiesTemplateCreatedBy_fkey")
+  User_ActivitiesTemplate_modified_byToUser User?                      @relation("ActivitiesTemplate_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivitiesTemplateModifiedBy_fkey")
+  Activity                                  Activity[]
+  ActivityTemplateLanguage                  ActivityTemplateLanguage[]
+
+  @@index([created_by], map: "idx_activities_template_created_by")
+  @@index([modified_by], map: "idx_activities_template_modified_by")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model Activity {
+  id                              BigInt                      @id @default(autoincrement())
+  created_at                      DateTime                    @default(now()) @db.Timestamptz(6)
+  modified_at                     DateTime                    @default(now()) @db.Timestamptz(6)
+  customer_id                     Int
+  title                           String?
+  content                         String
+  type                            activity_type
+  collection_period_id            Int?
+  invoice_id                      Int?
+  schedule_time                   DateTime                    @db.Timestamptz(6)
+  actual_delivery_time            DateTime?                   @db.Timestamptz(6)
+  status_reason                   String?                     @db.VarChar
+  last_sent_time                  DateTime?                   @db.Timestamptz(6)
+  contact_id                      Int?
+  activity_sequence_id            Int?
+  email                           String?                     @db.VarChar
+  mobile                          String?                     @db.VarChar
+  activity_template               Int?                        @db.SmallInt
+  account_id                      Int
+  is_last_step                    Boolean                     @default(false)
+  system_generated                Boolean                     @default(false)
+  title_params                    Json?
+  schedule_calculation            String?                     @db.VarChar
+  status                          activity_status
+  call_outcome                    String?                     @db.VarChar(50)
+  created_by                      String?                     @db.VarChar
+  modified_by                     String?                     @db.VarChar
+  User_Activity_created_byToUser  User?                       @relation("Activity_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivityCreatedBy_fkey")
+  User_Activity_modified_byToUser User?                       @relation("Activity_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivityModifiedBy_fkey")
+  Account                         Account                     @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  ActivitiesSequence              ActivitiesSequence?         @relation(fields: [activity_sequence_id], references: [id], onUpdate: NoAction)
+  ActivitiesTemplate              ActivitiesTemplate?         @relation(fields: [activity_template], references: [id], onUpdate: NoAction)
+  CustomerCollectionPeriod        CustomerCollectionPeriod?   @relation(fields: [collection_period_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "Activity_collection_period_fkey")
+  Invoice                         Invoice?                    @relation(fields: [invoice_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Contact                         Contact?                    @relation(fields: [contact_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Customer                        Customer                    @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  ActivityAttachment              ActivityAttachment[]
+  ActivityContact                 ActivityContact[]
+  CommunicationLearningData       CommunicationLearningData[]
+
+  @@index([call_outcome], map: "idx_activity_call_outcome")
+  @@index([collection_period_id], map: "idx_activity_collection_period_id")
+  @@index([collection_period_id, type], map: "idx_activity_collection_period_type")
+  @@index([collection_period_id, type, status, schedule_time], map: "idx_activity_collection_status_schedule")
+  @@index([contact_id], map: "idx_activity_contact_id")
+  @@index([created_by], map: "idx_activity_created_by")
+  @@index([customer_id, created_at(sort: Desc), id(sort: Desc)], map: "idx_activity_customer_created_desc")
+  @@index([customer_id, actual_delivery_time(sort: Desc), id(sort: Desc)], map: "idx_activity_customer_delivery_desc")
+  @@index([account_id], map: "idx_activity_customer_id")
+  @@index([customer_id, id(sort: Desc)], map: "idx_activity_customer_id_desc")
+  @@index([customer_id, schedule_time], map: "idx_activity_customer_schedule")
+  @@index([customer_id, schedule_time(sort: Desc), id(sort: Desc)], map: "idx_activity_customer_schedule_desc")
+  @@index([customer_id, type, id(sort: Desc)], map: "idx_activity_customer_type_desc")
+  @@index([modified_by], map: "idx_activity_modified_by")
+  @@index([activity_sequence_id], map: "idx_activity_sequence_id")
+  @@index([invoice_id, activity_sequence_id], map: "idx_activity_invoice_sequence")
+  @@index([status], map: "idx_activity_status")
+  @@index([system_generated], map: "idx_activity_system_generated")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model ActivityAttachment {
+  id                                        BigInt              @id @default(autoincrement())
+  created_at                                DateTime            @default(now()) @db.Timestamptz(6)
+  modified_at                               DateTime            @default(now()) @db.Timestamptz(6)
+  activity_id                               BigInt
+  file_name                                 String              @db.VarChar(255)
+  file_path                                 String              @db.VarChar(500)
+  file_size                                 Int
+  file_type                                 String              @db.VarChar(100)
+  file_category                             attachment_category
+  uploaded_by                               String              @db.VarChar(100)
+  account_id                                Int
+  created_by                                String?             @db.VarChar
+  modified_by                               String?             @db.VarChar
+  User_ActivityAttachment_created_byToUser  User?               @relation("ActivityAttachment_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivityAttachmentCreatedBy_fkey")
+  User_ActivityAttachment_modified_byToUser User?               @relation("ActivityAttachment_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivityAttachmentModifiedBy_fkey")
+  Account                                   Account             @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Activity                                  Activity            @relation(fields: [activity_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([account_id], map: "idx_activity_attachment_account_id")
+  @@index([activity_id], map: "idx_activity_attachment_activity_id")
+  @@index([file_category], map: "idx_activity_attachment_category")
+  @@index([created_by], map: "idx_activity_attachment_created_by")
+  @@index([modified_by], map: "idx_activity_attachment_modified_by")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model ActivityContact {
+  id                                     Int               @id @default(autoincrement())
+  activity_id                            BigInt
+  contact_id                             Int
+  message_id                             String?           @unique @db.VarChar(100)
+  status                                 delivery_status?  @default(Scheduled)
+  sent_at                                DateTime?         @db.Timestamptz(6)
+  delivered_at                           DateTime?         @db.Timestamptz(6)
+  failed_at                              DateTime?         @db.Timestamptz(6)
+  failure_reason                         String?           @db.VarChar(255)
+  retry_count                            Int?              @default(0)
+  created_at                             DateTime?         @default(now()) @db.Timestamptz(6)
+  modified_at                            DateTime?         @default(now()) @db.Timestamptz(6)
+  sms_vendor_id                          Int?
+  sms_cost                               Decimal?          @db.Decimal(10, 4)
+  sms_currency                           String?           @default("USD") @db.VarChar(3)
+  sms_segments                           Int?              @default(1)
+  sms_encoding                           String?           @default("GSM7") @db.VarChar(20)
+  email_opened_at                        DateTime?         @db.Timestamptz(6)
+  email_clicked_at                       DateTime?         @db.Timestamptz(6)
+  email_open_count                       Int?              @default(0)
+  email_click_count                      Int?              @default(0)
+  communication_channel                  activity_type?    @default(Email)
+  is_fallback_attempt                    Boolean?          @default(false)
+  original_contact_id                    Int?
+  response_received_at                   DateTime?         @db.Timestamp(6)
+  response_channel                       activity_type?
+  escalation_level                       Int?              @default(1)
+  channel_selection_reason               String?           @db.VarChar(100)
+  predicted_success_rate                 Decimal?          @db.Decimal(5, 4)
+  alternative_channels_considered        Json?
+  ses_message_id                         String?           @unique @db.VarChar(100)
+  bounced_at                             DateTime?         @db.Timestamptz(6)
+  complaint_at                           DateTime?         @db.Timestamptz(6)
+  bounce_type                            String?           @db.VarChar(50)
+  bounce_sub_type                        String?           @db.VarChar(50)
+  clicked_link                           String?           @db.VarChar(500)
+  vendor_message_id                      String?           @db.VarChar(100)
+  created_by                             String?           @db.VarChar
+  modified_by                            String?           @db.VarChar
+  User_ActivityContact_created_byToUser  User?             @relation("ActivityContact_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivityContactCreatedBy_fkey")
+  User_ActivityContact_modified_byToUser User?             @relation("ActivityContact_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivityContactModifiedBy_fkey")
+  Activity                               Activity          @relation(fields: [activity_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Contact                                Contact           @relation(fields: [contact_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  ActivityContact                        ActivityContact?  @relation("ActivityContactToActivityContact", fields: [original_contact_id], references: [id], onUpdate: NoAction)
+  other_ActivityContact                  ActivityContact[] @relation("ActivityContactToActivityContact")
+  SMSVendor                              SMSVendor?        @relation(fields: [sms_vendor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([message_id])
+  @@index([communication_channel], map: "idx_activity_contact_channel")
+  @@index([created_by], map: "idx_activity_contact_created_by")
+  @@index([email_clicked_at], map: "idx_activity_contact_email_clicked_at")
+  @@index([email_open_count, email_click_count], map: "idx_activity_contact_email_engagement")
+  @@index([email_opened_at], map: "idx_activity_contact_email_opened_at")
+  @@index([escalation_level], map: "idx_activity_contact_escalation")
+  @@index([is_fallback_attempt], map: "idx_activity_contact_fallback")
+  @@index([modified_by], map: "idx_activity_contact_modified_by")
+  @@index([original_contact_id], map: "idx_activity_contact_original")
+  @@index([predicted_success_rate], map: "idx_activity_contact_predicted_success")
+  @@index([channel_selection_reason], map: "idx_activity_contact_selection_reason")
+  @@index([sms_vendor_id], map: "idx_activity_contact_sms_vendor")
+  @@index([vendor_message_id], map: "idx_activity_contact_vendor_message_id")
+  @@index([bounced_at], map: "idx_activitycontact_bounced_at")
+  @@index([complaint_at], map: "idx_activitycontact_complaint_at")
+  @@index([ses_message_id], map: "idx_activitycontact_ses_message_id")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model ActivityTemplateLanguage {
+  id                                              Int                @id @default(autoincrement())
+  created_at                                      DateTime           @default(now()) @db.Timestamptz(6)
+  modified_at                                     DateTime           @default(now()) @db.Timestamptz(6)
+  template_id                                     Int
+  language                                        String             @db.VarChar(50)
+  sms_content                                     String?
+  whatsapp_content                                String?
+  email_subject                                   String?            @db.VarChar(255)
+  email_content                                   String?
+  created_by                                      String?            @db.VarChar
+  modified_by                                     String?            @db.VarChar
+  User_ActivityTemplateLanguage_created_byToUser  User?              @relation("ActivityTemplateLanguage_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivityTemplateLanguageCreatedBy_fkey")
+  User_ActivityTemplateLanguage_modified_byToUser User?              @relation("ActivityTemplateLanguage_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ActivityTemplateLanguageModifiedBy_fkey")
+  ActivitiesTemplate                              ActivitiesTemplate @relation(fields: [template_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([template_id, language], map: "ActivityTemplateLanguage_template_language_unique")
+  @@index([created_by], map: "idx_activity_template_language_created_by")
+  @@index([language], map: "idx_activity_template_language_language")
+  @@index([modified_by], map: "idx_activity_template_language_modified_by")
+  @@index([template_id], map: "idx_activity_template_language_template_id")
+  @@index([template_id, language], map: "idx_activity_template_language_template_language")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model CommunicationChannelPreference {
+  id                                                    Int           @id @default(autoincrement())
+  customer_id                                           Int
+  channel                                               activity_type
+  success_rate                                          Decimal?      @default(0.0000) @db.Decimal(5, 4)
+  response_time_hours                                   Decimal?      @db.Decimal(8, 2)
+  last_successful_contact                               DateTime?     @db.Timestamptz(6)
+  total_attempts                                        Int?          @default(0)
+  total_successes                                       Int?          @default(0)
+  preferred_time_of_day                                 String?       @db.VarChar(5)
+  created_at                                            DateTime?     @default(now()) @db.Timestamptz(6)
+  modified_at                                           DateTime?     @default(now()) @db.Timestamptz(6)
+  created_by                                            String?       @db.VarChar
+  modified_by                                           String?       @db.VarChar
+  User_CommunicationChannelPreference_created_byToUser  User?         @relation("CommunicationChannelPreference_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CommunicationChannelPreferenceCreatedBy_fkey")
+  User_CommunicationChannelPreference_modified_byToUser User?         @relation("CommunicationChannelPreference_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CommunicationChannelPreferenceModifiedBy_fkey")
+  Customer                                              Customer      @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([customer_id, channel], map: "idx_communication_channel_preference_unique")
+  @@index([channel], map: "idx_communication_channel_preference_channel")
+  @@index([created_by], map: "idx_communication_channel_preference_created_by")
+  @@index([customer_id, channel], map: "idx_communication_channel_preference_customer_channel")
+  @@index([customer_id], map: "idx_communication_channel_preference_customer_id")
+  @@index([modified_by], map: "idx_communication_channel_preference_modified_by")
+  @@index([success_rate], map: "idx_communication_channel_preference_success_rate")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model CommunicationLearningData {
+  id                                               Int            @id @default(autoincrement())
+  customer_id                                      Int
+  contact_id                                       Int?
+  channel                                          activity_type
+  activity_id                                      BigInt?
+  sent_at                                          DateTime       @db.Timestamptz(6)
+  response_received_at                             DateTime?      @db.Timestamptz(6)
+  response_channel                                 activity_type?
+  success                                          Boolean
+  response_time_hours                              Decimal?       @db.Decimal(8, 2)
+  context_data                                     Json?
+  created_at                                       DateTime?      @default(now()) @db.Timestamptz(6)
+  created_by                                       String?        @db.VarChar
+  modified_by                                      String?        @db.VarChar
+  User_CommunicationLearningData_created_byToUser  User?          @relation("CommunicationLearningData_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CommunicationLearningDataCreatedBy_fkey")
+  User_CommunicationLearningData_modified_byToUser User?          @relation("CommunicationLearningData_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CommunicationLearningDataModifiedBy_fkey")
+  Activity                                         Activity?      @relation(fields: [activity_id], references: [id], onUpdate: NoAction)
+  Contact                                          Contact?       @relation(fields: [contact_id], references: [id], onUpdate: NoAction)
+  Customer                                         Customer       @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([activity_id], map: "idx_communication_learning_data_activity_id")
+  @@index([channel], map: "idx_communication_learning_data_channel")
+  @@index([contact_id], map: "idx_communication_learning_data_contact_id")
+  @@index([created_by], map: "idx_communication_learning_data_created_by")
+  @@index([customer_id, channel], map: "idx_communication_learning_data_customer_channel")
+  @@index([customer_id], map: "idx_communication_learning_data_customer_id")
+  @@index([customer_id, success], map: "idx_communication_learning_data_customer_success")
+  @@index([modified_by], map: "idx_communication_learning_data_modified_by")
+  @@index([sent_at], map: "idx_communication_learning_data_sent_at")
+  @@index([sent_at, channel], map: "idx_communication_learning_data_sent_at_channel")
+  @@index([success], map: "idx_communication_learning_data_success")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model Company {
+  id                             Int        @id @unique @default(autoincrement())
+  created_at                     DateTime   @default(now()) @db.Timestamptz(6)
+  modified_at                    DateTime   @default(now()) @db.Timestamptz(6)
+  name                           String
+  company_number                 String?
+  created_by                     String?    @db.VarChar
+  modified_by                    String?    @db.VarChar
+  User_Company_created_byToUser  User?      @relation("Company_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CompanyCreatedBy_fkey")
+  User_Company_modified_byToUser User?      @relation("Company_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CompanyModifiedBy_fkey")
+  Contact                        Contact[]
+  Customer                       Customer[] @relation("Customer_Company")
+
+  @@index([created_by], map: "idx_company_created_by")
+  @@index([modified_by], map: "idx_company_modified_by")
+  @@index([name], map: "idx_company_name")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model Contact {
+  id                             Int                         @id @unique @default(autoincrement())
+  created_at                     DateTime                    @default(now()) @db.Timestamptz(6)
+  modified_at                    DateTime                    @default(now()) @db.Timestamptz(6)
+  first_name                     String
+  last_name                      String?
+  full_name                      String?                     @db.VarChar
+  date_of_birth                  DateTime?                   @db.Date
+  company_id                     Int
+  status                         contact_status              @default(Active)
+  email                          String?
+  phone                          String?
+  mobile                         String?
+  role                           String?
+  communication_priority         notification_type?
+  preferred_communication        activity_type               @default(Email)
+  ext_id                         String?                     @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_wide_address           Boolean?                    @default(false)
+  email_status                   email_status?               @default(Valid)
+  receives_standard_reminder     Boolean?                    @default(false)
+  receives_escalated_reminder    Boolean?                    @default(false)
+  mobile_status                  mobile_status?
+  priority_level                 contact_priority?           @default(Primary)
+  fallback_contact_id            Int?
+  preferred_channels             String[]                    @default([])
+  response_history               Json?
+  availability_schedule          Json?
+  escalation_delay_hours         Int?                        @default(24)
+  country_id                     Int?                        @db.SmallInt
+  state_id                       Int?                        @db.SmallInt
+  customer_id                    Int?
+  email_bounce_count             Int?                        @default(0)
+  last_email_bounce              DateTime?                   @db.Timestamptz(6)
+  sms_delivery_failure_count     Int?                        @default(0)
+  last_sms_failure               DateTime?                   @db.Timestamptz(6)
+  communication_score            Decimal?                    @default(1.00) @db.Decimal(3, 2)
+  generic_text1                  String?
+  generic_text2                  String?
+  generic_number1                Float?
+  generic_number2                Float?
+  generic_date1                  DateTime?                   @db.Date
+  generic_date2                  DateTime?                   @db.Date
+  erp_contact_id                 String?                     @db.VarChar(255)
+  created_by                     String?                     @db.VarChar
+  modified_by                    String?                     @db.VarChar
+  Activity                       Activity[]
+  ActivityContact                ActivityContact[]
+  CommunicationLearningData      CommunicationLearningData[]
+  User_Contact_created_byToUser  User?                       @relation("Contact_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ContactCreatedBy_fkey")
+  User_Contact_modified_byToUser User?                       @relation("Contact_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ContactModifiedBy_fkey")
+  Company                        Company                     @relation(fields: [company_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Country                        Country?                    @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Customer                       Customer?                   @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Contact                        Contact?                    @relation("ContactToContact", fields: [fallback_contact_id], references: [id], onUpdate: NoAction)
+  other_Contact                  Contact[]                   @relation("ContactToContact")
+  State                          State?                      @relation(fields: [state_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([email_bounce_count, sms_delivery_failure_count, communication_score], map: "idx_contact_communication_health")
+  @@index([communication_score], map: "idx_contact_communication_score")
+  @@index([company_id, status], map: "idx_contact_company_status")
+  @@index([country_id], map: "idx_contact_country_id")
+  @@index([created_by], map: "idx_contact_created_by")
+  @@index([customer_id], map: "idx_contact_customer_id")
+  @@index([email_bounce_count], map: "idx_contact_email_bounce_count")
+  @@index([fallback_contact_id], map: "idx_contact_fallback")
+  @@index([last_email_bounce], map: "idx_contact_last_email_bounce")
+  @@index([last_sms_failure], map: "idx_contact_last_sms_failure")
+  @@index([modified_by], map: "idx_contact_modified_by")
+  @@index([priority_level], map: "idx_contact_priority")
+  @@index([sms_delivery_failure_count], map: "idx_contact_sms_failure_count")
+  @@index([state_id], map: "idx_contact_state_id")
+  @@unique([company_id, erp_contact_id], map: "Contact_company_id_erp_contact_id_key")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model Country {
+  id                            Int                             @id(map: "country_pkey") @unique(map: "country_unique") @default(autoincrement())
+  name                          String                          @db.VarChar(100)
+  iso3                          String?                         @db.Char(3)
+  numeric_code                  String?                         @db.Char(3)
+  iso2                          String?                         @db.Char(2)
+  phonecode                     String?                         @db.VarChar(255)
+  capital                       String?                         @db.VarChar(255)
+  currency                      String?                         @db.VarChar(255)
+  currency_name                 String?                         @db.VarChar(255)
+  currency_symbol               String?                         @db.VarChar(255)
+  tld                           String?                         @db.VarChar(255)
+  native                        String?                         @db.VarChar(255)
+  region                        String?                         @db.VarChar(255)
+  region_id                     Int?
+  subregion                     String?                         @db.VarChar(255)
+  subregion_id                  Int?
+  nationality                   String?                         @db.VarChar(255)
+  translations                  String?
+  latitude                      Decimal?                        @db.Decimal(10, 8)
+  longitude                     Decimal?                        @db.Decimal(11, 8)
+  emoji                         String?                         @db.VarChar(191)
+  emojiU                        String?                         @db.VarChar(191)
+  created_at                    DateTime?                       @db.Timestamptz(6)
+  modified_at                   DateTime                        @updatedAt @db.Timestamptz(6)
+  flag                          Int                             @default(1) @db.SmallInt
+  wikiDataId                    String?                         @db.VarChar(255)
+  Account                       Account[]
+  AccountBankAccounts           AccountBankAccounts[]
+  AccountSMSProviderPreferences AccountSMSProviderPreferences[]
+  Contact                       Contact[]
+  CountrySMSVendor              CountrySMSVendor[]
+  State                         State[]
+  Customer                      Customer[]
+  InsurancePolicyCountry        InsurancePolicyCountry[]
+}
+
+model CountrySMSVendor {
+  id                                      Int       @id @default(autoincrement())
+  country_id                              Int
+  vendor_id                               Int
+  is_default                              Boolean?  @default(false)
+  is_active                               Boolean?  @default(true)
+  created_at                              DateTime? @default(now()) @db.Timestamp(6)
+  modified_at                             DateTime? @updatedAt @db.Timestamp(6)
+  cost_per_sms                            Decimal?  @db.Decimal(10, 4)
+  currency                                String?   @default("USD") @db.VarChar(3)
+  comment                                 String?   @db.VarChar
+  phone_number                            String?   @db.VarChar
+  created_by                              String?   @db.VarChar
+  modified_by                             String?   @db.VarChar
+  User_CountrySMSVendor_created_byToUser  User?     @relation("CountrySMSVendor_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CountrySMSVendorCreatedBy_fkey")
+  User_CountrySMSVendor_modified_byToUser User?     @relation("CountrySMSVendor_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CountrySMSVendorModifiedBy_fkey")
+  Country                                 Country   @relation(fields: [country_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  SMSVendor                               SMSVendor @relation(fields: [vendor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([country_id, vendor_id])
+  @@index([country_id], map: "idx_country_sms_vendor_country")
+  @@index([created_by], map: "idx_country_sms_vendor_created_by")
+  @@index([modified_by], map: "idx_country_sms_vendor_modified_by")
+  @@index([vendor_id], map: "idx_country_sms_vendor_vendor")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model CronJob {
+  id                                    Int       @id(map: "CronJobs_pkey") @default(autoincrement())
+  created_at                            DateTime  @default(now()) @db.Timestamptz(6)
+  name                                  String
+  active                                Boolean?
+  cron_expression                       String
+  last_run_at                           DateTime? @db.Timestamptz(6)
+  next_run_at                           DateTime? @db.Timestamptz(6)
+  modified_at                           DateTime  @updatedAt @db.Timestamptz(6)
+  sort_order                            Int       @db.SmallInt
+  timeout_period_seconds                Int       @default(1800)
+  last_execution_duration_seconds       Int?
+  average_execution_duration_seconds    Int?
+  min_execution_duration_seconds        Int?
+  max_execution_duration_seconds        Int?
+  success_count_30d                     Int       @default(0)
+  failure_count_30d                     Int       @default(0)
+  timeout_count_30d                     Int       @default(0)
+  last_success_at                       DateTime? @db.Timestamptz(6)
+  last_failure_at                       DateTime? @db.Timestamptz(6)
+  last_timeout_at                       DateTime? @db.Timestamptz(6)
+  performance_baseline_seconds          Int?
+  performance_degradation_alert_sent_at DateTime? @db.Timestamptz(6)
+  alert_duration_threshold_seconds      Int?
+  alert_failure_rate_threshold          Decimal?  @db.Decimal(5, 4)
+  alert_connection_threshold            Int?
+  alert_enabled                         Boolean   @default(true)
+  Log                                   Log[]
+
+  @@index([last_run_at], map: "idx_cron_job_last_run_at")
+  @@index([active, next_run_at], map: "idx_cron_job_active_next_run")
+}
+
+model CurrencyRate {
+  id              Int      @id @default(autoincrement())
+  rate_date       DateTime @db.Date
+  base_currency   String   @db.VarChar(16)
+  other_currency  String   @db.VarChar(16)
+  currency_ratio  Float
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  modified_at     DateTime @updatedAt @db.Timestamptz(6)
+  created_by      String?  @db.VarChar
+  modified_by     String?  @db.VarChar
+
+  @@unique([rate_date, base_currency, other_currency])
+  @@index([rate_date, base_currency])
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model Customer {
+  id                              Int                              @id(map: "customer_pkey") @unique(map: "customer_id_key") @default(autoincrement())
+  account_id                      Int
+  created_at                      DateTime                         @default(now()) @db.Timestamptz(6)
+  customer_number                 String?
+  /// Company registration number (CRN / מספר ח.פ.).
+  crn                             String?                          @db.VarChar(255)
+  country_id                      Int?                             @db.SmallInt
+  address_line1                   String?
+  address_line2                   String?
+  postal_code                     String?
+  modified_at                     DateTime                         @updatedAt @db.Timestamptz(6)
+  type                            client_type
+  phone                           String?
+  email                           String?
+  city                            String?
+  state_id                        Int?
+  total_invoices_overdue          Float?                           @default(0)
+  number_of_overdue_invoices      Int?                             @default(0) @db.SmallInt
+  collection_status               record_status                    @default(Inactive)
+  company_id                      Int?
+  person_id                       Int?
+  customer_uuid                   String                           @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id                        String?                          @db.VarChar
+  language                        language                         @default(English)
+  first_activity_delay_days       Int?                             @db.SmallInt
+  category_for_new_collection     category?
+  total_due_amount                Float?
+  no_of_due_invoices              Int?
+  customer_due_amount1            Float?
+  customer_due_currency1          String?                          @db.VarChar
+  customer_due_amount2            Float?
+  customer_due_currency2          String?                          @db.VarChar
+  total_overdue_amount            Float?                           @default(0)
+  customer_overdue_amount1        Float?
+  customer_overdue_currency1      String?                          @db.VarChar
+  customer_overdue_amount2        Float?
+  customer_overdue_currency2      String?                          @db.VarChar
+  sequence_container_id           Int?
+  business_unit_id                Int?
+  created_by                      String?                          @db.VarChar
+  modified_by                     String?                          @db.VarChar
+  parent_customer_id              Int?
+  generic_text1                   String?
+  generic_text2                   String?
+  generic_number1                 Float?
+  generic_number2                 Float?
+  generic_date1                   DateTime?                        @db.Date
+  generic_date2                   DateTime?                        @db.Date
+  automation_stuck_no_contacts    Boolean?                         @default(false)
+  oldest_invoice_overdue_date     DateTime?                        @db.Timestamp(6)
+  /// True when today is past Customer MEP deadline: oldest_invoice_overdue_date + max_allowed_mep (calendar days).
+  overdue_block                   Boolean                          @default(false)
+  zero_limit_alert_exist          Boolean                          @default(false)
+  Activity                        Activity[]
+  CommunicationChannelPreference  CommunicationChannelPreference[]
+  CommunicationLearningData       CommunicationLearningData[]
+  Contact                         Contact[]
+  Account                         Account                          @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Person                          Person?                          @relation("Customer_Person", fields: [person_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_person_id_fkey")
+  Company                         Company?                         @relation("Customer_Company", fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_company_id_fkey")
+  Owner                           User?                            @relation("Customer_Owner", fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_owner_id_fkey")
+  BusinessUnit                    BusinessUnit?                    @relation(fields: [business_unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Country                         Country?                         @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_country_id_fkey")
+  State                           State?                           @relation(fields: [state_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_state_id_fkey")
+  User_Customer_created_byToUser  User?                            @relation("Customer_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerCreatedBy_fkey")
+  User_Customer_modified_byToUser User?                            @relation("Customer_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerModifiedBy_fkey")
+  ParentCustomer                  Customer?                        @relation("CustomerParent", fields: [parent_customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_parent_customer_id_fkey")
+  ChildCustomers                  Customer[]                       @relation("CustomerParent")
+  SequenceContainer               SequenceContainer?               @relation("CustomerSequenceContainer", fields: [sequence_container_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  CustomerBanks                   CustomerBanks[]
+  CustomerCollectionPeriod        CustomerCollectionPeriod[]
+  CustomerDispute                 CustomerDispute[]
+  Invoice                         Invoice[]
+  InvoicePayment                  InvoicePayment[]
+  Payment                         Payment[]
+  CustomerAggregatedData          CustomerAggregatedData?
+  CustomerPolicy                  CustomerPolicy[]
+  CustomerPolicyTrend             CustomerPolicyTrend[]
+  CustomerTopUp                   CustomerTopUp[]
+  CustomerCheckpoint              CustomerCheckpoint?
+
+  @@unique([account_id, customer_number], map: "customer_number_unique")
+  @@index([company_id], map: "idx_company_company_id")
+  @@index([account_id, collection_status], map: "idx_customer_account_collection_status")
+  @@index([created_by], map: "idx_customer_created_by")
+  @@index([customer_due_currency1], map: "idx_customer_due_currency1")
+  @@index([customer_due_currency2], map: "idx_customer_due_currency2")
+  @@index([modified_by], map: "idx_customer_modified_by")
+  @@index([collection_status], map: "idx_customers_collection_status")
+  @@index([customer_number], map: "idx_customers_customer_number")
+  @@index([type, collection_status], map: "idx_customers_type_collection_status")
+  @@index([person_id], map: "idx_person_person_id")
+  @@index([account_id, collection_status], map: "idx_temp_customer_customer_collection_status")
+  @@index([business_unit_id], map: "idx_customer_business_unit_id")
+  @@index([parent_customer_id], map: "idx_customer_parent_customer_id")
+}
+
+/// QA checkpoint snapshot for a single customer (non-production restore workflows).
+model CustomerCheckpoint {
+  id          Int      @id @default(autoincrement())
+  customer_id Int      @unique
+  account_id  Int
+  payload     Json
+  saved_at    DateTime @default(now()) @db.Timestamptz(6)
+  saved_by    String?  @db.VarChar
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  modified_at DateTime @updatedAt @db.Timestamptz(6)
+  Customer    Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Account     Account  @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([account_id], map: "idx_customer_checkpoint_account_id")
+}
+
+/// Per-customer insurance policy assignment history (one active row per customer).
+model CustomerPolicy {
+  id                              Int                   @id @default(autoincrement())
+  created_at                      DateTime              @default(now()) @db.Timestamptz(6)
+  modified_at                     DateTime              @updatedAt @db.Timestamptz(6)
+  customer_id                     Int
+  insurance_policy_id             Int?
+  customer_number_policy          String?               @db.VarChar(255)
+  approved_limit                  Decimal?              @db.Decimal(20, 4)
+  approved_limit_currency         String?               @db.VarChar(16)
+  approved_limit_expiration_date  DateTime?             @db.Date
+  zero_limit_date                 DateTime?             @db.Date
+  limit_type                      customer_limit_type?
+  max_payment_term                Int?
+  max_allowed_mep                 Int?
+  reporting_days                  Int?
+  mep_cutoff_day_of_month         Int?
+  mep_substitute_day_of_month     Int?
+  reporting_cutoff_day_of_month   Int?
+  reporting_substitute_day_of_month Int?
+  payment_term_cutoff_day_of_month Int?
+  payment_term_substitute_day_of_month Int?
+  excluded_from_policy            Boolean               @default(false)
+  policy_exclusion_reason         String?
+  credit_score                    Decimal?              @db.Decimal(10, 2)
+  credit_score_input_date         DateTime?             @db.Date
+  active_customer_since           DateTime?             @db.Date
+  outdated_dcl                    Boolean               @default(false)
+  is_active                       Boolean               @default(false)
+  capacity_gap_amount             Float?
+  capacity_gap_amount_date        DateTime?             @db.Date
+  retained_capacity_gap           Float?
+  uninsured_amount                Float?
+  capacity_gap_amount1            Float?
+  capacity_gap_currency1          String?               @db.VarChar(16)
+  capacity_gap_amount2            Float?
+  capacity_gap_currency2          String?               @db.VarChar(16)
+  uninsured_amount1               Float?
+  uninsured_currency1             String?               @db.VarChar(16)
+  uninsured_amount2               Float?
+  uninsured_currency2             String?               @db.VarChar(16)
+  created_by                      String?               @db.VarChar
+  modified_by                     String?               @db.VarChar
+  Customer                        Customer              @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customer_policy_customer_id_fkey")
+  InsurancePolicy                 InsurancePolicy?      @relation(fields: [insurance_policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_policy_insurance_policy_id_fkey")
+  User_CustomerPolicy_created_byToUser  User?           @relation("CustomerPolicy_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerPolicyCreatedBy_fkey")
+  User_CustomerPolicy_modified_byToUser User?           @relation("CustomerPolicy_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerPolicyModifiedBy_fkey")
+
+  @@index([customer_id], map: "idx_customer_policy_customer_id")
+  @@index([insurance_policy_id], map: "idx_customer_policy_insurance_policy_id")
+  @@index([customer_id, is_active], map: "idx_customer_policy_customer_active")
+  CustomerPolicyTrend               CustomerPolicyTrend[]
+}
+
+/// Daily snapshot of active customer policy limits and open-AR usage (credit dashboard trends).
+model CustomerPolicyTrend {
+  id                             BigInt                @id @default(autoincrement())
+  account_id                     Int
+  customer_id                    Int
+  insurance_policy_id            Int?
+  customer_policy_id             Int?
+  snapshot_date                  DateTime              @db.Date
+  approved_limit                 Decimal?              @db.Decimal(20, 4)
+  usage_amount                   Float                 @default(0)
+  usage_pct                      Float?
+  customer_number_policy         String?               @db.VarChar(255)
+  approved_limit_currency        String?               @db.VarChar(16)
+  approved_limit_expiration_date DateTime?             @db.Date
+  limit_type                     customer_limit_type?
+  max_payment_term               Int?
+  max_allowed_mep                Int?
+  reporting_days                 Int?
+  mep_cutoff_day_of_month        Int?
+  mep_substitute_day_of_month    Int?
+  reporting_cutoff_day_of_month  Int?
+  reporting_substitute_day_of_month Int?
+  payment_term_cutoff_day_of_month Int?
+  payment_term_substitute_day_of_month Int?
+  excluded_from_policy           Boolean               @default(false)
+  policy_exclusion_reason        String?
+  credit_score                   Decimal?              @db.Decimal(10, 2)
+  credit_score_input_date        DateTime?             @db.Date
+  active_customer_since          DateTime?             @db.Date
+  outdated_dcl                   Boolean               @default(false)
+  top_up_total                   Float?
+  effective_approved_limit       Decimal?              @db.Decimal(20, 4)
+  active_top_up_count            Int?
+  policy_daily_cost              Decimal?              @db.Decimal(20, 4)
+  policy_cost_currency           String?               @db.VarChar(16)
+  top_up_daily_cost              Decimal?              @db.Decimal(20, 4)
+  top_up_cost_currency           String?               @db.VarChar(16)
+  total_daily_cost               Decimal?              @db.Decimal(20, 4)
+  cost_calculation_method        cost_calculation_method?
+  cost_percent                   Decimal?              @db.Decimal(10, 2)
+  financial_currency             String?               @db.VarChar(16)
+  total_receivables              Decimal?              @db.Decimal(20, 4)
+  health_index                   Float?
+  at_risk_exposure               Decimal?              @db.Decimal(20, 4)
+  compliant_exposure             Decimal?              @db.Decimal(20, 4)
+  terms_breach_amount            Decimal?              @db.Decimal(20, 4)
+  capacity_gap_amount            Decimal?              @db.Decimal(20, 4)
+  terms_breach_count             Int?
+  terms_breach_by_reason         Json                  @default("{}")
+  policy_usage_pct               Float?
+  top_up_usage_pct               Float?
+  effective_usage_pct            Float?
+  created_at                     DateTime              @default(now()) @db.Timestamptz(6)
+  modified_at                    DateTime              @updatedAt @db.Timestamptz(6)
+  Customer                       Customer              @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customer_policy_trend_customer_id_fkey")
+  InsurancePolicy                InsurancePolicy?      @relation(fields: [insurance_policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_policy_trend_insurance_policy_id_fkey")
+  CustomerPolicy                 CustomerPolicy?       @relation(fields: [customer_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customer_policy_trend_customer_policy_id_fkey")
+
+  @@unique([customer_id, customer_policy_id, snapshot_date], map: "ux_customer_policy_trend_customer_policy_day")
+  @@index([account_id, snapshot_date(sort: Desc)], map: "idx_customer_policy_trend_account_day")
+  @@index([account_id, insurance_policy_id, snapshot_date(sort: Desc)], map: "idx_customer_policy_trend_account_policy_day")
+  @@index([customer_id, snapshot_date(sort: Desc)], map: "idx_customer_policy_trend_customer_day")
+}
+
+/// Daily snapshot of insurance policy master data and rollups (policy config trends).
+model InsurancePolicyTrend {
+  id                           BigInt                    @id @default(autoincrement())
+  account_id                   Int
+  insurance_policy_id          Int
+  snapshot_date                DateTime                  @db.Date
+  policy_number                String                    @db.VarChar(255)
+  start_date                   DateTime                  @db.Date
+  end_date                     DateTime                  @db.Date
+  currency                     String?                   @db.VarChar(16)
+  insurer_name                 String?                   @db.VarChar(255)
+  policy_kind                  insurance_policy_kind     @default(Primary)
+  parent_insurance_policy_id   Int?
+  allow_concurrent_top_ups     Boolean                   @default(true)
+  max_total_cover              Decimal?                  @db.Decimal(20, 4)
+  max_total_dcl_sdl_cover      Decimal?                  @db.Decimal(20, 4)
+  min_credit_score             Decimal?                  @db.Decimal(10, 2)
+  score_validity_period_months Int?
+  max_dcl                      Decimal?                  @db.Decimal(20, 4)
+  dcl_customer_since_months    Int?
+  max_payment_term             Int?
+  max_allowed_mep              Int?
+  reporting_days               Int?
+  cost_calculation_method      cost_calculation_method?
+  cost_percent                 Decimal?                  @db.Decimal(10, 2)
+  status                       record_status             @default(Draft)
+  active_customer_count        Int                       @default(0)
+  total_approved_limit         Decimal?                  @db.Decimal(20, 4)
+  total_open_ar                Float                     @default(0)
+  policy_usage_pct             Float?
+  named_policy_row_count       Int                       @default(0)
+  country_row_count            Int                       @default(0)
+  created_at                   DateTime                  @default(now()) @db.Timestamptz(6)
+  modified_at                  DateTime                  @updatedAt @db.Timestamptz(6)
+  InsurancePolicy              InsurancePolicy           @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_trend_insurance_policy_id_fkey")
+
+  @@unique([insurance_policy_id, snapshot_date], map: "ux_insurance_policy_trend_policy_day")
+  @@index([account_id, snapshot_date(sort: Desc)], map: "idx_insurance_policy_trend_account_day")
+  @@index([account_id, insurance_policy_id, snapshot_date(sort: Desc)], map: "idx_insurance_policy_trend_account_policy_day")
+}
+
+/// Daily snapshot of per-country insurance policy caps and terms.
+model InsurancePolicyCountryTrend {
+  id                          BigInt                 @id @default(autoincrement())
+  account_id                  Int
+  insurance_policy_id         Int
+  insurance_policy_country_id String                 @db.Uuid
+  country_id                  Int
+  snapshot_date               DateTime               @db.Date
+  payment_term_cap            Int?
+  country_mep                 Int?
+  reporting_days              Int?
+  country_max_limit           Decimal?               @db.Decimal(20, 4)
+  created_at                  DateTime               @default(now()) @db.Timestamptz(6)
+  modified_at                 DateTime               @updatedAt @db.Timestamptz(6)
+  InsurancePolicyCountry      InsurancePolicyCountry @relation(fields: [insurance_policy_country_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_country_trend_country_row_fkey")
+  InsurancePolicy             InsurancePolicy        @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_country_trend_policy_id_fkey")
+
+  @@unique([insurance_policy_country_id, snapshot_date], map: "ux_insurance_policy_country_trend_row_day")
+  @@index([insurance_policy_id, snapshot_date(sort: Desc)], map: "idx_insurance_policy_country_trend_policy_day")
+  @@index([account_id, insurance_policy_id, snapshot_date(sort: Desc)], map: "idx_insurance_policy_country_trend_account_policy_day")
+}
+
+/// Daily snapshot of named-policy rows (per customer number caps/terms).
+model NamedPolicyTrend {
+  id                    BigInt          @id @default(autoincrement())
+  account_id            Int
+  insurance_policy_id   Int
+  named_policy_id       Int
+  snapshot_date         DateTime        @db.Date
+  customer_number       String          @db.VarChar(255)
+  max_payment_term      Int?
+  customer_mep          Int?
+  reporting_days        Int?
+  customer_max_limit    Decimal?        @db.Decimal(20, 4)
+  limit_expiration_date DateTime?       @db.Date
+  created_at            DateTime        @default(now()) @db.Timestamptz(6)
+  modified_at           DateTime        @updatedAt @db.Timestamptz(6)
+  NamedPolicy           NamedPolicy     @relation(fields: [named_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "named_policy_trend_named_policy_id_fkey")
+  InsurancePolicy       InsurancePolicy @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "named_policy_trend_insurance_policy_id_fkey")
+
+  @@unique([named_policy_id, snapshot_date], map: "ux_named_policy_trend_row_day")
+  @@index([insurance_policy_id, snapshot_date(sort: Desc)], map: "idx_named_policy_trend_policy_day")
+  @@index([account_id, insurance_policy_id, snapshot_date(sort: Desc)], map: "idx_named_policy_trend_account_policy_day")
+}
+
+/// Credit insurance policy (account-scoped). Primary or TopUp.
+model InsurancePolicy {
+  id                           Int                       @id @default(autoincrement())
+  created_at                   DateTime                  @default(now()) @db.Timestamptz(6)
+  modified_at                  DateTime                  @updatedAt @db.Timestamptz(6)
+  account_id                   Int
+  policy_number                String                    @db.VarChar(255)
+  start_date                   DateTime                  @db.Date
+  end_date                     DateTime                  @db.Date
+  currency                     String?                   @db.VarChar(16)
+  insurer_name                 String?                   @db.VarChar(255)
+  policy_kind                  insurance_policy_kind     @default(Primary)
+  parent_insurance_policy_id   Int?
+  allow_concurrent_top_ups     Boolean                   @default(true)
+  max_total_cover              Decimal?                  @db.Decimal(20, 4)
+  max_total_dcl_sdl_cover      Decimal?                  @db.Decimal(20, 4)
+  min_credit_score             Decimal?                  @db.Decimal(10, 2)
+  score_validity_period_months Int?
+  max_dcl                      Decimal?                  @db.Decimal(20, 4)
+  dcl_customer_since_months    Int?
+  /// Policy-level defaults (days); align with Customer.max_payment_term / max_allowed_mep / reporting_days.
+  max_payment_term             Int?
+  max_allowed_mep              Int?
+  reporting_days               Int?
+  mep_cutoff_day_of_month      Int?
+  mep_substitute_day_of_month  Int?
+  reporting_cutoff_day_of_month Int?
+  reporting_substitute_day_of_month Int?
+  payment_term_cutoff_day_of_month Int?
+  payment_term_substitute_day_of_month Int?
+  cost_calculation_method      cost_calculation_method?
+  cost_percent                 Decimal?                  @db.Decimal(10, 2)
+  status                       record_status             @default(Draft)
+  auto_activate_on_term_start  Boolean                   @default(false)
+  created_by                   String?                   @db.VarChar
+  modified_by                  String?                   @db.VarChar
+  Account                      Account                   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_account_id_fkey")
+  User_InsurancePolicy_created_byToUser  User?         @relation("InsurancePolicy_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyCreatedBy_fkey")
+  User_InsurancePolicy_modified_byToUser User?       @relation("InsurancePolicy_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyModifiedBy_fkey")
+  InsurancePolicyCountry       InsurancePolicyCountry[]
+  NamedPolicy                  NamedPolicy[]
+  CustomerPolicy               CustomerPolicy[]
+  CustomerPolicyTrend          CustomerPolicyTrend[]
+  InsurancePolicyTrend         InsurancePolicyTrend[]
+  InsurancePolicyCountryTrend  InsurancePolicyCountryTrend[]
+  NamedPolicyTrend             NamedPolicyTrend[]
+  Invoice                      Invoice[]
+  CustomerTopUp                CustomerTopUp[]
+  ParentInsurancePolicy        InsurancePolicy?          @relation("InsurancePolicyToInsurancePolicy", fields: [parent_insurance_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  ChildInsurancePolicies       InsurancePolicy[]         @relation("InsurancePolicyToInsurancePolicy")
+
+  @@unique([account_id, policy_number], map: "unique_insurance_policy_account_policy_number")
+  @@index([account_id], map: "idx_insurance_policy_account_id")
+  @@index([created_by], map: "idx_insurance_policy_created_by")
+  @@index([modified_by], map: "idx_insurance_policy_modified_by")
+  @@index([status], map: "idx_insurance_policy_status")
+  @@index([policy_kind], map: "idx_insurance_policy_policy_kind")
+  @@index([parent_insurance_policy_id], map: "idx_insurance_policy_parent")
+}
+
+/// Per-customer time-bounded top-up coverage linked to a TopUp InsurancePolicy.
+model CustomerTopUp {
+  id                   Int                   @id @default(autoincrement())
+  customer_id          Int
+  insurance_policy_id  Int
+  top_up_type          customer_top_up_type  @default(Fixed)
+  top_up_value         Decimal               @db.Decimal(20, 4)
+  currency             String?               @db.VarChar(16)
+  start_date           DateTime              @db.Date
+  end_date             DateTime              @db.Date
+  notes                String?               @db.Text
+  premium              Decimal?              @db.Decimal(20, 4)
+  premium_currency     String?               @db.VarChar(16)
+  cancelled_at         DateTime?             @db.Timestamptz(6)
+  created_by           String?               @db.VarChar
+  modified_by          String?               @db.VarChar
+  created_at           DateTime              @default(now()) @db.Timestamptz(6)
+  modified_at          DateTime              @updatedAt @db.Timestamptz(6)
+  Customer             Customer              @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  InsurancePolicy      InsurancePolicy       @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_CustomerTopUp_created_byToUser  User?  @relation("CustomerTopUp_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  User_CustomerTopUp_modified_byToUser User?  @relation("CustomerTopUp_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([customer_id, start_date, end_date], map: "idx_customer_top_up_customer_date")
+  @@index([customer_id, insurance_policy_id], map: "idx_customer_top_up_customer_policy")
+  @@index([insurance_policy_id], map: "idx_customer_top_up_policy")
+}
+
+/// Per-country caps and terms for an insurance policy.
+model InsurancePolicyCountry {
+  id                  String            @id @default(uuid()) @db.Uuid
+  created_at          DateTime          @default(now()) @db.Timestamptz(6)
+  modified_at         DateTime          @updatedAt @db.Timestamptz(6)
+  insurance_policy_id Int
+  country_id          Int
+  payment_term_cap    Int?
+  country_mep         Int?
+  reporting_days      Int?
+  country_max_limit   Decimal?          @db.Decimal(20, 4)
+  created_by          String?           @db.VarChar
+  modified_by         String?           @db.VarChar
+  InsurancePolicy     InsurancePolicy   @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_country_policy_id_fkey")
+  Country             Country           @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "insurance_policy_country_country_id_fkey")
+  User_InsurancePolicyCountry_created_byToUser  User? @relation("InsurancePolicyCountry_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyCountryCreatedBy_fkey")
+  User_InsurancePolicyCountry_modified_byToUser User? @relation("InsurancePolicyCountry_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyCountryModifiedBy_fkey")
+  InsurancePolicyCountryTrend                   InsurancePolicyCountryTrend[]
+
+  @@unique([insurance_policy_id, country_id], map: "unique_insurance_policy_country")
+  @@index([insurance_policy_id], map: "idx_insurance_policy_country_policy_id")
+  @@index([created_by], map: "idx_insurance_policy_country_created_by")
+  @@index([modified_by], map: "idx_insurance_policy_country_modified_by")
+}
+
+/// Per-customer-number caps and terms for an insurance policy (named / DCL-style rows).
+model NamedPolicy {
+  id                  Int             @id @default(autoincrement())
+  created_at          DateTime        @default(now()) @db.Timestamptz(6)
+  modified_at         DateTime        @updatedAt @db.Timestamptz(6)
+  insurance_policy_id Int
+  customer_number     String          @db.VarChar(255)
+  max_payment_term    Int?
+  customer_mep        Int?
+  reporting_days      Int?
+  customer_max_limit  Decimal?        @db.Decimal(20, 4)
+  /// Expiration date for the named customer's approved limit.
+  limit_expiration_date DateTime?     @db.Date
+  created_by          String?         @db.VarChar
+  modified_by         String?         @db.VarChar
+  InsurancePolicy     InsurancePolicy @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "named_policy_insurance_policy_id_fkey")
+  User_NamedPolicy_created_byToUser  User? @relation("NamedPolicy_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "NamedPolicyCreatedBy_fkey")
+  User_NamedPolicy_modified_byToUser User? @relation("NamedPolicy_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "NamedPolicyModifiedBy_fkey")
+  NamedPolicyTrend                   NamedPolicyTrend[]
+
+  @@unique([insurance_policy_id, customer_number], map: "unique_named_policy_policy_customer_number")
+  @@index([insurance_policy_id], map: "idx_named_policy_insurance_policy_id")
+  @@index([created_by], map: "idx_named_policy_created_by")
+  @@index([modified_by], map: "idx_named_policy_modified_by")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model CustomerBanks {
+  id                                   Int                 @id(map: "tempcustomerbanks_pk") @default(autoincrement())
+  customer_id                          Int
+  account_id                           Int
+  customer_bank_account_id             Int
+  created_at                           DateTime            @default(now()) @db.Timestamptz(6)
+  modified_at                          DateTime            @updatedAt @db.Timestamptz(6)
+  created_by                           String?             @db.VarChar
+  modified_by                          String?             @db.VarChar
+  User_CustomerBanks_created_byToUser  User?               @relation("CustomerBanks_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerBanksCreatedBy_fkey")
+  User_CustomerBanks_modified_byToUser User?               @relation("CustomerBanks_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerBanksModifiedBy_fkey")
+  Account                              Account             @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customerbanks_account_fk")
+  Customer                             Customer            @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customerbanks_customer_fk")
+  AccountBankAccounts                  AccountBankAccounts @relation(fields: [customer_bank_account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "tempcustomerbanks_customerbankaccounts_fk")
+
+  @@index([created_by], map: "idx_customer_banks_created_by")
+  @@index([modified_by], map: "idx_customer_banks_modified_by")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model CustomerCollectionPeriod {
+  id                                              Int               @id(map: "CustomerCollections_pkey") @default(autoincrement())
+  created_at                                      DateTime          @default(now()) @db.Timestamptz(6)
+  modified_at                                     DateTime          @updatedAt @db.Timestamptz(6)
+  customer_id                                     Int
+  period_start_date                               DateTime          @db.Date
+  period_end_date                                 DateTime?         @db.Date
+  last_automated_step                             Int?              @db.SmallInt
+  previous_category                               category?
+  current_category                                category?
+  priority                                        priority?         @default(Normal)
+  total_outstanding_amount                        Float?            @db.Real
+  no_of_overdue_invoices                          Int?              @db.SmallInt
+  currency                                        String?           @db.VarChar
+  promise_to_pay_date                             DateTime?         @db.Date
+  last_dispute_date                               DateTime?         @db.Date
+  customer_outstanding_amount1                    Float?
+  customer_outstanding_amount2                    Float?
+  customer_currency1                              String?           @db.VarChar
+  customer_currency2                              String?           @db.VarChar
+  last_call                                       DateTime?         @db.Timestamptz(6)
+  last_call_result                                String?           @db.VarChar
+  follow_up_time                                  DateTime?         @db.Timestamptz(6)
+  promise_to_pay_amount                           Float?            @db.Real
+  next_category                                   category?
+  next_category_date                              DateTime?         @db.Date
+  create_next_activity                            Boolean           @default(false)
+  next_activity_date                              DateTime?         @db.Timestamptz(6)
+  promise_to_pay_count                            Int               @default(0) @db.SmallInt
+  is_last_automated_step_delivered                Boolean           @default(false)
+  risk_score                                      Decimal?          @default(50.00) @db.Decimal(5, 2)
+  risk_factors                                    Json?
+  last_risk_calculation                           DateTime?         @db.Timestamptz(6)
+  risk_category                                   String?           @default("Medium") @db.VarChar(20)
+  lawyer_assigned                                 Boolean           @default(false)
+  created_by                                      String?           @db.VarChar
+  modified_by                                     String?           @db.VarChar
+  Activity                                        Activity[]
+  User_CustomerCollectionPeriod_created_byToUser  User?             @relation("CustomerCollectionPeriod_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerCollectionPeriodCreatedBy_fkey")
+  User_CustomerCollectionPeriod_modified_byToUser User?             @relation("CustomerCollectionPeriod_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerCollectionPeriodModifiedBy_fkey")
+  Customer                                        Customer          @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "CustomerCollections_customer_id_fkey")
+  CustomerDispute                                 CustomerDispute[]
+  Invoice                                         Invoice[]
+
+  @@index([created_by], map: "idx_customer_collection_period_created_by")
+  @@index([current_category, period_end_date], map: "idx_customer_collection_period_current_category")
+  @@index([modified_by], map: "idx_customer_collection_period_modified_by")
+  @@index([risk_category], map: "idx_customer_collection_risk_category")
+  @@index([risk_score(sort: Desc), priority(sort: Desc)], map: "idx_customer_collection_risk_priority")
+  @@index([risk_score(sort: Desc)], map: "idx_customer_collection_risk_score")
+  @@index([period_end_date, create_next_activity, current_category, customer_id], map: "idx_customer_collection_period_activity_generation")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model CustomerAggregatedData {
+  id                                            Int      @id @default(autoincrement())
+  customer_id                                   Int      @unique
+  created_at                                    DateTime @default(now()) @db.Timestamptz(6)
+  modified_at                                   DateTime @default(now()) @db.Timestamptz(6)
+  total_outstanding_amount                      Float?   @db.Real
+  customer_outstanding_amount1                  Float?
+  customer_outstanding_amount2                  Float?
+  customer_currency1                            String?  @db.VarChar
+  customer_currency2                            String?  @db.VarChar
+  no_of_overdue_invoices                        Int?     @db.SmallInt
+  no_of_due_invoices                            Int?     @db.SmallInt
+  total_invoices_count                          Int?     @db.SmallInt
+  total_paid_amount                             Float?   @db.Real
+  customer_total_paid_amount1                   Float?
+  customer_total_paid_amount2                   Float?
+  total_collection_periods                      Int?     @db.SmallInt
+  active_collection_periods                     Int?     @db.SmallInt
+  child_customers_count                         Int?     @db.SmallInt
+  created_by                                    String?  @db.VarChar
+  modified_by                                   String?  @db.VarChar
+  Customer                                      Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_CustomerAggregatedData_created_byToUser  User?    @relation("CustomerAggregatedData_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  User_CustomerAggregatedData_modified_byToUser User?    @relation("CustomerAggregatedData_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([customer_id], map: "idx_customer_aggregated_data_customer_id")
+  @@index([created_by], map: "idx_customer_aggregated_data_created_by")
+  @@index([modified_by], map: "idx_customer_aggregated_data_modified_by")
+}
+
+/// Dashboard cache table for pre-calculated dashboard metrics
+model DashboardCache {
+  id               Int     @id @default(autoincrement())
+  account_id       Int
+  business_unit_id Int?
+  owner_id         String? @db.VarChar
+  view_mode        String  @db.VarChar(10) // "child" | "parent"
+  cache_key        String  @unique @db.VarChar(255)
+
+  // Scalar metrics
+  active_customers Int   @default(0)
+  overdue_amount   Float @default(0) @db.Real
+  overdue_invoices Int   @default(0)
+  total_collected  Float @default(0) @db.Real
+  total_due        Float @default(0) @db.Real
+  due_today        Float @default(0) @db.Real
+  due_this_week    Float @default(0) @db.Real
+  due_this_month   Float @default(0) @db.Real
+  due_next_month   Float @default(0) @db.Real
+
+  // JSON fields for complex data structures
+  collection_stats                  Json?
+  category_stats                    Json?
+  dispute_stats                     Json?
+  chart_data                        Json? // All chart series data
+  aging_portfolio                   Json?
+  receivables_schedule              Json?
+  invoices_by_customer              Json?
+  invoices_by_business_unit         Json?
+  overdue_invoices_by_customer      Json?
+  overdue_invoices_by_business_unit Json?
+
+  // Metadata
+  last_calculated_at DateTime @default(now()) @db.Timestamptz(6)
+  expires_at         DateTime @db.Timestamptz(6)
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  modified_at        DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([account_id, business_unit_id, owner_id, view_mode], map: "idx_dashboard_cache_lookup")
+  @@index([expires_at], map: "idx_dashboard_cache_expires")
+  @@index([cache_key], map: "idx_dashboard_cache_key")
+  @@index([account_id], map: "idx_dashboard_cache_account")
+}
+
+model CreditDashboardDailySnapshot {
+  id                                     BigInt   @id @default(autoincrement())
+  account_id                             Int
+  policy_id                              Int?
+  business_unit_id                       Int?
+  snapshot_date                          DateTime @db.Date
+  health_index                           Float    @default(0)
+  total_receivables                      Float    @default(0)
+  compliant_exposure                     Float    @default(0)
+  at_risk_exposure                       Float    @default(0)
+  policy_risk_exposure                   Float    @default(0)
+  policy_risk_exposure_customer_count    Int      @default(0)
+  gross_risk_exposure                    Float    @default(0)
+  overdue_block_customer_count           Int      @default(0)
+  overdue_block_total_outstanding        Float    @default(0)
+  capacity_gap_total_amount              Float    @default(0)
+  capacity_gap_customer_over_limit_count Int      @default(0)
+  terms_breach_invoice_count             Int      @default(0)
+  terms_breach_total_amount              Float    @default(0)
+  terms_breach_count_by_reason           Json     @default("{}")
+  without_policy_customer_count          Int      @default(0)
+  without_policy_total_amount            Float    @default(0)
+  reporting_countdown_invoice_count      Int      @default(0)
+  reporting_countdown_total_amount       Float    @default(0)
+  reporting_countdown_window_days        Int      @default(0)
+  limit_warnings_customer_count          Int      @default(0)
+  limit_warnings_total_amount            Float    @default(0)
+  limit_warnings_threshold_pct           Int      @default(0)
+  limit_warnings_score_warn_days         Int      @default(0)
+  account_currency                       String   @default("USD") @db.VarChar(10)
+  top_up_cover_total_amount              Float?
+  customers_with_active_top_up_count     Int?
+  top_up_expiring_customer_count         Int?
+  created_at                             DateTime @default(now()) @db.Timestamptz(6)
+  modified_at                            DateTime @updatedAt @db.Timestamptz(6)
+  BusinessUnit                           BusinessUnit? @relation(fields: [business_unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([account_id, snapshot_date(sort: Desc)], map: "idx_credit_dashboard_daily_snapshot_account_day")
+  @@index([account_id, business_unit_id, snapshot_date(sort: Desc)], map: "idx_credit_dashboard_daily_snapshot_bu_day")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model CustomerDispute {
+  id                                     Int                       @id(map: "TempCustomerDispute_pkey") @default(autoincrement())
+  created_at                             DateTime                  @default(now()) @db.Timestamptz(6)
+  modified_at                            DateTime                  @default(now()) @db.Timestamptz(6)
+  customer_id                            Int
+  dispute_reason_id                      Int?
+  dispute_status                         dispute_status?
+  owner_id                               String?
+  dispute_resolution                     dispute_resolution?
+  customer_comment                       String?
+  customer_collection_period_id          Int?
+  resolution_comment                     String?
+  invoices_in_dispute                    String?                   @db.VarChar
+  contact_first_name                     String?                   @db.VarChar
+  contact_last_name                      String?                   @db.VarChar
+  contact_email                          String?                   @db.VarChar
+  contact_mobile                         String?                   @db.VarChar
+  created_by                             String?                   @db.VarChar
+  modified_by                            String?                   @db.VarChar
+  closed_at                              DateTime?                 @db.Timestamptz(6)
+  User_CustomerDispute_created_byToUser  User?                     @relation("CustomerDispute_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerDisputeCreatedBy_fkey")
+  User_CustomerDispute_modified_byToUser User?                     @relation("CustomerDispute_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerDisputeModifiedBy_fkey")
+  CustomerCollectionPeriod               CustomerCollectionPeriod? @relation(fields: [customer_collection_period_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Customer                               Customer                  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  DisputeReason                          DisputeReason?            @relation(fields: [dispute_reason_id], references: [id], onDelete: Cascade, map: "TempCustomerDispute_dispute_reason_id_fkey")
+  User_CustomerDispute_owner_idToUser    User?                     @relation("CustomerDispute_owner_idToUser", fields: [owner_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "TempCustomerDispute_owner_id_fkey")
+  DisputeInvoice                         DisputeInvoice[]
+
+  @@index([created_by], map: "idx_customer_dispute_created_by")
+  @@index([modified_by], map: "idx_customer_dispute_modified_by")
+}
+
+model DisputeInvoice {
+  id                                    Int             @id @default(autoincrement())
+  dispute_id                            Int
+  invoice_id                            Int
+  created_at                            DateTime?       @default(now()) @db.Timestamptz(6)
+  modified_at                           DateTime?       @default(now()) @db.Timestamptz(6)
+  created_by                            String?         @db.VarChar
+  modified_by                           String?         @db.VarChar
+  User_DisputeInvoice_created_byToUser  User?           @relation("DisputeInvoice_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "DisputeInvoiceCreatedBy_fkey")
+  User_DisputeInvoice_modified_byToUser User?           @relation("DisputeInvoice_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "DisputeInvoiceModifiedBy_fkey")
+  CustomerDispute                       CustomerDispute @relation(fields: [dispute_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Invoice                               Invoice         @relation(fields: [invoice_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([created_by], map: "idx_dispute_invoice_created_by")
+  @@index([modified_by], map: "idx_dispute_invoice_modified_by")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model DisputeReason {
+  id                                   Int                     @id @default(autoincrement())
+  created_at                           DateTime                @default(now()) @db.Timestamptz(6)
+  modified_at                          DateTime                @default(now()) @db.Timestamptz(6)
+  account_id                           Int?
+  master_template                      Boolean                 @default(false)
+  name                                 String                  @db.VarChar
+  status                               record_status           @default(Active)
+  editable                             Boolean?                @default(true)
+  created_by                           String?                 @db.VarChar
+  modified_by                          String?                 @db.VarChar
+  CustomerDispute                      CustomerDispute[]
+  User_DisputeReason_created_byToUser  User?                   @relation("DisputeReason_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "DisputeReasonCreatedBy_fkey")
+  User_DisputeReason_modified_byToUser User?                   @relation("DisputeReason_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "DisputeReasonModifiedBy_fkey")
+  Account                              Account?                @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  DisputeReasonLanguage                DisputeReasonLanguage[]
+
+  @@index([created_by], map: "idx_dispute_reason_created_by")
+  @@index([modified_by], map: "idx_dispute_reason_modified_by")
+}
+
+model DisputeReasonLanguage {
+  id                                           Int           @id @default(autoincrement())
+  created_at                                   DateTime      @default(now()) @db.Timestamptz(6)
+  modified_at                                  DateTime      @default(now()) @db.Timestamptz(6)
+  dispute_reason_id                            Int
+  language                                     String        @db.VarChar(50)
+  name                                         String        @db.VarChar(255)
+  created_by                                   String?       @db.VarChar
+  modified_by                                  String?       @db.VarChar
+  User_DisputeReasonLanguage_created_byToUser  User?         @relation("DisputeReasonLanguage_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "DisputeReasonLanguageCreatedBy_fkey")
+  User_DisputeReasonLanguage_modified_byToUser User?         @relation("DisputeReasonLanguage_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "DisputeReasonLanguageModifiedBy_fkey")
+  DisputeReason                                DisputeReason @relation(fields: [dispute_reason_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([dispute_reason_id, language], map: "DisputeReasonLanguage_reason_language_unique")
+  @@index([created_by], map: "idx_dispute_reason_language_created_by")
+  @@index([language], map: "idx_dispute_reason_language_language")
+  @@index([modified_by], map: "idx_dispute_reason_language_modified_by")
+  @@index([dispute_reason_id], map: "idx_dispute_reason_language_reason_id")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model ImportJob {
+  id                               String         @id
+  created_at                       DateTime       @default(now()) @db.Timestamptz(6)
+  modified_at                      DateTime       @default(now()) @db.Timestamptz(6)
+  account_id                       Int
+  user_id                          String?
+  import_type                      ImportType
+  status                           ImportStatus   @default(Pending)
+  total_records                    Int            @default(0)
+  processed_records                Int            @default(0)
+  successful_records               Int            @default(0)
+  failed_records                   Int            @default(0)
+  started_at                       DateTime?      @db.Timestamptz(6)
+  completed_at                     DateTime?      @db.Timestamptz(6)
+  error_message                    String?
+  metadata                         Json?
+  created_by                       String?        @db.VarChar
+  modified_by                      String?        @db.VarChar
+  User_ImportJob_created_byToUser  User?          @relation("ImportJob_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ImportJobCreatedBy_fkey")
+  User_ImportJob_modified_byToUser User?          @relation("ImportJob_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ImportJobModifiedBy_fkey")
+  Account                          Account        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_ImportJob_user_idToUser     User?          @relation("ImportJob_user_idToUser", fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ImportRecord                     ImportRecord[]
+
+  @@index([account_id], map: "idx_import_job_account_id")
+  @@index([created_at], map: "idx_import_job_created_at")
+  @@index([created_by], map: "idx_import_job_created_by")
+  @@index([modified_by], map: "idx_import_job_modified_by")
+  @@index([status], map: "idx_import_job_status")
+  @@index([user_id], map: "idx_import_job_user_id")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model ImportRecord {
+  id                                  String             @id
+  created_at                          DateTime           @default(now()) @db.Timestamptz(6)
+  modified_at                         DateTime           @default(now()) @db.Timestamptz(6)
+  import_job_id                       String
+  row_index                           Int
+  status                              ImportRecordStatus @default(Pending)
+  original_data                       Json
+  processed_data                      Json?
+  validation_errors                   Json?
+  processing_errors                   Json?
+  result_message                      String?
+  entity_id                           Int?
+  created_by                          String?            @db.VarChar
+  modified_by                         String?            @db.VarChar
+  User_ImportRecord_created_byToUser  User?              @relation("ImportRecord_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ImportRecordCreatedBy_fkey")
+  User_ImportRecord_modified_byToUser User?              @relation("ImportRecord_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ImportRecordModifiedBy_fkey")
+  ImportJob                           ImportJob          @relation(fields: [import_job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([created_by], map: "idx_import_record_created_by")
+  @@index([import_job_id, row_index], map: "idx_import_record_job_row")
+  @@index([import_job_id, status], map: "idx_import_record_job_status")
+  @@index([modified_by], map: "idx_import_record_modified_by")
+  @@index([status], map: "idx_import_record_status")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model InternalEmailTemplate {
+  id                                           Int                          @id @default(autoincrement())
+  created_at                                   DateTime                     @default(now()) @db.Timestamptz(6)
+  modified_at                                  DateTime                     @default(now()) @db.Timestamptz(6)
+  name                                         String                       @db.VarChar
+  type                                         internal_email_template_type
+  subject                                      String                       @db.VarChar
+  content                                      String
+  active                                       Boolean                      @default(true)
+  account_id                                   Int
+  master_template                              Boolean                      @default(false)
+  created_by                                   String?                      @db.VarChar
+  modified_by                                  String?                      @db.VarChar
+  User_InternalEmailTemplate_created_byToUser  User?                        @relation("InternalEmailTemplate_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InternalEmailTemplateCreatedBy_fkey")
+  User_InternalEmailTemplate_modified_byToUser User?                        @relation("InternalEmailTemplate_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InternalEmailTemplateModifiedBy_fkey")
+  Account                                      Account                      @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([account_id, type], map: "InternalEmailTemplate_customer_id_type_key")
+  @@index([account_id], map: "idx_internal_email_template_account_id")
+  @@index([active], map: "idx_internal_email_template_active")
+  @@index([created_by], map: "idx_internal_email_template_created_by")
+  @@index([master_template], map: "idx_internal_email_template_master")
+  @@index([modified_by], map: "idx_internal_email_template_modified_by")
+  @@index([type], map: "idx_internal_email_template_type")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model Invoice {
+  id                             Int                       @id @unique @default(autoincrement())
+  created_at                     DateTime                  @default(now()) @db.Timestamptz(6)
+  promise_to_pay                 Int?                      @db.SmallInt
+  modified_at                    DateTime                  @default(now()) @db.Timestamptz(6)
+  customer_id                    Int?
+  /// Insurance policy linked at invoice create/import (active customer policy).
+  policy_id                      Int?
+  invoice_number                 String?
+  amount                         Float?
+  due_date                       DateTime?                 @db.Date
+  oldest_overdue_invoice_date    DateTime?                 @db.Date
+  total_paid                     Float?                    @default(0)
+  status                         invoice_status
+  last_payment_date              DateTime?                 @db.Date
+  zero_limit_alert              Boolean                   @default(false)
+  invoice_date                   DateTime                  @db.Date
+  outstanding_debt               Float?
+  collection_period_id           Int?
+  first_activity_date            DateTime?                 @db.Date
+  customer_number                Int?
+  account_id                     Int
+  customer_total_paid            Float?
+  customer_amount                Float?
+  customer_outstanding_debt      Float?
+  customer_currency              String?                   @db.VarChar
+  credit_for_invoice_id          Int?
+  net_amount                     Float?
+  credit_for_invoice_number      String?                   @db.VarChar
+  customer_net_amount            Float?
+  generic_text1                  String?
+  generic_text2                  String?
+  generic_number1                Float?
+  generic_number2                Float?
+  generic_date1                  DateTime?                 @db.Date
+  generic_date2                  DateTime?                 @db.Date
+  created_by                     String?                   @db.VarChar
+  modified_by                    String?                   @db.VarChar
+  due_notification_state         Json?
+  payment_term                   Int?
+  target_reporting_date          DateTime?                 @db.Date
+  actual_reporting_date          DateTime?                 @db.Date
+  /// Reference / free-text note when marking an invoice as reported to the insurer (single field).
+  reporting_comment              String?                   @db.Text
+  /// Set when the user records reporting (for date & time display on the “Reported” list).
+  reporting_captured_at          DateTime?                 @db.Timestamptz(6)
+  target_mep_date                DateTime?                 @db.Date
+  reported_status                invoice_reported_status?
+  reporting_breach               Boolean                   @default(false)
+  /// True when calendar credit days (due_date − invoice_date) exceed Customer.max_payment_term.
+  ctv_payment_term Boolean             @default(false)
+  /// Snapshot at create/import: Customer was in overdue (MEP) breach.
+  ctv_customer_overdue_mep Boolean   @default(false)
+  /// Snapshot at create/import: Customer.excluded_from_policy.
+  ctv_customer_excluded_from_policy Boolean @default(false)
+  /// Snapshot at create/import: credit score / DCL info expired vs invoice issue date (policy validity months).
+  ctv_outdated_dcl Boolean             @default(false)
+  /// Snapshot at create/import: invoice_date on or after InsurancePolicy.end_date (expiry day counts).
+  ctv_invoice_after_policy_end Boolean @default(false)
+  /// Open Due/Overdue balance allocated above approved limit (FIFO by invoice_date); excluded from terms-breach sum when computing at-risk exposure.
+  in_capacity_gap              Boolean                   @default(false)
+  /// Invoice-level limit basis snapshot captured when invoice first becomes open.
+  limit_assessed_amount        Decimal?                  @db.Decimal(20, 4)
+  /// Timestamp when invoice-level limit basis was captured.
+  limit_assessed_at            DateTime?                 @db.Timestamptz(6)
+  /// Currency of invoice-level limit basis snapshot.
+  limit_assessed_currency      String?                   @db.VarChar(16)
+  /// Capacity gap in account base currency (sticky per open invoice).
+  capacity_gap_amount          Decimal?                  @db.Decimal(20, 4)
+  /// Capacity gap in limit / invoice currency (`limit_assessed_currency`).
+  capacity_gap_amount_limit    Decimal?                  @db.Decimal(20, 4)
+  /// FX rate date when table rate used for base gap; null when implicit invoice rate.
+  capacity_gap_amount_date     DateTime?                 @db.Date
+  DisputeInvoice                 DisputeInvoice[]
+  User_Invoice_created_byToUser  User?                     @relation("Invoice_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InvoiceCreatedBy_fkey")
+  User_Invoice_modified_byToUser User?                     @relation("Invoice_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InvoiceModifiedBy_fkey")
+  Account                        Account                   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  CustomerCollectionPeriod       CustomerCollectionPeriod? @relation(fields: [collection_period_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "Invoice_collection_period_fkey")
+  Invoice                        Invoice?                  @relation("InvoiceToInvoice", fields: [credit_for_invoice_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_Invoice                  Invoice[]                 @relation("InvoiceToInvoice")
+  Customer                       Customer?                 @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  InsurancePolicy                InsurancePolicy?          @relation(fields: [policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "invoice_insurance_policy_id_fkey")
+  InvoicePayment                 InvoicePayment[]
+  Activity                       Activity[]
+
+  @@index([policy_id], map: "idx_invoice_policy_id")
+  @@index([created_by], map: "idx_invoice_created_by")
+  @@index([credit_for_invoice_id], map: "idx_invoice_credit_for_invoice_id")
+  @@index([customer_id, status], map: "idx_invoice_customer_status")
+  @@index([due_date, status], map: "idx_invoice_due_date_status")
+  @@index([modified_by], map: "idx_invoice_modified_by")
+  @@index([status, target_mep_date], map: "idx_invoice_status_target_mep_date")
+  @@index([status, target_reporting_date], map: "idx_invoice_status_target_reporting_date")
+  @@index([account_id, customer_id, policy_id, status], map: "idx_invoice_gap_rollup")
+}
+
+model InvoicePayment {
+  id                                    Int       @id @default(autoincrement())
+  invoice_id                            Int?
+  customer_currency                     String    @db.VarChar(50)
+  payment_date                          DateTime  @db.Timestamptz(6)
+  amount                                Float     @db.Real
+  payment_method                        String    @db.VarChar(100)
+  reference                             String    @db.VarChar(100)
+  customer_id                           Int
+  account_id                            Int
+  customer_amount                       Float     @db.Real
+  invoice_number                        String?   @db.VarChar(100)
+  created_at                            DateTime? @default(now()) @db.Timestamptz(6)
+  modified_at                           DateTime? @default(now()) @db.Timestamptz(6)
+  created_by                            String?   @db.VarChar
+  modified_by                           String?   @db.VarChar
+  User_InvoicePayment_created_byToUser  User?     @relation("InvoicePayment_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InvoicePaymentCreatedBy_fkey")
+  User_InvoicePayment_modified_byToUser User?     @relation("InvoicePayment_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InvoicePaymentModifiedBy_fkey")
+  Customer                              Customer  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Invoice                               Invoice?  @relation(fields: [invoice_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Account                               Account   @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_account")
+
+  @@unique([account_id, customer_id, reference], map: "idx_unique_customer_reference")
+  @@index([created_by], map: "idx_invoice_payment_created_by")
+  @@index([modified_by], map: "idx_invoice_payment_modified_by")
+  @@index([account_id], map: "idx_invoicepayment_customer_id")
+}
+
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model Log {
+  id             BigInt    @id @default(autoincrement())
+  timestamp      DateTime  @default(now()) @db.Timestamptz(6)
+  level          log_level
+  message        String
+  source         String    @db.VarChar(255)
+  details        Json?     @db.Json
+  account_id     Int?
+  user_id        String?
+  job_id         Int?
+  correlation_id String?   @db.VarChar(255)
+  sub_source     String?   @db.VarChar(255)
+  Account        Account?  @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  CronJob        CronJob?  @relation(fields: [job_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User           User?     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model Notification {
+  id                                  String            @id
+  created_at                          DateTime          @default(now()) @db.Timestamptz(6)
+  modified_at                         DateTime          @default(now()) @db.Timestamptz(6)
+  type                                notification_type
+  title                               String            @db.VarChar(255)
+  message                             String
+  priority                            priority          @default(Normal)
+  user_id                             String            @db.VarChar(255)
+  account_id                          Int
+  read                                Boolean           @default(false)
+  action_url                          String?           @db.VarChar(500)
+  metadata                            Json?
+  created_by                          String?           @db.VarChar
+  modified_by                         String?           @db.VarChar
+  User_Notification_created_byToUser  User?             @relation("Notification_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "NotificationCreatedBy_fkey")
+  User_Notification_modified_byToUser User?             @relation("Notification_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "NotificationModifiedBy_fkey")
+  Account                             Account           @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_Notification_user_idToUser     User              @relation("Notification_user_idToUser", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([account_id, created_at(sort: Desc)], map: "idx_notification_account_created_desc")
+  @@index([created_by], map: "idx_notification_created_by")
+  @@index([created_at(sort: Desc)], map: "idx_notification_created_desc")
+  @@index([modified_by], map: "idx_notification_modified_by")
+  @@index([user_id, account_id], map: "idx_notification_user_account")
+  @@index([user_id, priority], map: "idx_notification_user_priority")
+  @@index([user_id, read], map: "idx_notification_user_read")
+  @@index([user_id, type], map: "idx_notification_user_type")
+}
+
+model NotificationRuleSet {
+  id             Int                            @id @default(autoincrement())
+  account_id     Int
+  product        notification_rule_product
+  trigger_type   notification_rule_trigger_type
+  enabled        Boolean                        @default(true)
+  created_at     DateTime                       @default(now()) @db.Timestamptz(6)
+  modified_at    DateTime                       @default(now()) @db.Timestamptz(6)
+  created_by     String?                        @db.VarChar
+  modified_by    String?                        @db.VarChar
+  Account        Account                        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  rules          NotificationRule[]
+
+  @@unique([account_id, product, trigger_type], map: "ux_notification_rule_set_account_product_trigger")
+  @@index([account_id, product], map: "idx_notification_rule_set_account_product")
+}
+
+model NotificationRule {
+  id                   Int                            @id @default(autoincrement())
+  rule_set_id          Int
+  advance_day_offsets  Int[]                          @default([])
+  metadata             Json?
+  created_at           DateTime                       @default(now()) @db.Timestamptz(6)
+  modified_at          DateTime                       @default(now()) @db.Timestamptz(6)
+  created_by           String?                        @db.VarChar
+  modified_by          String?                        @db.VarChar
+  rule_set             NotificationRuleSet            @relation(fields: [rule_set_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  role_defaults        NotificationRuleRoleDefault[]
+  user_overrides       NotificationRuleUserOverride[]
+  delivery_logs        NotificationDeliveryLog[]
+
+  @@unique([rule_set_id], map: "ux_notification_rule_rule_set")
+  @@index([rule_set_id], map: "idx_notification_rule_rule_set")
+}
+
+model NotificationRuleRoleDefault {
+  id          Int               @id @default(autoincrement())
+  rule_id     Int
+  role        user_role
+  created_at  DateTime          @default(now()) @db.Timestamptz(6)
+  modified_at DateTime          @default(now()) @db.Timestamptz(6)
+  created_by  String?           @db.VarChar
+  modified_by String?           @db.VarChar
+  rule        NotificationRule  @relation(fields: [rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([rule_id, role], map: "ux_notification_rule_role_default_rule_role")
+  @@index([rule_id], map: "idx_notification_rule_role_default_rule")
+}
+
+model NotificationRuleUserOverride {
+  id          Int               @id @default(autoincrement())
+  rule_id     Int
+  user_id     String            @db.VarChar(255)
+  active      Boolean           @default(true)
+  created_at  DateTime          @default(now()) @db.Timestamptz(6)
+  modified_at DateTime          @default(now()) @db.Timestamptz(6)
+  created_by  String?           @db.VarChar
+  modified_by String?           @db.VarChar
+  rule        NotificationRule  @relation(fields: [rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([rule_id, user_id], map: "ux_notification_rule_user_override_rule_user")
+  @@index([rule_id, active], map: "idx_notification_rule_user_override_rule_active")
+}
+
+model NotificationDeliveryLog {
+  id             BigInt                        @id @default(autoincrement())
+  account_id     Int
+  rule_id        Int
+  entity_type    String                        @db.VarChar(50)
+  entity_id      String                        @db.VarChar(128)
+  offset_days    Int?
+  channel        notification_delivery_channel
+  delivered_at   DateTime                      @default(now()) @db.Timestamptz(6)
+  cleared_at     DateTime?                     @db.Timestamptz(6)
+  metadata       Json?
+  created_at     DateTime                      @default(now()) @db.Timestamptz(6)
+  modified_at    DateTime                      @default(now()) @db.Timestamptz(6)
+  Account        Account                       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  rule           NotificationRule              @relation(fields: [rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([account_id, delivered_at(sort: Desc)], map: "idx_notification_delivery_log_account_delivered_desc")
+  @@index([rule_id, entity_type, entity_id], map: "idx_notification_delivery_log_rule_entity")
+  @@index([rule_id, channel, offset_days], map: "idx_notification_delivery_log_rule_channel_offset")
+}
+
+model Payment {
+  id                             Int       @id(map: "payment_pkey") @default(autoincrement())
+  created_at                     DateTime  @default(now()) @db.Timestamptz(6)
+  payment_date                   DateTime  @db.Date
+  amount                         Float
+  payment_method                 String?   @db.VarChar(50)
+  reference                      String?
+  customer_id                    Int
+  account_id                     Int
+  customer_amount                Float?    @db.Real
+  customer_currency              String?   @db.VarChar(50)
+  generic_text1                  String?
+  generic_text2                  String?
+  generic_number1                Float?
+  generic_number2                Float?
+  generic_date1                  DateTime? @db.Date
+  generic_date2                  DateTime? @db.Date
+  created_by                     String?   @db.VarChar
+  modified_by                    String?   @db.VarChar
+  User_Payment_created_byToUser  User?     @relation("Payment_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "PaymentCreatedBy_fkey")
+  User_Payment_modified_byToUser User?     @relation("Payment_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "PaymentModifiedBy_fkey")
+  Account                        Account   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Customer                       Customer  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([created_by], map: "idx_payment_created_by")
+  @@index([modified_by], map: "idx_payment_modified_by")
+}
+
+model Person {
+  id                            Int        @id(map: "PrivatePersons_pkey") @unique(map: "PrivatePersons_id_key") @default(autoincrement())
+  created_at                    DateTime   @default(now()) @db.Timestamptz(6)
+  modified_at                   DateTime   @default(now()) @db.Timestamptz(6)
+  first_name                    String?    @db.VarChar
+  last_name                     String?    @db.VarChar
+  date_of_birth                 DateTime?  @db.Date
+  identification_number         String?
+  mobile                        String?
+  full_name                     String?    @db.VarChar
+  created_by                    String?    @db.VarChar
+  modified_by                   String?    @db.VarChar
+  User_Person_created_byToUser  User?      @relation("Person_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "PersonCreatedBy_fkey")
+  User_Person_modified_byToUser User?      @relation("Person_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "PersonModifiedBy_fkey")
+  Customer                      Customer[] @relation("Customer_Person")
+
+  @@index([created_by], map: "idx_person_created_by")
+  @@index([full_name], map: "idx_person_full_name")
+  @@index([modified_by], map: "idx_person_modified_by")
+}
+
+model SMSVendor {
+  id                               Int                             @id @default(autoincrement())
+  name                             String                          @db.VarChar(100)
+  provider                         String                          @db.VarChar(50)
+  api_key                          String?                         @db.VarChar(255)
+  api_secret                       String?                         @db.VarChar(255)
+  account_sid                      String?                         @db.VarChar(255)
+  auth_token                       String?                         @db.VarChar(255)
+  webhook_url                      String?                         @db.VarChar(500)
+  is_active                        Boolean?                        @default(true)
+  priority                         Int?                            @default(1)
+  cost_per_sms                     Decimal?                        @db.Decimal(10, 4)
+  currency                         String?                         @default("USD") @db.VarChar(3)
+  created_at                       DateTime?                       @default(now()) @db.Timestamp(6)
+  modified_at                      DateTime?                       @default(now()) @db.Timestamp(6)
+  use_account_sender_name          Boolean?                        @default(false)
+  created_by                       String?                         @db.VarChar
+  modified_by                      String?                         @db.VarChar
+  AccountSMSProviderPreferences    AccountSMSProviderPreferences[]
+  ActivityContact                  ActivityContact[]
+  CountrySMSVendor                 CountrySMSVendor[]
+  User_SMSVendor_created_byToUser  User?                           @relation("SMSVendor_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "SMSVendorCreatedBy_fkey")
+  User_SMSVendor_modified_byToUser User?                           @relation("SMSVendor_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "SMSVendorModifiedBy_fkey")
+
+  @@index([is_active], map: "idx_sms_vendor_active")
+  @@index([created_by], map: "idx_sms_vendor_created_by")
+  @@index([modified_by], map: "idx_sms_vendor_modified_by")
+  @@index([provider], map: "idx_sms_vendor_provider")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model SequenceContainer {
+  id                                       Int                  @id @default(autoincrement())
+  created_at                               DateTime             @default(now()) @db.Timestamptz(6)
+  modified_at                              DateTime             @default(now()) @db.Timestamptz(6)
+  name                                     String               @db.VarChar(255)
+  category                                 category
+  account_id                               Int
+  is_default                               Boolean              @default(false)
+  active                                   Boolean              @default(true)
+  master_template                          Boolean              @default(false)
+  is_deleted                               Boolean              @default(false)
+  created_by                               String?              @db.VarChar
+  modified_by                              String?              @db.VarChar
+  ActivitiesSequence                       ActivitiesSequence[]
+  Customer                                 Customer[]           @relation("CustomerSequenceContainer")
+  User_SequenceContainer_created_byToUser  User?                @relation("SequenceContainer_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "SequenceContainerCreatedBy_fkey")
+  User_SequenceContainer_modified_byToUser User?                @relation("SequenceContainer_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "SequenceContainerModifiedBy_fkey")
+  Account                                  Account              @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([account_id, category, name, is_deleted], map: "sequence_container_unique_name")
+  @@index([created_by], map: "idx_sequence_container_created_by")
+  @@index([modified_by], map: "idx_sequence_container_modified_by")
+  @@index([account_id, category], map: "sequence_container_customer_category")
+  @@index([account_id, category, is_default], map: "sequence_container_default")
+  @@index([is_deleted], map: "sequence_container_is_deleted")
+}
+
+model Session {
+  id           String   @id
+  userId       String
+  expires      DateTime
+  sessionToken String   @unique
+  created_at   DateTime @default(now())
+  modified_at  DateTime @updatedAt
+  User         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model State {
+  id                  Int                   @id(map: "state_pkey") @default(autoincrement())
+  name                String                @db.VarChar(255)
+  country_id          Int
+  country_code        String                @db.Char(2)
+  fips_code           String?               @db.VarChar(255)
+  iso2                String?               @db.VarChar(255)
+  type                String?               @db.VarChar(191)
+  level               Int?
+  parent_id           Int?
+  latitude            Decimal?              @db.Decimal(10, 8)
+  longitude           Decimal?              @db.Decimal(11, 8)
+  created_at          DateTime?             @db.Timestamptz(6)
+  modified_at         DateTime              @updatedAt @db.Timestamptz(6)
+  flag                Int                   @default(1) @db.SmallInt
+  wikiDataId          String?               @db.VarChar(255)
+  Account             Account[]
+  AccountBankAccounts AccountBankAccounts[]
+  Contact             Contact[]
+  Country             Country               @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "state_country_id_fkey")
+  Customer            Customer[]
+
+  @@index([country_id], map: "state_country_id_idx")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model User {
+  id                                                                              String                           @id
+  name                                                                            String?
+  email                                                                           String
+  username                                                                        String                           @unique @db.VarChar(255)
+  emailVerified                                                                   DateTime?
+  image                                                                           String?
+  created_at                                                                      DateTime                         @default(now())
+  modified_at                                                                     DateTime                         @updatedAt
+  language                                                                        language                         @default(English)
+  account_id                                                                      Int?
+  password                                                                        String?
+  resetToken                                                                      String?
+  resetTokenExpiry                                                                DateTime?                        @db.Timestamptz(6)
+  status                                                                          record_status                    @default(Active)
+  first_name                                                                      String?                          @db.VarChar
+  last_name                                                                       String?                          @db.VarChar
+  role                                                                            user_role?
+  mobile                                                                          String?
+  time_zone                                                                       String?                          @default("Asia/Jerusalem") @db.VarChar(50)
+  currency                                                                        String?                          @default("USD") @db.VarChar
+  locale                                                                          String?                          @default("en-US") @db.VarChar(10)
+  session_version                                                                 Int                              @default(0)
+  freeze                                                                          Boolean                          @default(false)
+  sidebar_collapsed                                                               Boolean?
+  failed_login_attempts                                                           Int                              @default(0)
+  last_failed_login_at                                                            DateTime?                        @db.Timestamptz(6)
+  deactivated_at                                                                  DateTime?                        @db.Timestamptz(6)
+  guided_tooltips_enabled                                                         Boolean?                         @default(true)
+  is_audit_user                                                                   Boolean                          @default(false)
+  created_by                                                                      String?                          @db.VarChar
+  modified_by                                                                     String?                          @db.VarChar
+  business_unit_id                                                                Int?
+  Account_Account_created_byToUser                                                Account[]                        @relation("Account_created_byToUser")
+  Account_Account_modified_byToUser                                               Account[]                        @relation("Account_modified_byToUser")
+  Account_Account_deleted_byToUser                                                Account[]                        @relation("Account_deleted_byToUser")
+  AccountBankAccounts_AccountBankAccounts_created_byToUser                        AccountBankAccounts[]            @relation("AccountBankAccounts_created_byToUser")
+  AccountBankAccounts_AccountBankAccounts_modified_byToUser                       AccountBankAccounts[]            @relation("AccountBankAccounts_modified_byToUser")
+  AccountSMSProviderPreferences_AccountSMSProviderPreferences_created_byToUser    AccountSMSProviderPreferences[]  @relation("AccountSMSProviderPreferences_created_byToUser")
+  AccountSMSProviderPreferences_AccountSMSProviderPreferences_modified_byToUser   AccountSMSProviderPreferences[]  @relation("AccountSMSProviderPreferences_modified_byToUser")
+  ActivitiesSequence_ActivitiesSequence_created_byToUser                          ActivitiesSequence[]             @relation("ActivitiesSequence_created_byToUser")
+  ActivitiesSequence_ActivitiesSequence_modified_byToUser                         ActivitiesSequence[]             @relation("ActivitiesSequence_modified_byToUser")
+  ActivitiesTemplate_ActivitiesTemplate_created_byToUser                          ActivitiesTemplate[]             @relation("ActivitiesTemplate_created_byToUser")
+  ActivitiesTemplate_ActivitiesTemplate_modified_byToUser                         ActivitiesTemplate[]             @relation("ActivitiesTemplate_modified_byToUser")
+  Activity_Activity_created_byToUser                                              Activity[]                       @relation("Activity_created_byToUser")
+  Activity_Activity_modified_byToUser                                             Activity[]                       @relation("Activity_modified_byToUser")
+  ActivityAttachment_ActivityAttachment_created_byToUser                          ActivityAttachment[]             @relation("ActivityAttachment_created_byToUser")
+  ActivityAttachment_ActivityAttachment_modified_byToUser                         ActivityAttachment[]             @relation("ActivityAttachment_modified_byToUser")
+  ActivityContact_ActivityContact_created_byToUser                                ActivityContact[]                @relation("ActivityContact_created_byToUser")
+  ActivityContact_ActivityContact_modified_byToUser                               ActivityContact[]                @relation("ActivityContact_modified_byToUser")
+  ActivityTemplateLanguage_ActivityTemplateLanguage_created_byToUser              ActivityTemplateLanguage[]       @relation("ActivityTemplateLanguage_created_byToUser")
+  ActivityTemplateLanguage_ActivityTemplateLanguage_modified_byToUser             ActivityTemplateLanguage[]       @relation("ActivityTemplateLanguage_modified_byToUser")
+  CommunicationChannelPreference_CommunicationChannelPreference_created_byToUser  CommunicationChannelPreference[] @relation("CommunicationChannelPreference_created_byToUser")
+  CommunicationChannelPreference_CommunicationChannelPreference_modified_byToUser CommunicationChannelPreference[] @relation("CommunicationChannelPreference_modified_byToUser")
+  CommunicationLearningData_CommunicationLearningData_created_byToUser            CommunicationLearningData[]      @relation("CommunicationLearningData_created_byToUser")
+  CommunicationLearningData_CommunicationLearningData_modified_byToUser           CommunicationLearningData[]      @relation("CommunicationLearningData_modified_byToUser")
+  Company_Company_created_byToUser                                                Company[]                        @relation("Company_created_byToUser")
+  Company_Company_modified_byToUser                                               Company[]                        @relation("Company_modified_byToUser")
+  Contact_Contact_created_byToUser                                                Contact[]                        @relation("Contact_created_byToUser")
+  Contact_Contact_modified_byToUser                                               Contact[]                        @relation("Contact_modified_byToUser")
+  CountrySMSVendor_CountrySMSVendor_created_byToUser                              CountrySMSVendor[]               @relation("CountrySMSVendor_created_byToUser")
+  CountrySMSVendor_CountrySMSVendor_modified_byToUser                             CountrySMSVendor[]               @relation("CountrySMSVendor_modified_byToUser")
+  Customer_Customer_created_byToUser                                              Customer[]                       @relation("Customer_created_byToUser")
+  Customer_Customer_modified_byToUser                                             Customer[]                       @relation("Customer_modified_byToUser")
+  CustomerPolicy_CustomerPolicy_created_byToUser                                  CustomerPolicy[]                 @relation("CustomerPolicy_created_byToUser")
+  CustomerPolicy_CustomerPolicy_modified_byToUser                                 CustomerPolicy[]                 @relation("CustomerPolicy_modified_byToUser")
+  Customer_Customer_owner_idToUser                                                Customer[]                       @relation("Customer_Owner")
+  CustomerBanks_CustomerBanks_created_byToUser                                    CustomerBanks[]                  @relation("CustomerBanks_created_byToUser")
+  CustomerBanks_CustomerBanks_modified_byToUser                                   CustomerBanks[]                  @relation("CustomerBanks_modified_byToUser")
+  CustomerCollectionPeriod_CustomerCollectionPeriod_created_byToUser              CustomerCollectionPeriod[]       @relation("CustomerCollectionPeriod_created_byToUser")
+  CustomerCollectionPeriod_CustomerCollectionPeriod_modified_byToUser             CustomerCollectionPeriod[]       @relation("CustomerCollectionPeriod_modified_byToUser")
+  CustomerAggregatedData_CustomerAggregatedData_created_byToUser                  CustomerAggregatedData[]         @relation("CustomerAggregatedData_created_byToUser")
+  CustomerAggregatedData_CustomerAggregatedData_modified_byToUser                 CustomerAggregatedData[]         @relation("CustomerAggregatedData_modified_byToUser")
+  CustomerDispute_CustomerDispute_created_byToUser                                CustomerDispute[]                @relation("CustomerDispute_created_byToUser")
+  CustomerDispute_CustomerDispute_modified_byToUser                               CustomerDispute[]                @relation("CustomerDispute_modified_byToUser")
+  CustomerDispute_CustomerDispute_owner_idToUser                                  CustomerDispute[]                @relation("CustomerDispute_owner_idToUser")
+  DisputeInvoice_DisputeInvoice_created_byToUser                                  DisputeInvoice[]                 @relation("DisputeInvoice_created_byToUser")
+  DisputeInvoice_DisputeInvoice_modified_byToUser                                 DisputeInvoice[]                 @relation("DisputeInvoice_modified_byToUser")
+  DisputeReason_DisputeReason_created_byToUser                                    DisputeReason[]                  @relation("DisputeReason_created_byToUser")
+  DisputeReason_DisputeReason_modified_byToUser                                   DisputeReason[]                  @relation("DisputeReason_modified_byToUser")
+  DisputeReasonLanguage_DisputeReasonLanguage_created_byToUser                    DisputeReasonLanguage[]          @relation("DisputeReasonLanguage_created_byToUser")
+  DisputeReasonLanguage_DisputeReasonLanguage_modified_byToUser                   DisputeReasonLanguage[]          @relation("DisputeReasonLanguage_modified_byToUser")
+  ImportJob_ImportJob_created_byToUser                                            ImportJob[]                      @relation("ImportJob_created_byToUser")
+  ImportJob_ImportJob_modified_byToUser                                           ImportJob[]                      @relation("ImportJob_modified_byToUser")
+  ImportJob_ImportJob_user_idToUser                                               ImportJob[]                      @relation("ImportJob_user_idToUser")
+  ImportRecord_ImportRecord_created_byToUser                                      ImportRecord[]                   @relation("ImportRecord_created_byToUser")
+  ImportRecord_ImportRecord_modified_byToUser                                     ImportRecord[]                   @relation("ImportRecord_modified_byToUser")
+  InternalEmailTemplate_InternalEmailTemplate_created_byToUser                    InternalEmailTemplate[]          @relation("InternalEmailTemplate_created_byToUser")
+  InternalEmailTemplate_InternalEmailTemplate_modified_byToUser                   InternalEmailTemplate[]          @relation("InternalEmailTemplate_modified_byToUser")
+  InsurancePolicy_InsurancePolicy_created_byToUser                                InsurancePolicy[]                @relation("InsurancePolicy_created_byToUser")
+  InsurancePolicy_InsurancePolicy_modified_byToUser                               InsurancePolicy[]                @relation("InsurancePolicy_modified_byToUser")
+  InsurancePolicyCountry_InsurancePolicyCountry_created_byToUser                  InsurancePolicyCountry[]         @relation("InsurancePolicyCountry_created_byToUser")
+  InsurancePolicyCountry_InsurancePolicyCountry_modified_byToUser               InsurancePolicyCountry[]         @relation("InsurancePolicyCountry_modified_byToUser")
+  NamedPolicy_NamedPolicy_created_byToUser                                        NamedPolicy[]                    @relation("NamedPolicy_created_byToUser")
+  NamedPolicy_NamedPolicy_modified_byToUser                                       NamedPolicy[]                    @relation("NamedPolicy_modified_byToUser")
+  CustomerTopUp_CustomerTopUp_created_byToUser                                    CustomerTopUp[]                  @relation("CustomerTopUp_created_byToUser")
+  CustomerTopUp_CustomerTopUp_modified_byToUser                                   CustomerTopUp[]                  @relation("CustomerTopUp_modified_byToUser")
+  Invoice_Invoice_created_byToUser                                                Invoice[]                        @relation("Invoice_created_byToUser")
+  Invoice_Invoice_modified_byToUser                                               Invoice[]                        @relation("Invoice_modified_byToUser")
+  InvoicePayment_InvoicePayment_created_byToUser                                  InvoicePayment[]                 @relation("InvoicePayment_created_byToUser")
+  InvoicePayment_InvoicePayment_modified_byToUser                                 InvoicePayment[]                 @relation("InvoicePayment_modified_byToUser")
+  Log                                                                             Log[]
+  Notification_Notification_created_byToUser                                      Notification[]                   @relation("Notification_created_byToUser")
+  Notification_Notification_modified_byToUser                                     Notification[]                   @relation("Notification_modified_byToUser")
+  Notification_Notification_user_idToUser                                         Notification[]                   @relation("Notification_user_idToUser")
+  Payment_Payment_created_byToUser                                                Payment[]                        @relation("Payment_created_byToUser")
+  Payment_Payment_modified_byToUser                                               Payment[]                        @relation("Payment_modified_byToUser")
+  Person_Person_created_byToUser                                                  Person[]                         @relation("Person_created_byToUser")
+  Person_Person_modified_byToUser                                                 Person[]                         @relation("Person_modified_byToUser")
+  SMSVendor_SMSVendor_created_byToUser                                            SMSVendor[]                      @relation("SMSVendor_created_byToUser")
+  SMSVendor_SMSVendor_modified_byToUser                                           SMSVendor[]                      @relation("SMSVendor_modified_byToUser")
+  SequenceContainer_SequenceContainer_created_byToUser                            SequenceContainer[]              @relation("SequenceContainer_created_byToUser")
+  SequenceContainer_SequenceContainer_modified_byToUser                           SequenceContainer[]              @relation("SequenceContainer_modified_byToUser")
+  Session                                                                         Session[]
+  Account_User_account_idToAccount                                                Account?                         @relation("User_account_idToAccount", fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  UserImportMappings_created_by                                                   UserImportMappings[]             @relation("UserImportMappings_created_byToUser")
+  UserImportMappings_modified_by                                                  UserImportMappings[]             @relation("UserImportMappings_modified_byToUser")
+  UserImportMappings_user_id                                                      UserImportMappings[]             @relation("UserImportMappings_user_idToUser")
+  User_User_created_byToUser                                                      User?                            @relation("User_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  User_User_modified_byToUser                                                     User?                            @relation("User_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  User_User_created_byToUser_User                                                 User[]                           @relation("User_created_byToUser")
+  User_User_modified_byToUser_User                                                User[]                           @relation("User_modified_byToUser")
+  BusinessUnit                                                                    BusinessUnit?                    @relation(fields: [business_unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  BusinessUnit_BusinessUnit_created_byToUser                                      BusinessUnit[]                   @relation("BusinessUnit_created_byToUser")
+  BusinessUnit_BusinessUnit_modified_byToUser                                     BusinessUnit[]                   @relation("BusinessUnit_modified_byToUser")
+  RolePermission_RolePermission_created_byToUser                                  RolePermission[]                 @relation("RolePermission_created_byToUser")
+  RolePermission_RolePermission_modified_byToUser                                 RolePermission[]                 @relation("RolePermission_modified_byToUser")
+  UserPreferences                                                                 UserPreferences[]
+  Report_Report_created_byToUser                                                  Report[]                         @relation("Report_created_byToUser")
+  Report_Report_modified_byToUser                                                 Report[]                         @relation("Report_modified_byToUser")
+  ReportShare_ReportShare_shared_with_user_idToUser                               ReportShare[]                    @relation("ReportShare_shared_with_user_idToUser")
+  ReportShare_ReportShare_created_byToUser                                        ReportShare[]                    @relation("ReportShare_created_byToUser")
+  ReportExecution_ReportExecution_executed_byToUser                               ReportExecution[]                @relation("ReportExecution_executed_byToUser")
+  UserDefaultReport                                                               UserDefaultReport[]              @relation("UserDefaultReport_user_idToUser")
+
+  @@index([created_by], map: "idx_user_created_by")
+  @@index([modified_by], map: "idx_user_modified_by")
+  @@index([business_unit_id], map: "idx_user_business_unit_id")
+  @@index([account_id], map: "idx_user_account_id")
+}
+
+model UserPreferences {
+  id              String   @id @default(uuid())
+  userId          String   @db.VarChar
+  preferenceKey   String   @db.VarChar(255)
+  preferenceValue Json?
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  modified_at     DateTime @updatedAt @db.Timestamptz(6)
+  User            User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "UserPreferences_userId_fkey")
+
+  @@unique([userId, preferenceKey], map: "unique_user_preference")
+  @@index([userId], map: "idx_user_preferences_user_id")
+  @@index([preferenceKey], map: "idx_user_preferences_preference_key")
+  @@index([userId, preferenceKey], map: "idx_user_preferences_user_key")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model RolePermission {
+  id                                    Int       @id @default(autoincrement())
+  account_id                            Int
+  role                                  user_role
+  permission_key                        String    @db.VarChar(255)
+  is_collection                         Boolean   @default(true)
+  is_credit_insurance                   Boolean   @default(false)
+  created_at                            DateTime  @default(now()) @db.Timestamptz(6)
+  modified_at                           DateTime  @default(now()) @db.Timestamptz(6)
+  created_by                            String?   @db.VarChar
+  modified_by                           String?   @db.VarChar
+  Account                               Account   @relation("RolePermission_account_idToAccount", fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "RolePermission_account_id_fkey")
+  User_RolePermission_created_byToUser  User?     @relation("RolePermission_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "RolePermission_created_by_fkey")
+  User_RolePermission_modified_byToUser User?     @relation("RolePermission_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "RolePermission_modified_by_fkey")
+
+  @@unique([account_id, role, permission_key], map: "unique_role_permission")
+  @@index([account_id, role], map: "idx_role_permission_account_role")
+  @@index([account_id], map: "idx_role_permission_account_id")
+  @@index([role], map: "idx_role_permission_role")
+  @@index([created_by], map: "idx_role_permission_created_by")
+  @@index([modified_by], map: "idx_role_permission_modified_by")
+}
+
+model Report {
+  id                            Int                 @id @default(autoincrement())
+  account_id                    Int
+  name                          String              @db.VarChar(255)
+  unique_name                   String              @db.VarChar(255)
+  description                   String?             @db.VarChar(1000)
+  report_config                 Json
+  is_public                     Boolean             @default(false)
+  is_system                     Boolean             @default(false)
+  is_default                    Boolean             @default(false)
+  context                       String?             @db.VarChar(50)
+  created_at                    DateTime            @default(now()) @db.Timestamptz(6)
+  modified_at                   DateTime            @updatedAt @db.Timestamptz(6)
+  created_by                    String?             @db.VarChar
+  modified_by                   String?             @db.VarChar
+  Account                       Account             @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_Report_created_byToUser  User?               @relation("Report_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  User_Report_modified_byToUser User?               @relation("Report_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ReportShare                   ReportShare[]
+  ReportSchedule                ReportSchedule[]
+  ReportExecution               ReportExecution[]
+  UserDefaultReport             UserDefaultReport[]
+
+  @@unique([account_id, unique_name], map: "idx_report_account_unique_name")
+  @@index([account_id], map: "idx_report_account_id")
+  @@index([created_by], map: "idx_report_created_by")
+  @@index([modified_by], map: "idx_report_modified_by")
+  @@index([is_public], map: "idx_report_is_public")
+  @@index([is_system], map: "idx_report_is_system")
+  @@index([context], map: "idx_report_context")
+  @@index([is_system, context], map: "idx_report_system_context")
+  @@index([is_default, context], map: "idx_report_default_context")
+}
+
+model ReportShare {
+  id                                         Int        @id @default(autoincrement())
+  report_id                                  Int
+  shared_with_user_id                        String?    @db.VarChar
+  shared_with_role                           user_role?
+  permission                                 String     @default("view") @db.VarChar(20)
+  created_at                                 DateTime   @default(now()) @db.Timestamptz(6)
+  created_by                                 String?    @db.VarChar
+  Report                                     Report     @relation(fields: [report_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_ReportShare_shared_with_user_idToUser User?      @relation("ReportShare_shared_with_user_idToUser", fields: [shared_with_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_ReportShare_created_byToUser          User?      @relation("ReportShare_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([report_id, shared_with_user_id], map: "unique_report_share_user")
+  @@unique([report_id, shared_with_role], map: "unique_report_share_role")
+  @@index([report_id], map: "idx_report_share_report_id")
+  @@index([shared_with_user_id], map: "idx_report_share_user_id")
+  @@index([shared_with_role], map: "idx_report_share_role")
+}
+
+model ReportSchedule {
+  id              Int       @id @default(autoincrement())
+  report_id       Int
+  schedule_type   String    @db.VarChar(20)
+  schedule_config Json
+  is_active       Boolean   @default(true)
+  last_run_at     DateTime? @db.Timestamptz(6)
+  next_run_at     DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  modified_at     DateTime  @updatedAt @db.Timestamptz(6)
+  Report          Report    @relation(fields: [report_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([report_id], map: "idx_report_schedule_report_id")
+  @@index([is_active], map: "idx_report_schedule_is_active")
+  @@index([next_run_at], map: "idx_report_schedule_next_run_at")
+}
+
+model ReportExecution {
+  id                                     Int      @id @default(autoincrement())
+  report_id                              Int
+  executed_by                            String?  @db.VarChar
+  executed_at                            DateTime @default(now()) @db.Timestamptz(6)
+  execution_config                       Json?
+  result_count                           Int?
+  execution_time_ms                      Int?
+  Report                                 Report   @relation(fields: [report_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_ReportExecution_executed_byToUser User?    @relation("ReportExecution_executed_byToUser", fields: [executed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([report_id], map: "idx_report_execution_report_id")
+  @@index([executed_by], map: "idx_report_execution_executed_by")
+  @@index([executed_at], map: "idx_report_execution_executed_at")
+}
+
+model UserDefaultReport {
+  id          Int      @id @default(autoincrement())
+  user_id     String   @db.VarChar
+  context     String   @db.VarChar(50)
+  report_id   Int
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  modified_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  User        User     @relation("UserDefaultReport_user_idToUser", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Report      Report   @relation(fields: [report_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, context], map: "unique_user_default_report")
+  @@index([user_id], map: "idx_user_default_report_user_id")
+  @@index([context], map: "idx_user_default_report_context")
+  @@index([user_id, context], map: "idx_user_default_report_user_context")
+  @@index([report_id], map: "idx_user_default_report_report_id")
+}
+
+model VerificationToken {
+  id          String   @id @default(dbgenerated("gen_random_uuid()"))
+  identifier  String
+  token       String   @unique
+  expires     DateTime
+  created_at  DateTime @default(now())
+  modified_at DateTime @updatedAt
+
+  @@unique([identifier, token])
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model UserImportMappings {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String     @db.VarChar
+  mapping     Json
+  name        String?    @db.VarChar(255)
+  is_default  Boolean    @default(false)
+  created_at  DateTime   @default(now()) @db.Timestamptz(6)
+  modified_at DateTime   @updatedAt @db.Timestamptz(6)
+  import_type ImportType
+  created_by  String?    @db.VarChar
+  modified_by String?    @db.VarChar
+
+  CreatedByUser  User? @relation("UserImportMappings_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "UserImportMappingCreatedBy_fkey")
+  ModifiedByUser User? @relation("UserImportMappings_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "UserImportMappingModifiedBy_fkey")
+  User           User  @relation("UserImportMappings_user_idToUser", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_import_mappings_user_id")
+
+  @@unique([user_id, import_type, name], map: "unique_user_import_type_name")
+  @@index([created_by], map: "idx_UserImportMappings_created_by")
+  @@index([modified_by], map: "idx_UserImportMappings_modified_by")
+  @@index([user_id, import_type], map: "idx_UserImportMappings_user_type")
+  @@map("UserImportMappings")
+}
+
+enum ImportRecordStatus {
+  Pending
+  Validated
+  Processing
+  Success
+  Failed
+  Skipped
+}
+
+enum ImportStatus {
+  Pending
+  Processing
+  Completed
+  Failed
+  Cancelled
+}
+
+enum ImportType {
+  Invoice
+  Customer
+  Contact
+  Payment
+  Policy
+}
+
+enum activity_status {
+  SCHEDULED
+  SENT
+  DELIVERED
+  FAILED
+  CANCELLED
+  PAUSED
+  BOUNCED
+  DISPUTE
+  COMPLETED
+}
+
+enum activity_type {
+  SMS
+  Email
+  Call
+  WhatsApp
+  Internal
+  Resolved
+  Dispute
+  Promise_to_pay @map("Promise to pay")
+  Agent
+}
+
+enum attachment_category {
+  Text
+  Image
+  Audio
+}
+
+enum category {
+  Automated
+  Promise_to_pay @map("Promise to pay")
+  Dispute
+  Agent
+  Legal
+}
+
+enum step_type {
+  due
+  overdue
+}
+
+enum client_type {
+  Company
+  Person
+}
+
+enum contact_priority {
+  Primary
+  Secondary
+  Emergency
+}
+
+enum customer_client_type {
+  Company
+  Person
+  All
+}
+
+enum delivery_status {
+  Scheduled
+  Sent
+  Delivered
+  Bounced
+  Failed
+  Pending
+  Cancelled
+}
+
+enum dispute_resolution {
+  Denied
+  Accepted_Settled_partly       @map("Accepted - Settled partly")
+  Accepted_Settled_in_full      @map("Accepted -  Settled in full")
+  Accepted
+  Cancelled
+  Admin_Fixed_Balance_Unchanged @map("Admin Fixed – Balance Unchanged")
+}
+
+enum dispute_status {
+  New
+  Under_Review    @map("Under Review")
+  Awaiting_Update @map("Awaiting Update")
+  Resolved
+  Cancelled
+}
+
+enum email_status {
+  Valid
+  Bounced
+  Failure
+}
+
+enum internal_email_template_type {
+  dispute_assignment
+  dispute_created
+  dispute_resolved
+  dispute_updated
+  credit_insurance_alert
+}
+
+enum invoice_status {
+  Open
+  Paid
+  Overdue
+  Partially_Paid
+  Void
+  Under_Dispute
+  Due
+  Draft
+  Sent
+  Viewed
+  Cancelled
+}
+
+
+enum language {
+  English
+  Hebrew
+  German
+  Spanish
+  French
+  Italian
+  Portuguese
+}
+
+enum log_level {
+  DEBUG
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+enum mobile_status {
+  Valid
+  Failure
+}
+
+enum notification_type {
+  Primary
+  Secondary
+}
+
+enum notification_rule_product {
+  credit_insurance
+  collection
+}
+
+enum notification_rule_trigger_type {
+  overdue_block
+  capacity_gap
+  entry_terms_breach
+  action_window
+  limit_warnings
+}
+
+enum notification_delivery_channel {
+  in_app
+  email
+}
+
+enum priority {
+  Low
+  Normal
+  High
+}
+
+enum record_status {
+  Active
+  Inactive
+  Draft
+}
+
+enum sms_status {
+  Scheduled
+  Sent
+  Delivered
+  Failed
+  Rejected
+  Pending
+  Cancelled
+}
+
+enum user_role {
+  archaser_admin
+  Account_Manager
+  Bookkeeper
+  CFO
+  Collection_Manager
+  Collection_Agent
+  Data_Analyst
+  Customer_Service_Representative
+  Auditor
+  IT_Support
+  System_Administrator
+}
+
+model VerificationCode {
+  id            Int      @id @default(autoincrement())
+  customer_uuid String   @db.Uuid
+  code          String   @db.VarChar(6)
+  expires_at    DateTime @db.Timestamptz(6)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([customer_uuid], map: "idx_verification_code_customer_uuid")
+}
+
+enum contact_status {
+  Active
+  Inactive
+}
+
+enum customer_limit_type {
+  DCL
+  Named
+}
+
+enum insurance_policy_kind {
+  Primary
+  TopUp
+}
+
+enum cost_calculation_method {
+  ActualSales
+  Limit
+}
+
+enum customer_top_up_type {
+  Fixed
+  Percentage
+}
+
+enum invoice_reported_status {
+  Reported
+  Acknowledge_Received
+}
+
+enum BillingProvider {
+  PRIORITY
+  SAP_BUSINESS_ONE
+}
+
+enum ConnectorAuthType {
+  API_KEY
+  OAUTH2_CLIENT_CREDENTIALS
+  BASIC
+}
+
+enum ConnectorSyncMode {
+  BACKFILL
+  INCREMENTAL
+}
+
+enum BillingConnectorStatus {
+  Active
+  Disabled
+  Error
+}
+
+model BillingConnector {
+  id                            Int                    @id @default(autoincrement())
+  account_id                    Int                    @unique
+  provider                      BillingProvider        @default(PRIORITY)
+  status                        BillingConnectorStatus @default(Disabled)
+  base_url                      String?                @db.VarChar(500)
+  auth_type                     ConnectorAuthType      @default(API_KEY)
+  credentials_encrypted         String?                @db.Text
+  sync_enabled                  Boolean                @default(false)
+  sync_cron_expression          String                 @default("0 */6 * * *") @db.VarChar(100)
+  sync_mode                     ConnectorSyncMode      @default(BACKFILL)
+  enabled_entities              Json                   @default("[\"Customer\", \"Contact\", \"Invoice\", \"Payment\"]")
+  sync_overlap_minutes          Int                    @default(5)
+  backfill_max_pages_per_run    Int                    @default(50)
+  backfill_max_duration_seconds Int                    @default(600)
+  backfill_import_batch_size    Int                    @default(20)
+  consecutive_auth_failures     Int                    @default(0)
+  backfill_started_at           DateTime?              @db.Timestamptz(6)
+  last_connection_test_at       DateTime?              @db.Timestamptz(6)
+  last_connection_error         String?                @db.VarChar(500)
+  created_at                    DateTime               @default(now()) @db.Timestamptz(6)
+  modified_at                   DateTime               @default(now()) @db.Timestamptz(6)
+  created_by                    String?                @db.VarChar
+  modified_by                   String?                @db.VarChar
+  Account                       Account                @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  ConnectorFieldMapping         ConnectorFieldMapping[]
+  ConnectorSyncState            ConnectorSyncState[]
+
+  @@index([account_id], map: "idx_billing_connector_account_id")
+  @@index([status], map: "idx_billing_connector_status")
+}
+
+model ConnectorFieldMapping {
+  id           Int              @id @default(autoincrement())
+  connector_id Int
+  import_type  ImportType
+  mapping      Json
+  is_complete  Boolean          @default(false)
+  modified_at  DateTime         @default(now()) @db.Timestamptz(6)
+  modified_by  String?          @db.VarChar
+  BillingConnector BillingConnector @relation(fields: [connector_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([connector_id, import_type], map: "unique_connector_field_mapping")
+  @@index([connector_id], map: "idx_connector_field_mapping_connector_id")
+}
+
+model ConnectorSyncState {
+  id                         Int              @id @default(autoincrement())
+  connector_id               Int
+  entity_type                ImportType
+  backfill_completed         Boolean          @default(false)
+  backfill_completed_at      DateTime?        @db.Timestamptz(6)
+  backfill_cursor            String?          @db.VarChar(500)
+  backfill_records_pulled    Int              @default(0)
+  backfill_last_checkpoint_at DateTime?       @db.Timestamptz(6)
+  backfill_window_end        DateTime?        @db.Timestamptz(6)
+  backfill_total_records     Int?
+  last_max_updated_at        DateTime?        @db.Timestamptz(6)
+  last_successful_run_at     DateTime?        @db.Timestamptz(6)
+  last_attempt_at            DateTime?        @db.Timestamptz(6)
+  last_error                 String?          @db.VarChar(500)
+  BillingConnector           BillingConnector @relation(fields: [connector_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([connector_id, entity_type], map: "unique_connector_entity_sync_state")
+  @@index([connector_id], map: "idx_connector_sync_state_connector_id")
+}

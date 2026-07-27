@@ -1,0 +1,52 @@
+# API Guidelines
+
+## Summary
+
+This document provides guidelines for implementing API routes in the application. It covers:
+
+- **Location & Naming**: All API routes in `pages/api` directory (never use App Router), resource and action naming conventions
+- **Standard Pattern**: Handler structure with method validation, authentication, error handling, and response formatting
+- **Response Format**: Standardized success (`{ data: result }`) and error (`{ error: message }`) response structures
+
+All API routes must be in the `pages/api` directory using the Pages Router. Always include authentication checks and use standardized response formats.
+
+## 🔌 API Guidelines (Pages Router)
+
+### Location & Naming
+
+- **Location**: All API routes in `pages/api` directory (NEVER use App Router)
+- **Resource**: `pages/api/[resource]/index.ts`
+- **Action**: `pages/api/[resource]/[action].ts`
+
+### Standard Pattern
+
+```typescript
+import { NextApiRequest, NextApiResponse } from "next";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/server/auth/authOptions";
+
+export default async function handler(
+    req: NextApiRequest,
+    res: NextApiResponse
+) {
+    if (req.method !== "METHOD") {
+        return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    try {
+        const session = await getServerSession(req, res, authOptions);
+        if (!session?.user) {
+            return res.status(401).json({ error: "Unauthorized" });
+        }
+        // Logic here
+        return res.status(200).json({ data: result });
+    } catch (error: any) {
+        return res.status(500).json({ error: error.message });
+    }
+}
+```
+
+### Response Format
+
+- **Success**: `{ data: result }`
+- **Error**: `{ error: message }`

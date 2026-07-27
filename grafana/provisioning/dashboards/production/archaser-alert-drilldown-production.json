@@ -1,0 +1,656 @@
+{
+    "annotations": {
+        "list": [
+            {
+                "builtIn": 1,
+                "datasource": "-- Grafana --",
+                "enable": true,
+                "hide": true,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            }
+        ]
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": null,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+        {
+            "gridPos": {
+                "h": 2,
+                "w": 24,
+                "x": 0,
+                "y": 0
+            },
+            "id": 10,
+            "options": {
+                "mode": "markdown",
+                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-prod/archaser-home-production) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-prod/cron-health-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production)"
+            },
+            "title": "",
+            "type": "text",
+            "transparent": true
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 2
+            },
+            "id": 100,
+            "title": "Cron Jobs",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "postgres",
+                "uid": "Postgres"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "inspect": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 3
+            },
+            "id": 101,
+            "options": {
+                "footer": {
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "Postgres"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT id, name, next_run_at, last_run_at FROM \"CronJob\" WHERE next_run_at < NOW() - INTERVAL '5 minutes' AND active = true",
+                    "refId": "A"
+                }
+            ],
+            "title": "Overdue Cron Jobs",
+            "type": "table"
+        },
+        {
+            "datasource": {
+                "type": "postgres",
+                "uid": "Postgres"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "inspect": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 3
+            },
+            "id": 102,
+            "options": {
+                "footer": {
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "Postgres"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT id, name, last_run_at FROM \"CronJob\" WHERE last_run_at < NOW() - INTERVAL '24 hours' OR last_run_at IS NULL",
+                    "refId": "A"
+                }
+            ],
+            "title": "Jobs Not Run in 24h",
+            "type": "table"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 11
+            },
+            "id": 200,
+            "title": "Automation & Collection Periods",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "postgres",
+                "uid": "Postgres"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "inspect": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 12
+            },
+            "id": 201,
+            "options": {
+                "footer": {
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "Postgres"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT COALESCE(a.name, 'N/A') AS \"Account Name\", COALESCE(c.customer_number, 'N/A') AS \"Customer Number\", COALESCE(c.email, 'N/A') AS \"Email\", COALESCE(CAST(c.automation_stuck_no_contacts AS TEXT), 'N/A') AS \"Stuck\" FROM \"Customer\" c JOIN \"Account\" a ON a.id = c.account_id WHERE c.automation_stuck_no_contacts = true LIMIT 50",
+                    "refId": "A"
+                }
+            ],
+            "title": "Automation Stuck - No Contacts",
+            "type": "table"
+        },
+        {
+            "datasource": {
+                "type": "postgres",
+                "uid": "Postgres"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "inspect": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 12
+            },
+            "id": 202,
+            "options": {
+                "footer": {
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "Postgres"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT COALESCE(a.name, 'N/A') AS \"Account Name\", COALESCE(c.customer_number, 'N/A') AS \"Customer Number\", ccp.customer_id AS \"Customer ID\", COALESCE(TO_CHAR(CASE WHEN ccp.next_activity_date IS NULL THEN ccp.period_start_date ELSE ccp.next_activity_date + INTERVAL '24 hours' END, 'YYYY-MM-DD HH24:MI:SS'), 'N/A') AS \"Problem Start Date\", COALESCE(TO_CHAR(ccp.next_activity_date, 'YYYY-MM-DD HH24:MI:SS'), 'N/A') AS \"Next Activity Date\" FROM \"CustomerCollectionPeriod\" ccp JOIN \"Customer\" c ON c.id = ccp.customer_id JOIN \"Account\" a ON a.id = c.account_id WHERE ccp.period_end_date IS NULL AND ccp.current_category = 'Automated' AND (ccp.next_activity_date IS NULL OR ccp.next_activity_date < NOW() - INTERVAL '24 hours') AND NOT EXISTS (SELECT 1 FROM \"Activity\" act INNER JOIN \"ActivitiesSequence\" seq ON seq.id = act.activity_sequence_id WHERE act.collection_period_id = ccp.id AND seq.category = 'Automated' AND act.status = 'SCHEDULED') LIMIT 50",
+                    "refId": "A"
+                }
+            ],
+            "title": "Periods Without Activities (Potential Issue)",
+            "type": "table"
+        },
+        {
+            "datasource": {
+                "type": "postgres",
+                "uid": "Postgres"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "inspect": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 20
+            },
+            "id": 203,
+            "options": {
+                "footer": {
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "Postgres"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT COALESCE(a.name, 'N/A') AS \"Account Name\", COALESCE(c.customer_number, 'N/A') AS \"Customer Number\", ccp.customer_id AS \"Customer ID\", COALESCE(TO_CHAR(ccp.next_activity_date, 'YYYY-MM-DD HH24:MI:SS'), 'N/A') AS \"Next Activity Date\" FROM \"CustomerCollectionPeriod\" ccp JOIN \"Customer\" c ON c.id = ccp.customer_id JOIN \"Account\" a ON a.id = c.account_id WHERE ccp.create_next_activity = true AND ccp.next_activity_date < NOW() LIMIT 50",
+                    "refId": "A"
+                }
+            ],
+            "title": "Overdue Activity Creation",
+            "type": "table"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 28
+            },
+            "id": 300,
+            "title": "Activities",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "postgres",
+                "uid": "Postgres"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "inspect": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 29
+            },
+            "id": 301,
+            "options": {
+                "footer": {
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "Postgres"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT COALESCE(a.name, 'N/A') AS \"Account Name\", COALESCE(c.customer_number, 'N/A') AS \"Customer Number\", COALESCE(act.type::text, 'N/A') AS \"Type\", COALESCE(act.status::text, 'N/A') AS \"Status\", COALESCE(TO_CHAR(act.schedule_time, 'YYYY-MM-DD HH24:MI:SS'), 'N/A') AS \"Schedule Time\" FROM \"Activity\" act JOIN \"CustomerCollectionPeriod\" ccp ON ccp.id = act.collection_period_id JOIN \"Customer\" c ON c.id = ccp.customer_id JOIN \"Account\" a ON a.id = c.account_id WHERE act.status = 'SCHEDULED' AND act.schedule_time < NOW() - INTERVAL '2 hours' LIMIT 50",
+                    "refId": "A"
+                }
+            ],
+            "title": "Stuck Activities (Scheduled > 2h ago)",
+            "type": "table"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 37
+            },
+            "id": 400,
+            "title": "Communications (Last 24h)",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "postgres",
+                "uid": "Postgres"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "inspect": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 38
+            },
+            "id": 401,
+            "options": {
+                "footer": {
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "Postgres"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT id, collection_period_id, type, status, created_at FROM \"Activity\" WHERE type='Email' AND status='BOUNCED' AND created_at > NOW() - INTERVAL '24 hours' ORDER BY created_at DESC LIMIT 50",
+                    "refId": "A"
+                }
+            ],
+            "title": "Email Bounces",
+            "type": "table"
+        },
+        {
+            "datasource": {
+                "type": "postgres",
+                "uid": "Postgres"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "inspect": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 38
+            },
+            "id": 402,
+            "options": {
+                "footer": {
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "Postgres"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT id, collection_period_id, type, status, created_at FROM \"Activity\" WHERE type='SMS' AND status='FAILED' AND created_at > NOW() - INTERVAL '24 hours' ORDER BY created_at DESC LIMIT 50",
+                    "refId": "A"
+                }
+            ],
+            "title": "SMS Failures",
+            "type": "table"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 46
+            },
+            "id": 500,
+            "title": "Customers & Invoices",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "postgres",
+                "uid": "Postgres"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "inspect": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 10,
+                "w": 24,
+                "x": 0,
+                "y": 47
+            },
+            "id": 501,
+            "options": {
+                "footer": {
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "postgres",
+                        "uid": "Postgres"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT DISTINCT ON (c.id) COALESCE(a.name, 'N/A') AS \"Account Name\", COALESCE(c.customer_number, 'N/A') AS \"Customer Number\", c.id AS \"Customer ID\", COALESCE(c.collection_status::text, 'N/A') AS \"Collection Status\", COALESCE(ccp.id::text, 'N/A') AS \"Open Period ID\", COALESCE(ccp.current_category::text, 'N/A') AS \"Current Category\", COALESCE(c.number_of_overdue_invoices, 0) AS \"# Overdue Invoices\", COALESCE(c.total_invoices_overdue, 0) AS \"Total Overdue (cust curr)\" FROM \"Customer\" c JOIN \"Account\" a ON a.id = c.account_id INNER JOIN \"CustomerCollectionPeriod\" ccp ON ccp.customer_id = c.id AND ccp.period_end_date IS NULL AND ccp.current_category IS NULL WHERE ( COALESCE(c.number_of_overdue_invoices, 0) > 0 OR COALESCE(c.total_invoices_overdue, 0) > 0 OR EXISTS ( SELECT 1 FROM \"Invoice\" i WHERE i.customer_id = c.id AND i.status = 'Overdue' AND COALESCE(i.customer_outstanding_debt, i.outstanding_debt, 0) > 0 ) ) ORDER BY c.id, ccp.period_start_date DESC NULLS LAST LIMIT 50",
+                    "refId": "A"
+                }
+            ],
+            "title": "Overdue — open period category N/A",
+            "type": "table",
+            "description": "Customers with overdue exposure while the open collection period has no current_category (shown as N/A in the app)."
+        }
+    ],
+    "refresh": "1m",
+    "schemaVersion": 38,
+    "style": "dark",
+    "tags": [
+        "alerts",
+        "drilldown",
+        "production"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-24h",
+        "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "Alert Drilldown - Production",
+    "uid": "alert-drilldown-prod",
+    "version": 2,
+    "weekStart": ""
+}

@@ -1,0 +1,65 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "archaser-app"
+    metrics_path: "/api/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:3000", "host.docker.internal:3001"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: ".*:3000"
+        replacement: "Production"
+      - source_labels: [__address__]
+        target_label: instance
+        regex: ".*:3001"
+        replacement: "Staging"
+
+  - job_name: "archaser-api"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:3010"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "Nest API"
+      - target_label: service
+        replacement: "archaser-api"
+
+  - job_name: "archaser-worker"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:3003"]
+    relabel_configs:
+      - target_label: service
+        replacement: "archaser-worker"
+
+  - job_name: "archaser-sms"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:3004"]
+    relabel_configs:
+      - target_label: service
+        replacement: "archaser-sms"
+
+  - job_name: "archaser-connectors"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:3005"]
+    relabel_configs:
+      - target_label: service
+        replacement: "archaser-connectors"
+
+  - job_name: "archaser-reports"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:3006"]
+    relabel_configs:
+      - target_label: service
+        replacement: "archaser-reports"

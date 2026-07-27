@@ -1,0 +1,317 @@
+# Testing Guidelines
+
+## Summary
+
+This document provides guidelines for planning and implementing tests in the application. It covers:
+
+- **Test Planning**: Mapping business requirements to test cases, prioritizing critical paths, including edge cases
+- **Test Unit Categories**: Business logic, integration, validation, error handling, permission, and data integrity tests
+- **Required Test List Format**: Standardized format for test entries in implementation plans (file path, description, requirements mapping)
+- **Test Implementation**: Unit test patterns, integration test patterns, and test file organization
+- **Best Practices**: Test naming conventions, coverage requirements, and maintenance guidelines
+
+When generating implementation plans, always include a Testing Strategy section with test units that directly validate business requirements. Tests should be organized by category and mapped to specific requirements.
+
+## 🧪 Testing Guidelines
+
+### Planning Tests Based on Business Requirements
+
+**When generating implementation plans, ALWAYS suggest relevant test units that validate business requirements:**
+
+1. **Identify Business Requirements** - Extract specific business rules, constraints, and expected behaviors from requirements
+2. **Map Requirements to Test Cases** - Create test units that directly verify each business requirement
+3. **Prioritize Critical Paths** - Focus on tests for core business logic, data integrity, and user workflows
+4. **Include Edge Cases** - Test boundary conditions, error scenarios, and validation rules mentioned in requirements
+
+### Test Unit Categories
+
+**When planning, suggest tests for:**
+
+- **Business Logic Tests** - Service layer tests that validate business rules (e.g., `ActivityService.handleSMSDelivery.test.ts`)
+- **Integration Tests** - API endpoint tests that verify end-to-end workflows
+- **Validation Tests** - Input validation, data transformation, and constraint enforcement
+- **Error Handling Tests** - Error scenarios, edge cases, and failure modes from requirements
+- **Permission Tests** - Role-based access control and authorization checks
+- **Data Integrity Tests** - Database constraints, relationships, and data consistency rules
+
+### Required Test List Format for Implementation Plans
+
+**When generating implementation plans, ALWAYS include a "Testing Strategy" section with a detailed list of tests:**
+
+Each test entry MUST include:
+1. **Test file path** - Full path relative to project root (e.g., `__tests__/services/MyService.test.ts`)
+2. **Test description** - What business requirement or functionality is being tested
+3. **Specific test cases** - List of individual test scenarios within that test file
+
+**Format Template:**
+
+```markdown
+## Testing Strategy
+
+### 1. Business Logic Tests
+
+#### `__tests__/services/[ServiceName].test.ts`
+- **Purpose**: Validates [specific business rule or functionality]
+- **Test Cases**:
+  - [Test case 1: specific scenario being validated]
+  - [Test case 2: another scenario]
+  - [Test case 3: edge case or error scenario]
+
+#### `__tests__/services/[AnotherService].[method].test.ts`
+- **Purpose**: Validates [another business requirement]
+- **Test Cases**:
+  - [Test case 1]
+  - [Test case 2]
+
+### 2. Integration Tests
+
+#### `__tests__/api/[endpoint].integration.test.ts`
+- **Purpose**: Validates end-to-end workflow for [feature]
+- **Test Cases**:
+  - [Happy path scenario]
+  - [Error handling scenario]
+  - [Authorization checks]
+
+### 3. Validation Tests
+
+#### `__tests__/services/[ServiceName].validation.test.ts`
+- **Purpose**: Validates input validation and data constraints
+- **Test Cases**:
+  - [Required field validation]
+  - [Format validation]
+  - [Constraint validation]
+
+### 4. Error Handling Tests
+
+#### `__tests__/services/[ServiceName].error.test.ts`
+- **Purpose**: Validates error scenarios and failure modes
+- **Test Cases**:
+  - [Network failure handling]
+  - [Database error handling]
+  - [External service error handling]
+
+### 5. Permission Tests
+
+#### `__tests__/services/[ServiceName].permissions.test.ts`
+- **Purpose**: Validates role-based access control
+- **Test Cases**:
+  - [Admin access scenarios]
+  - [User access scenarios]
+  - [Unauthorized access scenarios]
+
+### 6. Data Integrity Tests
+
+#### `__tests__/services/[ServiceName].dataIntegrity.test.ts`
+- **Purpose**: Validates database constraints and relationships
+- **Test Cases**:
+  - [Foreign key constraints]
+  - [Unique constraints]
+  - [Data consistency rules]
+```
+
+### Test Planning Example
+
+**Example: "SMS Delivery Tracking" Feature**
+
+```markdown
+## Testing Strategy
+
+### 1. Business Logic Tests
+
+#### `__tests__/services/ActivityService.handleSMSDelivery.test.ts`
+- **Purpose**: Validates SMS delivery status updates and activity creation
+- **Test Cases**:
+  - Updates SMS delivery status from pending to delivered
+  - Updates SMS delivery status from pending to failed
+  - Creates activity record when SMS is delivered
+  - Associates activity with correct customer and invoice
+  - Handles duplicate status updates gracefully
+
+### 2. Integration Tests
+
+#### `__tests__/api/sms/webhook.integration.test.ts`
+- **Purpose**: Validates Twilio webhook handling end-to-end
+- **Test Cases**:
+  - Receives and processes Twilio status callback
+  - Updates database with correct delivery status
+  - Returns appropriate HTTP response
+  - Handles invalid webhook signatures
+
+#### `__tests__/services/InforuStatusChecker.integration.test.ts`
+- **Purpose**: Validates Inforu status checking workflow
+- **Test Cases**:
+  - Fetches SMS status from Inforu API
+  - Handles API rate limiting
+  - Processes status updates correctly
+  - Handles API failures gracefully
+
+### 3. Validation Tests
+
+#### `__tests__/services/SMSVendorService.validation.test.ts`
+- **Purpose**: Validates SMS input validation and constraints
+- **Test Cases**:
+  - Validates phone number format (Israeli numbers)
+  - Validates message length (max 160 characters)
+  - Validates required fields (phone, message, customerId)
+  - Validates phone number normalization
+
+### 4. Error Handling Tests
+
+#### `__tests__/services/SMSVendorService.error.test.ts`
+- **Purpose**: Validates error scenarios and failure modes
+- **Test Cases**:
+  - Handles network timeouts
+  - Handles vendor API errors (500, 503)
+  - Handles invalid API credentials
+  - Handles database transaction failures
+  - Handles concurrent status updates
+
+### 5. Permission Tests
+
+#### `__tests__/services/ActivityService.permissions.test.ts`
+- **Purpose**: Validates access control for SMS activities
+- **Test Cases**:
+  - Admin can view all SMS activities
+  - User can only view activities for assigned customers
+  - Unauthorized users cannot access SMS activities
+```
+
+### Test File Naming Convention
+
+- Unit tests: `[ServiceName].test.ts` (e.g., `ActivityService.handleSMSDelivery.test.ts`)
+- Integration tests: `[Feature].integration.test.ts`
+- Place tests in `__tests__/` directories mirroring source structure
+
+### Test Data and Fixtures
+
+**🚫 CRITICAL RULE: NEVER create local fixtures in test files. ALWAYS use shared fixtures from `tests/fixtures/` directories.**
+
+**ALWAYS prefer global fixtures over local test data:**
+
+1. **Use Existing Fixtures** - Import and use fixtures from `tests/fixtures/` directories instead of creating local data
+   - ✅ **DO**: Import fixtures like `createMockPaymentInput`, `mockUserData`, `mockCustomerData`, `mockInvoiceData` from `tests/fixtures/`
+   - ❌ **DON'T**: Create inline objects like `{ account_id: 1, customer_number: "CUST001", ... }` directly in test files
+   - ❌ **DON'T**: Define local constants or variables with test data objects in test files
+
+2. **Extend Fixtures with Overrides** - Use spread operators to extend fixture data with test-specific overrides:
+   ```typescript
+   // ✅ Good: Use fixture with override
+   const customer = createMockCustomer({ account_id: 100 });
+   const parent = createMockParentCustomer({ account_id: 100 });
+   
+   // ❌ Bad: Create local data
+   const customer = {
+       id: 1,
+       customer_number: "CUST001",
+       account_id: 100,
+       // ... many more fields
+   };
+   ```
+
+3. **Use Fixture Data in Mocks** - Use fixture data directly in Prisma mocks:
+   ```typescript
+   // ✅ Good: Use fixture with spread
+   mockPrisma.customer.findFirst.mockResolvedValueOnce({
+       ...customer,
+       parent_customer_id: null,
+       country_id: 1,
+   } as any);
+   
+   // ❌ Bad: Manually construct object
+   mockPrisma.customer.findFirst.mockResolvedValueOnce({
+       id: customer.id,
+       account_id: customer.account_id,
+       customer_number: customer.customer_number,
+       // ... repeating all fields
+   } as any);
+   ```
+
+4. **Use Fixture Variants** - Use different fixture variants from `mockParentCustomerData` for different scenarios:
+   ```typescript
+   // ✅ Good: Use fixture variants
+   const accessibleParent = createMockParentCustomer({ account_id: 100 });
+   const inaccessibleParent = createMockParentCustomer({ 
+       ...mockParentCustomerData.differentAccountCustomer,
+       account_id: 200 
+   });
+   
+   // ❌ Bad: Create similar objects manually
+   const accessibleParent = { id: 2, account_id: 100, /* ... */ };
+   const inaccessibleParent = { id: 3, account_id: 200, /* ... */ };
+   ```
+
+5. **Benefits of Using Fixtures**:
+   - **Consistency**: All tests use the same data structure
+   - **Maintainability**: Update fixtures once, all tests benefit
+   - **Readability**: Tests focus on what's different, not boilerplate
+   - **Type Safety**: Fixtures ensure correct data types and required fields
+
+6. **When to Create New Fixtures**:
+   - When a new data pattern is needed across multiple tests
+   - When existing fixtures don't cover a specific scenario
+   - Always add new fixtures to `tests/fixtures/` directories, not in test files
+
+7. **Examples of What NOT to Do**:
+   ```typescript
+   // ❌ BAD: Local fixture definition
+   const payment = {
+       account_id: 1,
+       customer_number: "CUST001",
+       invoice_number: "INV001",
+       payment_date: "2024-01-01",
+       amount: 1000,
+       customer_amount: 1000,
+       customer_currency: "USD",
+   };
+   
+   // ❌ BAD: Local user object
+   const user = {
+       id: "user-123",
+       account_id: 1,
+       role: "Admin",
+   };
+   
+   // ❌ BAD: Local customer object
+   const customer = {
+       id: 1,
+       customer_number: "CUST001",
+       business_unit_id: null,
+   };
+   ```
+
+8. **Examples of What TO Do**:
+   ```typescript
+   // ✅ GOOD: Use shared fixtures
+   import { createMockPaymentInput } from "@/tests/fixtures/services/payment";
+   import { mockUserData } from "@/tests/fixtures/common/users";
+   import { mockCustomerData } from "@/tests/fixtures/services/customer";
+   
+   const payment = createMockPaymentInput({
+       invoice_number: "INV001",
+       reference: "REF001",
+   });
+   
+   const user = {
+       ...mockUserData.adminUser,
+       id: "user-123",
+   };
+   
+   const customer = {
+       ...mockCustomerData.validCustomer,
+       customer_number: "CUST001",
+       business_unit_id: null,
+   };
+   ```
+
+### Test Requirements
+
+- **When generating plans**: Include a "Testing Strategy" section with specific test units following the format above
+- **Test coverage**: Focus on business-critical paths and requirements
+- **Test location**: Reference existing test patterns in `__tests__/` and `tests/` directories
+- **Mock data**: Use realistic test data that reflects business scenarios - **ALWAYS prefer global fixtures over local data**
+- **Test list completeness**: Each test file listed should have clear purpose and specific test cases documented
+- **Fixture usage**: 
+  - ✅ **MUST**: Import and use fixtures from `tests/fixtures/` directories
+  - ❌ **MUST NOT**: Create local fixture objects, inline data objects, or test data constants in test files
+  - ✅ **MUST**: Use fixture factory functions (e.g., `createMockPaymentInput()`, `createMockCustomer()`) with overrides when needed
+  - ✅ **MUST**: Use fixture data objects (e.g., `mockUserData.adminUser`, `mockCustomerData.validCustomer`) with spread operators for overrides

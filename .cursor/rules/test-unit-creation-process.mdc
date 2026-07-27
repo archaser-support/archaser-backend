@@ -1,0 +1,91 @@
+# Process for Creating an Integration / E2E Test Unit
+
+## Summary
+
+This document describes the process for creating a new integration or e2e test suite that covers a multi-step flow (e.g. cron jobs or workflows). Use it when adding tests for a feature that spans several components (e.g. handleOverdueInvoices → processAutomatedCollectionPeriods → activityWorkflowManager). It complements the general [Testing Guidelines](testing.mdc).
+
+## When to Use This Process
+
+- Adding integration tests for a **cron or workflow** that involves multiple steps or services.
+- The flow has **prerequisites** (e.g. data must be in a certain state before the next step runs).
+- You need **logic coverage** (every branch in the code mapped to at least one test).
+- Tests run against the **same database** as the app (Prisma from test setup and from app/lib).
+
+## Step-by-Step Process
+
+### 1. Identify the Feature and Code Paths
+
+- **Locate entry points**: Which cron(s) or service(s) implement the feature? (e.g. `handleOverdueInvoices`, `processAutomatedCollectionPeriods`, `activityWorkflowManager`.)
+- **Entry points and contexts**: If the feature can be triggered from different contexts (e.g. **portal** vs app, API vs UI, different roles), treat each as a separate logic path. In the plan, document how each context differs (audit user, notifications, titles, permissions). In the test structure (Step 3), add a **dedicated describe block or scenario group** per context (e.g. "Portal-created disputes") so audit fields, notifications, and context-specific side effects are covered.
+- **Document the flow**: Write the order of execution (e.g. 1 → 2 → 3) and what each step does (e.g. "marks invoices OVERDUE", "sets create_next_activity", "creates and sends Activity").
+- **Fixture contact/data**: If the plan specifies a fixture contact (e.g. email, mobile), use those exact values in fixtures. For testing email or SMS send, use email `ofir.amitai@gmail.com` and mobile `972542278407`.
+
+### 2. Logic Coverage Review (Before Implementing Tests)
+
+- **Trace each component**: For every file in the flow, list branches and filters (e.g. "no past-due invoices → early return", "customerId filter", "latest activity DELIVERED or CANCELLED → eligible").
+- **Map branches to tests**: For each branch, assign an existing or new test scenario (e.g. "Boundaries – No past-due invoices", "Additional – handleOverdueInvoices customerId filter").
+- **List missing scenarios**: Add test ideas for any branch that has no test yet (e.g. Phase 1 marks last step, latest activity FAILED, credit invoice past due, already Active customer).
+- **Optional scenarios**: Note optional tests (e.g. next_activity_date calculation failure fallback, take limit 1000) for documentation or later implementation.
+
+### 3. Define Test Structure and Scenarios
+
+Organize tests into **describe** blocks and **it** titles that match the flow and coverage:
+
+- **Prerequisite**: First step in the flow (e.g. "handleOverdueInvoices" – invoice status, customer activation, collection period created/updated).
+- **Main flow**: Each subsequent step (e.g. "Process Automated Collection Periods" – create_next_activity, no duplicate, Agent category; "activityWorkflowManager" – create SCHEDULED activity, send, fixture contact).
+- **Boundaries**: Empty or invalid input (e.g. no overdue invoices, no past-due invoices; invoice not overdue or already paid).
+- **Logic coverage**: One describe or group per added scenario (e.g. "Phase 1 marks last step", "Latest activity FAILED", "customerId filter", "Credit invoice past due", "Already Active customer", "Customer with no valid contacts").
+- **Cancellation / dispute**: If applicable, test that creating a dispute cancels a scheduled activity, and that resolving with a specific resolution (e.g. previous category Automated) creates a new scheduled activity.
+
+### 4. Create Fixtures File
+
+Create a **fixtures** file in the same directory as the test file (e.g. `tests/integration/<feature>/fixtures.ts`):
+
+- **ensureInvoiceStatuses** (or equivalent): Ensure required DB enum/status rows exist (e.g. DUE, OVERDUE, PAID).
+- **getOrCreate*Account**: Create or reuse a test account; ensure **system user** exists for that account (for Activity `created_by` and other FKs). If the flow sets audit fields (`created_by`, `modified_by`) from other users (e.g. portal user, specific role), ensure those users exist for the test account (e.g. `ensurePortalUserForAccount` or equivalent) and include them in the fixture setup.
+- **create*Customer**: Create customer (e.g. Company) with optional params (sequence_container_id, country_id, collection_status). Default collection status as required by the flow (e.g. Inactive for activation tests).
+- **create*Contact**: Create contact with **fixed** email and mobile when the plan specifies a fixture contact. **When creating a contact to test email or SMS send**, use email `ofir.amitai@gmail.com` and mobile `972542278407`.
+- **create*SequenceAndTemplate**: Create sequence step(s) and template (e.g. step_type "overdue", step, last_category_step, time_of_day) and link template.
+- **create*Invoice**: Create invoice with controllable due_date, status_id, amount, outstanding_debt, customer_outstanding_debt (for credit or edge cases).
+- **create*TestData**: One function that creates account, customer, contact, sequence, template, invoice and returns all IDs and entities.
+- **cleanup*TestData**: Delete in **correct order**: activities → invoices → contacts → sequences/containers/templates → collection periods → customer → company. **Insert feature-specific entities** in the right place to respect FKs (e.g. DisputeInvoice and CustomerDispute before invoices; Notification before or with other user-scoped data). Use optional IDs so callers can omit what was not created.
+
+Export status constants and fixture contact constants (e.g. `OVERDUE_CONTACT_EMAIL`) for use in tests.
+
+### 5. Create the Test File
+
+- **Setup**: Use `assertTestAndAppUseSameDatabase()` and `ensureInvoiceStatuses` (or equivalent) in `beforeAll`. Use `describe.skipIf(!process.env.DATABASE_URL)` so tests are skipped when no DB.
+- **Lifecycle**: In `beforeEach`, create full test data (e.g. `create*TestData`). In `afterAll`, call `cleanup*TestData` with the last created data and `prisma.$disconnect()`.
+- **Execution**: Call the real cron/service functions (e.g. `handleOverdueInvoices(customerId)`, `processAutomatedCollectionPeriods(customerId)`, `activityWorkflowManager(..., skipSmsSend, fastForwardScheduledActivities)`). Use the same Prisma client as the integration setup.
+- **Assertions**: Use Prisma to assert on DB state (Invoice.status_id, CustomerCollectionPeriod fields, Activity status and ActivityContact, etc.). Include any **side-effect entities** the flow creates (e.g. Notification rows when testing portal dispute notifications). Do not rely on console output for pass/fail.
+
+### 6. Implementation Details and Gotchas
+
+- **Activity `created_by`**: When creating Activity records manually in tests (e.g. to simulate FAILED latest activity), set `created_by` to `getSystemUserId(accountId)` so the User FK exists (system user is ensured in fixtures).
+- **Audit users and context-specific assertions**: When the flow is context-dependent (e.g. portal vs app), assert the correct audit user on created/updated records (e.g. `getPortalUserId(accountId)` for portal-created disputes) and any context-specific side effects (e.g. Notification rows, activity title keys).
+- **Relax assertions when product allows**: E.g. `next_activity_date` may be null when calculation fails; the cron may still set `create_next_activity` true. Assert only what the product guarantees.
+- **Explicit state for filters**: When testing that a given branch is *not* taken (e.g. "Agent category does not get create_next_activity"), set the state explicitly (e.g. set `create_next_activity: false` when switching period to Agent) so the assertion is reliable.
+- **Phase / timing-dependent tests**: If a test depends on an activity being DELIVERED (e.g. Phase 1 "mark last step"), and the workflow may leave it SCHEDULED due to timing, either: (a) update the activity to DELIVERED in the test and then run the phase, or (b) run the workflow until it becomes DELIVERED, then run the phase. Prefer (a) for stability.
+- **No duplicate cleanup**: For tests that create extra entities (e.g. second customer for customerId filter), call cleanup for that data inside the test or in a try/finally so the main afterAll does not double-delete.
+
+### 7. Running and Validating
+
+- Run the suite with the **integration** config (e.g. `npm run test:integration -- --run tests/integration/<feature>/<test-file>.ts`). Ensure all tests pass.
+- Run `npx tsc --noEmit` and project lint; fix any issues in the new files only.
+
+## File Layout Example
+
+```
+tests/integration/<feature>/
+  fixtures.ts              # Account, customer, contact, sequence, template, invoice, cleanup
+  <feature>-state.e2e.test.ts   # describe blocks: Prerequisite, Main flow, Boundaries, Logic coverage
+```
+
+## Checklist Before Finishing
+
+- [ ] Every branch from the logic coverage review is covered by at least one test (or explicitly deferred as optional).
+- [ ] If the feature has multiple contexts (e.g. portal vs app), a dedicated describe block or scenarios cover audit user, notifications, and context-specific side effects.
+- [ ] Fixtures use the required contact email/mobile when specified.
+- [ ] Cleanup order is correct and no FK errors on teardown.
+- [ ] No manual creation of Activity (or other entities with User FK) without using `getSystemUserId(accountId)` where required.
+- [ ] Tests are skipped when `!process.env.DATABASE_URL` and use the same DB as the app.

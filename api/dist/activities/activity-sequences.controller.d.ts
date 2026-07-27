@@ -1,0 +1,147 @@
+import { JwtPayload } from "../auth/auth.service";
+import { ActivitiesService } from "./activities.service";
+export declare class ActivitySequencesController {
+    private readonly activities;
+    constructor(activities: ActivitiesService);
+    list(user: JwtPayload, query: {
+        account_id?: string;
+        sequence_container_id?: string;
+    }): Promise<{
+        activitiesSequences: ({
+            ActivitiesTemplate: {
+                name: string;
+                language: import(".prisma/client").$Enums.language | null;
+                id: number;
+                category: import(".prisma/client").$Enums.category | null;
+            } | null;
+            SequenceContainer: {
+                account_id: number;
+                id: number;
+                active: boolean;
+                category: import(".prisma/client").$Enums.category;
+                is_deleted: boolean;
+            } | null;
+        } & {
+            account_id: number;
+            id: number;
+            created_at: Date;
+            modified_at: Date;
+            created_by: string | null;
+            modified_by: string | null;
+            active: boolean;
+            sequence_container_id: number | null;
+            step: number | null;
+            activity_type: import(".prisma/client").$Enums.activity_type;
+            category: import(".prisma/client").$Enums.category;
+            days_from_prev_step: number | null;
+            step_type: import(".prisma/client").$Enums.step_type | null;
+            days_before_due: number | null;
+            activity_template_id: number | null;
+            master_template: boolean | null;
+            last_category_step: boolean;
+            time_of_day: string | null;
+            days_after_start: number | null;
+            send_to_escalated_contacts: boolean | null;
+            send_to_standard_contacts: boolean | null;
+        })[];
+    }>;
+    activityTemplates(user: JwtPayload, query: Record<string, string | undefined>): Promise<{
+        templates: ({
+            User_ActivitiesTemplate_created_byToUser: {
+                username: string;
+                password: string | null;
+                email: string;
+                account_id: number | null;
+                role: import(".prisma/client").$Enums.user_role | null;
+                name: string | null;
+                language: import(".prisma/client").$Enums.language;
+                locale: string | null;
+                sidebar_collapsed: boolean | null;
+                id: string;
+                emailVerified: Date | null;
+                image: string | null;
+                created_at: Date;
+                modified_at: Date;
+                resetToken: string | null;
+                resetTokenExpiry: Date | null;
+                status: import(".prisma/client").$Enums.record_status;
+                first_name: string | null;
+                last_name: string | null;
+                mobile: string | null;
+                time_zone: string | null;
+                currency: string | null;
+                session_version: number;
+                freeze: boolean;
+                failed_login_attempts: number;
+                last_failed_login_at: Date | null;
+                deactivated_at: Date | null;
+                guided_tooltips_enabled: boolean | null;
+                is_audit_user: boolean;
+                created_by: string | null;
+                modified_by: string | null;
+                business_unit_id: number | null;
+            } | null;
+            User_ActivitiesTemplate_modified_byToUser: {
+                username: string;
+                password: string | null;
+                email: string;
+                account_id: number | null;
+                role: import(".prisma/client").$Enums.user_role | null;
+                name: string | null;
+                language: import(".prisma/client").$Enums.language;
+                locale: string | null;
+                sidebar_collapsed: boolean | null;
+                id: string;
+                emailVerified: Date | null;
+                image: string | null;
+                created_at: Date;
+                modified_at: Date;
+                resetToken: string | null;
+                resetTokenExpiry: Date | null;
+                status: import(".prisma/client").$Enums.record_status;
+                first_name: string | null;
+                last_name: string | null;
+                mobile: string | null;
+                time_zone: string | null;
+                currency: string | null;
+                session_version: number;
+                freeze: boolean;
+                failed_login_attempts: number;
+                last_failed_login_at: Date | null;
+                deactivated_at: Date | null;
+                guided_tooltips_enabled: boolean | null;
+                is_audit_user: boolean;
+                created_by: string | null;
+                modified_by: string | null;
+                business_unit_id: number | null;
+            } | null;
+            ActivityTemplateLanguage: {
+                language: string;
+                id: number;
+                created_at: Date;
+                modified_at: Date;
+                created_by: string | null;
+                modified_by: string | null;
+                template_id: number;
+                sms_content: string | null;
+                whatsapp_content: string | null;
+                email_subject: string | null;
+                email_content: string | null;
+            }[];
+        } & {
+            account_id: number;
+            name: string;
+            language: import(".prisma/client").$Enums.language | null;
+            id: number;
+            created_at: Date;
+            modified_at: Date;
+            created_by: string | null;
+            modified_by: string | null;
+            active: boolean | null;
+            category: import(".prisma/client").$Enums.category | null;
+            master_template: boolean | null;
+            dispute_resolution: import(".prisma/client").$Enums.dispute_resolution | null;
+        })[];
+        totalRecords: number;
+    }>;
+}

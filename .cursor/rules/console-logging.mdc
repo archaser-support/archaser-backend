@@ -1,0 +1,457 @@
+---
+alwaysApply: true
+---
+
+# Console Logging Guidelines
+
+## Summary
+
+This document provides comprehensive guidelines for console logging in the application. It covers:
+
+- **General Rules**: Never leave console.log in production, never log sensitive information, use appropriate log levels
+- **Debugging Logs**: When and how to use console logs for temporary debugging
+- **Preventing Duplicate Logs**: Critical patterns to prevent duplicate logs in React components (data attributes, useRef, flags, debouncing)
+- **Log Format Standards**: Consistent prefixes, structured data, and flattened log objects for easier debugging
+- **Script Management**: Reusing existing scripts instead of creating new ones for each test
+- **Cleanup Before Committing**: Pre-commit checklist for removing development logs
+
+## 🚫 General Rules
+
+- ❌ **NEVER leave console.log statements in production code** - Remove all development logs before committing
+- ❌ **NEVER log sensitive information** - No passwords, tokens, API keys, or personal data
+- ✅ **Use appropriate log levels** - `console.error` for errors, `console.warn` for warnings, `console.log` only for development debugging
+- ✅ **Remove logs after debugging** - Logs are temporary tools, not permanent code
+
+## 🔍 Debugging Logs
+
+### When to Use Console Logs
+
+- ✅ **Temporary debugging** - When investigating a specific issue
+- ✅ **Development only** - Never commit logs to production
+- ✅ **Structured data** - Log objects/arrays for better readability
+- ❌ **Avoid in production code** - Use proper error handling and logging services instead
+
+### Best Practices
+
+```typescript
+// ✅ GOOD: Structured logging with context
+console.log('[ComponentName] Action performed:', {
+    userId: user.id,
+    action: 'update',
+    timestamp: new Date().toISOString(),
+});
+
+// ✅ GOOD: Conditional logging (development only)
+if (process.env.NODE_ENV === 'development') {
+    console.log('[ComponentName] Debug info:', data);
+}
+
+// ❌ BAD: Unstructured logs
+console.log('data:', data, 'user:', user, 'status:', status);
+
+// ❌ BAD: Logging in production code
+console.log('User updated:', user); // Remove before commit
+```
+
+## 🚫 Preventing Duplicate Logs
+
+### Critical Requirement: No Duplicate Logs
+
+**ALWAYS prevent duplicate console logs**, especially in React components that may render multiple times due to:
+- React Strict Mode (double rendering in development)
+- Component re-renders
+- useEffect/useLayoutEffect multiple executions
+- Ref callbacks being called multiple times
+
+### Standard Patterns
+
+#### Pattern 1: Use Data Attributes to Track Logged State
+
+```typescript
+// ✅ GOOD: Prevent duplicate logs using data attributes
+ref={(el: HTMLDivElement | null) => {
+    if (el && !el.hasAttribute('data-logged')) {
+        el.setAttribute('data-logged', 'true');
+        console.log('[Component] One-time log:', data);
+    }
+}}
+```
+
+#### Pattern 2: Use useRef to Track Logged State
+
+```typescript
+// ✅ GOOD: Use ref to prevent duplicate logs
+const hasLoggedRef = useRef(false);
+
+useEffect(() => {
+    if (!hasLoggedRef.current) {
+        hasLoggedRef.current = true;
+        console.log('[Component] One-time log:', data);
+    }
+}, [data]);
+```
+
+#### Pattern 3: Use Flags for Conditional Logging
+
+```typescript
+// ✅ GOOD: Use a flag to prevent duplicate logs
+const [hasLogged, setHasLogged] = useState(false);
+
+useEffect(() => {
+    if (!hasLogged && condition) {
+        setHasLogged(true);
+        console.log('[Component] One-time log:', data);
+    }
+}, [condition, hasLogged]);
+```
+
+#### Pattern 4: Debounce Logging for Frequent Events
+
+```typescript
+// ✅ GOOD: Debounce logs for frequent events (resize, scroll, etc.)
+const debouncedLog = useMemo(
+    () => debounce((data: any) => {
+        console.log('[Component] Debounced log:', data);
+    }, 300),
+    []
+);
+
+useEffect(() => {
+    debouncedLog(data);
+    return () => debouncedLog.cancel();
+}, [data, debouncedLog]);
+```
+
+### Anti-Patterns to Avoid
+
+```typescript
+// ❌ BAD: Logging directly in render (will log on every render)
+const MyComponent = () => {
+    console.log('[Component] Rendering'); // Logs multiple times!
+    return <div>Content</div>;
+};
+
+// ❌ BAD: Logging in useEffect without guards (may log multiple times)
+useEffect(() => {
+    console.log('[Component] Effect ran'); // May log multiple times in Strict Mode
+}, [dependency]);
+
+// ❌ BAD: Logging in ref callback without guards
+ref={(el) => {
+    console.log('[Component] Ref callback'); // May be called multiple times
+}}
+
+// ❌ BAD: Logging in loops without deduplication
+items.forEach((item) => {
+    console.log('[Component] Item:', item); // Logs for every item, every render
+});
+```
+
+## 📊 Logging in React Components
+
+### Component Lifecycle Logging
+
+```typescript
+// ✅ GOOD: One-time mount logging with guard
+const MyComponent: React.FC = () => {
+    const hasLoggedMountRef = useRef(false);
+    
+    useEffect(() => {
+        if (!hasLoggedMountRef.current) {
+            hasLoggedMountRef.current = true;
+            console.log('[MyComponent] Mounted');
+        }
+    }, []);
+
+    return <div>Content</div>;
+};
+```
+
+### Event Handler Logging
+
+```typescript
+// ✅ GOOD: Log events with context, but avoid excessive logging
+const handleClick = useCallback((id: number) => {
+    // Only log if needed for debugging
+    if (process.env.NODE_ENV === 'development') {
+        console.log('[MyComponent] Click:', { id, timestamp: Date.now() });
+    }
+    // Handle click...
+}, []);
+```
+
+### Virtual Scroll / Infinite Scroll Logging
+
+```typescript
+// ✅ GOOD: Log only for specific items, with deduplication
+const renderItem = useCallback((item: any, index: number) => {
+    const itemRef = useRef<HTMLDivElement>(null);
+    
+    return (
+        <div
+            ref={(el) => {
+                if (el && index < 3 && !el.hasAttribute('data-logged')) {
+                    el.setAttribute('data-logged', 'true');
+                    console.log(`[VirtualList] Item ${index}:`, item);
+                }
+            }}
+        >
+            {item.content}
+        </div>
+    );
+}, []);
+```
+
+## 🧹 Cleanup Before Committing
+
+### Pre-Commit Checklist
+
+1. ✅ **Remove all console.log statements** - Use search to find all instances
+2. ✅ **Keep only console.error for critical failures** - These should remain
+3. ✅ **Remove debug logs from useEffect/useLayoutEffect** - Clean up temporary debugging
+4. ✅ **Remove logs from ref callbacks** - Unless they're permanent error handlers
+5. ✅ **Remove conditional development logs** - Even `if (process.env.NODE_ENV === 'development')` should be removed
+
+### Finding and Removing Logs
+
+```bash
+# Find all console.log statements
+grep -r "console.log" --include="*.ts" --include="*.tsx" .
+
+# Find console.log in specific directory
+grep -r "console.log" shared/layout-components/grid/
+```
+
+## 📝 Log Format Standards
+
+### Consistent Prefixes
+
+Use consistent prefixes for easier filtering in console:
+
+```typescript
+// ✅ GOOD: Consistent prefix pattern
+console.log('[ComponentName] Action:', data);
+console.log('[ComponentName] State change:', state);
+console.error('[ComponentName] Error:', error);
+
+// ❌ BAD: Inconsistent or no prefixes
+console.log('Action:', data);
+console.log('ComponentName - State:', state);
+```
+
+### Structured Data
+
+```typescript
+// ✅ GOOD: Log structured objects
+console.log('[ComponentName] User updated:', {
+    userId: user.id,
+    changes: diff,
+    timestamp: new Date().toISOString(),
+});
+
+// ❌ BAD: Multiple separate logs
+console.log('[ComponentName] User ID:', user.id);
+console.log('[ComponentName] Changes:', diff);
+console.log('[ComponentName] Timestamp:', new Date());
+```
+
+### Flatten Log Objects (Critical for Debugging)
+
+**ALWAYS flatten log objects** - Put all important information at the top level so you don't need to drill down in the console.
+
+```typescript
+// ❌ BAD: Nested structure requires drilling down
+console.log('[DataGridRow] Row 2 background check:', {
+    rowBackgroundColor: computed.backgroundColor,
+    calculatedBgColor,
+    match: computed.backgroundColor === calculatedBgColor,
+    cellBackgrounds: [
+        { field: 'checkbox', bg: 'rgba(0, 0, 0, 0)', isTransparent: true },
+        { field: '__rowNumber', bg: 'rgba(0, 0, 0, 0)', isTransparent: true },
+        // ... more cells
+    ],
+    hasNonTransparentCells: false,
+    parentBackground: parentBg,
+});
+
+// ✅ GOOD: Flattened structure - all key info at top level
+console.log('[DataGridRow] Row 2 background check:', {
+    // Key metrics at top level
+    rowBackgroundColor: computed.backgroundColor,
+    calculatedBgColor,
+    match: computed.backgroundColor === calculatedBgColor,
+    hasNonTransparentCells: false,
+    parentBackground: parentBg,
+    // Flatten cell data - use descriptive keys
+    cell0_field: 'checkbox',
+    cell0_bg: 'rgba(0, 0, 0, 0)',
+    cell0_isTransparent: true,
+    cell1_field: '__rowNumber',
+    cell1_bg: 'rgba(0, 0, 0, 0)',
+    cell1_isTransparent: true,
+    cell2_field: 'Customer.name',
+    cell2_bg: 'rgba(0, 0, 0, 0)',
+    cell2_isTransparent: true,
+    // Or use a summary for arrays
+    cellCount: cellBackgrounds.length,
+    allCellsTransparent: cellBackgrounds.every(c => c.isTransparent),
+    problematicCells: cellBackgrounds.filter(c => !c.isTransparent).map(c => c.field),
+});
+
+// ✅ GOOD: For complex data, flatten key properties and summarize arrays
+console.log('[Component] State update:', {
+    // Flatten key properties
+    userId: user.id,
+    userName: user.name,
+    userEmail: user.email,
+    // Summarize arrays/objects
+    permissionsCount: user.permissions.length,
+    hasAdminPermission: user.permissions.includes('admin'),
+    lastLoginDate: user.lastLogin?.toISOString() || 'never',
+    // Only include nested data if absolutely necessary
+    // fullPermissions: user.permissions, // Only if needed for debugging
+});
+
+// ✅ GOOD: Use descriptive flattened keys for nested data
+console.log('[API] Request failed:', {
+    // Flatten error details
+    errorMessage: error.message,
+    errorCode: error.code,
+    errorStatus: error.status,
+    // Flatten request details
+    requestUrl: request.url,
+    requestMethod: request.method,
+    requestBody: JSON.stringify(request.body),
+    // Flatten response details if available
+    responseStatus: response?.status,
+    responseData: response?.data ? JSON.stringify(response.data) : null,
+});
+
+// ❌ BAD: Deep nesting makes debugging harder
+console.log('[API] Request failed:', {
+    error: {
+        message: error.message,
+        code: error.code,
+        status: error.status,
+    },
+    request: {
+        url: request.url,
+        method: request.method,
+        body: request.body,
+    },
+    response: {
+        status: response?.status,
+        data: response?.data,
+    },
+});
+```
+
+### Flattening Guidelines
+
+1. **Put critical information at the top level** - The most important values should be immediately visible
+2. **Use descriptive flattened keys** - Instead of `cellBackgrounds[0].bg`, use `cell0_bg` or `firstCell_bg`
+3. **Summarize arrays** - Instead of logging entire arrays, log counts, summaries, or only problematic items
+4. **Flatten nested objects** - Extract important nested properties to the top level with descriptive names
+5. **Use prefixes for related data** - Group related flattened properties with prefixes (e.g., `cell0_`, `cell1_`, `error_`, `request_`)
+
+```typescript
+// ✅ GOOD: Flattened with prefixes for grouping
+console.log('[Grid] Alignment check:', {
+    // Row info
+    rowIndex: 1,
+    rowBg: computed.backgroundColor,
+    rowBgMatch: computed.backgroundColor === calculatedBgColor,
+    // Cell info - flattened with prefixes
+    cell0_field: 'checkbox',
+    cell0_bg: cellBackgrounds[0].bg,
+    cell0_transparent: cellBackgrounds[0].isTransparent,
+    cell1_field: '__rowNumber',
+    cell1_bg: cellBackgrounds[1].bg,
+    cell1_transparent: cellBackgrounds[1].isTransparent,
+    // Summary
+    totalCells: cellBackgrounds.length,
+    transparentCells: cellBackgrounds.filter(c => c.isTransparent).length,
+});
+```
+
+## 🔧 Script Management for Debugging
+
+### Reuse Existing Scripts
+
+When debugging a specific issue, **ALWAYS update the existing script** instead of creating new scripts for every test.
+
+#### ✅ GOOD: Update Existing Script
+
+```bash
+# If a script already exists for the issue (e.g., find-border-issue.js)
+# Update it to add new tests or fixes
+node scripts/find-border-issue.js
+```
+
+#### ❌ BAD: Creating Multiple Scripts
+
+```bash
+# ❌ BAD: Don't create new scripts for each test
+scripts/find-border-issue.js
+scripts/test-border-fix.js
+scripts/auto-fix-border-issue.js
+scripts/verify-border-fix.js
+# ... etc
+```
+
+### Script Evolution Pattern
+
+1. **Start with a single script** - Create one script for the debugging task
+2. **Enhance incrementally** - Add new features, tests, or fixes to the same script
+3. **Version the script** - Use comments or version numbers if the script changes significantly
+4. **Remove obsolete scripts** - Delete scripts that are no longer needed
+
+### Example: Evolving a Debug Script
+
+```javascript
+// ✅ GOOD: Single script that evolves
+// scripts/find-border-issue.js
+
+// Version 1: Basic detection
+async function findBorderIssue() {
+    // Collect data
+}
+
+// Version 2: Add automatic fix
+async function findBorderIssue() {
+    // Collect data
+    // Apply fix if issue found
+}
+
+// Version 3: Add verification
+async function findBorderIssue() {
+    // Collect data
+    // Apply fix if issue found
+    // Verify fix worked
+}
+```
+
+### When to Create a New Script
+
+Only create a new script if:
+- The new script serves a **completely different purpose** (e.g., performance testing vs. visual debugging)
+- The existing script is **production-critical** and shouldn't be modified
+- The new script is for a **different component/system** entirely
+
+### Script Naming Convention
+
+Use descriptive, purpose-based names:
+- ✅ `find-border-issue.js` - Finds and fixes border issues
+- ✅ `test-column-alignment.js` - Tests column alignment
+- ❌ `test1.js`, `test2.js`, `debug.js` - Too generic
+- ❌ `find-border-issue-v2.js` - Use version comments instead
+
+## 🎯 Summary
+
+1. **Always prevent duplicate logs** - Use data attributes, refs, or flags
+2. **Remove logs before committing** - Logs are temporary debugging tools
+3. **Use structured logging** - Log objects with context, not multiple separate logs
+4. **Flatten log objects** - Put all important information at the top level, avoid deep nesting
+5. **Use appropriate log levels** - `error` for errors, `warn` for warnings, `log` only for development
+6. **Never log sensitive data** - No passwords, tokens, or personal information
+7. **Reuse existing scripts** - Update the same script for debugging instead of creating new ones

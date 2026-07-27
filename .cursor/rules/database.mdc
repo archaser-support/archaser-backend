@@ -1,0 +1,226 @@
+# Database (Prisma) Guidelines
+
+## Summary
+
+This document provides guidelines for working with Prisma ORM and database operations. It covers:
+
+- **Schema Conventions**: Naming conventions (snake_case for DB, camelCase for Prisma), relations, indexes, and data types
+- **Date Handling**: Proper UTC timestamp storage and Date object usage (never strings in DB operations)
+- **Migration SQL Scripts**: Transaction handling, DBeaver-specific patterns, and safe migration practices
+- **Query Patterns**: Best practices for Prisma queries, error handling, and data transformations
+
+All database operations must store timestamps in UTC and use Date objects (not strings) for date fields.
+
+## 📊 Database (Prisma)
+
+### Schema Conventions
+
+- Use snake_case for DB columns, camelCase for Prisma fields
+- Include proper relations, indexes, and data types
+- Store ALL timestamps in UTC: `DateTime.now().toUTC().toJSDate()`
+
+### Date Handling
+
+- ALWAYS prefer Date objects over strings for DB operations
+- String conversions ONLY for UI display, API responses, or logging
+
+```typescript
+// ✅ CORRECT
+const [year, month, day] = dateString.split("-").map(Number);
+const dateObject = new Date(year, month - 1, day);
+await prisma.model.update({ data: { date: dateObject } });
+
+// ❌ INCORRECT
+await prisma.model.update({ data: { date: dateString } });
+```
+
+## 🔧 Migration SQL Scripts for DBeaver
+
+### Transaction Handling
+
+- **ALWAYS wrap scripts in transactions** (`BEGIN`/`COMMIT`) for safety
+- If a script fails, run `ROLLBACK;` before retrying
+- DBeaver may leave transactions in an aborted state after errors
+
+```sql
+-- ✅ CORRECT: Use transactions
+BEGIN;
+
+-- Your INSERT/UPDATE/DELETE statements here
+
+COMMIT;
+
+-- ❌ INCORRECT: No transaction protection
+INSERT INTO "Table" ...;
+UPDATE "Table" ...;
+```
+
+### Handling Unique Constraints
+
+- **ALWAYS use `ON CONFLICT`** when inserting records that might already exist
+- Prevents "unique constraint violation" errors that abort transactions
+- Use `DO UPDATE` to update existing records instead of failing
+
+```sql
+-- ✅ CORRECT: Handle existing records gracefully
+INSERT INTO "Report" (
+    account_id,
+    unique_name,
+    name,
+    ...
+) VALUES (...)
+ON CONFLICT (account_id, unique_name) 
+DO UPDATE SET
+    name = EXCLUDED.name,
+    modified_at = NOW();
+
+-- ❌ INCORRECT: Will fail if record exists
+INSERT INTO "Report" (
+    account_id,
+    unique_name,
+    name,
+    ...
+) VALUES (...);
+```
+
+### Creating Records for All Accounts
+
+- Use `INSERT ... SELECT` with `Account` table to create records for all accounts
+- Filter out deleted accounts: `WHERE deleted_at IS NULL`
+- Use `CROSS JOIN` or subquery pattern for bulk operations
+
+```sql
+-- ✅ CORRECT: Create records for all accounts
+INSERT INTO "Report" (
+    account_id,
+    name,
+    unique_name,
+    ...
+)
+SELECT 
+    a.id as account_id,
+    'Report Name' as name,
+    'report_name' as unique_name,
+    ...
+FROM 
+    "Account" a
+WHERE 
+    a.deleted_at IS NULL
+ON CONFLICT (account_id, unique_name) 
+DO UPDATE SET
+    name = EXCLUDED.name,
+    modified_at = NOW();
+
+-- ❌ INCORRECT: Only creates for one account
+INSERT INTO "Report" (
+    account_id,
+    name,
+    unique_name,
+    ...
+) VALUES (
+    10013,
+    'Report Name',
+    'report_name',
+    ...
+);
+```
+
+### Setting Default Records
+
+- When setting `is_default = true`, ensure other records in the same context have `is_default = false`
+- Use `ON CONFLICT` to enforce default status on updates
+
+```sql
+-- ✅ CORRECT: Set default and ensure others are not default
+INSERT INTO "Report" (
+    account_id,
+    unique_name,
+    is_default,
+    context,
+    ...
+)
+SELECT 
+    a.id as account_id,
+    'default_report' as unique_name,
+    true as is_default,
+    'context_name' as context,
+    ...
+FROM "Account" a
+WHERE a.deleted_at IS NULL
+ON CONFLICT (account_id, unique_name) 
+DO UPDATE SET
+    is_default = true,  -- Always set to true for this report
+    modified_at = NOW();
+
+-- Then set other reports in same context to false
+UPDATE "Report" 
+SET is_default = false, modified_at = NOW()
+WHERE context = 'context_name' 
+  AND unique_name != 'default_report'
+  AND is_default = true;
+```
+
+### Error Prevention
+
+- **Check for aborted transactions**: If you see "current transaction is aborted" error, run `ROLLBACK;` first
+- **Use `IF EXISTS` / `IF NOT EXISTS`** for schema changes (ALTER TABLE, CREATE INDEX, etc.)
+- **Test with small data subsets** before running on production
+- **Include verification queries** at the end of scripts
+
+```sql
+-- ✅ CORRECT: Include verification queries
+COMMIT;
+
+-- Verification queries:
+-- SELECT account_id, COUNT(*) as report_count
+-- FROM "Report" 
+-- WHERE context = 'customer_unpaid_invoices' AND is_system = true
+-- GROUP BY account_id;
+```
+
+### Script Structure Template
+
+```sql
+-- ============================================================================
+-- Migration Script: [Description]
+-- Generated: [Date]
+-- Context: [context_name]
+-- ============================================================================
+-- 
+-- Description of what this script does
+--
+-- IMPORTANT NOTES:
+-- 1. Execute this script on the database manually (DBeaver)
+-- 2. Run ROLLBACK; if you see transaction errors
+-- 3. After running, regenerate Prisma client: npx prisma generate
+-- ============================================================================
+
+BEGIN;
+
+-- Optional: Delete existing records (uncomment if needed)
+-- DELETE FROM "Table" WHERE condition;
+
+-- Insert/Update statements with ON CONFLICT
+INSERT INTO "Table" (...)
+SELECT ...
+FROM "Account" a
+WHERE a.deleted_at IS NULL
+ON CONFLICT (...) DO UPDATE SET ...;
+
+COMMIT;
+
+-- ============================================================================
+-- Verification queries:
+-- 
+-- SELECT * FROM "Table" WHERE condition;
+-- ============================================================================
+```
+
+### Common Pitfalls to Avoid
+
+1. **Missing ON CONFLICT**: Always handle unique constraint violations
+2. **Hardcoded account_id**: Use SELECT from Account table for all accounts
+3. **No transaction wrapper**: Always use BEGIN/COMMIT
+4. **Ignoring deleted accounts**: Always filter `WHERE deleted_at IS NULL`
+5. **Not updating modified_at**: Always update timestamps on conflict
+6. **Multiple defaults**: Ensure only one record has `is_default = true` per context

@@ -1,0 +1,954 @@
+{
+    "annotations": {
+        "list": [
+            {
+                "builtIn": 1,
+                "datasource": {
+                    "type": "grafana",
+                    "uid": "-- Grafana --"
+                },
+                "enable": true,
+                "hide": true,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            }
+        ]
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+        {
+            "gridPos": {
+                "h": 2,
+                "w": 24,
+                "x": 0,
+                "y": 0
+            },
+            "id": 10,
+            "options": {
+                "mode": "markdown",
+                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-staging/archaser-home-staging) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-staging/cron-health-staging) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-staging/communications-staging) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-staging/alert-drilldown-staging)"
+            },
+            "title": "",
+            "type": "text",
+            "transparent": true
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 2
+            },
+            "id": 1,
+            "title": "Server Availability (Uptime)",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 6,
+                "y": 3
+            },
+            "id": 3,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "textMode": "value"
+            },
+            "targets": [
+                {
+                    "expr": "up{instance=\"Staging\"}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Staging Server",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "OFF"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "ON"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 12,
+                "y": 3
+            },
+            "id": 1001,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "textMode": "value"
+            },
+            "targets": [
+                {
+                    "expr": "max(archaser_db_postgres_connected{instance=\"Staging\"})",
+                    "refId": "A"
+                }
+            ],
+            "title": "Postgres Status",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 15
+                            },
+                            {
+                                "color": "red",
+                                "value": 25
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 12,
+                "y": 7
+            },
+            "id": 1003,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "center",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                },
+                "textMode": "value"
+            },
+            "targets": [
+                {
+                    "expr": "max(archaser_db_postgres_connections{instance=\"Staging\"})",
+                    "refId": "A"
+                }
+            ],
+            "title": "Postgres Active Connections",
+            "mappings": [
+                {
+                    "options": {
+                        "0": {
+                            "color": "red",
+                            "text": "OFF"
+                        },
+                        "1": {
+                            "color": "green",
+                            "text": "ON"
+                        }
+                    },
+                    "type": "value"
+                }
+            ],
+            "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                    {
+                        "color": "red",
+                        "value": null
+                    },
+                    {
+                        "color": "green",
+                        "value": 1
+                    }
+                ]
+            }
+        },
+        {
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 18,
+                "y": 3
+            },
+            "id": 1002,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "textMode": "value"
+            },
+            "targets": [
+                {
+                    "expr": "max(archaser_db_mongodb_connected{instance=\"Staging\"})",
+                    "refId": "A"
+                }
+            ],
+            "title": "MongoDB Status",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 5
+                            },
+                            {
+                                "color": "red",
+                                "value": 10
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 18,
+                "y": 7
+            },
+            "id": 1004,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "center",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ]
+                },
+                "textMode": "value"
+            },
+            "targets": [
+                {
+                    "expr": "max(archaser_db_mongodb_connections{instance=\"Staging\"})",
+                    "refId": "A"
+                }
+            ],
+            "title": "MongoDB Active Connections",
+            "type": "stat"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 7
+            },
+            "id": 109,
+            "title": "Resource Utilization (Core)",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 8
+            },
+            "id": 71,
+            "options": {
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "nodejs_heap_size_used_bytes{instance=\"Staging\"}",
+                    "legendFormat": "{{instance}} - Heap Used",
+                    "refId": "A"
+                },
+                {
+                    "expr": "nodejs_heap_size_total_bytes{instance=\"Staging\"}",
+                    "legendFormat": "{{instance}} - Heap Total",
+                    "refId": "B"
+                }
+            ],
+            "title": "Memory Usage (Node.exe)",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 8
+            },
+            "id": 72,
+            "options": {
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "multi"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "rate(process_cpu_seconds_total{instance=\"Staging\"}[1m])",
+                    "legendFormat": "{{instance}} CPU %",
+                    "refId": "A"
+                }
+            ],
+            "title": "CPU Load",
+            "type": "timeseries"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 16
+            },
+            "id": 400,
+            "title": "Infrastructure Statistics",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 17
+            },
+            "id": 401,
+            "targets": [
+                {
+                    "expr": "nodejs_eventloop_lag_seconds{instance=\"Staging\"}",
+                    "legendFormat": "{{instance}} Lag",
+                    "refId": "A"
+                }
+            ],
+            "title": "Event Loop Lag",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 17
+            },
+            "id": 402,
+            "targets": [
+                {
+                    "expr": "nodejs_active_handles_total{instance=\"Staging\"}",
+                    "legendFormat": "{{instance}} Handles",
+                    "refId": "A"
+                },
+                {
+                    "expr": "nodejs_active_requests_total{instance=\"Staging\"}",
+                    "legendFormat": "{{instance}} Requests",
+                    "refId": "B"
+                }
+            ],
+            "title": "Active Handles & Requests",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 17
+            },
+            "id": 403,
+            "targets": [
+                {
+                    "expr": "sum by(instance, space) (nodejs_heap_space_size_used_bytes{instance=\"Staging\"})",
+                    "legendFormat": "{{instance}} - {{space}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Heap Space Distribution",
+            "type": "timeseries"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 25
+            },
+            "id": 500,
+            "title": "Runtime KPIs",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 26
+            },
+            "id": 501,
+            "targets": [
+                {
+                    "expr": "rate(nodejs_gc_duration_seconds_sum{instance=\"Staging\"}[5m])",
+                    "legendFormat": "{{instance}} GC Rate",
+                    "refId": "A"
+                }
+            ],
+            "title": "GC Duration Rate (5m)",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 26
+            },
+            "id": 502,
+            "targets": [
+                {
+                    "expr": "archaser_cron_job_success_rate{instance=\"Staging\"}",
+                    "legendFormat": "{{instance}} Success %",
+                    "refId": "A"
+                }
+            ],
+            "title": "Cron success rate (30d)",
+            "type": "gauge"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 34
+            },
+            "id": 503,
+            "title": "Email/SMS Connectivity Status",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "index": 0,
+                                    "text": "Down"
+                                },
+                                "1": {
+                                    "index": 1,
+                                    "text": "Connected"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": 0
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 0,
+                "y": 35
+            },
+            "id": 504,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "archaser_email_smtp_connected{instance=\"Staging\"}",
+                    "refId": "A"
+                }
+            ],
+            "title": "SMTP",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "index": 0,
+                                    "text": "Down"
+                                },
+                                "1": {
+                                    "index": 1,
+                                    "text": "Connected"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": 0
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 4,
+                "y": 35
+            },
+            "id": 505,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "archaser_email_ses_connected{instance=\"Staging\"}",
+                    "refId": "A"
+                }
+            ],
+            "title": "SES",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "cellOptions": {
+                            "type": "auto"
+                        },
+                        "inspect": false
+                    },
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "index": 0,
+                                    "text": "Disconnected"
+                                },
+                                "1": {
+                                    "index": 1,
+                                    "text": "Misconfigured"
+                                },
+                                "2": {
+                                    "index": 2,
+                                    "text": "Connected"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ]
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 16,
+                "x": 8,
+                "y": 35
+            },
+            "id": 506,
+            "options": {
+                "cellHeight": "sm",
+                "footer": {
+                    "countRows": false,
+                    "fields": "",
+                    "reducer": [
+                        "sum"
+                    ],
+                    "show": false
+                },
+                "showHeader": true
+            },
+            "targets": [
+                {
+                    "expr": "archaser_sms_provider_status{instance=\"Staging\"}",
+                    "format": "table",
+                    "instant": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "SMS Providers Status",
+            "transformations": [
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": true,
+                            "__name__": true,
+                            "app": true,
+                            "instance": true,
+                            "job": true
+                        },
+                        "indexByName": {
+                            "provider_id": 0,
+                            "provider_name": 1,
+                            "provider_type": 2,
+                            "Value": 3
+                        },
+                        "renameByName": {
+                            "provider_id": "Provider ID",
+                            "provider_name": "Provider Name",
+                            "provider_type": "Provider Type",
+                            "Value": "Status"
+                        }
+                    }
+                }
+            ],
+            "type": "table"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 43
+            },
+            "id": 600,
+            "title": "Log Analysis",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "Loki"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 44
+            },
+            "id": 110,
+            "options": {
+                "pieType": "donut",
+                "reduceOptions": {
+                    "calcs": [
+                        "sum"
+                    ]
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum by(level) (count_over_time({service=\"archaser-core\", host=\"staging\"} [$__range]))",
+                    "legendFormat": "{{level}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Log Level Distribution",
+            "type": "piechart"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "Loki"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 16,
+                "x": 8,
+                "y": 44
+            },
+            "id": 111,
+            "targets": [
+                {
+                    "expr": "sum(count_over_time({service=\"archaser-core\", level=~\"error|critical|fatal\", host=\"staging\"} [$__interval])) or sum(count_over_time({job=\"pm2\", app_name=~\".+\", log_type=\"error\", host=\"staging\"} [$__interval]))",
+                    "legendFormat": "Errors",
+                    "refId": "A"
+                }
+            ],
+            "title": "Error Rate (Loki)",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "Loki"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 52
+            },
+            "id": 112,
+            "options": {
+                "showTime": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
+            "targets": [
+                {
+                    "expr": "{job=~\"pm2|archaser-core\", level=~\"(?i)error|critical|fatal\", host=\"staging\"}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Recent Error Records",
+            "type": "logs"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "Loki"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 60
+            },
+            "id": 113,
+            "targets": [
+                {
+                    "expr": "sum by(source) (count_over_time({service=\"archaser-core\", host=\"staging\"} [$__range]))",
+                    "legendFormat": "{{source}}",
+                    "queryType": "instant",
+                    "refId": "A"
+                }
+            ],
+            "transformations": [
+                {
+                    "id": "labelsToFields"
+                },
+                {
+                    "id": "organize",
+                    "options": {
+                        "renameByName": {
+                            "Value": "Count"
+                        }
+                    }
+                },
+                {
+                    "id": "sortBy",
+                    "options": {
+                        "sort": [
+                            {
+                                "field": "Count",
+                                "desc": true
+                            }
+                        ]
+                    }
+                }
+            ],
+            "title": "Top Reporting Services",
+            "type": "table"
+        }
+    ],
+    "refresh": "10s",
+    "schemaVersion": 36,
+    "style": "dark",
+    "tags": [
+        "app",
+        "prometheus",
+        "health",
+        "production",
+        "staging",
+        "infra"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-3h",
+        "to": "now"
+    },
+    "timezone": "browser",
+    "title": "Infrastructure - Staging",
+    "uid": "archaser-prometheus-v1-staging",
+    "version": 4
+}

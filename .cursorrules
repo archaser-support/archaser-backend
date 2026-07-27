@@ -1,0 +1,128 @@
+# Cursor Rules for Archaser Project
+
+> **Note**: This project uses modular rules files in `.cursor/rules/` directory.
+> See individual rule files for specific guidelines:
+> - `.cursor/rules/critical-rules.mdc` - Critical rules and development workflow
+> - `.cursor/rules/planning.mdc` - Impact analysis, plan generation, repo plan copies, and **required codebase scan before finalizing plans**
+> - `.cursor/rules/testing.mdc` - Testing guidelines and test planning
+> - `.cursor/rules/test-unit-creation-process.mdc` - Process for creating integration/e2e test units (cron/workflow flows)
+> - `.cursor/rules/translations.mdc` - Internationalization (i18n) rules
+> - `.cursor/rules/design-system.mdc` - Design system and styling guidelines
+> - `.cursor/rules/database.mdc` - Database (Prisma) guidelines
+> - `.cursor/rules/api.mdc` - API guidelines
+> - `.cursor/rules/frontend.mdc` - Frontend guidelines
+
+## Quick Reference
+
+### Local issue tracker (`/to-issues`)
+
+**`/to-issues` publishes vertical slices as markdown under `.scratch/`, not ClickUp.** See `docs/agents/issue-tracker.md` and `.agents/skills/to-issues/SKILL.md`.
+
+| Key | Value |
+|-----|-------|
+| **Root** | `.scratch/<feature-slug>/` |
+| **Issues** | `.scratch/<feature-slug>/issues/<NN>-<slug>.md` (from `01`) |
+| **Overview (2+ slices)** | `.scratch/<feature-slug>/OVERVIEW.md` |
+| **Default status** | `ready-for-agent` (see `docs/agents/triage-labels.md`) |
+
+Do **not** call ClickUp MCP from `/to-issues`. ClickUp remains for ad-hoc tasks and human workflow outside this skill.
+
+**How to test:** Every slice file must include a short **How to test** section (where to go, what to do, what to expect).
+
+**After implementation:** When a session was scoped to a specific slice file and work is complete, update that slice’s `**Status:**` to `done` in the markdown file at the end of the same session (unless the user opted out or work is partial).
+
+### ClickUp Integration
+
+**Single source of truth** for skills that *do* create or update ClickUp tasks (ad-hoc features/bugs, human workflow) — do **not** duplicate these IDs in skill files. When the user overrides a value in chat, that override wins for the session. **Vertical slices use `/to-issues` → `.scratch/`, not ClickUp.**
+
+#### Project config
+
+| Key | Value |
+|-----|-------|
+| **MCP server** | `user-clickup` |
+| **Workspace ID** | `25708732` |
+| **Default space** | **ARchaser** — `90122374962` |
+| **Default list** | **ARchaser** — `901206394222` |
+| **Default status** | **Selected for Development** |
+| **Default assignee** | **Nilotpal Bose** — `93674717` (`nilotpal@archaser.com`) |
+
+Pass `workspace_id` on hierarchy/search calls unless the user specifies another team. Create new tasks in the **default list** unless the user specifies another list.
+
+Do not use other spaces in the same workspace (e.g. Development, Zman App) unless explicitly requested. Use `clickup_get_workspace_hierarchy` or `clickup_get_list` only when the user directs a different list.
+
+**Creating tasks:** When creating a ClickUp task (feature or bug), **always** add a short **How to test** paragraph in the task description (`markdown_description` preferred). Include concrete steps: where to go in the app, what to do, and what to expect. For bugs, include steps to reproduce and to verify the fix. Do not create tasks without this section unless the user explicitly opts out.
+
+#### Team members (workspace `25708732`)
+
+| Name | User ID | Email |
+|------|---------|-------|
+| Nilotpal Bose (`Nilotpal`) | `93674717` | `nilotpal@archaser.com` |
+| Ofir Amitai | `25548736` | `ofir@cloudial.io` |
+
+#### Task conventions
+
+| Context | Tracker | Notes |
+|---------|---------|-------|
+| Vertical slices (`/to-issues`) | **Local markdown** under `.scratch/<feature-slug>/issues/` | `**Status:** ready-for-agent`; `OVERVIEW.md` when 2+ slices |
+| Ad-hoc feature or bug (ClickUp) | ClickUp default list | Standard **Task** type (omit `task_type`); tags `ready-for-agent` when agent-ready; assignees `["93674717"]` |
+
+**When creating ClickUp items**, use the standard Task type: omit `task_type` on `clickup_create_task`. Do not pass the literal value `"Task"` because the API may reject it when only custom task types are enumerated.
+
+Tags must already exist in the space — confirm or ask before publishing.
+
+### 📋 Implementation plans & PRDs (workspace path — required)
+- ✅ **Always create/save plans in the workspace folder** `.cursor/plans/` so developers can see them in-repo immediately.
+- ✅ **`/to-prd`** writes PRDs to `.cursor/plans/<feature-slug>.prd.md` only — **no tracker issues**. Use **`/to-issues`** to publish vertical slices under `.scratch/<feature-slug>/issues/`.
+- ✅ If `CreatePlan` writes to `~/.cursor/plans/*.plan.md`, **immediately copy/sync** the same file into this repo at `.cursor/plans/<same-filename>.plan.md`.
+- ✅ Keep the **same filename** as the Cursor plan; do not duplicate under a second name unless merging plans.
+- ✅ When linking from ClickUp or PRs, use the **repo-relative path** `.cursor/plans/...`, not `~/.cursor/plans/...`.
+- ✅ Commit the copied plan with the feature PR (or in a separate commit when the user asks to commit plans only).
+- This is the **allowed exception** to “no random .md files”: plans/PRDs under `.cursor/plans/` (`*.plan.md`, `*.prd.md`), and vertical-slice issues under `.scratch/<feature-slug>/` — not new READMEs or ad-hoc docs elsewhere.
+
+### 📋 Plan prompts — codebase scan & plan improvements (required)
+Before finalizing any implementation plan (initial draft or after user feedback), **always scan the project** for additional files to update — do not rely only on the files the user named. See also `.cursor/rules/planning.mdc`.
+
+**Codebase scan (required):**
+- Search for the entity/field/API name, related types, enums, and similar existing patterns (`grep`, semantic search, and/or explore subagents in parallel).
+- Trace the full stack: Prisma schema/migrations → API handlers → services → UI forms → list/grid → export/import → i18n (EN/HE) → tests → report metadata.
+- For each candidate file, classify as **required**, **optional/out of scope**, or **no change needed** (with a one-line reason).
+- Include a **“Codebase scan”** section in the plan listing all three buckets — not just the obvious files.
+- Re-run the scan when the user asks to review the plan or says “what else needs updating?”; update the plan document accordingly.
+
+**Suggest plan improvements (required):**
+- Call out easy-to-miss touchpoints (e.g. manual export mappers, row/API types, sort allowlists, validation parity client/server, conditional required fields).
+- Note incorrect assumptions (e.g. “export auto-picks grid columns” when a handler maps fields manually).
+- Propose optional follow-ups (unit tests, report builder fields, edge cases) clearly labeled **out of scope unless requested**.
+- Flag cross-cutting rules that affect the plan (translations, styling approval, migration safety).
+- If the scan reveals gaps or better approaches, update the plan before asking the user to approve execution.
+
+### Tooltips
+- ✅ **Always place tooltips below the trigger** — use MUI `placement="bottom"` on every `Tooltip` (including shared helpers like `getRTLTooltipProps`). Do not default to `top`, `left`, or `right` unless the user explicitly requests another placement.
+- ✅ Keep other tooltip props per `.cursor/rules/frontend-tooltips.mdc` (`arrow`, delays, RTL text direction in `PopperProps`).
+
+### 🚫 Critical Rules
+- ❌ NEVER create .md files, READMEs, or run commands without approval (except implementation plans under `.cursor/plans/` and `/to-issues` slices under `.scratch/` — see above)
+- ❌ NEVER modify translation files without explicit permission
+- ❌ NEVER add new styles (theme overrides, global CSS, component `sx` blocks, or new CSS classes) without explicit user approval — reuse existing theme tokens, MUI variants, and patterns first
+- ❌ NEVER run `npx prisma db push --force-reset` or `npx prisma migrate dev`
+- ❌ NEVER run `npm run dev` or any development server commands automatically
+- ✅ Use `search_replace` with 3-5 lines context, `read_file`, `grep_search`
+- ✅ Use static analysis: `npx tsc --noEmit`, `npm run test:unit`, `npm run lint`
+
+### ❓ Clarifying & design questions (required format)
+
+When a decision is genuinely the user's to make — planning, grilling (`/grill-me`), ambiguous requirements, or trade-offs the codebase cannot resolve — **always** use the **`AskQuestion` tool** (same format as Plan mode). Do **not** list options as A/B/C bullets or numbered lists in chat.
+
+**Rules:**
+- **One question per turn** — wait for the answer before asking the next.
+- **Two or more concrete options** per question (Cursor also offers **Other** for free text).
+- Put the **recommended option first** and append **`(Recommended)`** to its label.
+- Keep option labels **short but specific** — include the outcome (e.g. KPI value or behavior), not just a name.
+- Brief context **above** the question is fine; the **choices themselves** belong in `AskQuestion`, not inline in prose.
+- If the answer is discoverable by reading the codebase, **explore first** — only ask when still blocked on a product/design choice.
+- After the user answers, incorporate it into the plan, PRD, or next implementation step before continuing.
+
+**Grilling (`/grill-me`, `/grilling`):** same rules — one `AskQuestion` per turn, recommended option first, no multi-question dumps. Use **simple language** (everyday words, short sentences, concrete examples when abstract; expand every acronym with its full name); see `.agents/skills/grill-me/SKILL.md`.
+
+### 📚 Rule Files
+All detailed rules are organized in `.cursor/rules/` directory for better maintainability and topic-specific reference.

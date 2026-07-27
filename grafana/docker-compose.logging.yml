@@ -1,0 +1,119 @@
+# Variable substitution (${GRAFANA_SMTP_HOST}, etc.) uses the Compose env file:
+#   docker compose --env-file ../.env -f docker-compose.logging.yml …
+# (from backend/grafana) or from repo root:
+#   docker compose --env-file backend/.env -f backend/grafana/docker-compose.logging.yml …
+
+services:
+  loki:
+    image: grafana/loki:latest
+    container_name: archaser-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+      - loki-data:/loki
+    networks:
+      - archaser-network
+
+  grafana-db:
+    image: postgres:latest
+    container_name: archaser-grafana-db
+    environment:
+      - POSTGRES_USER=${GRAFANA_INTERNAL_DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${GRAFANA_INTERNAL_DB_PASSWORD:-postgres}
+      - POSTGRES_DB=${GRAFANA_INTERNAL_DB_NAME:-grafana}
+    volumes:
+      - grafana-db-data-v2:/var/lib/postgresql
+    networks:
+      - archaser-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: archaser-grafana
+    ports:
+      - "3002:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}
+      - GF_SERVER_DOMAIN=${GRAFANA_DOMAIN:-grafana.portal.archaser.com}
+      # SMTP Configuration
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=${GRAFANA_SMTP_HOST}
+      - GF_SMTP_USER=${GRAFANA_SMTP_USER}
+      - GF_SMTP_PASSWORD=${GRAFANA_SMTP_PASSWORD}
+      - GF_SMTP_FROM_ADDRESS=${GRAFANA_SMTP_FROM}
+      - GF_SMTP_FROM_NAME=ARChaser Grafana
+      # AWS SNS Webhook URL for alert notifications (set after CloudFormation deployment)
+      - GRAFANA_SNS_WEBHOOK_URL=${GRAFANA_SNS_WEBHOOK_URL:-}
+      # Database connection for Postgres Datasource
+      - GRAFANA_DB_HOST=${GRAFANA_DB_HOST:-host.docker.internal}
+      - GRAFANA_DB_PORT=${GRAFANA_DB_PORT:-5432}
+      - GRAFANA_DB_NAME=${GRAFANA_DB_NAME:-archaser_local}
+      - GRAFANA_DB_USER=${GRAFANA_DB_USER:-postgres}
+      - GRAFANA_DB_PASSWORD=${GRAFANA_DB_PASSWORD:-postgres}
+      - GRAFANA_DB_SSLMODE=${GRAFANA_DB_SSLMODE:-disable}
+      # Internal Database Configuration (pointing to grafana-db container)
+      - GF_DATABASE_TYPE=postgres
+      - GF_DATABASE_HOST=grafana-db:5432
+      - GF_DATABASE_NAME=${GRAFANA_INTERNAL_DB_NAME:-grafana}
+      - GF_DATABASE_USER=${GRAFANA_INTERNAL_DB_USER:-postgres}
+      - GF_DATABASE_PASSWORD=${GRAFANA_INTERNAL_DB_PASSWORD:-postgres}
+      - GF_DATABASE_SSL_MODE=disable
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasource.yaml
+      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboard.yaml
+      - ./provisioning/dashboards/${MONITORING_ENV:-staging}:/etc/grafana/provisioning/dashboards_files/current_env
+      - ./provisioning/alerting/rules-${MONITORING_ENV:-staging}.yaml:/etc/grafana/provisioning/alerting/rules.yaml
+      - ./provisioning/alerting/contact-points.yaml:/etc/grafana/provisioning/alerting/contact-points.yaml
+      - ./provisioning/alerting/mute-timings.yaml:/etc/grafana/provisioning/alerting/mute-timings.yaml
+      - ./provisioning/alerting/notification-policies.yaml:/etc/grafana/provisioning/alerting/notification-policies.yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - loki
+      - grafana-db
+    networks:
+      - archaser-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: archaser-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - archaser-network
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: archaser-promtail
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/config.yml
+      # PM2 logs on production EC2 (ubuntu); override with PM2_LOGS_HOST_PATH if needed
+      - ${PM2_LOGS_HOST_PATH:-/home/ubuntu/logs}:/var/log/pm2:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - archaser-network
+
+volumes:
+  loki-data:
+  grafana-data:
+  grafana-db-data-v2:
+  prometheus-data:
+
+networks:
+  archaser-network:
+    driver: bridge

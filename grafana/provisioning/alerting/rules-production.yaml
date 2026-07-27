@@ -1,0 +1,766 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: System Health Alerts - Production
+    folder: Production
+    interval: 1m
+    rules:
+      # ============================================================
+      # Critical Alerts - Database Health
+      # ============================================================
+      - uid: postgres-disconnected-prod
+        title: PostgreSQL Disconnected
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_db_postgres_connected{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: KeepLast
+        for: 2m
+        annotations:
+          summary: PostgreSQL database connection lost
+          description: "The application cannot connect to PostgreSQL. This is a critical issue that may affect all operations."
+        labels:
+          severity: critical
+          type: database
+
+      - uid: mongodb-disconnected-prod
+        title: MongoDB Disconnected
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_db_mongodb_connected{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: MongoDB database connection lost
+          description: "The application cannot connect to MongoDB. Logging functionality may be affected."
+        labels:
+          severity: critical
+          type: database
+
+      # ============================================================
+      # High Priority Alerts - Cron Jobs & Activities
+      # ============================================================
+      - uid: stuck-activities-prod
+        title: Stuck Activities Detected
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_activities_stuck{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "Stuck activities detected"
+          description: "Activities with SCHEDULED status have passed their schedule_time by more than 2 hours. Check Activity Workflow Manager cron job."
+        labels:
+          severity: high
+          type: activities
+
+      - uid: no-system-activities-24h-prod
+        title: No System Activities Created in 24 Hours
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_hours_since_last_system_activity{instance="Production"}
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions: []
+              expression: A
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions: []
+              expression: $B > 24
+              refId: C
+              type: math
+        noDataState: NoData
+        execErrState: Error
+        for: 30m
+        annotations:
+          summary: 'No system-generated activities created in over {{ $values.B.Value }} hours'
+          description: "The system has not created any automated activities in more than 24 hours. Check Activity Workflow Manager and Process Automated Collection Periods cron jobs."
+        labels:
+          severity: high
+          type: activities
+
+      - uid: cron-jobs-overdue-prod
+        title: Cron Jobs Overdue
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_cron_jobs_overdue{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: "Cron jobs are overdue"
+          description: "Cron jobs have not run when they were scheduled. Check cron manager for issues."
+        labels:
+          severity: medium
+          type: cron
+
+      - uid: cron-jobs-not-run-24h-prod
+        title: Cron Jobs Not Run in 24 Hours
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_cron_jobs_not_run_24h{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "Cron jobs have not run in 24 hours"
+          description: "Some cron jobs have not executed in the last 24 hours. This may indicate cron manager issues."
+        labels:
+          severity: high
+          type: cron
+
+      - uid: cron-jobs-failed-execution-prod
+        title: Cron Jobs Failed Execution
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: increase(archaser_cron_job_executions_total{status="FAILED", instance="Production"}[15m])
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 0m
+        annotations:
+          summary: "One or more cron jobs failed execution"
+          description: "At least one cron job recorded a FAILED execution in the last 15 minutes. Check the ARchaser Cron dashboard (uid archaser-cron-v1-prod) for per-job failure counts and CronJobExecution logs / application logs for error details."
+        labels:
+          severity: high
+          type: cron
+
+      # ============================================================
+      # High Priority Alerts - Collection Periods
+      # ============================================================
+      - uid: periods-without-activities-prod
+        title: Automated Periods Without Activities
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_periods_without_activities{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 30m
+        annotations:
+          summary: "Automated periods have no scheduled activities"
+          description: "Automated collection periods exist without any scheduled activities for over 24 hours."
+        labels:
+          severity: high
+          type: collection
+
+      - uid: overdue-activity-creation-prod
+        title: Overdue Activity Creation
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_overdue_activity_creation{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: "Collection periods have overdue activity creation"
+          description: "Collection periods with create_next_activity=true have passed their next_activity_date."
+        labels:
+          severity: high
+          type: collection
+
+      - uid: automation-stuck-no-contacts-prod
+        title: Automation Stuck - No Contacts
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_automation_stuck_no_contacts{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 1h
+        annotations:
+          summary: "Collection periods stuck due to no contacts"
+          description: "Automated collection periods cannot proceed because customers have no valid contacts."
+        labels:
+          severity: medium
+          type: collection
+
+      # ============================================================
+      # Medium Priority Alerts - Communication Issues
+      # ============================================================
+      - uid: high-email-bounces-prod
+        title: High Email Bounce Rate
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_emails_bounced_24h{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 10
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 30m
+        annotations:
+          summary: "High number of emails bounced in the last 24 hours"
+          description: "High number of email bounces detected. Check email service configuration and contact data quality."
+        labels:
+          severity: medium
+          type: email
+
+      - uid: high-sms-failures-prod
+        title: High SMS Failure Rate
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_sms_failed_24h{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 10
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 30m
+        annotations:
+          summary: "High number of SMS failures in the last 24 hours"
+          description: "High number of SMS failures detected. Check SMS vendor configuration."
+        labels:
+          severity: medium
+          type: sms
+
+      # ============================================================
+      # Medium Priority Alerts - Application Errors
+      # ============================================================
+      - uid: high-application-errors-prod
+        title: High Application Error Rate
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_errors_1h{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 50
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "High number of application errors in the last hour"
+          description: "High number of application errors detected. Check application logs for details."
+        labels:
+          severity: high
+          type: errors
+
+  - uid: billing-connector-auth-failures-prod
+    title: Billing Connector Auth Failures
+    condition: C
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 3600
+          to: 0
+        datasourceUid: Prometheus
+        model:
+          expr: increase(archaser_billing_connector_errors_total{instance="Production", error_type="auth"}[1h])
+          instant: true
+          refId: A
+      - refId: C
+        relativeTimeRange:
+          from: 0
+          to: 0
+        datasourceUid: __expr__
+        model:
+          conditions:
+            - evaluator:
+                params:
+                  - 3
+                type: gt
+              operator:
+                type: and
+              query:
+                params:
+                  - A
+              reducer:
+                type: last
+          refId: C
+          type: classic_conditions
+    noDataState: NoData
+    execErrState: Error
+    for: 5m
+    annotations:
+      summary: Repeated ERP authentication failures
+      description: Priority/auth errors exceeded threshold. Check credentials on affected accounts.
+    labels:
+      severity: critical
+      type: billing_connector
+
+  - uid: billing-connector-in-error-prod
+    title: Billing Connectors In Error State
+    condition: C
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 300
+          to: 0
+        datasourceUid: Prometheus
+        model:
+          expr: archaser_billing_connector_connectors_in_error{instance="Production"}
+          instant: true
+          refId: A
+      - refId: C
+        relativeTimeRange:
+          from: 0
+          to: 0
+        datasourceUid: __expr__
+        model:
+          conditions:
+            - evaluator:
+                params:
+                  - 0
+                type: gt
+              operator:
+                type: and
+              query:
+                params:
+                  - A
+              reducer:
+                type: last
+          refId: C
+          type: classic_conditions
+    noDataState: NoData
+    execErrState: Error
+    for: 10m
+    annotations:
+      summary: One or more billing connectors in Error status
+      description: Connector circuit breaker or connection failure. Admin Account Details → Billing integration.
+    labels:
+      severity: critical
+      type: billing_connector
+
+  # ============================================================
+  # Postgres server logs (RDS → CloudWatch → Loki)
+  # ============================================================
+  - orgId: 1
+    name: Postgres Server Logs - Production
+    folder: Production
+    interval: 1m
+    rules:
+      - uid: postgres-fatal-panic-prod
+        title: PostgreSQL FATAL or PANIC
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Loki
+            model:
+              editorMode: code
+              expr: sum(count_over_time({job="rds-postgres", environment="production"} | json | error_severity=~"FATAL|PANIC" [5m]))
+              queryType: instant
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: OK
+        execErrState: Error
+        for: 1m
+        annotations:
+          summary: PostgreSQL FATAL or PANIC in server logs
+          description: "One or more FATAL/PANIC lines in RDS Postgres logs (last 5m). Open dashboard: /d/archaser-postgres-logs-prod/postgres-logs-production"
+        labels:
+          severity: critical
+          type: database
+          source: rds-postgres
+
+      - uid: postgres-error-rate-spike-prod
+        title: PostgreSQL Error Rate Spike
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: Loki
+            model:
+              editorMode: code
+              expr: sum(count_over_time({job="rds-postgres", environment="production"} | json | error_severity="ERROR" [10m]))
+              queryType: instant
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 20
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: Elevated PostgreSQL ERROR volume
+          description: "More than 20 ERROR-severity lines in RDS Postgres logs over 10m. Investigate /d/archaser-postgres-logs-prod/postgres-logs-production"
+        labels:
+          severity: high
+          type: database
+          source: rds-postgres
