@@ -23,6 +23,8 @@ const REPORT_TABLE_TO_PRISMA_MODEL = {
     Company: "Company",
     User: "User",
     BusinessUnit: "BusinessUnit",
+    Country: "Country",
+    State: "State",
 };
 const scalarFieldCache = new Map();
 function calculateDaysOverdue(dueDate, now = new Date()) {

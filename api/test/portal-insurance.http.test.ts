@@ -6,6 +6,7 @@ import cookieParser from "cookie-parser";
 import request from "supertest";
 import { AppModule } from "../src/app.module";
 import { DatabaseService } from "../src/database/database.service";
+import { bindCreditInsurancePrisma } from "../src/credit-insurance/domain-db";
 
 describe("Portal + credit insurance + remainder HTTP contract", () => {
     let app: INestApplication;
@@ -44,12 +45,25 @@ describe("Portal + credit insurance + remainder HTTP contract", () => {
             aggregate: jest
                 .fn()
                 .mockResolvedValue({ _sum: { max_total_cover: 1000 } }),
-            findMany: jest
-                .fn()
-                .mockResolvedValue([{ id: 1, name: "Policy A" }]),
+            findMany: jest.fn().mockResolvedValue([
+                {
+                    id: 1,
+                    name: "Policy A",
+                    policy_number: "POL-A",
+                    end_date: new Date("2099-12-31"),
+                    max_total_cover: 1000,
+                },
+            ]),
             count: jest.fn().mockResolvedValue(1),
             findFirst: jest.fn(),
             update: jest.fn(),
+        },
+        customerCollectionPeriod: {
+            findFirst: jest.fn().mockResolvedValue(null),
+            findMany: jest.fn().mockResolvedValue([]),
+            count: jest.fn().mockResolvedValue(0),
+            groupBy: jest.fn().mockResolvedValue([]),
+            aggregate: jest.fn().mockResolvedValue({ _sum: {} }),
         },
         invoice: {
             aggregate: jest.fn().mockResolvedValue({
@@ -70,27 +84,82 @@ describe("Portal + credit insurance + remainder HTTP contract", () => {
                         id: 1,
                         customer_uuid: "uuid-1",
                         customer_number: "C-1",
+                        type: "Person",
+                        language: "en",
+                        total_due_amount: 0,
+                        customer_due_amount1: 0,
+                        customer_due_currency1: "USD",
+                        customer_due_amount2: 0,
+                        customer_due_currency2: null,
+                        total_invoices_overdue: 0,
+                        number_of_overdue_invoices: 0,
                         Person: { first_name: "Jane", last_name: "Doe" },
                         Company: null,
-                        Account: { id: 42, name: "Acme", currency: "USD" },
+                        Account: {
+                            id: 42,
+                            name: "Acme",
+                            logo: null,
+                            currency: "USD",
+                            promise_to_pay: true,
+                            max_promise_to_pay_allowed_per_cycle: 3,
+                            sub_domain: null,
+                            portal_verification_enabled: false,
+                            primary_color: null,
+                            secondary_color: null,
+                            chart_palette_color: null,
+                        },
                     };
                 }
             ),
         },
         customerPolicy: {
             count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
         },
         customerTopUp: {
             count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+        },
+        customerPolicyTrend: {
+            findMany: jest.fn().mockResolvedValue([]),
+        },
+        exchangeRate: {
+            findMany: jest.fn().mockResolvedValue([]),
+            findFirst: jest.fn().mockResolvedValue(null),
         },
         customerDispute: {
             findMany: jest.fn().mockResolvedValue([]),
+            count: jest.fn().mockResolvedValue(0),
         },
+        activity: {
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue([]),
+        },
+        $queryRaw: jest.fn().mockResolvedValue([
+            {
+                c: 0,
+                t: 0,
+                cnt_reporting: 0,
+                cnt_payment_term: 0,
+                cnt_overdue_mep: 0,
+                cnt_outdated_dcl: 0,
+                cnt_after_policy_end: 0,
+            },
+        ]),
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $transaction: jest.fn(),
         cronJob: {
             findMany: jest.fn().mockResolvedValue([]),
         },
         $disconnect: jest.fn().mockResolvedValue(undefined),
     };
+
+    databaseMock.$transaction.mockImplementation(async (arg: unknown) => {
+        if (typeof arg === "function") {
+            return (arg as (tx: typeof databaseMock) => unknown)(databaseMock);
+        }
+        return arg;
+    });
 
     async function token(): Promise<string> {
         return jwtService.signAsync({
@@ -131,6 +200,7 @@ describe("Portal + credit insurance + remainder HTTP contract", () => {
         );
         await app.init();
         jwtService = app.get(JwtService);
+        bindCreditInsurancePrisma(databaseMock as unknown as DatabaseService);
     });
 
     afterAll(async () => {

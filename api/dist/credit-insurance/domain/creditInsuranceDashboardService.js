@@ -930,8 +930,11 @@ async function getCreditDashboardSummary(accountId, policyId, businessUnitFilter
     const today = (0, date_fns_1.startOfDay)(new Date());
     const policyExpirationAlerts = scopedPolicies
         .map((policy) => {
+        if (policy.end_date == null) {
+            return null;
+        }
         const endDate = (0, date_fns_1.startOfDay)(new Date(policy.end_date));
-        if (endDate >= today) {
+        if (Number.isNaN(endDate.getTime()) || endDate >= today) {
             return null;
         }
         return {

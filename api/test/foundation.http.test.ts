@@ -15,6 +15,14 @@ describe("Stage 0 Nest foundation HTTP contract", () => {
         user: {
             count: jest.fn().mockResolvedValue(3),
             findFirst: jest.fn(),
+            update: jest.fn().mockResolvedValue(undefined),
+        },
+        account: {
+            findUnique: jest.fn().mockResolvedValue({
+                name: "Spike Account",
+                primary_color: null,
+                secondary_color: null,
+            }),
         },
         $disconnect: jest.fn().mockResolvedValue(undefined),
     };
@@ -23,17 +31,32 @@ describe("Stage 0 Nest foundation HTTP contract", () => {
         process.env.JWT_SECRET = "stage0-test-secret";
 
         databaseMock.user.findFirst.mockImplementation(
-            async ({ where }: { where: { username: string } }) => {
-                if (where.username !== "spike.user") {
+            async ({
+                where,
+            }: {
+                where: { username?: string; id?: string; deactivated_at?: null };
+            }) => {
+                if (where.username && where.username !== "spike.user") {
+                    return null;
+                }
+                if (where.id && where.id !== "user-1") {
                     return null;
                 }
                 return {
                     id: "user-1",
                     username: "spike.user",
                     email: "spike@archaser.test",
+                    name: "Spike User",
                     password: TEST_PASSWORD_HASH,
                     account_id: 42,
+                    role: "Collection_Agent",
                     freeze: false,
+                    status: "Active",
+                    failed_login_attempts: 0,
+                    language: "English",
+                    time_zone: null,
+                    locale: null,
+                    sidebar_collapsed: null,
                 };
             }
         );

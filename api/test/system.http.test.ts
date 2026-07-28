@@ -86,6 +86,17 @@ describe("SystemModule — Nest-native HTTP contract", () => {
                 },
             ]),
             count: jest.fn().mockResolvedValue(1),
+            groupBy: jest.fn().mockResolvedValue([
+                {
+                    current_category: "Agent",
+                    _count: { _all: 2 },
+                    _sum: {
+                        total_outstanding_amount: 100,
+                        no_of_overdue_invoices: 1,
+                        promise_to_pay_amount: 50,
+                    },
+                },
+            ]),
             aggregate: jest.fn().mockResolvedValue({
                 _sum: {
                     total_outstanding_amount: 100,

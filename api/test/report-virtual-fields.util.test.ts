@@ -21,6 +21,12 @@ describe("report virtual fields", () => {
         expect(isPrismaScalarField("Dispute", "dispute_number")).toBe(false);
     });
 
+    it("recognizes Country.name and State.name as Prisma scalars for report select", () => {
+        expect(isPrismaScalarField("Country", "name")).toBe(true);
+        expect(isPrismaScalarField("State", "name")).toBe(true);
+        expect(isPrismaScalarField("Country", "iso3")).toBe(true);
+    });
+
     it("expands terms_breach_reason into CTV / reporting flag selects", () => {
         const select: Record<string, unknown> = { id: true };
         expect(
