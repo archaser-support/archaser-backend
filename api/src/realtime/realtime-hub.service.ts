@@ -50,24 +50,36 @@ export class RealtimeHubService implements OnModuleInit, OnModuleDestroy {
     async onModuleInit(): Promise<void> {
         const redisUrl =
             this.config.get<string>("REDIS_URL") || "redis://127.0.0.1:6379";
+        let publisher: IORedis | null = null;
+        let subscriber: IORedis | null = null;
         try {
-            this.publisher = new IORedis(redisUrl, {
-                maxRetriesPerRequest: null,
+            const redisOptions = {
+                maxRetriesPerRequest: 1,
                 lazyConnect: true,
-            });
-            this.subscriber = new IORedis(redisUrl, {
-                maxRetriesPerRequest: null,
-                lazyConnect: true,
-            });
-            await this.publisher.connect();
-            await this.subscriber.connect();
-            await this.subscriber.subscribe(
+                enableOfflineQueue: false,
+                // Stop reconnect spam when Redis is down (local `dev:api`).
+                retryStrategy: (times: number) =>
+                    times > 2 ? null : Math.min(times * 200, 1000),
+            };
+            publisher = new IORedis(redisUrl, redisOptions);
+            subscriber = new IORedis(redisUrl, redisOptions);
+            const onError = (err: Error) => {
+                this.logger.warn(`Realtime Redis: ${err.message}`);
+            };
+            publisher.on("error", onError);
+            subscriber.on("error", onError);
+
+            await publisher.connect();
+            await subscriber.connect();
+            await subscriber.subscribe(
                 NOTIFICATIONS_CHANNEL,
                 CONTROL_CENTER_CHANNEL
             );
-            this.subscriber.on("message", (channel, message) => {
+            subscriber.on("message", (channel, message) => {
                 this.onRedisMessage(channel, message);
             });
+            this.publisher = publisher;
+            this.subscriber = subscriber;
             this.logger.log(`Realtime Redis pub/sub ready @ ${redisUrl}`);
         } catch (error) {
             this.logger.warn(
@@ -75,6 +87,8 @@ export class RealtimeHubService implements OnModuleInit, OnModuleDestroy {
                     error instanceof Error ? error.message : String(error)
                 }`
             );
+            await publisher?.quit().catch(() => undefined);
+            await subscriber?.quit().catch(() => undefined);
             this.publisher = null;
             this.subscriber = null;
         }

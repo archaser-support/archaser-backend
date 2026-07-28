@@ -32,6 +32,8 @@
     "dev:connectors": "npm run start:dev -w @archaser/connectors",
     "dev:reports": "npm run start:dev -w @archaser/reports",
     "openapi:export": "npm run build -w @archaser/api && npx tsx ./scripts/openapi/export-nest-openapi.ts",
+    "deploy:docker:staging": "bash ./scripts/deployment/deploy-backend-docker.sh --env staging",
+    "deploy:docker:production": "bash ./scripts/deployment/deploy-backend-docker.sh --env production",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "migrate:activity-keys": "npx tsx scripts/database/run-migration.ts",
