@@ -46,6 +46,9 @@ function nestOwnerScopeWhere(primaryTable, ownerFilter) {
     if (primaryTable === "Activity" || primaryTable === "Payment") {
         return { Customer: ownerFilter };
     }
+    if (primaryTable === "CustomerBanks") {
+        return { Customer: ownerFilter };
+    }
     return null;
 }
 function nestBusinessUnitScopeWhere(primaryTable, buFilter) {
@@ -67,7 +70,8 @@ function nestBusinessUnitScopeWhere(primaryTable, buFilter) {
     if (primaryTable === "Dispute" ||
         primaryTable === "CustomerCollectionPeriod" ||
         primaryTable === "Activity" ||
-        primaryTable === "Payment") {
+        primaryTable === "Payment" ||
+        primaryTable === "CustomerBanks") {
         return { Customer: buFilter };
     }
     if (primaryTable === "InvoicePayment") {

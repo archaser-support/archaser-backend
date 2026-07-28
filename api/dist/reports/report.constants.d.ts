@@ -1,5 +1,6 @@
 export declare const MODEL_NAME_MAP: Record<string, string>;
 export declare const CONTEXT_PRIMARY_TABLE: Record<string, string>;
+export declare const ENTITY_LIST_REPORT_CONTEXTS: Set<string>;
 export declare const DASHBOARD_REPORT_CONTEXTS: Set<string>;
 export declare const FINANCIAL_DASHBOARD_CONTEXTS: Set<string>;
 export declare const OPERATION_DASHBOARD_CONTEXTS: Set<string>;

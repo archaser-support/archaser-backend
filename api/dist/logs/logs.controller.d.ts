@@ -11,8 +11,8 @@ export declare class LogsController {
             account_id: number | null;
             message: string;
             id: bigint;
-            user_id: string | null;
             level: import(".prisma/client").$Enums.log_level;
+            user_id: string | null;
             timestamp: Date;
             source: string;
             details: import("@prisma/client/runtime/library").JsonValue | null;

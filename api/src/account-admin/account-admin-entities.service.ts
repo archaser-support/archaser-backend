@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     ForbiddenException,
     Injectable,
     NotFoundException,
@@ -83,6 +84,10 @@ export type AccountAdminListQuery = {
     page?: string;
     limit?: string;
     search?: string;
+    query?: string;
+    sortField?: string;
+    sortDirection?: string;
+    include?: string;
 };
 
 @Injectable()
@@ -149,6 +154,87 @@ export class AccountAdminEntitiesService {
         }
 
         const delegate = this.delegate(entityType);
+
+        // Settings Business Units grid needs Parent + audit users.
+        if (entityType === "business-units") {
+            const searchTerm = query.search || query.query || "";
+            if (searchTerm) {
+                where.OR = [
+                    { name: { contains: searchTerm, mode: "insensitive" } },
+                    {
+                        external_id: {
+                            contains: searchTerm,
+                            mode: "insensitive",
+                        },
+                    },
+                ];
+            }
+            const [rows, totalRecords] = await Promise.all([
+                this.db.businessUnit.findMany({
+                    where,
+                    skip: (page - 1) * limit,
+                    take: limit,
+                    orderBy: this.businessUnitOrderBy(
+                        query.sortField,
+                        query.sortDirection
+                    ),
+                    include: this.businessUnitListInclude(),
+                }),
+                this.db.businessUnit.count({ where }),
+            ]);
+            const sorted =
+                query.sortField === "hierarchical"
+                    ? this.sortBusinessUnitsHierarchically(rows)
+                    : rows;
+            return serializeBigInt({
+                data: sorted,
+                total: totalRecords,
+            });
+        }
+
+        if (entityType === "bank-accounts") {
+            const searchTerm = query.search || query.query || "";
+            if (searchTerm) {
+                where.OR = [
+                    {
+                        bank_name: {
+                            contains: searchTerm,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        account_number: {
+                            contains: searchTerm,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        beneficiary_name: {
+                            contains: searchTerm,
+                            mode: "insensitive",
+                        },
+                    },
+                ];
+            }
+            const [rows, totalRecords] = await Promise.all([
+                this.db.accountBankAccounts.findMany({
+                    where,
+                    skip: (page - 1) * limit,
+                    take: limit,
+                    orderBy: this.bankAccountOrderBy(
+                        query.sortField,
+                        query.sortDirection
+                    ),
+                    include: this.bankAccountListInclude(true),
+                }),
+                this.db.accountBankAccounts.count({ where }),
+            ]);
+            return serializeBigInt({
+                data: rows,
+                total: totalRecords,
+            });
+        }
+
         const [rows, totalRecords] = await Promise.all([
             delegate.findMany({
                 where,
@@ -160,18 +246,6 @@ export class AccountAdminEntitiesService {
         ]);
 
         // Legacy pagination shapes for settings UIs.
-        if (entityType === "business-units") {
-            return serializeBigInt({
-                data: rows,
-                total: totalRecords,
-            });
-        }
-        if (entityType === "bank-accounts") {
-            return serializeBigInt({
-                data: rows,
-                total: totalRecords,
-            });
-        }
         if (entityType === "customer-banks") {
             return serializeBigInt({
                 data: rows,
@@ -197,9 +271,37 @@ export class AccountAdminEntitiesService {
         });
     }
 
-    /**
-     * Dropdown list (no page/limit): plain array matching legacy handler.
-     */
+    private businessUnitListInclude() {
+        return {
+            Parent: true,
+            User_BusinessUnit_created_byToUser: {
+                select: { id: true, name: true, email: true },
+            },
+            User_BusinessUnit_modified_byToUser: {
+                select: { id: true, name: true, email: true },
+            },
+        };
+    }
+
+    private businessUnitOrderBy(
+        sortField?: string,
+        sortDirection?: string
+    ): Record<string, "asc" | "desc"> {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        if (
+            sortField === "name" ||
+            sortField === "external_id" ||
+            sortField === "status" ||
+            sortField === "is_primary" ||
+            sortField === "created_at" ||
+            sortField === "modified_at"
+        ) {
+            return { [sortField]: dir };
+        }
+        return { name: "asc" };
+    }
+
+    /** Dropdown list (no page/limit): plain array matching legacy handler. */
     private async listBusinessUnitsDropdown(user: JwtPayload) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
         const accountId = this.accessScope.getEffectiveAccountId(userInfo);
@@ -210,7 +312,7 @@ export class AccountAdminEntitiesService {
                 account_id: accountId,
                 status: "Active",
             },
-            include: { Parent: true },
+            include: this.businessUnitListInclude(),
             orderBy: { name: "asc" },
         });
 
@@ -262,6 +364,499 @@ export class AccountAdminEntitiesService {
         return result;
     }
 
+    /**
+     * Nested settings/UI route:
+     * GET /api/entities/accounts/:accountId/business-units
+     */
+    async listAccountBusinessUnits(
+        user: JwtPayload,
+        accountId: number,
+        query: AccountAdminListQuery = {}
+    ) {
+        const { accountId: sessionAccountId, isAdmin } = await this.scope(user);
+        if (!isAdmin && accountId !== sessionAccountId) {
+            throw new ForbiddenException({ error: "Access denied" });
+        }
+
+        const searchTerm = query.search || query.query || "";
+        const where: Record<string, unknown> = {
+            account_id: accountId,
+        };
+        if (searchTerm) {
+            where.OR = [
+                { name: { contains: searchTerm, mode: "insensitive" } },
+                {
+                    external_id: {
+                        contains: searchTerm,
+                        mode: "insensitive",
+                    },
+                },
+            ];
+        }
+
+        // Dropdown / parent-picker: no pagination → full array (legacy shape).
+        if (query.page == null && query.limit == null) {
+            const all = await this.db.businessUnit.findMany({
+                where: { ...where, status: "Active" },
+                include: this.businessUnitListInclude(),
+                orderBy: { name: "asc" },
+            });
+            return serializeBigInt(this.sortBusinessUnitsHierarchically(all));
+        }
+
+        const page = parseInt(query.page || "1", 10);
+        const limit = parseInt(query.limit || "25", 10);
+        const [rows, total] = await Promise.all([
+            this.db.businessUnit.findMany({
+                where,
+                skip: (page - 1) * limit,
+                take: limit,
+                orderBy: this.businessUnitOrderBy(
+                    query.sortField,
+                    query.sortDirection
+                ),
+                include: this.businessUnitListInclude(),
+            }),
+            this.db.businessUnit.count({ where }),
+        ]);
+        const data =
+            query.sortField === "hierarchical"
+                ? this.sortBusinessUnitsHierarchically(rows)
+                : rows;
+        return serializeBigInt({ data, total });
+    }
+
+    private bankAccountListInclude(includeCountry = true) {
+        return {
+            ...(includeCountry ? { Country: true, State: true } : {}),
+        };
+    }
+
+    private bankAccountOrderBy(
+        sortField?: string,
+        sortDirection?: string
+    ): Record<string, "asc" | "desc"> {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        if (
+            sortField === "bank_name" ||
+            sortField === "account_number" ||
+            sortField === "beneficiary_name" ||
+            sortField === "status" ||
+            sortField === "primary" ||
+            sortField === "created_at" ||
+            sortField === "modified_at" ||
+            sortField === "city"
+        ) {
+            return { [sortField]: dir };
+        }
+        return { bank_name: "asc" };
+    }
+
+    private assertAccountAccess(
+        isAdmin: boolean,
+        sessionAccountId: number,
+        accountId: number
+    ) {
+        if (!isAdmin && accountId !== sessionAccountId) {
+            throw new ForbiddenException({ error: "Access denied" });
+        }
+    }
+
+    /**
+     * Nested settings route:
+     * GET /api/entities/accounts/:accountId/bank-accounts
+     */
+    async listAccountBankAccounts(
+        user: JwtPayload,
+        accountId: number,
+        query: AccountAdminListQuery = {}
+    ) {
+        const { accountId: sessionAccountId, isAdmin } = await this.scope(user);
+        this.assertAccountAccess(isAdmin, sessionAccountId, accountId);
+
+        const searchTerm = query.search || query.query || "";
+        const includeCountry =
+            !query.include || query.include.includes("Country");
+        const where: Record<string, unknown> = {
+            account_id: accountId,
+        };
+        if (searchTerm) {
+            where.OR = [
+                { bank_name: { contains: searchTerm, mode: "insensitive" } },
+                {
+                    account_number: {
+                        contains: searchTerm,
+                        mode: "insensitive",
+                    },
+                },
+                {
+                    beneficiary_name: {
+                        contains: searchTerm,
+                        mode: "insensitive",
+                    },
+                },
+            ];
+        }
+
+        const page = parseInt(query.page || "1", 10);
+        const limit = parseInt(query.limit || "25", 10);
+        const [rows, total] = await Promise.all([
+            this.db.accountBankAccounts.findMany({
+                where,
+                skip: (page - 1) * limit,
+                take: limit,
+                orderBy: this.bankAccountOrderBy(
+                    query.sortField,
+                    query.sortDirection
+                ),
+                include: this.bankAccountListInclude(includeCountry),
+            }),
+            this.db.accountBankAccounts.count({ where }),
+        ]);
+        return serializeBigInt({ data: rows, total });
+    }
+
+    async createAccountBankAccount(
+        user: JwtPayload,
+        accountId: number,
+        body: Record<string, unknown>
+    ) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const sessionAccountId =
+            this.accessScope.getEffectiveAccountId(userInfo);
+        const isAdmin = this.accessScope.isAdminAccount(userInfo.accountId);
+        this.assertAccountAccess(isAdmin, sessionAccountId, accountId);
+
+        if (!body.bank_name || typeof body.bank_name !== "string") {
+            throw new BadRequestException({ error: "Bank name is required" });
+        }
+        if (!body.account_number || typeof body.account_number !== "string") {
+            throw new BadRequestException({
+                error: "Account number is required",
+            });
+        }
+
+        const isPrimary = body.primary === true;
+        if (isPrimary) {
+            await this.db.accountBankAccounts.updateMany({
+                where: { account_id: accountId, primary: true },
+                data: { primary: false },
+            });
+        }
+
+        const created = await this.db.accountBankAccounts.create({
+            data: {
+                account_id: accountId,
+                bank_name: body.bank_name,
+                account_number: body.account_number,
+                beneficiary_name:
+                    typeof body.beneficiary_name === "string"
+                        ? body.beneficiary_name
+                        : null,
+                branch_number:
+                    typeof body.branch_number === "string"
+                        ? body.branch_number
+                        : null,
+                branch_name:
+                    typeof body.branch_name === "string"
+                        ? body.branch_name
+                        : null,
+                swift: typeof body.swift === "string" ? body.swift : null,
+                iban: typeof body.iban === "string" ? body.iban : null,
+                comments:
+                    typeof body.comments === "string" ? body.comments : null,
+                address_line1:
+                    typeof body.address_line1 === "string"
+                        ? body.address_line1
+                        : null,
+                address_line2:
+                    typeof body.address_line2 === "string"
+                        ? body.address_line2
+                        : null,
+                city: typeof body.city === "string" ? body.city : null,
+                postal_code:
+                    typeof body.postal_code === "string"
+                        ? body.postal_code
+                        : null,
+                country_id:
+                    body.country_id == null || body.country_id === ""
+                        ? null
+                        : Number(body.country_id),
+                state_id:
+                    body.state_id == null || body.state_id === ""
+                        ? null
+                        : Number(body.state_id),
+                status: body.status === false ? false : true,
+                primary: isPrimary,
+                created_by: userInfo.userId,
+                modified_by: userInfo.userId,
+            },
+            include: this.bankAccountListInclude(true),
+        });
+        return serializeBigInt(created);
+    }
+
+    async updateAccountBankAccount(
+        user: JwtPayload,
+        accountId: number,
+        id: number,
+        body: Record<string, unknown>
+    ) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const sessionAccountId =
+            this.accessScope.getEffectiveAccountId(userInfo);
+        const isAdmin = this.accessScope.isAdminAccount(userInfo.accountId);
+        this.assertAccountAccess(isAdmin, sessionAccountId, accountId);
+
+        const existing = await this.db.accountBankAccounts.findFirst({
+            where: { id, account_id: accountId },
+        });
+        if (!existing) {
+            throw new NotFoundException({ error: "Bank account not found" });
+        }
+
+        if (body.primary === true) {
+            await this.db.accountBankAccounts.updateMany({
+                where: {
+                    account_id: accountId,
+                    primary: true,
+                    NOT: { id },
+                },
+                data: { primary: false },
+            });
+        }
+
+        const data: Record<string, unknown> = {
+            modified_by: userInfo.userId,
+            modified_at: new Date(),
+        };
+        const scalarKeys = [
+            "bank_name",
+            "account_number",
+            "beneficiary_name",
+            "branch_number",
+            "branch_name",
+            "swift",
+            "iban",
+            "comments",
+            "address_line1",
+            "address_line2",
+            "city",
+            "postal_code",
+        ] as const;
+        for (const key of scalarKeys) {
+            if (body[key] !== undefined) {
+                data[key] =
+                    typeof body[key] === "string" ? body[key] || null : body[key];
+            }
+        }
+        if (body.status !== undefined) {
+            data.status = body.status === false ? false : true;
+        }
+        if (body.primary !== undefined) {
+            data.primary = body.primary === true;
+        }
+        if (body.country_id !== undefined) {
+            data.country_id =
+                body.country_id == null || body.country_id === ""
+                    ? null
+                    : Number(body.country_id);
+        }
+        if (body.state_id !== undefined) {
+            data.state_id =
+                body.state_id == null || body.state_id === ""
+                    ? null
+                    : Number(body.state_id);
+        }
+
+        const updated = await this.db.accountBankAccounts.update({
+            where: { id },
+            data,
+            include: this.bankAccountListInclude(true),
+        });
+        return serializeBigInt(updated);
+    }
+
+    async deleteAccountBankAccount(
+        user: JwtPayload,
+        accountId: number,
+        id: number
+    ) {
+        const { accountId: sessionAccountId, isAdmin } = await this.scope(user);
+        this.assertAccountAccess(isAdmin, sessionAccountId, accountId);
+
+        const existing = await this.db.accountBankAccounts.findFirst({
+            where: { id, account_id: accountId },
+            select: { id: true, primary: true },
+        });
+        if (!existing) {
+            throw new NotFoundException({ error: "Bank account not found" });
+        }
+        if (existing.primary) {
+            throw new BadRequestException({
+                error: "Cannot delete primary bank account",
+            });
+        }
+        const linked = await this.db.customerBanks.count({
+            where: { customer_bank_account_id: id },
+        });
+        if (linked > 0) {
+            throw new BadRequestException({
+                error: "Cannot delete bank account assigned to customers",
+                count: linked,
+            });
+        }
+        await this.db.accountBankAccounts.delete({ where: { id } });
+        return { success: true };
+    }
+
+    async createBusinessUnit(user: JwtPayload, body: Record<string, unknown>) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const sessionAccountId =
+            this.accessScope.getEffectiveAccountId(userInfo);
+        const isAdmin = this.accessScope.isAdminAccount(userInfo.accountId);
+        const accountId =
+            typeof body.account_id === "number"
+                ? body.account_id
+                : parseInt(String(body.account_id || sessionAccountId), 10);
+        if (!isAdmin && accountId !== sessionAccountId) {
+            throw new ForbiddenException({ error: "Access denied" });
+        }
+        if (!body.name || typeof body.name !== "string") {
+            throw new BadRequestException({ error: "Name is required" });
+        }
+        const parentId =
+            body.parent_id == null || body.parent_id === ""
+                ? null
+                : Number(body.parent_id);
+        if (parentId != null) {
+            const parent = await this.db.businessUnit.findFirst({
+                where: { id: parentId, account_id: accountId },
+                select: { id: true },
+            });
+            if (!parent) {
+                throw new BadRequestException({
+                    error: "Parent business unit must belong to the same account",
+                });
+            }
+        }
+        const created = await this.db.businessUnit.create({
+            data: {
+                name: body.name,
+                account_id: accountId,
+                parent_id: parentId,
+                external_id:
+                    typeof body.external_id === "string"
+                        ? body.external_id || null
+                        : null,
+                status:
+                    body.status === "Inactive" ? "Inactive" : ("Active" as const),
+                created_by: userInfo.userId,
+                modified_by: userInfo.userId,
+            },
+            include: this.businessUnitListInclude(),
+        });
+        return serializeBigInt(created);
+    }
+
+    async updateBusinessUnitStatus(
+        user: JwtPayload,
+        id: number,
+        status: "Active" | "Inactive"
+    ) {
+        const existing = await this.getById("business-units", user, id);
+        if (existing.is_primary && status === "Inactive") {
+            throw new BadRequestException({
+                error: "Cannot deactivate primary business unit",
+            });
+        }
+        if (status === "Inactive") {
+            const activeUsers = await this.db.user.count({
+                where: {
+                    business_unit_id: id,
+                    status: "Active",
+                    deactivated_at: null,
+                },
+            });
+            if (activeUsers > 0) {
+                throw new BadRequestException({
+                    error: `Cannot disable business unit. This business unit has ${activeUsers} active user(s) assigned.`,
+                    count: activeUsers,
+                });
+            }
+        }
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const updated = await this.db.businessUnit.update({
+            where: { id },
+            data: {
+                status,
+                modified_by: userInfo.userId,
+                modified_at: new Date(),
+            },
+            include: this.businessUnitListInclude(),
+        });
+        return serializeBigInt(updated);
+    }
+
+    async deleteBusinessUnit(
+        user: JwtPayload,
+        id: number,
+        reassignToBusinessUnitId?: number | null
+    ) {
+        const existing = (await this.getById(
+            "business-units",
+            user,
+            id
+        )) as { is_primary?: boolean; account_id: number };
+        if (existing.is_primary) {
+            throw new BadRequestException({
+                error: "Cannot delete primary business unit",
+            });
+        }
+        const childCount = await this.db.businessUnit.count({
+            where: { parent_id: id },
+        });
+        if (childCount > 0) {
+            throw new BadRequestException({
+                error: "Cannot delete business unit with child units",
+            });
+        }
+        if (reassignToBusinessUnitId) {
+            const target = await this.db.businessUnit.findFirst({
+                where: {
+                    id: reassignToBusinessUnitId,
+                    account_id: existing.account_id,
+                },
+                select: { id: true },
+            });
+            if (!target) {
+                throw new BadRequestException({
+                    error: "Reassign target business unit not found",
+                });
+            }
+            await this.db.user.updateMany({
+                where: { business_unit_id: id },
+                data: { business_unit_id: reassignToBusinessUnitId },
+            });
+            await this.db.customer.updateMany({
+                where: { business_unit_id: id },
+                data: { business_unit_id: reassignToBusinessUnitId },
+            });
+        } else {
+            const assignedUsers = await this.db.user.count({
+                where: { business_unit_id: id },
+            });
+            if (assignedUsers > 0) {
+                throw new BadRequestException({
+                    error: "Business unit has users assigned; reassign them first",
+                    count: assignedUsers,
+                });
+            }
+        }
+        await this.db.businessUnit.delete({ where: { id } });
+        return { success: true };
+    }
+
     async getById(
         entityType: AccountAdminEntityType,
         user: JwtPayload,
@@ -271,7 +866,13 @@ export class AccountAdminEntitiesService {
         const config = ENTITY_CONFIG[entityType];
         const delegate = this.delegate(entityType);
 
-        const row = await delegate.findUnique({ where: { id } });
+        const row =
+            entityType === "business-units"
+                ? await this.db.businessUnit.findUnique({
+                      where: { id: id as number },
+                      include: this.businessUnitListInclude(),
+                  })
+                : await delegate.findUnique({ where: { id } });
         if (!row) {
             throw new NotFoundException({ error: `${entityType} not found` });
         }
@@ -294,6 +895,36 @@ export class AccountAdminEntitiesService {
         body: Record<string, unknown>
     ) {
         await this.getById(entityType, user, id);
+
+        if (entityType === "business-units") {
+            const userInfo = await this.accessScope.resolveUserInfo(user);
+            const data: Record<string, unknown> = {
+                modified_by: userInfo.userId,
+                modified_at: new Date(),
+            };
+            if (typeof body.name === "string") data.name = body.name;
+            if (body.external_id !== undefined) {
+                data.external_id =
+                    typeof body.external_id === "string"
+                        ? body.external_id || null
+                        : null;
+            }
+            if (body.status === "Active" || body.status === "Inactive") {
+                data.status = body.status;
+            }
+            if (body.parent_id !== undefined) {
+                data.parent_id =
+                    body.parent_id == null || body.parent_id === ""
+                        ? null
+                        : Number(body.parent_id);
+            }
+            const updated = await this.db.businessUnit.update({
+                where: { id: id as number },
+                data,
+                include: this.businessUnitListInclude(),
+            });
+            return serializeBigInt(updated);
+        }
 
         const data: Record<string, unknown> = { ...body };
         delete data.id;

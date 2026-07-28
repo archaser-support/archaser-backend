@@ -34,18 +34,13 @@ export declare class CustomersController {
             country_id: number | null;
             state_id: number | null;
             category_for_new_collection: import(".prisma/client").$Enums.category | null;
-            overdue_block: boolean;
-            sequence_container_id: number | null;
             customer_number: string | null;
             crn: string | null;
             phone: string | null;
             total_invoices_overdue: number | null;
             number_of_overdue_invoices: number | null;
             collection_status: import(".prisma/client").$Enums.record_status;
-            company_id: number | null;
-            person_id: number | null;
             customer_uuid: string;
-            owner_id: string | null;
             first_activity_delay_days: number | null;
             total_due_amount: number | null;
             no_of_due_invoices: number | null;
@@ -58,7 +53,6 @@ export declare class CustomersController {
             customer_overdue_currency1: string | null;
             customer_overdue_amount2: number | null;
             customer_overdue_currency2: string | null;
-            parent_customer_id: number | null;
             generic_text1: string | null;
             generic_text2: string | null;
             generic_number1: number | null;
@@ -67,7 +61,13 @@ export declare class CustomersController {
             generic_date2: Date | null;
             automation_stuck_no_contacts: boolean | null;
             oldest_invoice_overdue_date: Date | null;
+            overdue_block: boolean;
             zero_limit_alert_exist: boolean;
+            company_id: number | null;
+            person_id: number | null;
+            owner_id: string | null;
+            sequence_container_id: number | null;
+            parent_customer_id: number | null;
         }[];
         totalRecords: number;
         page: number;
@@ -203,18 +203,13 @@ export declare class CustomersController {
             country_id: number | null;
             state_id: number | null;
             category_for_new_collection: import(".prisma/client").$Enums.category | null;
-            overdue_block: boolean;
-            sequence_container_id: number | null;
             customer_number: string | null;
             crn: string | null;
             phone: string | null;
             total_invoices_overdue: number | null;
             number_of_overdue_invoices: number | null;
             collection_status: import(".prisma/client").$Enums.record_status;
-            company_id: number | null;
-            person_id: number | null;
             customer_uuid: string;
-            owner_id: string | null;
             first_activity_delay_days: number | null;
             total_due_amount: number | null;
             no_of_due_invoices: number | null;
@@ -227,7 +222,6 @@ export declare class CustomersController {
             customer_overdue_currency1: string | null;
             customer_overdue_amount2: number | null;
             customer_overdue_currency2: string | null;
-            parent_customer_id: number | null;
             generic_text1: string | null;
             generic_text2: string | null;
             generic_number1: number | null;
@@ -236,7 +230,13 @@ export declare class CustomersController {
             generic_date2: Date | null;
             automation_stuck_no_contacts: boolean | null;
             oldest_invoice_overdue_date: Date | null;
+            overdue_block: boolean;
             zero_limit_alert_exist: boolean;
+            company_id: number | null;
+            person_id: number | null;
+            owner_id: string | null;
+            sequence_container_id: number | null;
+            parent_customer_id: number | null;
         } | null;
     } & {
         type: import(".prisma/client").$Enums.client_type;
@@ -256,18 +256,13 @@ export declare class CustomersController {
         country_id: number | null;
         state_id: number | null;
         category_for_new_collection: import(".prisma/client").$Enums.category | null;
-        overdue_block: boolean;
-        sequence_container_id: number | null;
         customer_number: string | null;
         crn: string | null;
         phone: string | null;
         total_invoices_overdue: number | null;
         number_of_overdue_invoices: number | null;
         collection_status: import(".prisma/client").$Enums.record_status;
-        company_id: number | null;
-        person_id: number | null;
         customer_uuid: string;
-        owner_id: string | null;
         first_activity_delay_days: number | null;
         total_due_amount: number | null;
         no_of_due_invoices: number | null;
@@ -280,7 +275,6 @@ export declare class CustomersController {
         customer_overdue_currency1: string | null;
         customer_overdue_amount2: number | null;
         customer_overdue_currency2: string | null;
-        parent_customer_id: number | null;
         generic_text1: string | null;
         generic_text2: string | null;
         generic_number1: number | null;
@@ -289,7 +283,13 @@ export declare class CustomersController {
         generic_date2: Date | null;
         automation_stuck_no_contacts: boolean | null;
         oldest_invoice_overdue_date: Date | null;
+        overdue_block: boolean;
         zero_limit_alert_exist: boolean;
+        company_id: number | null;
+        person_id: number | null;
+        owner_id: string | null;
+        sequence_container_id: number | null;
+        parent_customer_id: number | null;
     }>;
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         Country: {
@@ -361,18 +361,13 @@ export declare class CustomersController {
         country_id: number | null;
         state_id: number | null;
         category_for_new_collection: import(".prisma/client").$Enums.category | null;
-        overdue_block: boolean;
-        sequence_container_id: number | null;
         customer_number: string | null;
         crn: string | null;
         phone: string | null;
         total_invoices_overdue: number | null;
         number_of_overdue_invoices: number | null;
         collection_status: import(".prisma/client").$Enums.record_status;
-        company_id: number | null;
-        person_id: number | null;
         customer_uuid: string;
-        owner_id: string | null;
         first_activity_delay_days: number | null;
         total_due_amount: number | null;
         no_of_due_invoices: number | null;
@@ -385,7 +380,6 @@ export declare class CustomersController {
         customer_overdue_currency1: string | null;
         customer_overdue_amount2: number | null;
         customer_overdue_currency2: string | null;
-        parent_customer_id: number | null;
         generic_text1: string | null;
         generic_text2: string | null;
         generic_number1: number | null;
@@ -394,7 +388,13 @@ export declare class CustomersController {
         generic_date2: Date | null;
         automation_stuck_no_contacts: boolean | null;
         oldest_invoice_overdue_date: Date | null;
+        overdue_block: boolean;
         zero_limit_alert_exist: boolean;
+        company_id: number | null;
+        person_id: number | null;
+        owner_id: string | null;
+        sequence_container_id: number | null;
+        parent_customer_id: number | null;
     }>;
     activity(user: JwtPayload, id: number, query: CustomerActivityQuery): Promise<{
         activities: {
@@ -464,9 +464,9 @@ export declare class CustomersController {
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            owner_id: string | null;
             dispute_resolution: import(".prisma/client").$Enums.dispute_resolution | null;
             customer_id: number;
-            owner_id: string | null;
             dispute_reason_id: number | null;
             dispute_status: import(".prisma/client").$Enums.dispute_status | null;
             customer_comment: string | null;
@@ -633,9 +633,9 @@ export declare class CustomersController {
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
+        owner_id: string | null;
         dispute_resolution: import(".prisma/client").$Enums.dispute_resolution | null;
         customer_id: number;
-        owner_id: string | null;
         dispute_reason_id: number | null;
         dispute_status: import(".prisma/client").$Enums.dispute_status | null;
         customer_comment: string | null;

@@ -40,9 +40,9 @@ export declare class OperationsService {
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            owner_id: string | null;
             dispute_resolution: import(".prisma/client").$Enums.dispute_resolution | null;
             customer_id: number;
-            owner_id: string | null;
             dispute_reason_id: number | null;
             dispute_status: import(".prisma/client").$Enums.dispute_status | null;
             customer_comment: string | null;
@@ -167,9 +167,9 @@ export declare class OperationsService {
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
+        owner_id: string | null;
         dispute_resolution: import(".prisma/client").$Enums.dispute_resolution | null;
         customer_id: number;
-        owner_id: string | null;
         dispute_reason_id: number | null;
         dispute_status: import(".prisma/client").$Enums.dispute_status | null;
         customer_comment: string | null;
@@ -188,9 +188,9 @@ export declare class OperationsService {
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
+        owner_id: string | null;
         dispute_resolution: import(".prisma/client").$Enums.dispute_resolution | null;
         customer_id: number;
-        owner_id: string | null;
         dispute_reason_id: number | null;
         dispute_status: import(".prisma/client").$Enums.dispute_status | null;
         customer_comment: string | null;

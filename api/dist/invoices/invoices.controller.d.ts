@@ -25,8 +25,6 @@ export declare class InvoicesController {
             created_by: string | null;
             modified_by: string | null;
             promise_to_pay: number | null;
-            customer_id: number | null;
-            collection_period_id: number | null;
             customer_number: number | null;
             generic_text1: string | null;
             generic_text2: string | null;
@@ -34,6 +32,8 @@ export declare class InvoicesController {
             generic_number2: number | null;
             generic_date1: Date | null;
             generic_date2: Date | null;
+            customer_id: number | null;
+            collection_period_id: number | null;
             amount: number | null;
             policy_id: number | null;
             invoice_number: string | null;
@@ -126,8 +126,6 @@ export declare class InvoicesController {
         created_by: string | null;
         modified_by: string | null;
         promise_to_pay: number | null;
-        customer_id: number | null;
-        collection_period_id: number | null;
         customer_number: number | null;
         generic_text1: string | null;
         generic_text2: string | null;
@@ -135,6 +133,8 @@ export declare class InvoicesController {
         generic_number2: number | null;
         generic_date1: Date | null;
         generic_date2: Date | null;
+        customer_id: number | null;
+        collection_period_id: number | null;
         amount: number | null;
         policy_id: number | null;
         invoice_number: string | null;
@@ -185,8 +185,6 @@ export declare class InvoicesController {
         created_by: string | null;
         modified_by: string | null;
         promise_to_pay: number | null;
-        customer_id: number | null;
-        collection_period_id: number | null;
         customer_number: number | null;
         generic_text1: string | null;
         generic_text2: string | null;
@@ -194,6 +192,8 @@ export declare class InvoicesController {
         generic_number2: number | null;
         generic_date1: Date | null;
         generic_date2: Date | null;
+        customer_id: number | null;
+        collection_period_id: number | null;
         amount: number | null;
         policy_id: number | null;
         invoice_number: string | null;

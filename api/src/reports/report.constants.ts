@@ -8,6 +8,8 @@ export const MODEL_NAME_MAP: Record<string, string> = {
     Activity: "activity",
     Dispute: "customerDispute",
     CustomerCollectionPeriod: "customerCollectionPeriod",
+    CustomerBanks: "customerBanks",
+    AccountBankAccounts: "accountBankAccounts",
     Person: "person",
     Company: "company",
     User: "user",
@@ -19,6 +21,8 @@ export const CONTEXT_PRIMARY_TABLE: Record<string, string> = {
     customers: "Customer",
     invoices: "Invoice",
     contacts: "Contact",
+    customer_contacts: "Contact",
+    customer_banks: "CustomerBanks",
     disputes: "Dispute",
     payments: "Payment",
     activities: "Activity",
@@ -32,6 +36,22 @@ export const CONTEXT_PRIMARY_TABLE: Record<string, string> = {
     dashboard_credit_customers: "Customer",
     dashboard_credit_invoices: "Invoice",
 };
+
+/**
+ * Embedded entity grids (customer detail tabs, etc.) that must execute without
+ * requiring the global `view_reports` permission.
+ */
+export const ENTITY_LIST_REPORT_CONTEXTS = new Set([
+    "customers",
+    "invoices",
+    "contacts",
+    "customer_contacts",
+    "customer_banks",
+    "disputes",
+    "payments",
+    "activities",
+    "customer-collection-period",
+]);
 
 export const DASHBOARD_REPORT_CONTEXTS = new Set([
     "dashboard_invoices",
@@ -85,6 +105,13 @@ export const RELATION_FROM_PRIMARY: Record<
     Contact: {
         Customer: "Customer",
         Person: "Person",
+        Country: "Country",
+        State: "State",
+        Company: "Company",
+    },
+    CustomerBanks: {
+        AccountBankAccounts: "AccountBankAccounts",
+        Customer: "Customer",
     },
     Dispute: {
         Customer: "Customer",

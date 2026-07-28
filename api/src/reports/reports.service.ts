@@ -11,6 +11,7 @@ import { DatabaseService } from "../database/database.service";
 import {
     CREDIT_DASHBOARD_CONTEXTS,
     DASHBOARD_REPORT_CONTEXTS,
+    ENTITY_LIST_REPORT_CONTEXTS,
     FINANCIAL_DASHBOARD_CONTEXTS,
     OPERATION_DASHBOARD_CONTEXTS,
 } from "./report.constants";
@@ -503,6 +504,27 @@ export class ReportsService {
     ) {
         if (await this.access.hasPermission(accountId, role, "view_reports")) {
             return;
+        }
+        if (context && ENTITY_LIST_REPORT_CONTEXTS.has(context)) {
+            if (
+                await this.access.hasPermission(
+                    accountId,
+                    role,
+                    "view_customers"
+                )
+            ) {
+                return;
+            }
+            if (
+                (context === "contacts" || context === "customer_contacts") &&
+                (await this.access.hasPermission(
+                    accountId,
+                    role,
+                    "view_contacts"
+                ))
+            ) {
+                return;
+            }
         }
         if (context && DASHBOARD_REPORT_CONTEXTS.has(context)) {
             if (

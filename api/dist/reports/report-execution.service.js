@@ -115,6 +115,15 @@ let ReportExecutionService = class ReportExecutionService {
         if (canViewReports) {
             return;
         }
+        if (context && report_constants_1.ENTITY_LIST_REPORT_CONTEXTS.has(context)) {
+            if (await this.access.hasPermission(accountId, role, "view_customers")) {
+                return;
+            }
+            if ((context === "contacts" || context === "customer_contacts") &&
+                (await this.access.hasPermission(accountId, role, "view_contacts"))) {
+                return;
+            }
+        }
         if (!context || !report_constants_1.DASHBOARD_REPORT_CONTEXTS.has(context)) {
             throw new common_1.ForbiddenException("You do not have permission to execute reports");
         }
@@ -290,6 +299,21 @@ let ReportExecutionService = class ReportExecutionService {
             }
             const rel = relationMap[f.table];
             if (!rel) {
+                if (primaryTable === "CustomerBanks" &&
+                    f.table === "Country") {
+                    const aba = ensureRelSelect("AccountBankAccounts");
+                    const existing = aba.Country;
+                    const countrySelect = existing &&
+                        typeof existing === "object" &&
+                        existing !== null &&
+                        "select" in existing
+                        ? existing.select
+                        : { id: true };
+                    if ((0, report_virtual_fields_util_1.isPrismaScalarField)("Country", f.field)) {
+                        countrySelect[f.field] = true;
+                    }
+                    aba.Country = { select: countrySelect };
+                }
                 continue;
             }
             if (f.table === "Customer" && f.field === "name") {
@@ -697,6 +721,13 @@ let ReportExecutionService = class ReportExecutionService {
         const nested = rel
             ? row[rel]
             : null;
+        if (primaryTable === "CustomerBanks" &&
+            f.table === "Country" &&
+            !rel) {
+            const aba = row.AccountBankAccounts;
+            const country = aba?.Country;
+            return country?.[f.field] ?? null;
+        }
         if (f.table === "Customer" && f.field === "name") {
             return nested ? this.extractCustomerName(nested) : null;
         }
