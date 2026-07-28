@@ -14,6 +14,8 @@ const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
     Company: "Company",
     User: "User",
     BusinessUnit: "BusinessUnit",
+    Country: "Country",
+    State: "State",
 };
 
 const scalarFieldCache = new Map<string, Set<string>>();

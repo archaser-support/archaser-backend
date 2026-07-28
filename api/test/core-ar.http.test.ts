@@ -24,7 +24,7 @@ describe("Stage 1A core AR — Nest-native HTTP contract", () => {
         },
         account: {
             findFirst: jest.fn(),
-            findUnique: jest.fn(),
+            findUnique: jest.fn().mockResolvedValue({ currency: "ILS" }),
         },
         rolePermission: {
             findUnique: jest.fn().mockResolvedValue(null),
@@ -41,6 +41,14 @@ describe("Stage 1A core AR — Nest-native HTTP contract", () => {
             findFirst: jest.fn().mockResolvedValue({ id: 1, account_id: 42 }),
             findUnique: jest.fn(),
             update: jest.fn(),
+            aggregate: jest.fn().mockResolvedValue({
+                _sum: {
+                    total_due_amount: 27500,
+                    total_overdue_amount: 948025.36,
+                    no_of_due_invoices: 940,
+                    number_of_overdue_invoices: 60,
+                },
+            }),
         },
         invoice: {
             findMany: jest
@@ -168,6 +176,31 @@ describe("Stage 1A core AR — Nest-native HTTP contract", () => {
             totalRecords: 1,
         });
         expect(databaseMock.customer.findMany).toHaveBeenCalled();
+    });
+
+    it("GET /api/entities/customers?stats=true aggregates customer due/overdue totals", async () => {
+        databaseMock.customer.count
+            .mockResolvedValueOnce(3)
+            .mockResolvedValueOnce(2)
+            .mockResolvedValueOnce(1);
+
+        const token = await bearerToken();
+        const response = await request(app.getHttpServer())
+            .get("/api/entities/customers?stats=true")
+            .set("Authorization", `Bearer ${token}`)
+            .expect(200);
+
+        expect(response.body.counts).toMatchObject({
+            total_customers: 3,
+            active_customers: 2,
+            inactive_customers: 1,
+            total_due_amount: 27500,
+            total_overdue_amount: 948025.36,
+            open_invoice_count: 1000,
+            currency: "ILS",
+        });
+        expect(databaseMock.customer.aggregate).toHaveBeenCalled();
+        expect(databaseMock.invoice.aggregate).not.toHaveBeenCalled();
     });
 
     it("GET /api/entities/invoices and contacts return list shapes via Nest modules", async () => {
