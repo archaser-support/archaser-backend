@@ -22,7 +22,28 @@ import {
     OPERATION_DASHBOARD_CONTEXTS,
     RELATION_FROM_PRIMARY,
 } from "./report.constants";
+import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
+import {
+    enrichCreditDashboardCustomerRows,
+    fetchTopUpExpiringReportAsCustomerRows,
+    isCreditDashboardEnrichedSortField,
+    reportConfigNeedsCreditDashboardEnrichment,
+    sortCreditDashboardEnrichedRows,
+} from "../credit-insurance/domain/creditDashboardReportEnrichment";
+import { getLimitWarningReport } from "../credit-insurance/domain/creditInsuranceDashboardService";
 import { prepareDashboardActivityMarkers } from "./dashboard-activity-markers.util";
+import { prepareDashboardCreditCustomerMarkers } from "./dashboard-credit-customer-markers.util";
+import { prepareDashboardCreditInvoiceMarkers } from "./dashboard-credit-invoice-markers.util";
+import {
+    extractTrendCostReportField,
+    isTrendCostBackedReportField,
+    mergeLatestCustomerPolicyTrendSelect,
+} from "./report-customer-trend-fields.util";
+import {
+    extractCustomerPolicyReportField,
+    isCustomerPolicyBackedReportField,
+    mergeActiveCustomerPolicySelect,
+} from "./report-customer-policy-fields.util";
 import {
     attachLinkingIds,
     getFieldLinkMetadata,
@@ -64,7 +85,9 @@ export class ReportExecutionService {
     constructor(
         private readonly db: DatabaseService,
         private readonly access: AccessScopeService
-    ) {}
+    ) {
+        bindCreditInsurancePrisma(this.db);
+    }
 
     async execute(
         user: JwtPayload,
@@ -146,6 +169,39 @@ export class ReportExecutionService {
             skipSelectedUserOnActivity = prepared.skipsSelectedUserScope;
         }
 
+        let creditCustomerExtras: PrismaWhere | undefined;
+        let creditInvoiceExtras: PrismaWhere | undefined;
+        let creditDashboardPolicyId: number | undefined;
+        let creditDashboardWithinDays: number | undefined;
+        let creditCustomerMembershipType:
+            | "capacity"
+            | "policy_risk"
+            | "limit_warning"
+            | "zero_limit_warning"
+            | "no_policy_exposure"
+            | "top_up"
+            | "top_up_expiring"
+            | null
+            | undefined;
+        if (report.context === "dashboard_credit_customers") {
+            const prepared = await prepareDashboardCreditCustomerMarkers(
+                filters,
+                { accountId }
+            );
+            filters = prepared.filters;
+            creditCustomerExtras = prepared.primaryWhereExtras;
+            creditDashboardPolicyId = prepared.policyId;
+            creditDashboardWithinDays = prepared.withinDays;
+            creditCustomerMembershipType = prepared.membershipType;
+        } else if (report.context === "dashboard_credit_invoices") {
+            const prepared = await prepareDashboardCreditInvoiceMarkers(
+                filters,
+                { accountId }
+            );
+            filters = prepared.filters;
+            creditInvoiceExtras = prepared.primaryWhereExtras;
+        }
+
         const scopeWhere = await this.buildScopeWhere(
             userInfo,
             accountId,
@@ -178,31 +234,127 @@ export class ReportExecutionService {
             filterPrimary,
             nestedWhere,
             searchWhere,
-            activityExtras
+            activityExtras,
+            creditCustomerExtras,
+            creditInvoiceExtras
         );
 
         const fields = (config.fields || []).filter((f) => !f.aggregation);
         const select = this.buildSelect(primaryTable, fields);
 
-        const orderBy = this.buildOrderBy(
-            primaryTable,
-            body.sortField,
-            body.sortDirection,
-            config.sorting
-        );
+        const reportUniqueName = (report as { unique_name?: string | null })
+            .unique_name;
+        const isTopUpExpiringReport =
+            reportUniqueName ===
+                "dashboard_credit_customers_top_up_expiring" ||
+            creditCustomerMembershipType === "top_up_expiring";
+
+        if (isTopUpExpiringReport && primaryTable === "Customer") {
+            const rawSortDir = (
+                body.sortDirection ||
+                config.sorting?.[0]?.direction ||
+                "asc"
+            ).toString();
+            const topUpResult = await fetchTopUpExpiringReportAsCustomerRows({
+                accountId,
+                page,
+                limit,
+                search: body.search,
+                sortField: body.sortField || config.sorting?.[0]?.field,
+                sortDirection:
+                    rawSortDir.toLowerCase() === "desc" ? "DESC" : "ASC",
+                policyId: creditDashboardPolicyId,
+                withinDays: creditDashboardWithinDays ?? 30,
+            });
+            const locale = body.locale || "en-US";
+            const data = topUpResult.rows.map((row) =>
+                this.formatRow(row, primaryTable, fields, locale)
+            );
+            return serializeBigInt({
+                data,
+                totalRecords: topUpResult.total,
+            });
+        }
+
+        const effectiveSortField =
+            body.sortField || config.sorting?.[0]?.field;
+        const effectiveSortDirection =
+            body.sortDirection ||
+            (config.sorting?.[0]?.direction?.toLowerCase() === "asc"
+                ? "asc"
+                : "desc");
+        const needsInMemorySort =
+            report.context === "dashboard_credit_customers" &&
+            !!effectiveSortField &&
+            (isCreditDashboardEnrichedSortField(effectiveSortField) ||
+                isCustomerPolicyBackedReportField(effectiveSortField));
+
+        const orderBy = needsInMemorySort
+            ? []
+            : this.buildOrderBy(
+                  primaryTable,
+                  body.sortField,
+                  body.sortDirection,
+                  config.sorting
+              );
 
         const findArgs: Record<string, unknown> = {
             where,
-            skip,
-            take: limit,
+            skip: needsInMemorySort ? undefined : skip,
+            take: needsInMemorySort ? undefined : limit,
             orderBy: orderBy.length ? orderBy : undefined,
             select,
         };
 
-        const [rows, totalRecords] = await Promise.all([
+        let [rows, totalRecords] = await Promise.all([
             delegate.findMany(findArgs),
             delegate.count({ where }),
         ]);
+
+        if (
+            report.context === "dashboard_credit_customers" &&
+            primaryTable === "Customer" &&
+            reportConfigNeedsCreditDashboardEnrichment(fields)
+        ) {
+            const requestedCustomerFields = fields
+                .filter((f) => f.table === "Customer" && f.field)
+                .map((f) => f.field as string);
+            let limitWarningByCustomerId:
+                | Map<
+                      number,
+                      Awaited<
+                          ReturnType<typeof getLimitWarningReport>
+                      >["rows"][number]
+                  >
+                | undefined;
+            if (requestedCustomerFields.includes("limit_warning_summary")) {
+                const { rows: warningRows } = await getLimitWarningReport(
+                    accountId,
+                    100_000,
+                    0,
+                    { policyId: creditDashboardPolicyId }
+                );
+                limitWarningByCustomerId = new Map(
+                    warningRows.map((r) => [r.customerId, r])
+                );
+            }
+            rows = await enrichCreditDashboardCustomerRows(rows, {
+                accountId,
+                policyId: creditDashboardPolicyId,
+                requestedFields: requestedCustomerFields,
+                limitWarningByCustomerId,
+            });
+        }
+
+        if (needsInMemorySort && effectiveSortField) {
+            rows = sortCreditDashboardEnrichedRows(
+                rows,
+                effectiveSortField,
+                effectiveSortDirection
+            );
+            totalRecords = rows.length;
+            rows = rows.slice(skip, skip + limit);
+        }
 
         const locale = body.locale || "en-US";
         const data = rows.map((row) =>
@@ -459,6 +611,13 @@ export class ReportExecutionService {
                     this.applyCustomerPolicyNumberSelect(select);
                     continue;
                 }
+                if (
+                    primaryTable === "Invoice" &&
+                    f.field === "InsurancePolicy.policy_number"
+                ) {
+                    this.applyInvoicePolicyNumberSelect(select);
+                    continue;
+                }
                 if (f.field.includes(".")) {
                     const [relTable, ...rest] = f.field.split(".");
                     const rel = relationMap[relTable] || relTable;
@@ -577,6 +736,13 @@ export class ReportExecutionService {
         }
 
         this.enrichSelectForLinks(primaryTable, fields, select);
+        if (primaryTable === "Customer") {
+            const customerFields = fields
+                .filter((f) => f.table === "Customer")
+                .map((f) => f.field);
+            mergeActiveCustomerPolicySelect(select, customerFields);
+            mergeLatestCustomerPolicyTrendSelect(select, customerFields);
+        }
         return select;
     }
 
@@ -609,6 +775,26 @@ export class ReportExecutionService {
                         policy_number: true,
                     },
                 },
+            },
+        };
+    }
+
+    private applyInvoicePolicyNumberSelect(
+        select: Record<string, unknown>
+    ): void {
+        select.policy_id = true;
+        const existing = select.InsurancePolicy as
+            | { select?: Record<string, unknown> }
+            | undefined;
+        const existingSelect =
+            existing?.select && typeof existing.select === "object"
+                ? existing.select
+                : {};
+        select.InsurancePolicy = {
+            select: {
+                ...existingSelect,
+                id: true,
+                policy_number: true,
             },
         };
     }
@@ -853,6 +1039,14 @@ export class ReportExecutionService {
             }
         }
 
+        if (primaryTable === "Invoice") {
+            if (normalized === "InsurancePolicy.policy_number") {
+                return (dir) => ({
+                    InsurancePolicy: { policy_number: dir },
+                });
+            }
+        }
+
         if (primaryTable === "Dispute") {
             if (normalized === "dispute_number") {
                 return (dir) => ({ id: dir });
@@ -1053,6 +1247,12 @@ export class ReportExecutionService {
             ) {
                 return this.extractCustomerPolicyNumber(row);
             }
+            if (
+                primaryTable === "Invoice" &&
+                f.field === "InsurancePolicy.policy_number"
+            ) {
+                return this.extractInvoicePolicyNumber(row);
+            }
             if (primaryTable === "Customer" && f.field === "category") {
                 const periods = row.CustomerCollectionPeriod;
                 if (Array.isArray(periods) && periods.length > 0) {
@@ -1090,6 +1290,24 @@ export class ReportExecutionService {
                 if (activityValue !== undefined) {
                     return activityValue;
                 }
+            }
+            if (
+                primaryTable === "Customer" &&
+                isCustomerPolicyBackedReportField(f.field)
+            ) {
+                const policyValue = extractCustomerPolicyReportField(
+                    row,
+                    f.field
+                );
+                if (policyValue !== null && policyValue !== undefined) {
+                    return policyValue;
+                }
+            }
+            if (
+                primaryTable === "Customer" &&
+                isTrendCostBackedReportField(f.field)
+            ) {
+                return extractTrendCostReportField(row, f.field);
             }
             if (f.field.includes(".")) {
                 const [relTable, ...rest] = f.field.split(".");
@@ -1228,6 +1446,17 @@ export class ReportExecutionService {
         return typeof direct === "string" && direct.trim() !== ""
             ? direct
             : null;
+    }
+
+    private extractInvoicePolicyNumber(
+        row: Record<string, unknown>
+    ): string | null {
+        const policy = row.InsurancePolicy as
+            | { policy_number?: string | null }
+            | null
+            | undefined;
+        const value = policy?.policy_number;
+        return typeof value === "string" && value.trim() !== "" ? value : null;
     }
 
     /**

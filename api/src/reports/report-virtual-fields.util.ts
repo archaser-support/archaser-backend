@@ -1,4 +1,6 @@
 import { Prisma } from "@prisma/client";
+import { getCustomerPolicyRow } from "./report-customer-policy-fields.util";
+import { mergeActiveCustomerPolicySelect } from "./report-customer-policy-fields.util";
 
 /** Report table name → Prisma DMMF model name. */
 const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
@@ -18,6 +20,7 @@ const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
     BusinessUnit: "BusinessUnit",
     Country: "Country",
     State: "State",
+    InsurancePolicy: "InsurancePolicy",
 };
 
 const scalarFieldCache = new Map<string, Set<string>>();
@@ -188,6 +191,12 @@ export function applyComputedFieldSelect(
             select.oldest_invoice_overdue_date = true;
             return true;
         }
+        if (field === "limit_expires_in_days") {
+            mergeActiveCustomerPolicySelect(select, [
+                "approved_limit_expiration_date",
+            ]);
+            return true;
+        }
         if (field === "company_number") {
             select.Company = {
                 select: {
@@ -251,6 +260,16 @@ export function extractComputedFieldValue(
                     | undefined
             );
         }
+        if (field === "limit_expires_in_days") {
+            const policy = getCustomerPolicyRow(row);
+            return calculateDaysLeft(
+                (policy?.approved_limit_expiration_date as
+                    | Date
+                    | string
+                    | null
+                    | undefined) ?? null
+            );
+        }
         if (field === "company_number") {
             const company = row.Company as
                 | { company_number?: string | null }
@@ -278,7 +297,23 @@ export function isComputedReportField(
         );
     }
     if (primaryTable === "Customer") {
-        return field === "days_overdue" || field === "company_number";
+        return (
+            field === "days_overdue" ||
+            field === "company_number" ||
+            field === "limit_expires_in_days" ||
+            field === "top_up_total" ||
+            field === "effective_approved_limit" ||
+            field === "open_receivable_amount" ||
+            field === "open_invoice_count" ||
+            field === "terms_breach_outstanding" ||
+            field === "policy_risk_allocated" ||
+            field === "limit_warning_summary" ||
+            field === "top_up_type" ||
+            field === "top_up_value" ||
+            field === "top_up_resolved_amount" ||
+            field === "top_up_end_date" ||
+            field === "top_up_days_left"
+        );
     }
     if (primaryTable === "Activity") {
         return field === "call_time" || field === "call_direction";

@@ -10,6 +10,8 @@ exports.applyComputedFieldSelect = applyComputedFieldSelect;
 exports.extractComputedFieldValue = extractComputedFieldValue;
 exports.isComputedReportField = isComputedReportField;
 const client_1 = require("@prisma/client");
+const report_customer_policy_fields_util_1 = require("./report-customer-policy-fields.util");
+const report_customer_policy_fields_util_2 = require("./report-customer-policy-fields.util");
 const REPORT_TABLE_TO_PRISMA_MODEL = {
     Customer: "Customer",
     Invoice: "Invoice",
@@ -27,6 +29,7 @@ const REPORT_TABLE_TO_PRISMA_MODEL = {
     BusinessUnit: "BusinessUnit",
     Country: "Country",
     State: "State",
+    InsurancePolicy: "InsurancePolicy",
 };
 const scalarFieldCache = new Map();
 function calculateDaysOverdue(dueDate, now = new Date()) {
@@ -152,6 +155,12 @@ function applyComputedFieldSelect(primaryTable, field, select) {
             select.oldest_invoice_overdue_date = true;
             return true;
         }
+        if (field === "limit_expires_in_days") {
+            (0, report_customer_policy_fields_util_2.mergeActiveCustomerPolicySelect)(select, [
+                "approved_limit_expiration_date",
+            ]);
+            return true;
+        }
         if (field === "company_number") {
             select.Company = {
                 select: {
@@ -188,6 +197,10 @@ function extractComputedFieldValue(primaryTable, field, row) {
         if (field === "days_overdue") {
             return calculateDaysOverdue(row.oldest_invoice_overdue_date);
         }
+        if (field === "limit_expires_in_days") {
+            const policy = (0, report_customer_policy_fields_util_1.getCustomerPolicyRow)(row);
+            return calculateDaysLeft(policy?.approved_limit_expiration_date ?? null);
+        }
         if (field === "company_number") {
             const company = row.Company;
             return company?.company_number ?? null;
@@ -204,7 +217,21 @@ function isComputedReportField(primaryTable, field) {
             field === "terms_breach_reason");
     }
     if (primaryTable === "Customer") {
-        return field === "days_overdue" || field === "company_number";
+        return (field === "days_overdue" ||
+            field === "company_number" ||
+            field === "limit_expires_in_days" ||
+            field === "top_up_total" ||
+            field === "effective_approved_limit" ||
+            field === "open_receivable_amount" ||
+            field === "open_invoice_count" ||
+            field === "terms_breach_outstanding" ||
+            field === "policy_risk_allocated" ||
+            field === "limit_warning_summary" ||
+            field === "top_up_type" ||
+            field === "top_up_value" ||
+            field === "top_up_resolved_amount" ||
+            field === "top_up_end_date" ||
+            field === "top_up_days_left");
     }
     if (primaryTable === "Activity") {
         return field === "call_time" || field === "call_direction";
