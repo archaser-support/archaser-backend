@@ -182,25 +182,19 @@ let CustomersService = class CustomersService {
                 select: { currency: true },
             }),
         ]);
-        const invoiceAgg = await this.db.invoice.aggregate({
-            where: {
-                Customer: { AND: accessParts },
-                status: { not: "Paid" },
+        const customerAgg = await this.db.customer.aggregate({
+            where: where,
+            _sum: {
+                total_due_amount: true,
+                total_overdue_amount: true,
+                no_of_due_invoices: true,
+                number_of_overdue_invoices: true,
             },
-            _sum: { outstanding_debt: true },
-            _count: { id: true },
         });
-        const overdueAgg = await this.db.invoice.aggregate({
-            where: {
-                Customer: { AND: accessParts },
-                status: { not: "Paid" },
-                due_date: { lt: new Date() },
-            },
-            _sum: { outstanding_debt: true },
-        });
-        const totalDue = Number(invoiceAgg._sum.outstanding_debt ?? 0);
-        const openInvoiceCount = invoiceAgg._count.id ?? 0;
-        const totalOverdue = Number(overdueAgg._sum.outstanding_debt ?? 0);
+        const totalDue = Number(customerAgg._sum.total_due_amount ?? 0);
+        const totalOverdue = Number(customerAgg._sum.total_overdue_amount ?? 0);
+        const openInvoiceCount = Number(customerAgg._sum.no_of_due_invoices ?? 0) +
+            Number(customerAgg._sum.number_of_overdue_invoices ?? 0);
         return {
             counts: {
                 total_customers: total,

@@ -426,6 +426,16 @@ export class ReportExecutionService {
                 if (this.applyVirtualSelect(primaryTable, f.field, select)) {
                     continue;
                 }
+                if (this.applyAuditUserSelect(primaryTable, f.field, select)) {
+                    continue;
+                }
+                if (
+                    primaryTable === "Customer" &&
+                    f.field === "InsurancePolicy.policy_number"
+                ) {
+                    this.applyCustomerPolicyNumberSelect(select);
+                    continue;
+                }
                 if (f.field.includes(".")) {
                     const [relTable, ...rest] = f.field.split(".");
                     const rel = relationMap[relTable] || relTable;
@@ -480,6 +490,13 @@ export class ReportExecutionService {
                 this.applyCustomerNameSelect(ensureRelSelect(rel));
                 continue;
             }
+            if (
+                f.table === "Customer" &&
+                f.field === "InsurancePolicy.policy_number"
+            ) {
+                this.applyCustomerPolicyNumberSelect(ensureRelSelect(rel));
+                continue;
+            }
             if (f.table === "Customer" && f.field === "category") {
                 const nested = ensureRelSelect(rel);
                 nested.CustomerCollectionPeriod = {
@@ -515,6 +532,39 @@ export class ReportExecutionService {
 
         this.enrichSelectForLinks(primaryTable, fields, select);
         return select;
+    }
+
+    private applyCustomerPolicyNumberSelect(
+        select: Record<string, unknown>
+    ): void {
+        const existing = select.CustomerPolicy as
+            | {
+                  select?: Record<string, unknown>;
+                  take?: number;
+                  orderBy?: Record<string, "asc" | "desc">;
+              }
+            | undefined;
+        const existingSelect =
+            existing?.select && typeof existing.select === "object"
+                ? existing.select
+                : {};
+
+        select.CustomerPolicy = {
+            ...(existing || {}),
+            take: 1,
+            orderBy: { id: "desc" as const },
+            select: {
+                ...existingSelect,
+                id: true,
+                insurance_policy_id: true,
+                InsurancePolicy: {
+                    select: {
+                        id: true,
+                        policy_number: true,
+                    },
+                },
+            },
+        };
     }
 
     /** Ensure FKs / Customer.id needed for __link_* metadata are selected. */
@@ -743,6 +793,12 @@ export class ReportExecutionService {
             if (normalized === "name") {
                 return (dir) => ({ Company: { name: dir } });
             }
+            if (normalized === "InsurancePolicy.policy_number") {
+                // Customer -> CustomerPolicy is one-to-many; Prisma cannot
+                // order Customer rows by a nested list relation field directly.
+                // Fall back to stable id sorting to avoid runtime query errors.
+                return (dir) => ({ id: dir });
+            }
             if (
                 normalized === "parent_customer_name" ||
                 normalized === "category"
@@ -945,6 +1001,12 @@ export class ReportExecutionService {
             ) {
                 return this.extractParentCustomerName(row);
             }
+            if (
+                primaryTable === "Customer" &&
+                f.field === "InsurancePolicy.policy_number"
+            ) {
+                return this.extractCustomerPolicyNumber(row);
+            }
             if (primaryTable === "Customer" && f.field === "category") {
                 const periods = row.CustomerCollectionPeriod;
                 if (Array.isArray(periods) && periods.length > 0) {
@@ -954,6 +1016,16 @@ export class ReportExecutionService {
                     );
                 }
                 return null;
+            }
+            if (
+                f.field === "created_by" ||
+                f.field === "modified_by"
+            ) {
+                return this.extractAuditUserName(
+                    row,
+                    primaryTable,
+                    f.field
+                );
             }
             if (primaryTable === "Dispute") {
                 const disputeValue = this.extractDisputeVirtualField(
@@ -982,7 +1054,7 @@ export class ReportExecutionService {
                         ? this.extractCustomerName(nested)
                         : null;
                 }
-                return nested?.[rest.join(".")] ?? null;
+                return this.getNestedValue(nested, rest.join(".")) ?? null;
             }
             return row[f.field];
         }
@@ -993,7 +1065,108 @@ export class ReportExecutionService {
         if (f.table === "Customer" && f.field === "name") {
             return nested ? this.extractCustomerName(nested) : null;
         }
+        if (
+            f.table === "Customer" &&
+            f.field === "InsurancePolicy.policy_number"
+        ) {
+            return nested ? this.extractCustomerPolicyNumber(nested) : null;
+        }
+        if (f.field.includes(".")) {
+            return this.getNestedValue(nested, f.field) ?? null;
+        }
         return nested?.[f.field];
+    }
+
+    private applyAuditUserSelect(
+        tableName: string,
+        fieldName: string,
+        select: Record<string, unknown>
+    ): boolean {
+        if (fieldName !== "created_by" && fieldName !== "modified_by") {
+            return false;
+        }
+        select[fieldName] = true;
+        const relationName = this.getAuditUserRelationName(tableName, fieldName);
+        select[relationName] = {
+            select: {
+                id: true,
+                name: true,
+                email: true,
+            },
+        };
+        return true;
+    }
+
+    private getAuditUserRelationName(
+        tableName: string,
+        fieldName: "created_by" | "modified_by"
+    ): string {
+        if (tableName === "Dispute") {
+            const disputeRelationField =
+                fieldName === "created_by"
+                    ? "User_CustomerDispute_created_byToUser"
+                    : "User_CustomerDispute_modified_byToUser";
+            return disputeRelationField;
+        }
+        return `User_${tableName}_${fieldName}ToUser`;
+    }
+
+    private extractAuditUserName(
+        row: Record<string, unknown>,
+        tableName: string,
+        fieldName: "created_by" | "modified_by"
+    ): string | null {
+        const relationName = this.getAuditUserRelationName(tableName, fieldName);
+        const relation = row[relationName] as
+            | { name?: string | null; email?: string | null }
+            | null
+            | undefined;
+        if (relation?.name && relation.name.trim() !== "") {
+            return relation.name;
+        }
+        if (relation?.email && relation.email.trim() !== "") {
+            return relation.email;
+        }
+        const raw = row[fieldName];
+        return raw == null ? null : String(raw);
+    }
+
+    private getNestedValue(
+        value: Record<string, unknown> | null | undefined,
+        path: string
+    ): unknown {
+        if (!value || !path) {
+            return null;
+        }
+        return path.split(".").reduce<unknown>((acc, part) => {
+            if (acc == null || typeof acc !== "object") {
+                return null;
+            }
+            return (acc as Record<string, unknown>)[part];
+        }, value);
+    }
+
+    private extractCustomerPolicyNumber(
+        row: Record<string, unknown>
+    ): string | null {
+        const policyRows = row.CustomerPolicy as
+            | Array<{ InsurancePolicy?: { policy_number?: string | null } | null }>
+            | undefined;
+        if (Array.isArray(policyRows)) {
+            const firstPolicyNumber =
+                policyRows.find((p) => p?.InsurancePolicy?.policy_number)
+                    ?.InsurancePolicy?.policy_number ?? null;
+            if (firstPolicyNumber) {
+                return firstPolicyNumber;
+            }
+        }
+        const direct = this.getNestedValue(
+            row,
+            "InsurancePolicy.policy_number"
+        );
+        return typeof direct === "string" && direct.trim() !== ""
+            ? direct
+            : null;
     }
 
     /**

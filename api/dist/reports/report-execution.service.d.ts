@@ -14,6 +14,7 @@ export declare class ReportExecutionService {
     private buildScopeWhere;
     private buildSearchWhere;
     private buildSelect;
+    private applyCustomerPolicyNumberSelect;
     private enrichSelectForLinks;
     private applyVirtualSelect;
     private applyCustomerNameSelect;
@@ -22,6 +23,11 @@ export declare class ReportExecutionService {
     private parseSortField;
     private formatRow;
     private extractFieldValue;
+    private applyAuditUserSelect;
+    private getAuditUserRelationName;
+    private extractAuditUserName;
+    private getNestedValue;
+    private extractCustomerPolicyNumber;
     private extractActivityVirtualField;
     private extractDisputeVirtualField;
     private extractCustomerName;
