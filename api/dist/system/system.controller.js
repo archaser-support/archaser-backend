@@ -49,8 +49,8 @@ let SystemController = class SystemController {
     async agents(user, query) {
         return this.system.getAgents(user, query);
     }
-    async agentsStats(user) {
-        return this.system.getAgentsStats(user);
+    async agentsStats(user, query) {
+        return this.system.getAgentsStats(user, query);
     }
     async agentsFollowUp(user) {
         return this.system.getAgentsFollowUp(user);
@@ -169,8 +169,9 @@ __decorate([
     (0, common_1.Get)("agents/stats"),
     (0, swagger_1.ApiOperation)({ summary: "Agents stats (Nest-native)" }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], SystemController.prototype, "agentsStats", null);
 __decorate([
