@@ -88,6 +88,7 @@ exports.RELATION_FROM_PRIMARY = {
         Customer: "Customer",
         BusinessUnit: "BusinessUnit",
         User: "User",
+        InsurancePolicy: "InsurancePolicy",
     },
     Contact: {
         Customer: "Customer",

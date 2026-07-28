@@ -101,6 +101,7 @@ export const RELATION_FROM_PRIMARY: Record<
         Customer: "Customer",
         BusinessUnit: "BusinessUnit",
         User: "User",
+        InsurancePolicy: "InsurancePolicy",
     },
     Contact: {
         Customer: "Customer",

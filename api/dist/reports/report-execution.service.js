@@ -15,7 +15,14 @@ const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
 const report_constants_1 = require("./report.constants");
+const domain_db_1 = require("../credit-insurance/domain-db");
+const creditDashboardReportEnrichment_1 = require("../credit-insurance/domain/creditDashboardReportEnrichment");
+const creditInsuranceDashboardService_1 = require("../credit-insurance/domain/creditInsuranceDashboardService");
 const dashboard_activity_markers_util_1 = require("./dashboard-activity-markers.util");
+const dashboard_credit_customer_markers_util_1 = require("./dashboard-credit-customer-markers.util");
+const dashboard_credit_invoice_markers_util_1 = require("./dashboard-credit-invoice-markers.util");
+const report_customer_trend_fields_util_1 = require("./report-customer-trend-fields.util");
+const report_customer_policy_fields_util_1 = require("./report-customer-policy-fields.util");
 const report_link_util_1 = require("./report-link.util");
 const report_filter_util_1 = require("./report-filter.util");
 const report_scope_util_1 = require("./report-scope.util");
@@ -24,6 +31,7 @@ let ReportExecutionService = class ReportExecutionService {
     constructor(db, access) {
         this.db = db;
         this.access = access;
+        (0, domain_db_1.bindCreditInsurancePrisma)(this.db);
     }
     async execute(user, reportId, body) {
         const userInfo = await this.access.resolveUserInfo(user);
@@ -80,6 +88,24 @@ let ReportExecutionService = class ReportExecutionService {
             activityExtras = prepared.primaryWhereExtras;
             skipSelectedUserOnActivity = prepared.skipsSelectedUserScope;
         }
+        let creditCustomerExtras;
+        let creditInvoiceExtras;
+        let creditDashboardPolicyId;
+        let creditDashboardWithinDays;
+        let creditCustomerMembershipType;
+        if (report.context === "dashboard_credit_customers") {
+            const prepared = await (0, dashboard_credit_customer_markers_util_1.prepareDashboardCreditCustomerMarkers)(filters, { accountId });
+            filters = prepared.filters;
+            creditCustomerExtras = prepared.primaryWhereExtras;
+            creditDashboardPolicyId = prepared.policyId;
+            creditDashboardWithinDays = prepared.withinDays;
+            creditCustomerMembershipType = prepared.membershipType;
+        }
+        else if (report.context === "dashboard_credit_invoices") {
+            const prepared = await (0, dashboard_credit_invoice_markers_util_1.prepareDashboardCreditInvoiceMarkers)(filters, { accountId });
+            filters = prepared.filters;
+            creditInvoiceExtras = prepared.primaryWhereExtras;
+        }
         const scopeWhere = await this.buildScopeWhere(userInfo, accountId, primaryTable, body, { skipSelectedUserId: skipSelectedUserOnActivity });
         const { primary: filterPrimary, nested } = (0, report_filter_util_1.splitFiltersByTable)(this.normalizeFilters(filters, primaryTable), primaryTable);
         const nestedWhere = {};
@@ -91,21 +117,81 @@ let ReportExecutionService = class ReportExecutionService {
             }
         }
         const searchWhere = this.buildSearchWhere(primaryTable, body.search, config.fields || []);
-        const where = (0, report_filter_util_1.mergeAndWhere)(scopeWhere, filterPrimary, nestedWhere, searchWhere, activityExtras);
+        const where = (0, report_filter_util_1.mergeAndWhere)(scopeWhere, filterPrimary, nestedWhere, searchWhere, activityExtras, creditCustomerExtras, creditInvoiceExtras);
         const fields = (config.fields || []).filter((f) => !f.aggregation);
         const select = this.buildSelect(primaryTable, fields);
-        const orderBy = this.buildOrderBy(primaryTable, body.sortField, body.sortDirection, config.sorting);
+        const reportUniqueName = report
+            .unique_name;
+        const isTopUpExpiringReport = reportUniqueName ===
+            "dashboard_credit_customers_top_up_expiring" ||
+            creditCustomerMembershipType === "top_up_expiring";
+        if (isTopUpExpiringReport && primaryTable === "Customer") {
+            const rawSortDir = (body.sortDirection ||
+                config.sorting?.[0]?.direction ||
+                "asc").toString();
+            const topUpResult = await (0, creditDashboardReportEnrichment_1.fetchTopUpExpiringReportAsCustomerRows)({
+                accountId,
+                page,
+                limit,
+                search: body.search,
+                sortField: body.sortField || config.sorting?.[0]?.field,
+                sortDirection: rawSortDir.toLowerCase() === "desc" ? "DESC" : "ASC",
+                policyId: creditDashboardPolicyId,
+                withinDays: creditDashboardWithinDays ?? 30,
+            });
+            const locale = body.locale || "en-US";
+            const data = topUpResult.rows.map((row) => this.formatRow(row, primaryTable, fields, locale));
+            return (0, serialize_bigint_1.serializeBigInt)({
+                data,
+                totalRecords: topUpResult.total,
+            });
+        }
+        const effectiveSortField = body.sortField || config.sorting?.[0]?.field;
+        const effectiveSortDirection = body.sortDirection ||
+            (config.sorting?.[0]?.direction?.toLowerCase() === "asc"
+                ? "asc"
+                : "desc");
+        const needsInMemorySort = report.context === "dashboard_credit_customers" &&
+            !!effectiveSortField &&
+            ((0, creditDashboardReportEnrichment_1.isCreditDashboardEnrichedSortField)(effectiveSortField) ||
+                (0, report_customer_policy_fields_util_1.isCustomerPolicyBackedReportField)(effectiveSortField));
+        const orderBy = needsInMemorySort
+            ? []
+            : this.buildOrderBy(primaryTable, body.sortField, body.sortDirection, config.sorting);
         const findArgs = {
             where,
-            skip,
-            take: limit,
+            skip: needsInMemorySort ? undefined : skip,
+            take: needsInMemorySort ? undefined : limit,
             orderBy: orderBy.length ? orderBy : undefined,
             select,
         };
-        const [rows, totalRecords] = await Promise.all([
+        let [rows, totalRecords] = await Promise.all([
             delegate.findMany(findArgs),
             delegate.count({ where }),
         ]);
+        if (report.context === "dashboard_credit_customers" &&
+            primaryTable === "Customer" &&
+            (0, creditDashboardReportEnrichment_1.reportConfigNeedsCreditDashboardEnrichment)(fields)) {
+            const requestedCustomerFields = fields
+                .filter((f) => f.table === "Customer" && f.field)
+                .map((f) => f.field);
+            let limitWarningByCustomerId;
+            if (requestedCustomerFields.includes("limit_warning_summary")) {
+                const { rows: warningRows } = await (0, creditInsuranceDashboardService_1.getLimitWarningReport)(accountId, 100_000, 0, { policyId: creditDashboardPolicyId });
+                limitWarningByCustomerId = new Map(warningRows.map((r) => [r.customerId, r]));
+            }
+            rows = await (0, creditDashboardReportEnrichment_1.enrichCreditDashboardCustomerRows)(rows, {
+                accountId,
+                policyId: creditDashboardPolicyId,
+                requestedFields: requestedCustomerFields,
+                limitWarningByCustomerId,
+            });
+        }
+        if (needsInMemorySort && effectiveSortField) {
+            rows = (0, creditDashboardReportEnrichment_1.sortCreditDashboardEnrichedRows)(rows, effectiveSortField, effectiveSortDirection);
+            totalRecords = rows.length;
+            rows = rows.slice(skip, skip + limit);
+        }
         const locale = body.locale || "en-US";
         const data = rows.map((row) => this.formatRow(row, primaryTable, fields, locale));
         return (0, serialize_bigint_1.serializeBigInt)({ data, totalRecords });
@@ -260,6 +346,11 @@ let ReportExecutionService = class ReportExecutionService {
                     this.applyCustomerPolicyNumberSelect(select);
                     continue;
                 }
+                if (primaryTable === "Invoice" &&
+                    f.field === "InsurancePolicy.policy_number") {
+                    this.applyInvoicePolicyNumberSelect(select);
+                    continue;
+                }
                 if (f.field.includes(".")) {
                     const [relTable, ...rest] = f.field.split(".");
                     const rel = relationMap[relTable] || relTable;
@@ -350,6 +441,13 @@ let ReportExecutionService = class ReportExecutionService {
             ensureRelSelect(rel)[f.field] = true;
         }
         this.enrichSelectForLinks(primaryTable, fields, select);
+        if (primaryTable === "Customer") {
+            const customerFields = fields
+                .filter((f) => f.table === "Customer")
+                .map((f) => f.field);
+            (0, report_customer_policy_fields_util_1.mergeActiveCustomerPolicySelect)(select, customerFields);
+            (0, report_customer_trend_fields_util_1.mergeLatestCustomerPolicyTrendSelect)(select, customerFields);
+        }
         return select;
     }
     applyCustomerPolicyNumberSelect(select) {
@@ -371,6 +469,20 @@ let ReportExecutionService = class ReportExecutionService {
                         policy_number: true,
                     },
                 },
+            },
+        };
+    }
+    applyInvoicePolicyNumberSelect(select) {
+        select.policy_id = true;
+        const existing = select.InsurancePolicy;
+        const existingSelect = existing?.select && typeof existing.select === "object"
+            ? existing.select
+            : {};
+        select.InsurancePolicy = {
+            select: {
+                ...existingSelect,
+                id: true,
+                policy_number: true,
             },
         };
     }
@@ -554,6 +666,13 @@ let ReportExecutionService = class ReportExecutionService {
                 return (dir) => ({ id: dir });
             }
         }
+        if (primaryTable === "Invoice") {
+            if (normalized === "InsurancePolicy.policy_number") {
+                return (dir) => ({
+                    InsurancePolicy: { policy_number: dir },
+                });
+            }
+        }
         if (primaryTable === "Dispute") {
             if (normalized === "dispute_number") {
                 return (dir) => ({ id: dir });
@@ -680,6 +799,10 @@ let ReportExecutionService = class ReportExecutionService {
                 f.field === "InsurancePolicy.policy_number") {
                 return this.extractCustomerPolicyNumber(row);
             }
+            if (primaryTable === "Invoice" &&
+                f.field === "InsurancePolicy.policy_number") {
+                return this.extractInvoicePolicyNumber(row);
+            }
             if (primaryTable === "Customer" && f.field === "category") {
                 const periods = row.CustomerCollectionPeriod;
                 if (Array.isArray(periods) && periods.length > 0) {
@@ -703,6 +826,17 @@ let ReportExecutionService = class ReportExecutionService {
                 if (activityValue !== undefined) {
                     return activityValue;
                 }
+            }
+            if (primaryTable === "Customer" &&
+                (0, report_customer_policy_fields_util_1.isCustomerPolicyBackedReportField)(f.field)) {
+                const policyValue = (0, report_customer_policy_fields_util_1.extractCustomerPolicyReportField)(row, f.field);
+                if (policyValue !== null && policyValue !== undefined) {
+                    return policyValue;
+                }
+            }
+            if (primaryTable === "Customer" &&
+                (0, report_customer_trend_fields_util_1.isTrendCostBackedReportField)(f.field)) {
+                return (0, report_customer_trend_fields_util_1.extractTrendCostReportField)(row, f.field);
             }
             if (f.field.includes(".")) {
                 const [relTable, ...rest] = f.field.split(".");
@@ -800,6 +934,11 @@ let ReportExecutionService = class ReportExecutionService {
         return typeof direct === "string" && direct.trim() !== ""
             ? direct
             : null;
+    }
+    extractInvoicePolicyNumber(row) {
+        const policy = row.InsurancePolicy;
+        const value = policy?.policy_number;
+        return typeof value === "string" && value.trim() !== "" ? value : null;
     }
     extractActivityVirtualField(row, field) {
         if (field === "call_time") {
