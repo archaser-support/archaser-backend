@@ -30,8 +30,14 @@ export class CronQueueService implements OnModuleDestroy {
         const redisUrl =
             this.config.get<string>("REDIS_URL") || "redis://127.0.0.1:6379";
         this.connection = new IORedis(redisUrl, {
-            maxRetriesPerRequest: null,
+            maxRetriesPerRequest: 1,
             lazyConnect: true,
+            enableOfflineQueue: false,
+            retryStrategy: (times: number) =>
+                times > 2 ? null : Math.min(times * 200, 1000),
+        });
+        this.connection.on("error", (err) => {
+            this.logger.warn(`Cron queue Redis: ${err.message}`);
         });
         this.queue = new Queue(CRON_QUEUE_NAME, {
             connection: this.connection,

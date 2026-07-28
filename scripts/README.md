@@ -65,7 +65,11 @@ General utility scripts for maintenance and fixes.
 
 ### 📁 deployment/
 
-Deployment-related scripts (currently empty, ready for future use).
+Deployment-related scripts.
+
+**Files:**
+
+- `deploy-backend-docker.sh` - Centralized EC2 deploy for backend Docker stacks (Nest API, Redis, worker, SMS, connectors, reports, and optional Grafana/Loki/Prometheus)
 
 ## Usage
 
@@ -118,13 +122,32 @@ npx ts-node database/run-migration.ts prisma/migrations/your_migration.sql
 node utilities/testEmail.ts
 ```
 
+### Deployment (EC2 Docker)
+
+```bash
+# From backend deploy root on EC2 (default app-dir /home/ubuntu/<env>)
+bash scripts/deployment/deploy-backend-docker.sh --env staging
+bash scripts/deployment/deploy-backend-docker.sh --env production
+
+# Optional flags
+bash scripts/deployment/deploy-backend-docker.sh --env staging --no-grafana
+bash scripts/deployment/deploy-backend-docker.sh --env staging --skip-install --skip-build
+```
+
+Or via npm scripts:
+
+```bash
+npm run deploy:docker:staging
+npm run deploy:docker:production
+```
+
 ## Script Categories
 
 - **Testing**: All test-related scripts for unit, integration, and end-to-end testing
 - **Database**: SQL files and database setup/migration scripts
 - **Development**: Development environment setup and debugging tools
 - **Utilities**: Maintenance and fix scripts for common issues
-- **Deployment**: Deployment automation scripts (future use)
+- **Deployment**: EC2 deployment automation scripts
 
 ## Best Practices
 
