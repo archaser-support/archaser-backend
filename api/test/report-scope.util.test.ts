@@ -26,6 +26,11 @@ describe("buildAccountScopeWhere", () => {
             account_id: 42,
         });
     });
+    it("scopes CustomerBanks with direct account_id", () => {
+        expect(buildAccountScopeWhere("CustomerBanks", 42)).toEqual({
+            account_id: 42,
+        });
+    });
 });
 
 describe("nestOwnerScopeWhere", () => {
@@ -40,9 +45,27 @@ describe("nestOwnerScopeWhere", () => {
             },
         });
     });
+
+    it("nests CustomerBanks owner through Customer", () => {
+        expect(
+            nestOwnerScopeWhere("CustomerBanks", { owner_id: "u1" })
+        ).toEqual({
+            Customer: { owner_id: "u1" },
+        });
+    });
 });
 
 describe("nestBusinessUnitScopeWhere", () => {
+    it("nests CustomerBanks BU through Customer", () => {
+        expect(
+            nestBusinessUnitScopeWhere("CustomerBanks", {
+                business_unit_id: { in: [1, 2] },
+            })
+        ).toEqual({
+            Customer: { business_unit_id: { in: [1, 2] } },
+        });
+    });
+
     it("nests Contact BU through Company.Customer", () => {
         expect(
             nestBusinessUnitScopeWhere("Contact", {

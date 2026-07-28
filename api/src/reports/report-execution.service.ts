@@ -15,6 +15,7 @@ import {
     CONTEXT_PRIMARY_TABLE,
     CREDIT_DASHBOARD_CONTEXTS,
     DASHBOARD_REPORT_CONTEXTS,
+    ENTITY_LIST_REPORT_CONTEXTS,
     FINANCIAL_DASHBOARD_CONTEXTS,
     getFieldOutputKey,
     MODEL_NAME_MAP,
@@ -223,6 +224,28 @@ export class ReportExecutionService {
         );
         if (canViewReports) {
             return;
+        }
+        // Customer-detail embedded grids (contacts, banks, etc.)
+        if (context && ENTITY_LIST_REPORT_CONTEXTS.has(context)) {
+            if (
+                await this.access.hasPermission(
+                    accountId,
+                    role,
+                    "view_customers"
+                )
+            ) {
+                return;
+            }
+            if (
+                (context === "contacts" || context === "customer_contacts") &&
+                (await this.access.hasPermission(
+                    accountId,
+                    role,
+                    "view_contacts"
+                ))
+            ) {
+                return;
+            }
         }
         if (!context || !DASHBOARD_REPORT_CONTEXTS.has(context)) {
             throw new ForbiddenException(
@@ -484,6 +507,29 @@ export class ReportExecutionService {
             }
             const rel = relationMap[f.table];
             if (!rel) {
+                // CustomerBanks → AccountBankAccounts → Country (report joins Country via bank account)
+                if (
+                    primaryTable === "CustomerBanks" &&
+                    f.table === "Country"
+                ) {
+                    const aba = ensureRelSelect("AccountBankAccounts");
+                    const existing = aba.Country;
+                    const countrySelect =
+                        existing &&
+                        typeof existing === "object" &&
+                        existing !== null &&
+                        "select" in (existing as object)
+                            ? (
+                                  existing as {
+                                      select: Record<string, unknown>;
+                                  }
+                              ).select
+                            : { id: true };
+                    if (isPrismaScalarField("Country", f.field)) {
+                        countrySelect[f.field] = true;
+                    }
+                    aba.Country = { select: countrySelect };
+                }
                 continue;
             }
             if (f.table === "Customer" && f.field === "name") {
@@ -1062,6 +1108,21 @@ export class ReportExecutionService {
         const nested = rel
             ? (row[rel] as Record<string, unknown> | null)
             : null;
+        if (
+            primaryTable === "CustomerBanks" &&
+            f.table === "Country" &&
+            !rel
+        ) {
+            const aba = row.AccountBankAccounts as
+                | Record<string, unknown>
+                | null
+                | undefined;
+            const country = aba?.Country as
+                | Record<string, unknown>
+                | null
+                | undefined;
+            return country?.[f.field] ?? null;
+        }
         if (f.table === "Customer" && f.field === "name") {
             return nested ? this.extractCustomerName(nested) : null;
         }

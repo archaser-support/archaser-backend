@@ -26,17 +26,41 @@ function createAccountAdminController(entityType) {
         async list(user, query) {
             return this.service.list(entityType, user, query);
         }
+        async create(user, body) {
+            if (entityType === "business-units") {
+                return this.service.createBusinessUnit(user, body);
+            }
+            return { error: `Create not supported for ${entityType}` };
+        }
         async collectionAgents(user) {
             if (entityType !== "users") {
                 return this.service.getById(entityType, user, this.service.parseId(entityType, "collection-agents"));
             }
             return this.service.listCollectionAgents(user);
         }
+        async updateStatus(user, id, body) {
+            if (entityType !== "business-units") {
+                return {
+                    error: `Status update not supported for ${entityType}`,
+                };
+            }
+            const status = body.status === "Inactive" ? "Inactive" : "Active";
+            return this.service.updateBusinessUnitStatus(user, this.service.parseId(entityType, id), status);
+        }
         async byId(user, id) {
             return this.service.getById(entityType, user, this.service.parseId(entityType, id));
         }
         async update(user, id, body) {
             return this.service.update(entityType, user, this.service.parseId(entityType, id), body);
+        }
+        async remove(user, id, body) {
+            if (entityType !== "business-units") {
+                return { error: `Delete not supported for ${entityType}` };
+            }
+            const reassign = body?.reassignToBusinessUnitId == null
+                ? null
+                : Number(body.reassignToBusinessUnitId);
+            return this.service.deleteBusinessUnit(user, this.service.parseId(entityType, id), reassign);
         }
     };
     __decorate([
@@ -54,6 +78,15 @@ function createAccountAdminController(entityType) {
         __metadata("design:returntype", Promise)
     ], AccountAdminEntityController.prototype, "list", null);
     __decorate([
+        (0, common_1.Post)(),
+        (0, swagger_1.ApiOperation)({ summary: `${entityType} create (Nest-native)` }),
+        __param(0, (0, current_user_decorator_1.CurrentUser)()),
+        __param(1, (0, common_1.Body)()),
+        __metadata("design:type", Function),
+        __metadata("design:paramtypes", [Object, Object]),
+        __metadata("design:returntype", Promise)
+    ], AccountAdminEntityController.prototype, "create", null);
+    __decorate([
         (0, common_1.Get)("collection-agents"),
         (0, swagger_1.ApiOperation)({
             summary: "Active collection agents (users entity only)",
@@ -63,6 +96,16 @@ function createAccountAdminController(entityType) {
         __metadata("design:paramtypes", [Object]),
         __metadata("design:returntype", Promise)
     ], AccountAdminEntityController.prototype, "collectionAgents", null);
+    __decorate([
+        (0, common_1.Put)(":id/status"),
+        (0, swagger_1.ApiOperation)({ summary: `${entityType} status update (Nest-native)` }),
+        __param(0, (0, current_user_decorator_1.CurrentUser)()),
+        __param(1, (0, common_1.Param)("id")),
+        __param(2, (0, common_1.Body)()),
+        __metadata("design:type", Function),
+        __metadata("design:paramtypes", [Object, String, Object]),
+        __metadata("design:returntype", Promise)
+    ], AccountAdminEntityController.prototype, "updateStatus", null);
     __decorate([
         (0, common_1.Get)(":id"),
         (0, swagger_1.ApiOperation)({ summary: `${entityType} detail (Nest-native)` }),
@@ -82,6 +125,16 @@ function createAccountAdminController(entityType) {
         __metadata("design:paramtypes", [Object, String, Object]),
         __metadata("design:returntype", Promise)
     ], AccountAdminEntityController.prototype, "update", null);
+    __decorate([
+        (0, common_1.Delete)(":id"),
+        (0, swagger_1.ApiOperation)({ summary: `${entityType} delete (Nest-native)` }),
+        __param(0, (0, current_user_decorator_1.CurrentUser)()),
+        __param(1, (0, common_1.Param)("id")),
+        __param(2, (0, common_1.Body)()),
+        __metadata("design:type", Function),
+        __metadata("design:paramtypes", [Object, String, Object]),
+        __metadata("design:returntype", Promise)
+    ], AccountAdminEntityController.prototype, "remove", null);
     AccountAdminEntityController = __decorate([
         (0, swagger_1.ApiTags)("entities"),
         (0, swagger_1.ApiBearerAuth)(),
@@ -90,7 +143,9 @@ function createAccountAdminController(entityType) {
         __metadata("design:paramtypes", [account_admin_entities_service_1.AccountAdminEntitiesService])
     ], AccountAdminEntityController);
     Object.defineProperty(AccountAdminEntityController, "name", {
-        value: `${entityType.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).replace(/^./, (c) => c.toUpperCase())}AccountAdminController`,
+        value: `${entityType
+            .replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+            .replace(/^./, (c) => c.toUpperCase())}AccountAdminController`,
     });
     return AccountAdminEntityController;
 }

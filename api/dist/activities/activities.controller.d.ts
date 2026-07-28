@@ -28,8 +28,8 @@ export declare class ActivitiesController {
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
-            active: boolean;
             sequence_container_id: number | null;
+            active: boolean;
             step: number | null;
             activity_type: import(".prisma/client").$Enums.activity_type;
             category: import(".prisma/client").$Enums.category;
@@ -66,8 +66,8 @@ export declare class ActivitiesController {
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
-        active: boolean;
         sequence_container_id: number | null;
+        active: boolean;
         step: number | null;
         activity_type: import(".prisma/client").$Enums.activity_type;
         category: import(".prisma/client").$Enums.category;
@@ -89,8 +89,8 @@ export declare class ActivitiesController {
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
-        active: boolean;
         sequence_container_id: number | null;
+        active: boolean;
         step: number | null;
         activity_type: import(".prisma/client").$Enums.activity_type;
         category: import(".prisma/client").$Enums.category;
@@ -112,8 +112,8 @@ export declare class ActivitiesController {
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
-        active: boolean;
         sequence_container_id: number | null;
+        active: boolean;
         step: number | null;
         activity_type: import(".prisma/client").$Enums.activity_type;
         category: import(".prisma/client").$Enums.category;
@@ -137,8 +137,8 @@ export declare class ActivitiesController {
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
-        active: boolean;
         sequence_container_id: number | null;
+        active: boolean;
         step: number | null;
         activity_type: import(".prisma/client").$Enums.activity_type;
         category: import(".prisma/client").$Enums.category;

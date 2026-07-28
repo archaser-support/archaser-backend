@@ -410,6 +410,15 @@ let ReportsService = class ReportsService {
         if (await this.access.hasPermission(accountId, role, "view_reports")) {
             return;
         }
+        if (context && report_constants_1.ENTITY_LIST_REPORT_CONTEXTS.has(context)) {
+            if (await this.access.hasPermission(accountId, role, "view_customers")) {
+                return;
+            }
+            if ((context === "contacts" || context === "customer_contacts") &&
+                (await this.access.hasPermission(accountId, role, "view_contacts"))) {
+                return;
+            }
+        }
         if (context && report_constants_1.DASHBOARD_REPORT_CONTEXTS.has(context)) {
             if (report_constants_1.FINANCIAL_DASHBOARD_CONTEXTS.has(context) &&
                 (await this.access.hasPermission(accountId, role, "view_financial_dashboard"))) {

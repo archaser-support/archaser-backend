@@ -1,8 +1,10 @@
 import {
     Body,
     Controller,
+    Delete,
     Get,
     Param,
+    Post,
     Put,
     Query,
     Type,
@@ -51,6 +53,18 @@ export function createAccountAdminController(
             return this.service.list(entityType, user, query);
         }
 
+        @Post()
+        @ApiOperation({ summary: `${entityType} create (Nest-native)` })
+        async create(
+            @CurrentUser() user: JwtPayload,
+            @Body() body: Record<string, unknown>
+        ) {
+            if (entityType === "business-units") {
+                return this.service.createBusinessUnit(user, body);
+            }
+            return { error: `Create not supported for ${entityType}` };
+        }
+
         // Declared before `:id` so Nest does not treat the path segment as an id.
         @Get("collection-agents")
         @ApiOperation({
@@ -65,6 +79,26 @@ export function createAccountAdminController(
                 );
             }
             return this.service.listCollectionAgents(user);
+        }
+
+        @Put(":id/status")
+        @ApiOperation({ summary: `${entityType} status update (Nest-native)` })
+        async updateStatus(
+            @CurrentUser() user: JwtPayload,
+            @Param("id") id: string,
+            @Body() body: Record<string, unknown>
+        ) {
+            if (entityType !== "business-units") {
+                return {
+                    error: `Status update not supported for ${entityType}`,
+                };
+            }
+            const status = body.status === "Inactive" ? "Inactive" : "Active";
+            return this.service.updateBusinessUnitStatus(
+                user,
+                this.service.parseId(entityType, id) as number,
+                status
+            );
         }
 
         @Get(":id")
@@ -94,10 +128,33 @@ export function createAccountAdminController(
                 body
             );
         }
+
+        @Delete(":id")
+        @ApiOperation({ summary: `${entityType} delete (Nest-native)` })
+        async remove(
+            @CurrentUser() user: JwtPayload,
+            @Param("id") id: string,
+            @Body() body: Record<string, unknown>
+        ) {
+            if (entityType !== "business-units") {
+                return { error: `Delete not supported for ${entityType}` };
+            }
+            const reassign =
+                body?.reassignToBusinessUnitId == null
+                    ? null
+                    : Number(body.reassignToBusinessUnitId);
+            return this.service.deleteBusinessUnit(
+                user,
+                this.service.parseId(entityType, id) as number,
+                reassign
+            );
+        }
     }
 
     Object.defineProperty(AccountAdminEntityController, "name", {
-        value: `${entityType.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()).replace(/^./, (c) => c.toUpperCase())}AccountAdminController`,
+        value: `${entityType
+            .replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
+            .replace(/^./, (c) => c.toUpperCase())}AccountAdminController`,
     });
 
     return AccountAdminEntityController;

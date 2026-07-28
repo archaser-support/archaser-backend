@@ -19,6 +19,8 @@ const REPORT_TABLE_TO_PRISMA_MODEL = {
     Activity: "Activity",
     Dispute: "CustomerDispute",
     CustomerCollectionPeriod: "CustomerCollectionPeriod",
+    CustomerBanks: "CustomerBanks",
+    AccountBankAccounts: "AccountBankAccounts",
     Person: "Person",
     Company: "Company",
     User: "User",

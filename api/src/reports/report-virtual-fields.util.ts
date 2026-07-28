@@ -10,6 +10,8 @@ const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
     Activity: "Activity",
     Dispute: "CustomerDispute",
     CustomerCollectionPeriod: "CustomerCollectionPeriod",
+    CustomerBanks: "CustomerBanks",
+    AccountBankAccounts: "AccountBankAccounts",
     Person: "Person",
     Company: "Company",
     User: "User",

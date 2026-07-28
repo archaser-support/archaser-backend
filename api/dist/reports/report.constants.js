@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RELATION_FROM_PRIMARY = exports.CREDIT_DASHBOARD_CONTEXTS = exports.OPERATION_DASHBOARD_CONTEXTS = exports.FINANCIAL_DASHBOARD_CONTEXTS = exports.DASHBOARD_REPORT_CONTEXTS = exports.CONTEXT_PRIMARY_TABLE = exports.MODEL_NAME_MAP = void 0;
+exports.RELATION_FROM_PRIMARY = exports.CREDIT_DASHBOARD_CONTEXTS = exports.OPERATION_DASHBOARD_CONTEXTS = exports.FINANCIAL_DASHBOARD_CONTEXTS = exports.DASHBOARD_REPORT_CONTEXTS = exports.ENTITY_LIST_REPORT_CONTEXTS = exports.CONTEXT_PRIMARY_TABLE = exports.MODEL_NAME_MAP = void 0;
 exports.getFieldOutputKey = getFieldOutputKey;
 exports.MODEL_NAME_MAP = {
     Customer: "customer",
@@ -11,6 +11,8 @@ exports.MODEL_NAME_MAP = {
     Activity: "activity",
     Dispute: "customerDispute",
     CustomerCollectionPeriod: "customerCollectionPeriod",
+    CustomerBanks: "customerBanks",
+    AccountBankAccounts: "accountBankAccounts",
     Person: "person",
     Company: "company",
     User: "user",
@@ -20,6 +22,8 @@ exports.CONTEXT_PRIMARY_TABLE = {
     customers: "Customer",
     invoices: "Invoice",
     contacts: "Contact",
+    customer_contacts: "Contact",
+    customer_banks: "CustomerBanks",
     disputes: "Dispute",
     payments: "Payment",
     activities: "Activity",
@@ -33,6 +37,17 @@ exports.CONTEXT_PRIMARY_TABLE = {
     dashboard_credit_customers: "Customer",
     dashboard_credit_invoices: "Invoice",
 };
+exports.ENTITY_LIST_REPORT_CONTEXTS = new Set([
+    "customers",
+    "invoices",
+    "contacts",
+    "customer_contacts",
+    "customer_banks",
+    "disputes",
+    "payments",
+    "activities",
+    "customer-collection-period",
+]);
 exports.DASHBOARD_REPORT_CONTEXTS = new Set([
     "dashboard_invoices",
     "dashboard_customers",
@@ -77,6 +92,13 @@ exports.RELATION_FROM_PRIMARY = {
     Contact: {
         Customer: "Customer",
         Person: "Person",
+        Country: "Country",
+        State: "State",
+        Company: "Company",
+    },
+    CustomerBanks: {
+        AccountBankAccounts: "AccountBankAccounts",
+        Customer: "Customer",
     },
     Dispute: {
         Customer: "Customer",

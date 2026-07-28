@@ -5,11 +5,15 @@ import {
     ACCOUNT_ADMIN_ENTITY_TYPES,
     AccountAdminEntitiesService,
 } from "./account-admin-entities.service";
+import { AccountsBankAccountsController } from "./accounts-bank-accounts.controller";
+import { AccountsBusinessUnitsController } from "./accounts-business-units.controller";
 import { BankAccountsLeafController } from "./bank-accounts-leaf.controller";
 import { createAccountAdminController } from "./create-account-admin.controller";
 
 const controllers = [
     ...ACCOUNT_ADMIN_ENTITY_TYPES.map((t) => createAccountAdminController(t)),
+    AccountsBusinessUnitsController,
+    AccountsBankAccountsController,
     BankAccountsLeafController,
 ];
 

@@ -296,9 +296,9 @@ export declare class SystemController {
                 } | null;
                 customer_number: string | null;
                 number_of_overdue_invoices: number | null;
-                owner_id: string | null;
                 total_overdue_amount: number | null;
                 oldest_invoice_overdue_date: Date | null;
+                owner_id: string | null;
             };
         } & {
             id: number;
@@ -385,9 +385,9 @@ export declare class SystemController {
                 } | null;
                 customer_number: string | null;
                 number_of_overdue_invoices: number | null;
-                owner_id: string | null;
                 total_overdue_amount: number | null;
                 oldest_invoice_overdue_date: Date | null;
+                owner_id: string | null;
             };
         } & {
             id: number;
@@ -456,9 +456,9 @@ export declare class SystemController {
                 } | null;
                 customer_number: string | null;
                 number_of_overdue_invoices: number | null;
-                owner_id: string | null;
                 total_overdue_amount: number | null;
                 oldest_invoice_overdue_date: Date | null;
+                owner_id: string | null;
             };
         } & {
             id: number;

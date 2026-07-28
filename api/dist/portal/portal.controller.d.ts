@@ -25,8 +25,6 @@ export declare class PortalCustomersDomainController {
             created_by: string | null;
             modified_by: string | null;
             promise_to_pay: number | null;
-            customer_id: number | null;
-            collection_period_id: number | null;
             customer_number: number | null;
             generic_text1: string | null;
             generic_text2: string | null;
@@ -34,6 +32,8 @@ export declare class PortalCustomersDomainController {
             generic_number2: number | null;
             generic_date1: Date | null;
             generic_date2: Date | null;
+            customer_id: number | null;
+            collection_period_id: number | null;
             amount: number | null;
             policy_id: number | null;
             invoice_number: string | null;
@@ -83,9 +83,9 @@ export declare class PortalCustomersDomainController {
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            owner_id: string | null;
             dispute_resolution: import(".prisma/client").$Enums.dispute_resolution | null;
             customer_id: number;
-            owner_id: string | null;
             dispute_reason_id: number | null;
             dispute_status: import(".prisma/client").$Enums.dispute_status | null;
             customer_comment: string | null;

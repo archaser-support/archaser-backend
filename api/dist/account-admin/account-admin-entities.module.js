@@ -11,10 +11,14 @@ const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const database_module_1 = require("../database/database.module");
 const account_admin_entities_service_1 = require("./account-admin-entities.service");
+const accounts_bank_accounts_controller_1 = require("./accounts-bank-accounts.controller");
+const accounts_business_units_controller_1 = require("./accounts-business-units.controller");
 const bank_accounts_leaf_controller_1 = require("./bank-accounts-leaf.controller");
 const create_account_admin_controller_1 = require("./create-account-admin.controller");
 const controllers = [
     ...account_admin_entities_service_1.ACCOUNT_ADMIN_ENTITY_TYPES.map((t) => (0, create_account_admin_controller_1.createAccountAdminController)(t)),
+    accounts_business_units_controller_1.AccountsBusinessUnitsController,
+    accounts_bank_accounts_controller_1.AccountsBankAccountsController,
     bank_accounts_leaf_controller_1.BankAccountsLeafController,
 ];
 let AccountAdminEntitiesModule = class AccountAdminEntitiesModule {
