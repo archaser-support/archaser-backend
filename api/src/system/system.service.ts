@@ -1205,6 +1205,37 @@ export class SystemService {
         });
     }
 
+    /** Customer fields the Agents grids need (country/state/BU + display names). */
+    private agentsCustomerSelect() {
+        return {
+            id: true,
+            customer_number: true,
+            total_overdue_amount: true,
+            number_of_overdue_invoices: true,
+            oldest_invoice_overdue_date: true,
+            owner_id: true,
+            country_id: true,
+            state_id: true,
+            business_unit_id: true,
+            Company: { select: { name: true } },
+            Person: {
+                select: {
+                    first_name: true,
+                    last_name: true,
+                },
+            },
+            Country: {
+                select: { id: true, name: true, iso2: true },
+            },
+            State: {
+                select: { id: true, name: true, iso2: true },
+            },
+            BusinessUnit: {
+                select: { id: true, name: true },
+            },
+        };
+    }
+
     async getAgents(user: JwtPayload, query: SystemListQuery = {}) {
         const { accountId } = await this.scope(user);
         const page = parseInt(query.page || "1", 10);
@@ -1212,13 +1243,132 @@ export class SystemService {
         const search = query.search || "";
         const skip = (page - 1) * limit;
         const currency = await this.accountCurrency(accountId);
+        const businessUnitId = query.businessUnitId
+            ? parseInt(String(query.businessUnitId), 10)
+            : NaN;
+        const outcome = query.outcome || "";
 
         const where = {
             current_category: "Agent" as const,
             period_end_date: null,
+            ...(outcome ? { last_call_result: outcome } : {}),
             Customer: {
                 account_id: accountId,
                 collection_status: "Active" as const,
+                ...(Number.isFinite(businessUnitId)
+                    ? { business_unit_id: businessUnitId }
+                    : {}),
+                ...(search
+                    ? {
+                          OR: [
+                              {
+                                  customer_number: {
+                                      contains: search,
+                                      mode: "insensitive" as const,
+                                  },
+                              },
+                              {
+                                  Company: {
+                                      name: {
+                                          contains: search,
+                                          mode: "insensitive" as const,
+                                      },
+                                  },
+                              },
+                              {
+                                  Person: {
+                                      first_name: {
+                                          contains: search,
+                                          mode: "insensitive" as const,
+                                      },
+                                  },
+                              },
+                              {
+                                  Person: {
+                                      last_name: {
+                                          contains: search,
+                                          mode: "insensitive" as const,
+                                      },
+                                  },
+                              },
+                          ],
+                      }
+                    : {}),
+            },
+        };
+
+        const [periods, totalRecords] = await Promise.all([
+            this.db.customerCollectionPeriod.findMany({
+                where,
+                include: {
+                    Customer: {
+                        select: this.agentsCustomerSelect(),
+                    },
+                },
+                skip,
+                take: limit,
+                orderBy: { last_call: "desc" },
+            }),
+            this.db.customerCollectionPeriod.count({ where }),
+        ]);
+
+        return serializeBigInt({
+            agents: periods,
+            totalRecords,
+            currentPage: page,
+            totalPages: Math.ceil(totalRecords / limit) || 0,
+            currency,
+        });
+    }
+
+    async getAgentsFollowUp(user: JwtPayload) {
+        const { accountId } = await this.scope(user);
+        const currency = await this.accountCurrency(accountId);
+        const now = new Date();
+        const periods = await this.db.customerCollectionPeriod.findMany({
+            where: {
+                follow_up_time: { lte: now },
+                period_end_date: null,
+                Customer: {
+                    account_id: accountId,
+                    collection_status: "Active",
+                },
+            },
+            include: {
+                Customer: {
+                    select: this.agentsCustomerSelect(),
+                },
+            },
+            take: 100,
+            orderBy: { follow_up_time: "asc" },
+        });
+        return serializeBigInt({
+            agents: periods,
+            followUps: periods,
+            totalRecords: periods.length,
+            currency,
+        });
+    }
+
+    async getAgentsStats(user: JwtPayload, query: SystemListQuery = {}) {
+        const { accountId } = await this.scope(user);
+        const currency = await this.accountCurrency(accountId);
+        const search = query.search || "";
+        const outcome = query.outcome || "";
+        const businessUnitId = query.businessUnitId
+            ? parseInt(String(query.businessUnitId), 10)
+            : NaN;
+
+        const where = {
+            current_category: "Agent" as const,
+            period_end_date: null,
+            ...(outcome ? { last_call_result: outcome } : {}),
+            Customer: {
+                account_id: accountId,
+                collection_status: "Active" as const,
+                ...(Number.isFinite(businessUnitId)
+                    ? { business_unit_id: businessUnitId }
+                    : {}),
                 ...(search
                     ? {
                           OR: [
@@ -1242,104 +1392,49 @@ export class SystemService {
             },
         };
 
-        const [periods, totalRecords] = await Promise.all([
+        const [totalCustomers, periods, totalOutstanding] = await Promise.all([
+            this.db.customerCollectionPeriod.count({ where }),
             this.db.customerCollectionPeriod.findMany({
                 where,
-                include: {
-                    Customer: {
-                        select: {
-                            id: true,
-                            customer_number: true,
-                            total_overdue_amount: true,
-                            number_of_overdue_invoices: true,
-                            oldest_invoice_overdue_date: true,
-                            owner_id: true,
-                            Company: { select: { name: true } },
-                            Person: {
-                                select: {
-                                    first_name: true,
-                                    last_name: true,
-                                },
-                            },
-                        },
-                    },
-                },
-                skip,
-                take: limit,
-                orderBy: { last_call: "desc" },
-            }),
-            this.db.customerCollectionPeriod.count({ where }),
-        ]);
-
-        return serializeBigInt({
-            agents: periods,
-            totalRecords,
-            currentPage: page,
-            totalPages: Math.ceil(totalRecords / limit) || 0,
-            currency,
-        });
-    }
-
-    async getAgentsFollowUp(user: JwtPayload) {
-        const { accountId } = await this.scope(user);
-        const now = new Date();
-        const periods = await this.db.customerCollectionPeriod.findMany({
-            where: {
-                follow_up_time: { lte: now },
-                period_end_date: null,
-                Customer: {
-                    account_id: accountId,
-                    collection_status: "Active",
-                },
-            },
-            include: {
-                Customer: {
-                    select: {
-                        id: true,
-                        customer_number: true,
-                        Company: { select: { name: true } },
-                        Person: {
-                            select: { first_name: true, last_name: true },
-                        },
-                    },
-                },
-            },
-            take: 100,
-            orderBy: { follow_up_time: "asc" },
-        });
-        return serializeBigInt({
-            followUps: periods,
-            totalRecords: periods.length,
-        });
-    }
-
-    async getAgentsStats(user: JwtPayload) {
-        const { accountId } = await this.scope(user);
-        const [agentPeriods, totalOutstanding] = await Promise.all([
-            this.db.customerCollectionPeriod.count({
-                where: {
-                    current_category: "Agent",
-                    period_end_date: null,
-                    Customer: {
-                        account_id: accountId,
-                        collection_status: "Active",
-                    },
-                },
+                select: { customer_id: true },
             }),
             this.db.customerCollectionPeriod.aggregate({
-                where: {
-                    current_category: "Agent",
-                    period_end_date: null,
-                    Customer: {
-                        account_id: accountId,
-                        collection_status: "Active",
-                    },
-                },
+                where,
                 _sum: { total_outstanding_amount: true },
             }),
         ]);
+
+        const customerIds = [
+            ...new Set(
+                periods
+                    .map((p) => p.customer_id)
+                    .filter((id): id is number => id != null)
+            ),
+        ];
+        const totalInvoices =
+            customerIds.length === 0
+                ? 0
+                : await this.db.invoice.count({
+                      where: {
+                          customer_id: { in: customerIds },
+                          status: { notIn: ["Paid", "Void", "Cancelled"] },
+                          due_date: { lt: new Date() },
+                      },
+                  });
+
         return serializeBigInt({
-            totalAgents: agentPeriods,
+            stats: {
+                counts: {
+                    total_customers: totalCustomers,
+                    total_invoices: totalInvoices,
+                    total_outstanding_amount: Number(
+                        totalOutstanding._sum.total_outstanding_amount ?? 0
+                    ),
+                    currency,
+                },
+            },
+            // Keep legacy keys for any older consumers
+            totalAgents: totalCustomers,
             totalOutstandingAmount: Number(
                 totalOutstanding._sum.total_outstanding_amount ?? 0
             ),

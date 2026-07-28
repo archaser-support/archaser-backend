@@ -111,8 +111,11 @@ export class SystemController {
 
     @Get("agents/stats")
     @ApiOperation({ summary: "Agents stats (Nest-native)" })
-    async agentsStats(@CurrentUser() user: JwtPayload) {
-        return this.system.getAgentsStats(user);
+    async agentsStats(
+        @CurrentUser() user: JwtPayload,
+        @Query() query: SystemListQuery
+    ) {
+        return this.system.getAgentsStats(user, query);
     }
 
     @Get("agents/follow-up")

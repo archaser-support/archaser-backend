@@ -244,10 +244,28 @@ export declare class SystemService {
         totalRecords: number;
         hasMore: boolean;
     }>;
+    private agentsCustomerSelect;
     getAgents(user: JwtPayload, query?: SystemListQuery): Promise<{
         agents: ({
             Customer: {
                 id: number;
+                business_unit_id: number | null;
+                BusinessUnit: {
+                    name: string;
+                    id: number;
+                } | null;
+                country_id: number | null;
+                state_id: number | null;
+                Country: {
+                    name: string;
+                    id: number;
+                    iso2: string | null;
+                } | null;
+                State: {
+                    name: string;
+                    id: number;
+                    iso2: string | null;
+                } | null;
                 Company: {
                     name: string;
                 } | null;
@@ -305,9 +323,26 @@ export declare class SystemService {
         currency: string;
     }>;
     getAgentsFollowUp(user: JwtPayload): Promise<{
-        followUps: ({
+        agents: ({
             Customer: {
                 id: number;
+                business_unit_id: number | null;
+                BusinessUnit: {
+                    name: string;
+                    id: number;
+                } | null;
+                country_id: number | null;
+                state_id: number | null;
+                Country: {
+                    name: string;
+                    id: number;
+                    iso2: string | null;
+                } | null;
+                State: {
+                    name: string;
+                    id: number;
+                    iso2: string | null;
+                } | null;
                 Company: {
                     name: string;
                 } | null;
@@ -316,6 +351,81 @@ export declare class SystemService {
                     last_name: string | null;
                 } | null;
                 customer_number: string | null;
+                number_of_overdue_invoices: number | null;
+                owner_id: string | null;
+                total_overdue_amount: number | null;
+                oldest_invoice_overdue_date: Date | null;
+            };
+        } & {
+            id: number;
+            created_at: Date;
+            modified_at: Date;
+            currency: string | null;
+            created_by: string | null;
+            modified_by: string | null;
+            next_activity_date: Date | null;
+            priority: import(".prisma/client").$Enums.priority | null;
+            customer_id: number;
+            period_start_date: Date;
+            period_end_date: Date | null;
+            last_automated_step: number | null;
+            previous_category: import(".prisma/client").$Enums.category | null;
+            current_category: import(".prisma/client").$Enums.category | null;
+            total_outstanding_amount: number | null;
+            no_of_overdue_invoices: number | null;
+            promise_to_pay_date: Date | null;
+            last_dispute_date: Date | null;
+            customer_outstanding_amount1: number | null;
+            customer_outstanding_amount2: number | null;
+            customer_currency1: string | null;
+            customer_currency2: string | null;
+            last_call: Date | null;
+            last_call_result: string | null;
+            follow_up_time: Date | null;
+            promise_to_pay_amount: number | null;
+            next_category: import(".prisma/client").$Enums.category | null;
+            next_category_date: Date | null;
+            create_next_activity: boolean;
+            promise_to_pay_count: number;
+            is_last_automated_step_delivered: boolean;
+            risk_score: import("@prisma/client/runtime/library").Decimal | null;
+            risk_factors: import("@prisma/client/runtime/library").JsonValue | null;
+            last_risk_calculation: Date | null;
+            risk_category: string | null;
+            lawyer_assigned: boolean;
+        })[];
+        followUps: ({
+            Customer: {
+                id: number;
+                business_unit_id: number | null;
+                BusinessUnit: {
+                    name: string;
+                    id: number;
+                } | null;
+                country_id: number | null;
+                state_id: number | null;
+                Country: {
+                    name: string;
+                    id: number;
+                    iso2: string | null;
+                } | null;
+                State: {
+                    name: string;
+                    id: number;
+                    iso2: string | null;
+                } | null;
+                Company: {
+                    name: string;
+                } | null;
+                Person: {
+                    first_name: string | null;
+                    last_name: string | null;
+                } | null;
+                customer_number: string | null;
+                number_of_overdue_invoices: number | null;
+                owner_id: string | null;
+                total_overdue_amount: number | null;
+                oldest_invoice_overdue_date: Date | null;
             };
         } & {
             id: number;
@@ -356,8 +466,17 @@ export declare class SystemService {
             lawyer_assigned: boolean;
         })[];
         totalRecords: number;
+        currency: string;
     }>;
-    getAgentsStats(user: JwtPayload): Promise<{
+    getAgentsStats(user: JwtPayload, query?: SystemListQuery): Promise<{
+        stats: {
+            counts: {
+                total_customers: number;
+                total_invoices: number;
+                total_outstanding_amount: number;
+                currency: string;
+            };
+        };
         totalAgents: number;
         totalOutstandingAmount: number;
     }>;

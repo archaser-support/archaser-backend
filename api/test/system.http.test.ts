@@ -76,12 +76,16 @@ describe("SystemModule — Nest-native HTTP contract", () => {
             findMany: jest.fn().mockResolvedValue([
                 {
                     id: 99,
+                    customer_id: 1,
                     current_category: "Agent",
                     total_outstanding_amount: 100,
                     Customer: {
                         id: 1,
                         customer_number: "C-1",
                         Company: { name: "Acme" },
+                        Country: { id: 1, name: "Israel", iso2: "IL" },
+                        State: { id: 2, name: "Tel Aviv", iso2: "TA" },
+                        BusinessUnit: { id: 3, name: "HQ" },
                     },
                 },
             ]),
@@ -228,6 +232,16 @@ describe("SystemModule — Nest-native HTTP contract", () => {
             .expect(200);
         expect(agents.body.agents).toHaveLength(1);
         expect(agents.body.totalRecords).toBe(1);
+        expect(agents.body.agents[0].Customer.Country.name).toBe("Israel");
+        expect(agents.body.agents[0].Customer.State.name).toBe("Tel Aviv");
+        expect(agents.body.currency).toBe("USD");
+
+        const agentStats = await request(app.getHttpServer())
+            .get("/api/system/agents/stats")
+            .set("Authorization", `Bearer ${token}`)
+            .expect(200);
+        expect(agentStats.body.stats.counts.total_customers).toBe(1);
+        expect(agentStats.body.stats.counts.currency).toBe("USD");
     });
 
     it("GET /api/system/admin/cron-jobs and POST cache-invalidation", async () => {
