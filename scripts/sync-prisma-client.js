@@ -1,11 +1,24 @@
 /**
- * Prisma schema lives at backend/prisma/. Generate may write into root or
- * backend node_modules depending on cwd; sync into frontend + backend installs.
+ * Prisma schema lives at backend/prisma/. Generate may write into this package,
+ * the monorepo root, or a sibling install depending on cwd; sync into every
+ * install that exists in the current layout. Supports both the monorepo
+ * checkout (frontend/ + backend/ siblings) and a standalone backend repo.
  */
 const fs = require("fs");
 const path = require("path");
 
-const root = path.resolve(__dirname, "../..");
+const packageRoot = path.resolve(__dirname, "..");
+const workspaceRoot = path.resolve(packageRoot, "..");
+
+function uniquePaths(paths) {
+    const seen = new Set();
+    return paths.filter((entry) => {
+        const resolved = path.resolve(entry);
+        if (seen.has(resolved)) return false;
+        seen.add(resolved);
+        return true;
+    });
+}
 
 function copyDir(src, dest) {
     fs.mkdirSync(dest, { recursive: true });
@@ -18,11 +31,12 @@ function copyDir(src, dest) {
 }
 
 function findGeneratedPrisma() {
-    const candidates = [
-        path.join(root, "node_modules", ".prisma"),
-        path.join(root, "backend", "node_modules", ".prisma"),
-        path.join(root, "frontend", "node_modules", ".prisma"),
-    ];
+    const candidates = uniquePaths([
+        path.join(packageRoot, "node_modules", ".prisma"),
+        path.join(workspaceRoot, "node_modules", ".prisma"),
+        path.join(workspaceRoot, "backend", "node_modules", ".prisma"),
+        path.join(workspaceRoot, "frontend", "node_modules", ".prisma"),
+    ]);
     for (const candidate of candidates) {
         const indexJs = path.join(candidate, "client", "index.js");
         if (fs.existsSync(indexJs) && fs.statSync(indexJs).size > 10_000) {
@@ -33,11 +47,12 @@ function findGeneratedPrisma() {
 }
 
 function findGeneratedClientPkg(nearPrisma) {
-    const tryPaths = [
+    const tryPaths = uniquePaths([
         path.join(path.dirname(nearPrisma), "@prisma", "client"),
-        path.join(root, "node_modules", "@prisma", "client"),
-        path.join(root, "backend", "node_modules", "@prisma", "client"),
-    ];
+        path.join(packageRoot, "node_modules", "@prisma", "client"),
+        path.join(workspaceRoot, "node_modules", "@prisma", "client"),
+        path.join(workspaceRoot, "backend", "node_modules", "@prisma", "client"),
+    ]);
     for (const p of tryPaths) {
         if (fs.existsSync(p)) return p;
     }
@@ -47,8 +62,18 @@ function findGeneratedClientPkg(nearPrisma) {
 function syncInto(targetRoot, srcPrisma, srcClientPkg) {
     const destPrisma = path.join(targetRoot, "node_modules", ".prisma");
     const destClient = path.join(targetRoot, "node_modules", "@prisma", "client");
+    if (!fs.existsSync(targetRoot)) {
+        return;
+    }
     if (!fs.existsSync(path.join(targetRoot, "node_modules"))) {
         console.warn(`[sync-prisma] skip ${targetRoot} (no node_modules)`);
+        return;
+    }
+    // Generate already wrote here — copying onto the source would delete it.
+    if (path.resolve(destPrisma) === path.resolve(srcPrisma)) {
+        console.log(
+            `[sync-prisma] ${path.relative(workspaceRoot, targetRoot)} already holds the generated client`
+        );
         return;
     }
     fs.rmSync(destPrisma, { recursive: true, force: true });
@@ -67,15 +92,22 @@ function syncInto(targetRoot, srcPrisma, srcClientPkg) {
             }
         }
     }
-    console.log(`[sync-prisma] synced into ${path.relative(root, targetRoot)}`);
+    console.log(
+        `[sync-prisma] synced into ${path.relative(workspaceRoot, targetRoot)}`
+    );
 }
 
 const srcPrisma = findGeneratedPrisma();
 if (!srcPrisma) {
     throw new Error(
-        "[sync-prisma] no generated client found; run prisma generate --schema=backend/prisma/schema.prisma first"
+        "[sync-prisma] no generated client found; run prisma generate --schema=prisma/schema.prisma first"
     );
 }
 const srcClientPkg = findGeneratedClientPkg(srcPrisma);
-syncInto(path.join(root, "frontend"), srcPrisma, srcClientPkg);
-syncInto(path.join(root, "backend"), srcPrisma, srcClientPkg);
+for (const target of uniquePaths([
+    packageRoot,
+    path.join(workspaceRoot, "frontend"),
+    path.join(workspaceRoot, "backend"),
+])) {
+    syncInto(target, srcPrisma, srcClientPkg);
+}
