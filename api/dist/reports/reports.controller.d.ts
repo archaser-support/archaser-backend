@@ -144,6 +144,7 @@ export declare class ReportsByIdController {
     execute(user: JwtPayload, id: number, body: ExecuteReportDto): Promise<{
         data: Record<string, unknown>[];
         totalRecords: number;
+        formulaWarnings?: import("./report-formula/types").FormulaWarningSummary[];
     }>;
     export(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         format: string;

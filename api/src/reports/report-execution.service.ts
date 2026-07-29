@@ -64,6 +64,15 @@ import {
     isComputedReportField,
     isPrismaScalarField,
 } from "./report-virtual-fields.util";
+import { REPORT_METADATA } from "./report-metadata";
+import {
+    applyFormulasToRows,
+    mergeFormulaOperandFieldsIntoConfig,
+} from "./report-formula/formula-execution";
+import {
+    FormulaWarningSummary,
+    ReportFormula,
+} from "./report-formula/types";
 
 type ReportConfig = {
     tables?: string[];
@@ -76,9 +85,15 @@ type ReportConfig = {
     filters?: ReportFilterDto[];
     sorting?: Array<{ field: string; direction?: string }>;
     grouping?: string[];
+    formulas?: ReportFormula[];
 };
 
 type PrismaWhere = Record<string, unknown>;
+type ExecuteReportResult = {
+    data: Record<string, unknown>[];
+    totalRecords: number;
+    formulaWarnings?: FormulaWarningSummary[];
+};
 
 @Injectable()
 export class ReportExecutionService {
@@ -93,7 +108,7 @@ export class ReportExecutionService {
         user: JwtPayload,
         reportId: number,
         body: ExecuteReportDto
-    ): Promise<{ data: Record<string, unknown>[]; totalRecords: number }> {
+    ): Promise<ExecuteReportResult> {
         const userInfo = await this.access.resolveUserInfo(user);
         const accountId = this.access.getEffectiveAccountId(userInfo);
         const role = userInfo.viewAsUserRole || userInfo.role;
@@ -114,7 +129,10 @@ export class ReportExecutionService {
 
         await this.assertExecutePermission(accountId, role, report.context);
 
-        const config = (report.report_config || {}) as ReportConfig;
+        const config = mergeFormulaOperandFieldsIntoConfig(
+            (report.report_config || {}) as ReportConfig,
+            REPORT_METADATA.tables
+        );
         const primaryTable =
             CONTEXT_PRIMARY_TABLE[report.context || ""] ||
             config.tables?.[0] ||
@@ -270,9 +288,16 @@ export class ReportExecutionService {
             const data = topUpResult.rows.map((row) =>
                 this.formatRow(row, primaryTable, fields, locale)
             );
+            const formulaResult = applyFormulasToRows(data, config, {
+                locale,
+                metadataTables: REPORT_METADATA.tables,
+            });
             return serializeBigInt({
-                data,
+                data: formulaResult.rows,
                 totalRecords: topUpResult.total,
+                ...(formulaResult.warnings.length
+                    ? { formulaWarnings: formulaResult.warnings }
+                    : {}),
             });
         }
 
@@ -360,8 +385,18 @@ export class ReportExecutionService {
         const data = rows.map((row) =>
             this.formatRow(row, primaryTable, fields, locale)
         );
+        const formulaResult = applyFormulasToRows(data, config, {
+            locale,
+            metadataTables: REPORT_METADATA.tables,
+        });
 
-        return serializeBigInt({ data, totalRecords });
+        return serializeBigInt({
+            data: formulaResult.rows,
+            totalRecords,
+            ...(formulaResult.warnings.length
+                ? { formulaWarnings: formulaResult.warnings }
+                : {}),
+        });
     }
 
     private async assertExecutePermission(

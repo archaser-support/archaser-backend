@@ -241,6 +241,63 @@ describe("Reports Nest-native HTTP", () => {
         expect(res.body.data[0]["Customer.name"]).toBe("Acme");
     });
 
+    it("POST /api/reports/:id/execute applies chained formulas and warning summaries", async () => {
+        databaseMock.report.findFirst.mockResolvedValueOnce({
+            ...reportRow,
+            id: 9,
+            report_config: {
+                tables: ["Customer"],
+                fields: [{ table: "Customer", field: "name" }],
+                formulas: [
+                    {
+                        id: "doubled",
+                        label: "Doubled ratio",
+                        expression: "[formula:ratio]*2",
+                        format: "number",
+                    },
+                    {
+                        id: "ratio",
+                        label: "Ratio",
+                        expression:
+                            "[Customer.total_due_amount]/[Customer.total_invoices_overdue]",
+                        format: "number",
+                    },
+                ],
+            },
+        });
+        databaseMock.customer.findMany.mockResolvedValueOnce([
+            {
+                id: 1,
+                total_due_amount: 100,
+                total_invoices_overdue: 4,
+                Company: { id: 10, name: "Acme" },
+                Person: null,
+            },
+            {
+                id: 2,
+                total_due_amount: 100,
+                total_invoices_overdue: 0,
+                Company: { id: 11, name: "Globex" },
+                Person: null,
+            },
+        ]);
+        databaseMock.customer.count.mockResolvedValueOnce(2);
+
+        const res = await request(app.getHttpServer())
+            .post("/api/reports/9/execute")
+            .set(authHeader())
+            .send({ page: 1, limit: 20, locale: "en-US" })
+            .expect(200);
+
+        expect(res.body.data[0]["formula:ratio"]).toBe(25);
+        expect(res.body.data[0]["formula:doubled"]).toBe(50);
+        expect(res.body.data[1]["formula:ratio"]).toBeNull();
+        expect(res.body.data[1]["formula:doubled"]).toBeNull();
+        expect(res.body.formulaWarnings).toEqual([
+            { formulaId: "ratio", label: "Ratio", invalidCount: 1 },
+        ]);
+    });
+
     it("POST /api/reports/:id/execute maps Dispute Customer.name sort/select for Prisma", async () => {
         databaseMock.customerDispute.findMany.mockClear();
         databaseMock.report.findFirst.mockResolvedValueOnce(disputeReportRow);
