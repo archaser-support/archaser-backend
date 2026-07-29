@@ -2,14 +2,17 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { DatabaseService } from "../database/database.service";
 import { ExecuteReportDto } from "./dto/execute-report.dto";
+import { FormulaWarningSummary } from "./report-formula/types";
+type ExecuteReportResult = {
+    data: Record<string, unknown>[];
+    totalRecords: number;
+    formulaWarnings?: FormulaWarningSummary[];
+};
 export declare class ReportExecutionService {
     private readonly db;
     private readonly access;
     constructor(db: DatabaseService, access: AccessScopeService);
-    execute(user: JwtPayload, reportId: number, body: ExecuteReportDto): Promise<{
-        data: Record<string, unknown>[];
-        totalRecords: number;
-    }>;
+    execute(user: JwtPayload, reportId: number, body: ExecuteReportDto): Promise<ExecuteReportResult>;
     private assertExecutePermission;
     private buildScopeWhere;
     private buildSearchWhere;
@@ -37,3 +40,4 @@ export declare class ReportExecutionService {
     private formatValue;
     private looksLikeDateField;
 }
+export {};

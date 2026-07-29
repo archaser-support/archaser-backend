@@ -27,6 +27,8 @@ const report_link_util_1 = require("./report-link.util");
 const report_filter_util_1 = require("./report-filter.util");
 const report_scope_util_1 = require("./report-scope.util");
 const report_virtual_fields_util_1 = require("./report-virtual-fields.util");
+const report_metadata_1 = require("./report-metadata");
+const formula_execution_1 = require("./report-formula/formula-execution");
 let ReportExecutionService = class ReportExecutionService {
     constructor(db, access) {
         this.db = db;
@@ -51,7 +53,7 @@ let ReportExecutionService = class ReportExecutionService {
             throw new common_1.NotFoundException("Report not found");
         }
         await this.assertExecutePermission(accountId, role, report.context);
-        const config = (report.report_config || {});
+        const config = (0, formula_execution_1.mergeFormulaOperandFieldsIntoConfig)((report.report_config || {}), report_metadata_1.REPORT_METADATA.tables);
         const primaryTable = report_constants_1.CONTEXT_PRIMARY_TABLE[report.context || ""] ||
             config.tables?.[0] ||
             "Customer";
@@ -141,9 +143,16 @@ let ReportExecutionService = class ReportExecutionService {
             });
             const locale = body.locale || "en-US";
             const data = topUpResult.rows.map((row) => this.formatRow(row, primaryTable, fields, locale));
+            const formulaResult = (0, formula_execution_1.applyFormulasToRows)(data, config, {
+                locale,
+                metadataTables: report_metadata_1.REPORT_METADATA.tables,
+            });
             return (0, serialize_bigint_1.serializeBigInt)({
-                data,
+                data: formulaResult.rows,
                 totalRecords: topUpResult.total,
+                ...(formulaResult.warnings.length
+                    ? { formulaWarnings: formulaResult.warnings }
+                    : {}),
             });
         }
         const effectiveSortField = body.sortField || config.sorting?.[0]?.field;
@@ -194,7 +203,17 @@ let ReportExecutionService = class ReportExecutionService {
         }
         const locale = body.locale || "en-US";
         const data = rows.map((row) => this.formatRow(row, primaryTable, fields, locale));
-        return (0, serialize_bigint_1.serializeBigInt)({ data, totalRecords });
+        const formulaResult = (0, formula_execution_1.applyFormulasToRows)(data, config, {
+            locale,
+            metadataTables: report_metadata_1.REPORT_METADATA.tables,
+        });
+        return (0, serialize_bigint_1.serializeBigInt)({
+            data: formulaResult.rows,
+            totalRecords,
+            ...(formulaResult.warnings.length
+                ? { formulaWarnings: formulaResult.warnings }
+                : {}),
+        });
     }
     async assertExecutePermission(accountId, role, context) {
         const canViewReports = await this.access.hasPermission(accountId, role, "view_reports");
