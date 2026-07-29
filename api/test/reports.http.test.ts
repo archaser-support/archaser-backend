@@ -32,8 +32,24 @@ describe("Reports Nest-native HTTP", () => {
         context: "customers",
         created_at: new Date("2024-01-01"),
         modified_at: new Date("2024-01-02"),
-        created_by: null,
-        modified_by: null,
+        created_by: "creator-id",
+        modified_by: "modifier-id",
+        User_Report_created_byToUser: {
+            id: "creator-id",
+            name: "Creator Name",
+            username: "creator",
+            first_name: "Creator",
+            last_name: "Name",
+            email: "creator@example.com",
+        },
+        User_Report_modified_byToUser: {
+            id: "modifier-id",
+            name: "Modifier Name",
+            username: "modifier",
+            first_name: "Modifier",
+            last_name: "Name",
+            email: "modifier@example.com",
+        },
     };
 
     const databaseMock = {
@@ -208,6 +224,32 @@ describe("Reports Nest-native HTTP", () => {
             .expect(200);
         expect(res.body.reports).toHaveLength(1);
         expect(res.body.totalRecords).toBe(1);
+        expect(res.body.reports[0].User_Report_created_byToUser.name).toBe(
+            "Creator Name"
+        );
+        expect(res.body.reports[0].User_Report_modified_byToUser.name).toBe(
+            "Modifier Name"
+        );
+        expect(databaseMock.report.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                include: {
+                    User_Report_created_byToUser: {
+                        select: expect.objectContaining({
+                            name: true,
+                            username: true,
+                            email: true,
+                        }),
+                    },
+                    User_Report_modified_byToUser: {
+                        select: expect.objectContaining({
+                            name: true,
+                            username: true,
+                            email: true,
+                        }),
+                    },
+                },
+            })
+        );
     });
 
     it("GET /api/reports/:id wraps payload as { report }", async () => {
@@ -218,6 +260,9 @@ describe("Reports Nest-native HTTP", () => {
         expect(res.body.report).toBeDefined();
         expect(res.body.report.id).toBe(7);
         expect(res.body.report.name).toBe("Customers default");
+        expect(res.body.report.User_Report_created_byToUser.name).toBe(
+            "Creator Name"
+        );
         expect(res.body.id).toBeUndefined();
     });
 

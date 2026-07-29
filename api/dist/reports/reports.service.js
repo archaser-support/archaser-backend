@@ -17,6 +17,28 @@ const database_service_1 = require("../database/database.service");
 const report_constants_1 = require("./report.constants");
 const report_metadata_1 = require("./report-metadata");
 const report_relationships_1 = require("./report-relationships");
+const REPORT_AUDIT_USERS_INCLUDE = {
+    User_Report_created_byToUser: {
+        select: {
+            id: true,
+            name: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+        },
+    },
+    User_Report_modified_byToUser: {
+        select: {
+            id: true,
+            name: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+        },
+    },
+};
 let ReportsService = class ReportsService {
     constructor(db, access) {
         this.db = db;
@@ -124,6 +146,7 @@ let ReportsService = class ReportsService {
                 orderBy: orderBy,
                 skip: (page - 1) * limit,
                 take: limit,
+                include: REPORT_AUDIT_USERS_INCLUDE,
             }),
             this.db.report.count({ where: where }),
         ]);
@@ -146,6 +169,7 @@ let ReportsService = class ReportsService {
                     { is_public: true },
                 ],
             },
+            include: REPORT_AUDIT_USERS_INCLUDE,
         });
         if (!report) {
             throw new common_1.NotFoundException("Report not found");
@@ -189,6 +213,7 @@ let ReportsService = class ReportsService {
                 created_by: userId,
                 modified_by: userId,
             },
+            include: REPORT_AUDIT_USERS_INCLUDE,
         });
         return (0, serialize_bigint_1.serializeBigInt)({
             report: this.formatReportDates(created),
@@ -221,6 +246,7 @@ let ReportsService = class ReportsService {
         const updated = await this.db.report.update({
             where: { id },
             data: data,
+            include: REPORT_AUDIT_USERS_INCLUDE,
         });
         return (0, serialize_bigint_1.serializeBigInt)({
             report: this.formatReportDates(updated),
@@ -383,7 +409,11 @@ let ReportsService = class ReportsService {
     async resolveDefaultView(accountId, userId, context, _role, filterCi) {
         const userDefault = await this.db.userDefaultReport.findFirst({
             where: { user_id: userId, context },
-            include: { Report: true },
+            include: {
+                Report: {
+                    include: REPORT_AUDIT_USERS_INCLUDE,
+                },
+            },
         });
         if (userDefault?.Report) {
             return userDefault.Report;
@@ -404,6 +434,7 @@ let ReportsService = class ReportsService {
         return this.db.report.findFirst({
             where: where,
             orderBy: [{ is_system: "desc" }, { modified_at: "desc" }],
+            include: REPORT_AUDIT_USERS_INCLUDE,
         });
     }
     async assertListPermission(accountId, role, context) {

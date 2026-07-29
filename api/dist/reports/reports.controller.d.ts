@@ -8,6 +8,23 @@ export declare class ReportsController {
     constructor(reports: ReportsService, execution: ReportExecutionService);
     list(user: JwtPayload, query: Record<string, string | undefined>): Promise<{
         reports: ({
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;
@@ -32,6 +49,23 @@ export declare class ReportsController {
     }>;
     create(user: JwtPayload, body: Record<string, unknown>): Promise<{
         report: {
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;
@@ -57,6 +91,23 @@ export declare class ReportsController {
     }>;
     getUserDefault(user: JwtPayload, context: string): Promise<{
         report: ({
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;
@@ -98,6 +149,23 @@ export declare class ReportsByIdController {
     constructor(reports: ReportsService, execution: ReportExecutionService);
     byId(user: JwtPayload, id: number): Promise<{
         report: {
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;
@@ -119,6 +187,23 @@ export declare class ReportsByIdController {
     }>;
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         report: {
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;
