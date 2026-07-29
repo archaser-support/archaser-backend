@@ -7,6 +7,23 @@ export declare class ReportsService {
     constructor(db: DatabaseService, access: AccessScopeService);
     list(user: JwtPayload, query: Record<string, string | undefined>): Promise<{
         reports: ({
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;
@@ -31,6 +48,23 @@ export declare class ReportsService {
     }>;
     getById(user: JwtPayload, id: number): Promise<{
         report: {
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;
@@ -52,6 +86,23 @@ export declare class ReportsService {
     }>;
     create(user: JwtPayload, body: Record<string, unknown>): Promise<{
         report: {
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;
@@ -73,6 +124,23 @@ export declare class ReportsService {
     }>;
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         report: {
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;
@@ -101,6 +169,23 @@ export declare class ReportsService {
     }>;
     getUserDefault(user: JwtPayload, context: string): Promise<{
         report: ({
+            User_Report_created_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+            User_Report_modified_byToUser: {
+                username: string;
+                email: string;
+                name: string | null;
+                id: string;
+                first_name: string | null;
+                last_name: string | null;
+            } | null;
+        } & {
             description: string | null;
             account_id: number;
             name: string;

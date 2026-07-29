@@ -18,6 +18,29 @@ import {
 import { REPORT_METADATA } from "./report-metadata";
 import { REPORT_RELATIONSHIPS } from "./report-relationships";
 
+const REPORT_AUDIT_USERS_INCLUDE = {
+    User_Report_created_byToUser: {
+        select: {
+            id: true,
+            name: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+        },
+    },
+    User_Report_modified_byToUser: {
+        select: {
+            id: true,
+            name: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+        },
+    },
+} as const;
+
 @Injectable()
 export class ReportsService {
     constructor(
@@ -147,6 +170,7 @@ export class ReportsService {
                 orderBy: orderBy as never,
                 skip: (page - 1) * limit,
                 take: limit,
+                include: REPORT_AUDIT_USERS_INCLUDE,
             }),
             this.db.report.count({ where: where as never }),
         ]);
@@ -171,6 +195,7 @@ export class ReportsService {
                     { is_public: true },
                 ],
             },
+            include: REPORT_AUDIT_USERS_INCLUDE,
         });
         if (!report) {
             throw new NotFoundException("Report not found");
@@ -223,6 +248,7 @@ export class ReportsService {
                 created_by: userId,
                 modified_by: userId,
             },
+            include: REPORT_AUDIT_USERS_INCLUDE,
         });
         return serializeBigInt({
             report: this.formatReportDates(created),
@@ -260,6 +286,7 @@ export class ReportsService {
         const updated = await this.db.report.update({
             where: { id },
             data: data as never,
+            include: REPORT_AUDIT_USERS_INCLUDE,
         });
         return serializeBigInt({
             report: this.formatReportDates(updated),
@@ -472,7 +499,11 @@ export class ReportsService {
     ) {
         const userDefault = await this.db.userDefaultReport.findFirst({
             where: { user_id: userId, context },
-            include: { Report: true },
+            include: {
+                Report: {
+                    include: REPORT_AUDIT_USERS_INCLUDE,
+                },
+            },
         });
         if (userDefault?.Report) {
             return userDefault.Report;
@@ -494,6 +525,7 @@ export class ReportsService {
         return this.db.report.findFirst({
             where: where as never,
             orderBy: [{ is_system: "desc" }, { modified_at: "desc" }],
+            include: REPORT_AUDIT_USERS_INCLUDE,
         });
     }
 
