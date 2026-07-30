@@ -3,6 +3,7 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
@@ -388,7 +389,7 @@ export class SystemService {
      */
     private async buildEntityBreakdowns(
         accountId: number,
-        invoiceWhere: Record<string, unknown>
+        invoiceWhere: Prisma.InvoiceWhereInput
     ): Promise<{
         byCustomer: EntityAmount[];
         byBusinessUnit: EntityAmount[];
@@ -399,7 +400,7 @@ export class SystemService {
                 ...invoiceWhere,
                 account_id: accountId,
                 customer_id: { not: null },
-            } as never,
+            },
             _sum: { outstanding_debt: true },
         });
 
@@ -425,7 +426,7 @@ export class SystemService {
         const unitTotals = new Map<number, { label: string; amount: number }>();
 
         for (const group of groups) {
-            const amount = Number(group._sum.outstanding_debt ?? 0);
+            const amount = Number(group._sum?.outstanding_debt ?? 0);
             if (group.customer_id == null || amount <= 0) {
                 continue;
             }
@@ -575,8 +576,8 @@ export class SystemService {
         const steps = groups
             .map((group) => ({
                 step: group.last_automated_step ?? 0,
-                customers: group._count._all,
-                invoices: Number(group._sum.no_of_overdue_invoices ?? 0),
+                customers: group._count?._all ?? 0,
+                invoices: Number(group._sum?.no_of_overdue_invoices ?? 0),
             }))
             .sort((a, b) => a.step - b.step)
             .map((entry) => ({

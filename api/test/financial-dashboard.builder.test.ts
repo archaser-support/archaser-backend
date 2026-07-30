@@ -1,8 +1,12 @@
 import {
+    buildActiveCustomersChart,
     buildAudienceReportChart,
+    buildAutomatedPhaseSplitChart,
     buildCollectionEffortsPhase,
     buildCollectionStat,
     buildAgingRangeRows,
+    buildMaturityRows,
+    buildTopEntityAmounts,
     reconstructDashboardFromCache,
 } from "../src/system/financial-dashboard.builder";
 
@@ -54,6 +58,70 @@ describe("financial-dashboard.builder", () => {
         expect(rows).toHaveLength(2);
         expect(rows[1].amountPercentage).toBe("75%");
         expect(rows[1].progress).toBe(75);
+    });
+
+    it("ranks top entity amounts and scales percentages to the slices shown", () => {
+        const slices = buildTopEntityAmounts(
+            [
+                { label: "Small", amount: 100 },
+                { label: "Big", amount: 700 },
+                { label: "Mid", amount: 200 },
+            ],
+            2
+        );
+        expect(slices.map((s) => s.customer)).toEqual(["Big", "Mid"]);
+        // Percentages describe the donut, so the two kept slices total 100 even
+        // though "Small" was dropped.
+        expect(slices.map((s) => s.percentage)).toEqual([77.78, 22.22]);
+        expect(slices[0].color).not.toBe(slices[1].color);
+    });
+
+    it("drops non-positive entity amounts rather than charting empty slices", () => {
+        expect(
+            buildTopEntityAmounts([
+                { label: "Zero", amount: 0 },
+                { label: "Credit", amount: -50 },
+            ])
+        ).toEqual([]);
+    });
+
+    it("builds maturity rows with two-decimal percentages", () => {
+        const rows = buildMaturityRows([
+            { daysRange: "0_7", invoices: 2, accounts: 1, amount: 600 },
+            { daysRange: "8_30", invoices: 2, accounts: 2, amount: 4000 },
+        ]);
+        expect(rows[0].id).toBe(1);
+        expect(rows[0].amountPercentage).toBe("13.04%");
+        expect(rows[1].amountPercentage).toBe("86.96%");
+    });
+
+    it("keeps maturity percentages at zero when nothing is due", () => {
+        const rows = buildMaturityRows([
+            { daysRange: "0_7", invoices: 0, accounts: 0, amount: 0 },
+        ]);
+        expect(rows[0].amountPercentage).toBe("0.00%");
+    });
+
+    it("builds the added/removed customer series the dynamics chart reads", () => {
+        const chart = buildActiveCustomersChart(
+            [0, 0, 4, 2, 6, 0],
+            [0, 0, 0, 0, 0, 11],
+            new Date(Date.UTC(2026, 6, 15))
+        );
+        expect(chart.options.xaxis.categories).toHaveLength(6);
+        expect(chart.series[0].name).toBe("Added Customers");
+        expect(chart.series[0].data).toEqual([0, 0, 4, 2, 6, 0]);
+        expect(chart.series[1].data).toEqual([0, 0, 0, 0, 0, 11]);
+    });
+
+    it("builds automated phase split categories and paired series", () => {
+        const chart = buildAutomatedPhaseSplitChart([
+            { label: "Step 0", customers: 12, invoices: 30 },
+            { label: "Step 2", customers: 2, invoices: 4 },
+        ]);
+        expect(chart.options.xaxis.categories).toEqual(["Step 0", "Step 2"]);
+        expect(chart.series[0].data).toEqual([12, 2]);
+        expect(chart.series[1].data).toEqual([30, 4]);
     });
 
     it("reconstructs cached dashboard with non-empty charts", () => {
