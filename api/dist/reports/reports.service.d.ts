@@ -218,8 +218,8 @@ export declare class ReportsService {
             created_at: Date;
             created_by: string | null;
             report_id: number;
-            shared_with_role: import(".prisma/client").$Enums.user_role | null;
             shared_with_user_id: string | null;
+            shared_with_role: import(".prisma/client").$Enums.user_role | null;
             permission: string;
         }[];
     }>;
@@ -228,8 +228,8 @@ export declare class ReportsService {
         created_at: Date;
         created_by: string | null;
         report_id: number;
-        shared_with_role: import(".prisma/client").$Enums.user_role | null;
         shared_with_user_id: string | null;
+        shared_with_role: import(".prisma/client").$Enums.user_role | null;
         permission: string;
     }>;
     listSchedules(user: JwtPayload, reportId: number): Promise<{

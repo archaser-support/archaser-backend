@@ -6,6 +6,7 @@ exports.calculateDaysLeft = calculateDaysLeft;
 exports.extractTermsBreachReasonCodes = extractTermsBreachReasonCodes;
 exports.formatTermsBreachReasonForDisplay = formatTermsBreachReasonForDisplay;
 exports.isPrismaScalarField = isPrismaScalarField;
+exports.isPrismaListRelation = isPrismaListRelation;
 exports.applyComputedFieldSelect = applyComputedFieldSelect;
 exports.extractComputedFieldValue = extractComputedFieldValue;
 exports.isComputedReportField = isComputedReportField;
@@ -32,6 +33,7 @@ const REPORT_TABLE_TO_PRISMA_MODEL = {
     InsurancePolicy: "InsurancePolicy",
 };
 const scalarFieldCache = new Map();
+const listRelationCache = new Map();
 function calculateDaysOverdue(dueDate, now = new Date()) {
     if (dueDate == null)
         return null;
@@ -129,6 +131,21 @@ function isPrismaScalarField(reportTable, field) {
         scalarFieldCache.set(modelName, scalars);
     }
     return scalars.has(field);
+}
+function isPrismaListRelation(reportTable, relationField) {
+    const modelName = REPORT_TABLE_TO_PRISMA_MODEL[reportTable];
+    if (!modelName) {
+        return false;
+    }
+    let lists = listRelationCache.get(modelName);
+    if (!lists) {
+        const model = client_1.Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
+        lists = new Set((model?.fields || [])
+            .filter((f) => f.kind === "object" && f.isList)
+            .map((f) => f.name));
+        listRelationCache.set(modelName, lists);
+    }
+    return lists.has(relationField);
 }
 function applyComputedFieldSelect(primaryTable, field, select) {
     if (primaryTable === "Invoice") {

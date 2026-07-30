@@ -34,7 +34,6 @@ const PORTAL_CUSTOMER_SUFFIXES = [
     "create-dispute",
     "view-disputes",
     "wrong-contact",
-    "top-ups",
 ] as const;
 
 function methods(

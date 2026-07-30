@@ -13,7 +13,36 @@ exports.CustomersService = void 0;
 const common_1 = require("@nestjs/common");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
+const domain_db_1 = require("../credit-insurance/domain-db");
+const openReceivableByCustomerCurrency_1 = require("../credit-insurance/domain/openReceivableByCustomerCurrency");
 const database_service_1 = require("../database/database.service");
+const TOP_UP_SORT_FIELDS = new Set([
+    "start_date",
+    "end_date",
+    "top_up_type",
+    "top_up_value",
+    "premium",
+    "created_at",
+]);
+function optionalTrimmed(value) {
+    if (value == null) {
+        return null;
+    }
+    const trimmed = String(value).trim();
+    return trimmed === "" ? null : trimmed;
+}
+function parseDateOnly(value) {
+    const raw = optionalTrimmed(value);
+    if (!raw) {
+        return null;
+    }
+    const ymd = raw.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+        return null;
+    }
+    const parsed = new Date(`${ymd}T00:00:00.000Z`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 const ACTIVITY_TYPES = [
     "SMS",
     "Email",
@@ -29,6 +58,7 @@ let CustomersService = class CustomersService {
     constructor(db, accessScope) {
         this.db = db;
         this.accessScope = accessScope;
+        (0, domain_db_1.bindCreditInsurancePrisma)(this.db);
     }
     async listOrStats(user, query) {
         if (query.stats === "true") {
@@ -265,6 +295,21 @@ let CustomersService = class CustomersService {
                 CustomerCollectionPeriod: {
                     where: { period_end_date: null },
                 },
+                CustomerPolicy: {
+                    include: {
+                        InsurancePolicy: true,
+                        User_CustomerPolicy_modified_byToUser: {
+                            select: {
+                                id: true,
+                                name: true,
+                                first_name: true,
+                                last_name: true,
+                                email: true,
+                            },
+                        },
+                    },
+                    orderBy: [{ is_active: "desc" }, { id: "desc" }],
+                },
             },
         });
         if (!customer) {
@@ -273,7 +318,24 @@ let CustomersService = class CustomersService {
                 code: "CUSTOMER_NOT_FOUND",
             });
         }
-        return (0, serialize_bigint_1.serializeBigInt)(customer);
+        const { CustomerPolicy: customerPolicies, ...rest } = customer;
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { currency: true },
+        });
+        const headerAr = await (0, openReceivableByCustomerCurrency_1.resolveCustomerHeaderOpenArAmounts)({
+            accountId,
+            customerId: id,
+            accountCurrency: account?.currency,
+            customer,
+            dbClient: this.db,
+        });
+        return (0, serialize_bigint_1.serializeBigInt)({
+            ...rest,
+            ...headerAr,
+            customerPolicies,
+            activeCustomerPolicy: customerPolicies.find((policy) => policy.is_active) ?? null,
+        });
     }
     async update(user, id, body) {
         await this.getById(user, id);
@@ -295,6 +357,12 @@ let CustomersService = class CustomersService {
         delete data.ParentCustomer;
         delete data.CustomerCollectionPeriod;
         delete data.Invoice;
+        delete data.CustomerPolicy;
+        delete data.customerPolicies;
+        delete data.activeCustomerPolicy;
+        delete data.total_ar;
+        delete data.total_ar_secondary;
+        delete data.credit_insurance_secondary_currency;
         const updated = await this.db.customer.update({
             where: { id },
             data: data,
@@ -386,6 +454,159 @@ let CustomersService = class CustomersService {
             orderBy: { id: "desc" },
         });
         return (0, serialize_bigint_1.serializeBigInt)({ policies, totalRecords: policies.length });
+    }
+    async listTopUps(user, id, query) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        await this.assertCustomerInAccount(userInfo, id);
+        const page = Math.max(parseInt(query.page || "1", 10) || 1, 1);
+        const limit = Math.min(Math.max(parseInt(query.limit || "50", 10) || 50, 1), 200);
+        const search = (query.query || "").trim();
+        const sortField = TOP_UP_SORT_FIELDS.has(query.sortField || "")
+            ? query.sortField
+            : "start_date";
+        const sortDirection = query.sortDirection === "asc" ? "asc" : "desc";
+        const where = { customer_id: id };
+        if (search) {
+            where.OR = [
+                { notes: { contains: search, mode: "insensitive" } },
+                {
+                    InsurancePolicy: {
+                        policy_number: { contains: search, mode: "insensitive" },
+                    },
+                },
+                {
+                    InsurancePolicy: {
+                        insurer_name: { contains: search, mode: "insensitive" },
+                    },
+                },
+            ];
+        }
+        const [rows, totalRecords] = await Promise.all([
+            this.db.customerTopUp.findMany({
+                where: where,
+                include: {
+                    InsurancePolicy: {
+                        select: {
+                            id: true,
+                            policy_number: true,
+                            insurer_name: true,
+                        },
+                    },
+                },
+                orderBy: [{ [sortField]: sortDirection }, { id: "desc" }],
+                skip: (page - 1) * limit,
+                take: limit,
+            }),
+            this.db.customerTopUp.count({ where: where }),
+        ]);
+        const data = rows.map(({ InsurancePolicy, ...row }) => ({
+            ...row,
+            policy_number: InsurancePolicy?.policy_number ?? null,
+            insurer_name: InsurancePolicy?.insurer_name ?? null,
+        }));
+        return (0, serialize_bigint_1.serializeBigInt)({ data, totalRecords, page, limit });
+    }
+    async createTopUp(user, id, body) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const { accountId, effectiveUserId } = await this.assertCustomerInAccount(userInfo, id);
+        const insurancePolicyId = Number(body.insurancePolicyId);
+        if (!Number.isInteger(insurancePolicyId) || insurancePolicyId <= 0) {
+            throw new common_1.BadRequestException({
+                error: "insurancePolicyId is required",
+            });
+        }
+        const topUpType = body.topUpType === "Percentage" ? "Percentage" : "Fixed";
+        const topUpValue = Number(body.topUpValue);
+        if (!Number.isFinite(topUpValue) || topUpValue <= 0) {
+            throw new common_1.BadRequestException({
+                error: "topUpValue must be a positive number",
+            });
+        }
+        const currency = optionalTrimmed(body.currency);
+        if (topUpType === "Fixed" && !currency) {
+            throw new common_1.BadRequestException({
+                error: "currency is required for a fixed top-up",
+            });
+        }
+        const startDate = parseDateOnly(body.startDate);
+        const endDate = parseDateOnly(body.endDate);
+        if (!startDate) {
+            throw new common_1.BadRequestException({ error: "startDate is required" });
+        }
+        if (!endDate) {
+            throw new common_1.BadRequestException({ error: "endDate is required" });
+        }
+        if (endDate < startDate) {
+            throw new common_1.BadRequestException({
+                error: "endDate must be on or after startDate",
+            });
+        }
+        let premium = null;
+        if (body.premium != null && body.premium !== "") {
+            premium = Number(body.premium);
+            if (!Number.isFinite(premium) || premium < 0) {
+                throw new common_1.BadRequestException({
+                    error: "premium must be a positive number",
+                });
+            }
+        }
+        const premiumCurrency = optionalTrimmed(body.premiumCurrency);
+        if (premium != null && !premiumCurrency) {
+            throw new common_1.BadRequestException({
+                error: "premiumCurrency is required when a premium is set",
+            });
+        }
+        const policy = await this.db.insurancePolicy.findFirst({
+            where: { id: insurancePolicyId, account_id: accountId },
+            select: { id: true, policy_kind: true },
+        });
+        if (!policy) {
+            throw new common_1.NotFoundException({ error: "Insurance policy not found" });
+        }
+        if (policy.policy_kind !== "TopUp") {
+            throw new common_1.BadRequestException({
+                error: "Insurance policy is not a top-up policy",
+            });
+        }
+        const topUp = await this.db.customerTopUp.create({
+            data: {
+                customer_id: id,
+                insurance_policy_id: insurancePolicyId,
+                top_up_type: topUpType,
+                top_up_value: topUpValue,
+                currency,
+                start_date: startDate,
+                end_date: endDate,
+                notes: optionalTrimmed(body.notes),
+                premium,
+                premium_currency: premium == null ? null : premiumCurrency,
+                created_by: effectiveUserId,
+                modified_by: effectiveUserId,
+            },
+        });
+        return (0, serialize_bigint_1.serializeBigInt)(topUp);
+    }
+    async cancelTopUp(user, id, topUpId) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const { effectiveUserId } = await this.assertCustomerInAccount(userInfo, id);
+        const topUp = await this.db.customerTopUp.findFirst({
+            where: { id: topUpId, customer_id: id },
+            select: { id: true, cancelled_at: true },
+        });
+        if (!topUp) {
+            throw new common_1.NotFoundException({ error: "Top-up not found" });
+        }
+        if (topUp.cancelled_at) {
+            return (0, serialize_bigint_1.serializeBigInt)(topUp);
+        }
+        const cancelled = await this.db.customerTopUp.update({
+            where: { id: topUpId },
+            data: {
+                cancelled_at: new Date(),
+                modified_by: effectiveUserId,
+            },
+        });
+        return (0, serialize_bigint_1.serializeBigInt)(cancelled);
     }
     async stuckActivities(user, id) {
         const userInfo = await this.accessScope.resolveUserInfo(user);

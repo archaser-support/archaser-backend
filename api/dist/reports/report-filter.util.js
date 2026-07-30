@@ -79,9 +79,11 @@ function operatorToPrisma(operator, value) {
         }
         case "is_null":
         case "isnull":
+        case "is_empty":
             return { equals: null };
         case "is_not_null":
         case "isnotnull":
+        case "is_not_empty":
             return { not: null };
         case "between": {
             if (Array.isArray(v) && v.length >= 2) {

@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportExecutionService = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
@@ -40,14 +41,7 @@ let ReportExecutionService = class ReportExecutionService {
         const accountId = this.access.getEffectiveAccountId(userInfo);
         const role = userInfo.viewAsUserRole || userInfo.role;
         const report = await this.db.report.findFirst({
-            where: {
-                id: reportId,
-                OR: [
-                    { account_id: accountId },
-                    { is_system: true },
-                    { is_public: true },
-                ],
-            },
+            where: { id: reportId, ...(0, report_scope_util_1.reportVisibilityWhere)(accountId) },
         });
         if (!report) {
             throw new common_1.NotFoundException("Report not found");
@@ -115,7 +109,9 @@ let ReportExecutionService = class ReportExecutionService {
         for (const [table, where] of Object.entries(nested)) {
             const rel = relationMap[table];
             if (rel) {
-                nestedWhere[rel] = where;
+                nestedWhere[rel] = (0, report_virtual_fields_util_1.isPrismaListRelation)(primaryTable, rel)
+                    ? { some: where }
+                    : where;
             }
         }
         const searchWhere = this.buildSearchWhere(primaryTable, body.search, config.fields || []);
@@ -1075,20 +1071,29 @@ let ReportExecutionService = class ReportExecutionService {
             return value.toString();
         }
         if (typeof value === "number") {
-            try {
-                return new Intl.NumberFormat(locale).format(value);
-            }
-            catch {
-                return String(value);
-            }
+            return this.formatNumber(value, locale);
         }
         if (typeof value === "boolean") {
             return value ? "Yes" : "No";
+        }
+        if (client_1.Prisma.Decimal.isDecimal(value)) {
+            return this.formatNumber(value.toNumber(), locale);
         }
         if (typeof value === "object") {
             return JSON.stringify(value);
         }
         return String(value);
+    }
+    formatNumber(value, locale) {
+        if (!Number.isFinite(value)) {
+            return String(value);
+        }
+        try {
+            return new Intl.NumberFormat(locale).format(value);
+        }
+        catch {
+            return String(value);
+        }
     }
     looksLikeDateField(field, value) {
         if (field.includes("_at") ||
