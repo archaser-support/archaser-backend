@@ -9,26 +9,11 @@ const invoiceInsuranceFields_1 = require("./invoiceInsuranceFields");
 const invoiceCapacityGapAmounts_1 = require("./invoiceCapacityGapAmounts");
 const termBreachResolver_1 = require("./termBreachResolver");
 function resolveCustomerCapacityGapForKpi(args) {
-    const sumInvoiceGaps = Math.max(0, args.sumInvoiceGaps);
-    if (sumInvoiceGaps <= 0) {
-        return { capacity: 0, retainedCapacityGap: 0 };
-    }
-    const excessOverLimit = Math.max(0, args.totalAr - args.approvedLimit);
-    if (excessOverLimit > 0) {
-        const capacity = Math.min(sumInvoiceGaps, excessOverLimit);
-        return { capacity, retainedCapacityGap: capacity };
-    }
-    if (args.retainedCapacityGap > 0 &&
-        sumInvoiceGaps < args.retainedCapacityGap * 0.2) {
-        return { capacity: 0, retainedCapacityGap: 0 };
-    }
-    if (args.retainedCapacityGap > 0) {
-        return {
-            capacity: Math.min(sumInvoiceGaps, args.retainedCapacityGap),
-            retainedCapacityGap: args.retainedCapacityGap,
-        };
-    }
-    return { capacity: 0, retainedCapacityGap: 0 };
+    void args.totalAr;
+    void args.approvedLimit;
+    void args.retainedCapacityGap;
+    const capacity = Math.max(0, args.sumInvoiceGaps);
+    return { capacity, retainedCapacityGap: capacity };
 }
 function computePolicyCapacityGapKpi(args) {
     const result = resolveCustomerCapacityGapForKpi({
