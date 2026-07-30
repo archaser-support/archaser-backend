@@ -282,7 +282,7 @@ let SystemService = class SystemService {
         const customerEntries = [];
         const unitTotals = new Map();
         for (const group of groups) {
-            const amount = Number(group._sum.outstanding_debt ?? 0);
+            const amount = Number(group._sum?.outstanding_debt ?? 0);
             if (group.customer_id == null || amount <= 0) {
                 continue;
             }
@@ -396,8 +396,8 @@ let SystemService = class SystemService {
         const steps = groups
             .map((group) => ({
             step: group.last_automated_step ?? 0,
-            customers: group._count._all,
-            invoices: Number(group._sum.no_of_overdue_invoices ?? 0),
+            customers: group._count?._all ?? 0,
+            invoices: Number(group._sum?.no_of_overdue_invoices ?? 0),
         }))
             .sort((a, b) => a.step - b.step)
             .map((entry) => ({

@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { DatabaseService } from "../database/database.service";
@@ -386,8 +387,8 @@ export declare class SystemService {
             create_next_activity: boolean;
             promise_to_pay_count: number;
             is_last_automated_step_delivered: boolean;
-            risk_score: import("@prisma/client/runtime/library").Decimal | null;
-            risk_factors: import("@prisma/client/runtime/library").JsonValue | null;
+            risk_score: Prisma.Decimal | null;
+            risk_factors: Prisma.JsonValue | null;
             last_risk_calculation: Date | null;
             risk_category: string | null;
             lawyer_assigned: boolean;
@@ -463,8 +464,8 @@ export declare class SystemService {
             create_next_activity: boolean;
             promise_to_pay_count: number;
             is_last_automated_step_delivered: boolean;
-            risk_score: import("@prisma/client/runtime/library").Decimal | null;
-            risk_factors: import("@prisma/client/runtime/library").JsonValue | null;
+            risk_score: Prisma.Decimal | null;
+            risk_factors: Prisma.JsonValue | null;
             last_risk_calculation: Date | null;
             risk_category: string | null;
             lawyer_assigned: boolean;
@@ -534,8 +535,8 @@ export declare class SystemService {
             create_next_activity: boolean;
             promise_to_pay_count: number;
             is_last_automated_step_delivered: boolean;
-            risk_score: import("@prisma/client/runtime/library").Decimal | null;
-            risk_factors: import("@prisma/client/runtime/library").JsonValue | null;
+            risk_score: Prisma.Decimal | null;
+            risk_factors: Prisma.JsonValue | null;
             last_risk_calculation: Date | null;
             risk_category: string | null;
             lawyer_assigned: boolean;
@@ -603,8 +604,8 @@ export declare class SystemService {
             create_next_activity: boolean;
             promise_to_pay_count: number;
             is_last_automated_step_delivered: boolean;
-            risk_score: import("@prisma/client/runtime/library").Decimal | null;
-            risk_factors: import("@prisma/client/runtime/library").JsonValue | null;
+            risk_score: Prisma.Decimal | null;
+            risk_factors: Prisma.JsonValue | null;
             last_risk_calculation: Date | null;
             risk_category: string | null;
             lawyer_assigned: boolean;

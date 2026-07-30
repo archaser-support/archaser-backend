@@ -43,16 +43,30 @@ describe("SystemModule — Nest-native HTTP contract", () => {
         },
         customer: {
             count: jest.fn().mockResolvedValue(5),
-            findMany: jest.fn().mockResolvedValue([]),
+            findMany: jest.fn().mockResolvedValue([
+                {
+                    id: 1,
+                    Person: null,
+                    Company: { name: "Acme" },
+                    BusinessUnit: { id: 3, name: "HQ" },
+                },
+                {
+                    id: 2,
+                    Person: null,
+                    Company: { name: "Globex" },
+                    BusinessUnit: { id: 3, name: "HQ" },
+                },
+            ]),
         },
         invoice: {
             aggregate: jest.fn().mockResolvedValue({
                 _sum: { outstanding_debt: 1200, amount: 0 },
             }),
             count: jest.fn().mockResolvedValue(3),
-            groupBy: jest
-                .fn()
-                .mockResolvedValue([{ customer_id: 1 }, { customer_id: 2 }]),
+            groupBy: jest.fn().mockResolvedValue([
+                { customer_id: 1, _sum: { outstanding_debt: 900 } },
+                { customer_id: 2, _sum: { outstanding_debt: 300 } },
+            ]),
             findMany: jest.fn().mockResolvedValue([]),
         },
         invoicePayment: {
@@ -196,6 +210,21 @@ describe("SystemModule — Nest-native HTTP contract", () => {
         });
         expect(Array.isArray(response.body.collectionStats)).toBe(true);
         expect(databaseMock.invoice.aggregate).toHaveBeenCalled();
+
+        // These chart payloads used to be hardcoded empty, which rendered the
+        // dashboard with blank axes.
+        expect(response.body.overdueInvoicesByCustomer).toEqual([
+            expect.objectContaining({ customer: "Acme", percentage: 75 }),
+            expect.objectContaining({ customer: "Globex", percentage: 25 }),
+        ]);
+        expect(response.body.overdueInvoicesByBusinessUnit).toEqual([
+            expect.objectContaining({ customer: "HQ", amount: 1200 }),
+        ]);
+        expect(response.body.receivablesMaturitySchedule).toHaveLength(7);
+        expect(
+            response.body.activeCustomersChart.options.xaxis.categories
+        ).toHaveLength(6);
+        expect(response.body.automatedPhaseSplit.series).toHaveLength(2);
     });
 
     it("GET /api/system/chart-details and control-center/agents work", async () => {
