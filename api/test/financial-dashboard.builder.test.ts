@@ -48,8 +48,8 @@ describe("financial-dashboard.builder", () => {
 
     it("builds aging portfolio rows with percentages", () => {
         const rows = buildAgingRangeRows([
-            { daysRange: "0-7", invoices: 1, accounts: 1, amount: 25 },
-            { daysRange: "8-30", invoices: 1, accounts: 1, amount: 75 },
+            { daysRange: "0_7", invoices: 1, accounts: 1, amount: 25 },
+            { daysRange: "8_30", invoices: 1, accounts: 1, amount: 75 },
         ]);
         expect(rows).toHaveLength(2);
         expect(rows[1].amountPercentage).toBe("75%");
@@ -84,7 +84,7 @@ describe("financial-dashboard.builder", () => {
                 currency: "ILS",
                 hasChildBusinessUnits: false,
             },
-            aging_portfolio: { chartData: [{ daysRange: "0-7" }], details: [] },
+            aging_portfolio: { chartData: [{ daysRange: "0_7" }], details: [] },
             collection_stats: [
                 buildCollectionStat("Agent", 1, 1, 10, "ILS"),
             ],

@@ -93,7 +93,19 @@ export declare class SystemService {
         hasChildBusinessUnits: boolean;
         fromCache: boolean;
     }>;
-    getChartDetails(_user: JwtPayload, _query?: SystemListQuery): Promise<{
+    private openCollectionPeriodFilter;
+    private selectedBusinessUnitFilter;
+    private resolveAgingBucket;
+    getChartDetails(user: JwtPayload, query?: SystemListQuery): Promise<{
+        details: never[];
+        data: never[];
+        totalRecords: number;
+        summary: {
+            totalRecords: number;
+            totalAmount: number;
+        };
+        currency: string;
+    } | {
         details: never[];
         totalRecords: number;
     }>;
