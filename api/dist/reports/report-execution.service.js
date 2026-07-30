@@ -41,14 +41,7 @@ let ReportExecutionService = class ReportExecutionService {
         const accountId = this.access.getEffectiveAccountId(userInfo);
         const role = userInfo.viewAsUserRole || userInfo.role;
         const report = await this.db.report.findFirst({
-            where: {
-                id: reportId,
-                OR: [
-                    { account_id: accountId },
-                    { is_system: true },
-                    { is_public: true },
-                ],
-            },
+            where: { id: reportId, ...(0, report_scope_util_1.reportVisibilityWhere)(accountId) },
         });
         if (!report) {
             throw new common_1.NotFoundException("Report not found");

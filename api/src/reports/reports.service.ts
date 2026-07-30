@@ -17,6 +17,7 @@ import {
 } from "./report.constants";
 import { REPORT_METADATA } from "./report-metadata";
 import { REPORT_RELATIONSHIPS } from "./report-relationships";
+import { reportVisibilityWhere } from "./report-scope.util";
 
 const REPORT_AUDIT_USERS_INCLUDE = {
     User_Report_created_byToUser: {
@@ -104,26 +105,7 @@ export class ReportsService {
                 : "desc";
 
         const where: Record<string, unknown> = {
-            AND: [
-                {
-                    OR: [
-                        { account_id: accountId },
-                        { is_system: true },
-                        {
-                            is_public: true,
-                            ReportShare: {
-                                some: {
-                                    OR: [
-                                        { shared_with_user_id: userId },
-                                        { shared_with_role: role as never },
-                                    ],
-                                },
-                            },
-                        },
-                        { created_by: userId },
-                    ],
-                },
-            ],
+            AND: [reportVisibilityWhere(accountId)],
         };
         if (context) {
             (where.AND as unknown[]).push({ context });
@@ -187,14 +169,7 @@ export class ReportsService {
         const userInfo = await this.access.resolveUserInfo(user);
         const accountId = this.access.getEffectiveAccountId(userInfo);
         const report = await this.db.report.findFirst({
-            where: {
-                id,
-                OR: [
-                    { account_id: accountId },
-                    { is_system: true },
-                    { is_public: true },
-                ],
-            },
+            where: { id, ...reportVisibilityWhere(accountId) },
             include: REPORT_AUDIT_USERS_INCLUDE,
         });
         if (!report) {
@@ -367,10 +342,7 @@ export class ReportsService {
         const userId = this.access.getEffectiveUserId(userInfo);
 
         const report = await this.db.report.findFirst({
-            where: {
-                id: reportId,
-                OR: [{ account_id: accountId }, { is_system: true }],
-            },
+            where: { id: reportId, ...reportVisibilityWhere(accountId) },
         });
         if (!report) {
             throw new NotFoundException("Report not found");
@@ -512,7 +484,7 @@ export class ReportsService {
         const where: Record<string, unknown> = {
             context,
             is_default: true,
-            OR: [{ account_id: accountId }, { is_system: true }],
+            ...reportVisibilityWhere(accountId),
         };
         if (filterCi) {
             where.NOT = {

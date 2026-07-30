@@ -57,6 +57,7 @@ import {
     buildAccountScopeWhere,
     nestBusinessUnitScopeWhere,
     nestOwnerScopeWhere,
+    reportVisibilityWhere,
 } from "./report-scope.util";
 import {
     applyComputedFieldSelect,
@@ -115,14 +116,7 @@ export class ReportExecutionService {
         const role = userInfo.viewAsUserRole || userInfo.role;
 
         const report = await this.db.report.findFirst({
-            where: {
-                id: reportId,
-                OR: [
-                    { account_id: accountId },
-                    { is_system: true },
-                    { is_public: true },
-                ],
-            },
+            where: { id: reportId, ...reportVisibilityWhere(accountId) },
         });
         if (!report) {
             throw new NotFoundException("Report not found");
