@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
     aggregateDailyHealthToMonthly,
@@ -236,6 +238,79 @@ describe("dual Health A/B pure helpers", () => {
         expect(metrics.lowestHealthStreakEnd).toBe("2026-07-03");
         // only 2026-07-03 is below 85 → 1/3
         expect(metrics.pctDaysBelow85).toBeCloseTo(100 / 3, 5);
+    });
+
+    it("excludes zero-AR days from health series KPIs", () => {
+        const daily = [
+            buildDailyHealthPoint({
+                snapshotDate: "2026-07-01",
+                totalReceivables: 100,
+                compliantExposure: 80,
+                atRiskExposure: 20,
+            }),
+            // AR = 0 → health 100 by definition; must not affect KPIs
+            buildDailyHealthPoint({
+                snapshotDate: "2026-07-02",
+                totalReceivables: 0,
+                compliantExposure: 0,
+                atRiskExposure: 0,
+            }),
+            buildDailyHealthPoint({
+                snapshotDate: "2026-07-03",
+                totalReceivables: 100,
+                compliantExposure: 90,
+                atRiskExposure: 10,
+            }),
+            buildDailyHealthPoint({
+                snapshotDate: "2026-07-04",
+                totalReceivables: 0,
+                compliantExposure: 0,
+                atRiskExposure: 0,
+            }),
+        ];
+        const metrics = computePortfolioHealthSeriesMetrics(daily);
+        expect(metrics.averageHealthPct).toBeCloseTo((80 + 90) / 2, 5);
+        expect(metrics.lowestHealthPct).toBe(80);
+        expect(metrics.lowestHealthStreakDays).toBe(1);
+        expect(metrics.lowestHealthStreakStart).toBe("2026-07-01");
+        expect(metrics.lowestHealthStreakEnd).toBe("2026-07-01");
+        // only 2026-07-01 is below 85 among eligible days → 1/2
+        expect(metrics.pctDaysBelow85).toBeCloseTo(50, 5);
+    });
+
+    it("returns zero health KPIs when every day has AR = 0", () => {
+        const metrics = computePortfolioHealthSeriesMetrics([
+            buildDailyHealthPoint({
+                snapshotDate: "2026-07-01",
+                totalReceivables: 0,
+                compliantExposure: 0,
+                atRiskExposure: 0,
+            }),
+        ]);
+        expect(metrics).toEqual({
+            averageHealthPct: 0,
+            lowestHealthPct: 0,
+            lowestHealthStreakDays: 0,
+            lowestHealthStreakStart: null,
+            lowestHealthStreakEnd: null,
+            pctDaysBelow85: 0,
+        });
+    });
+
+    it("falls back to approved_limit in portfolio util SQL fragments", () => {
+        const source = readFileSync(
+            resolve(
+                __dirname,
+                "../src/credit-insurance/domain/creditPortfolioHealthService.ts"
+            ),
+            "utf8"
+        );
+        expect(source).toContain(
+            "COALESCE(t.effective_approved_limit, t.approved_limit, 0)"
+        );
+        expect(source).not.toMatch(
+            /SUM\(\s*COALESCE\(t\.effective_approved_limit,\s*0\)::float8\s*\)/
+        );
     });
 
     it("exposes trough streak window on series metrics when two equal troughs exist", () => {
@@ -1113,7 +1188,7 @@ describe("getCreditPortfolioHealth", () => {
         ];
 
         jest.mocked(prisma.customerTopUp.findMany).mockResolvedValue([]);
-        jest.mocked(prisma.$queryRaw).mockImplementation(async (query: any) => {
+        jest.mocked(prisma.$queryRaw).mockImplementation((async (query: any) => {
             const sql = String(query?.strings?.join?.("") ?? query ?? "");
             if (sql.includes("compliant_a")) {
                 return healthRows as any;
@@ -1143,7 +1218,7 @@ describe("getCreditPortfolioHealth", () => {
                 return distributionRows as any;
             }
             return [];
-        });
+        }) as any);
 
         const result = await getCreditPortfolioHealth(1001, {
             from: "2026-07-01",
