@@ -948,7 +948,12 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         const approvedLimit = decimalToNumber(cp.approved_limit);
         let topUpTotal: Prisma.Decimal | null = null;
         let activeTopUpCount: number | null = null;
-        let effectiveApprovedLimit: Prisma.Decimal | null = null;
+        // Without top-ups (or when resolve fails), effective limit = base approved.
+        // Portfolio Health utilization uses this field as the denominator.
+        let effectiveApprovedLimit: Prisma.Decimal | null =
+            cp.approved_limit != null
+                ? new Prisma.Decimal(cp.approved_limit)
+                : null;
         if (accountHasTopUp) {
             const resolved = await resolveEffectiveApprovedLimit(cp.customer_id, {
                 baseApprovedLimit: cp.approved_limit,
@@ -960,7 +965,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             });
             if (resolved) {
                 effectiveApprovedLimit = new Prisma.Decimal(
-                    resolved.effectiveApprovedLimit ?? 0
+                    resolved.effectiveApprovedLimit ?? approvedLimit ?? 0
                 );
                 topUpTotal = new Prisma.Decimal(resolved.topUpTotalInLimitCurrency);
                 activeTopUpCount = resolved.topUpByPolicy.reduce(
@@ -1035,7 +1040,6 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         if (!accountHasTopUp) {
             topUpTotal = null;
             activeTopUpCount = null;
-            effectiveApprovedLimit = null;
         }
 
         const scopedTopUps = (topUpsByCustomerId.get(cp.customer_id) ?? []).filter(

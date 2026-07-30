@@ -42,7 +42,8 @@ export type CustomerKpiSnapshotResult = {
 
 /**
  * Customer-level capacity gap for KPI / at-risk (golden harness + policy sync).
- * Rolls up sticky per-invoice gaps with retained snapshot when AR drops below limit.
+ * Capacity is the sum of sticky per-invoice gaps on still-open invoices — it is
+ * not capped at (AR − limit). Gaps clear only when those invoices are paid down.
  */
 export function resolveCustomerCapacityGapForKpi(args: {
     totalAr: number;
@@ -50,32 +51,11 @@ export function resolveCustomerCapacityGapForKpi(args: {
     approvedLimit: number;
     retainedCapacityGap: number;
 }): { capacity: number; retainedCapacityGap: number } {
-    const sumInvoiceGaps = Math.max(0, args.sumInvoiceGaps);
-    if (sumInvoiceGaps <= 0) {
-        return { capacity: 0, retainedCapacityGap: 0 };
-    }
-
-    const excessOverLimit = Math.max(0, args.totalAr - args.approvedLimit);
-    if (excessOverLimit > 0) {
-        const capacity = Math.min(sumInvoiceGaps, excessOverLimit);
-        return { capacity, retainedCapacityGap: capacity };
-    }
-
-    if (
-        args.retainedCapacityGap > 0 &&
-        sumInvoiceGaps < args.retainedCapacityGap * 0.2
-    ) {
-        return { capacity: 0, retainedCapacityGap: 0 };
-    }
-
-    if (args.retainedCapacityGap > 0) {
-        return {
-            capacity: Math.min(sumInvoiceGaps, args.retainedCapacityGap),
-            retainedCapacityGap: args.retainedCapacityGap,
-        };
-    }
-
-    return { capacity: 0, retainedCapacityGap: 0 };
+    void args.totalAr;
+    void args.approvedLimit;
+    void args.retainedCapacityGap;
+    const capacity = Math.max(0, args.sumInvoiceGaps);
+    return { capacity, retainedCapacityGap: capacity };
 }
 
 /** Policy sync / dashboard: KPI capacity from invoice gap sum + retained state. */
