@@ -4,7 +4,10 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
-import { AccessScopeService, AccessUserInfo } from "../auth/access-scope.service";
+import {
+    AccessScopeService,
+    AccessUserInfo,
+} from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
@@ -64,20 +67,30 @@ const UUID_RE =
 /**
  * `title_params` actor fields, paired with the name field the locale strings and
  * the client fall back to. Titles interpolate the id field verbatim, so it has to
- * carry a display name by the time it leaves the API.
+ * carry a display name by the time it leaves the API. `fromCreator` marks the
+ * actor that `Activity.created_by` can stand in for when the params carry none.
  */
-const ACTOR_PARAM_FIELDS: ReadonlyArray<readonly [string, string]> = [
-    ["userId", "userName"],
-    ["assigneeId", "assigneeName"],
+const ACTOR_PARAM_FIELDS: ReadonlyArray<{
+    idField: string;
+    nameField: string;
+    fromCreator: boolean;
+}> = [
+    { idField: "userId", nameField: "userName", fromCreator: true },
+    { idField: "assigneeId", nameField: "assigneeName", fromCreator: false },
 ];
 
-/** Actors with no User row; mapped to keys so the client renders them translated. */
-const SPECIAL_ACTOR_KEYS: Record<string, string> = {
-    system: "{{activities.values.system}}",
-    system_user: "{{activities.values.system}}",
-    portal_user: "{{users.values.portal_user}}",
-    "portal user": "{{users.values.portal_user}}",
-};
+/**
+ * Actors with no real User row, plus the sentinel accounts that stand in for
+ * them. Mapped to keys so the client renders them in the viewer's language
+ * instead of the English name stored on the sentinel.
+ */
+const SPECIAL_ACTOR_KEYS = new Map<string, string>([
+    ["system", "{{activities.values.system}}"],
+    ["system_user", "{{activities.values.system}}"],
+    ["system user", "{{activities.values.system}}"],
+    ["portal_user", "{{users.values.portal_user}}"],
+    ["portal user", "{{users.values.portal_user}}"],
+]);
 
 const UNKNOWN_ACTOR_KEY = "{{users.values.unknown_user}}";
 
@@ -503,11 +516,7 @@ export class CustomersService {
         });
     }
 
-    async update(
-        user: JwtPayload,
-        id: number,
-        body: Record<string, unknown>
-    ) {
+    async update(user: JwtPayload, id: number, body: Record<string, unknown>) {
         await this.getById(user, id);
 
         if (
@@ -621,7 +630,12 @@ export class CustomersService {
      * lookup for the whole page rather than a query per row.
      */
     private async hydrateActivityUsers<
-        T extends { content?: string | null; title_params?: unknown },
+        T extends {
+            title?: string | null;
+            content?: string | null;
+            title_params?: unknown;
+            created_by?: string | null;
+        },
     >(activities: T[]): Promise<T[]> {
         const ids = new Set<string>();
         const collectId = (value: unknown) => {
@@ -640,9 +654,10 @@ export class CustomersService {
                     collectId(token);
                 }
             }
+            collectId(activity.created_by);
             const params = asParamsObject(activity.title_params);
             if (params) {
-                for (const [idField] of ACTOR_PARAM_FIELDS) {
+                for (const { idField } of ACTOR_PARAM_FIELDS) {
                     collectId(params[idField]);
                 }
             }
@@ -685,14 +700,18 @@ export class CustomersService {
             if (!raw) {
                 return stored;
             }
-            const special = SPECIAL_ACTOR_KEYS[raw.toLowerCase()];
+            const special = SPECIAL_ACTOR_KEYS.get(raw.toLowerCase());
             if (special) {
                 return special;
             }
             if (!UUID_RE.test(raw)) {
                 return raw;
             }
-            return names.get(raw) || stored || UNKNOWN_ACTOR_KEY;
+            const resolved = names.get(raw);
+            if (!resolved) {
+                return stored || UNKNOWN_ACTOR_KEY;
+            }
+            return SPECIAL_ACTOR_KEYS.get(resolved.toLowerCase()) || resolved;
         };
 
         return activities.map((activity) => {
@@ -706,20 +725,31 @@ export class CustomersService {
             }
 
             const params = asParamsObject(activity.title_params);
-            if (params) {
-                const next = { ...params };
-                for (const [idField, nameField] of ACTOR_PARAM_FIELDS) {
-                    const display = resolveActor(
-                        next[idField],
-                        next[nameField]
-                    );
+            // Rows can carry a title whose template names an actor while having
+            // no params at all, so the creator fallback has to run for those too.
+            if (params || optionalTrimmed(activity.title)) {
+                const next = { ...(params || {}) };
+                for (const {
+                    idField,
+                    nameField,
+                    fromCreator,
+                } of ACTOR_PARAM_FIELDS) {
+                    // Older rows recorded no actor param at all, which renders
+                    // as a dangling "changed by"; the row's author is the same
+                    // actor those titles refer to.
+                    const idValue =
+                        next[idField] ??
+                        (fromCreator ? activity.created_by : null);
+                    const display = resolveActor(idValue, next[nameField]);
                     if (!display) {
                         continue;
                     }
                     next[idField] = display;
                     next[nameField] = display;
                 }
-                hydrated.title_params = next;
+                if (Object.keys(next).length > 0) {
+                    hydrated.title_params = next;
+                }
             }
 
             return hydrated;
@@ -787,7 +817,10 @@ export class CustomersService {
                 { notes: { contains: search, mode: "insensitive" } },
                 {
                     InsurancePolicy: {
-                        policy_number: { contains: search, mode: "insensitive" },
+                        policy_number: {
+                            contains: search,
+                            mode: "insensitive",
+                        },
                     },
                 },
                 {
@@ -810,7 +843,10 @@ export class CustomersService {
                         },
                     },
                 },
-                orderBy: [{ [sortField]: sortDirection }, { id: "desc" }] as never,
+                orderBy: [
+                    { [sortField]: sortDirection },
+                    { id: "desc" },
+                ] as never,
                 skip: (page - 1) * limit,
                 take: limit,
             }),
@@ -843,7 +879,8 @@ export class CustomersService {
             });
         }
 
-        const topUpType = body.topUpType === "Percentage" ? "Percentage" : "Fixed";
+        const topUpType =
+            body.topUpType === "Percentage" ? "Percentage" : "Fixed";
         const topUpValue = Number(body.topUpValue);
         if (!Number.isFinite(topUpValue) || topUpValue <= 0) {
             throw new BadRequestException({
@@ -894,7 +931,9 @@ export class CustomersService {
             select: { id: true, policy_kind: true },
         });
         if (!policy) {
-            throw new NotFoundException({ error: "Insurance policy not found" });
+            throw new NotFoundException({
+                error: "Insurance policy not found",
+            });
         }
         if (policy.policy_kind !== "TopUp") {
             throw new BadRequestException({
@@ -957,10 +996,7 @@ export class CustomersService {
 
     async stuckActivities(user: JwtPayload, id: number) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
-        const { accountId } = await this.assertCustomerInAccount(
-            userInfo,
-            id
-        );
+        const { accountId } = await this.assertCustomerInAccount(userInfo, id);
 
         const customer = await this.db.customer.findFirst({
             where: { id, account_id: accountId },
@@ -981,7 +1017,8 @@ export class CustomersService {
         if (!user) {
             return null;
         }
-        const composed = `${user.first_name || ""} ${user.last_name || ""}`.trim();
+        const composed =
+            `${user.first_name || ""} ${user.last_name || ""}`.trim();
         return optionalTrimmed(user.name) || optionalTrimmed(composed);
     }
 
@@ -994,10 +1031,7 @@ export class CustomersService {
         });
     }
 
-    async invoicesAvailableForDispute(
-        user: JwtPayload,
-        id: number
-    ) {
+    async invoicesAvailableForDispute(user: JwtPayload, id: number) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
         const { accountId } = await this.assertCustomerInAccount(userInfo, id);
 
@@ -1060,7 +1094,12 @@ export class CustomersService {
         if (Number.isFinite(contactId) && contactId > 0) {
             const found = await this.db.contact.findFirst({
                 where: { id: contactId, customer_id: id },
-                select: { id: true, full_name: true, first_name: true, last_name: true },
+                select: {
+                    id: true,
+                    full_name: true,
+                    first_name: true,
+                    last_name: true,
+                },
             });
             if (!found) {
                 throw new BadRequestException({
@@ -1096,7 +1135,8 @@ export class CustomersService {
         const disputeReasonId = body.dispute_reason
             ? parseInt(String(body.dispute_reason), 10)
             : NaN;
-        let disputeInvoices: { id: number; invoice_number: string | null }[] = [];
+        let disputeInvoices: { id: number; invoice_number: string | null }[] =
+            [];
         if (callOutcome === "open_dispute") {
             if (disputeInvoiceIds.length === 0) {
                 throw new BadRequestException({
@@ -1294,13 +1334,19 @@ export class CustomersService {
         const subject = body.subject as string | undefined;
         const emailBody = body.emailBody as string | undefined;
 
-        if (!contactIds || !Array.isArray(contactIds) || contactIds.length === 0) {
+        if (
+            !contactIds ||
+            !Array.isArray(contactIds) ||
+            contactIds.length === 0
+        ) {
             throw new BadRequestException({
                 error: "At least one contact is required",
             });
         }
         if (!subject || !subject.trim()) {
-            throw new BadRequestException({ error: "Email subject is required" });
+            throw new BadRequestException({
+                error: "Email subject is required",
+            });
         }
         if (!emailBody || !emailBody.trim()) {
             throw new BadRequestException({ error: "Email body is required" });
@@ -1320,7 +1366,10 @@ export class CustomersService {
             } as never,
         });
 
-        return serializeBigInt({ ok: true, activity: serializeBigInt(activity) });
+        return serializeBigInt({
+            ok: true,
+            activity: serializeBigInt(activity),
+        });
     }
 
     async updateDispute(

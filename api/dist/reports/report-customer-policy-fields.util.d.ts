@@ -5,7 +5,7 @@ type CustomerPolicyRow = Record<string, unknown> & {
     is_active?: boolean;
     insurance_policy_id?: number | null;
 };
-export declare function getCustomerPolicyRow(row: unknown, invoiceRow?: unknown): CustomerPolicyRow | null;
-export declare function extractCustomerPolicyReportField(row: unknown, field: string, invoiceRow?: unknown): unknown;
+export declare function getCustomerPolicyRow(row: unknown, invoiceRow?: unknown, scopedPolicyId?: number): CustomerPolicyRow | null;
+export declare function extractCustomerPolicyReportField(row: unknown, field: string, invoiceRow?: unknown, scopedPolicyId?: number): unknown;
 export declare function mergeActiveCustomerPolicySelect(select: Record<string, unknown>, fields: string[]): void;
 export {};

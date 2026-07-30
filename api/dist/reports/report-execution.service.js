@@ -138,7 +138,7 @@ let ReportExecutionService = class ReportExecutionService {
                 withinDays: creditDashboardWithinDays ?? 30,
             });
             const locale = body.locale || "en-US";
-            const data = topUpResult.rows.map((row) => this.formatRow(row, primaryTable, fields, locale));
+            const data = topUpResult.rows.map((row) => this.formatRow(row, primaryTable, fields, locale, creditDashboardPolicyId));
             const formulaResult = (0, formula_execution_1.applyFormulasToRows)(data, config, {
                 locale,
                 metadataTables: report_metadata_1.REPORT_METADATA.tables,
@@ -198,7 +198,7 @@ let ReportExecutionService = class ReportExecutionService {
             rows = rows.slice(skip, skip + limit);
         }
         const locale = body.locale || "en-US";
-        const data = rows.map((row) => this.formatRow(row, primaryTable, fields, locale));
+        const data = rows.map((row) => this.formatRow(row, primaryTable, fields, locale, creditDashboardPolicyId));
         const formulaResult = (0, formula_execution_1.applyFormulasToRows)(data, config, {
             locale,
             metadataTables: report_metadata_1.REPORT_METADATA.tables,
@@ -741,7 +741,7 @@ let ReportExecutionService = class ReportExecutionService {
         }
         return null;
     }
-    formatRow(row, primaryTable, fields, locale) {
+    formatRow(row, primaryTable, fields, locale, scopedPolicyId) {
         const out = {
             id: row.id,
         };
@@ -759,7 +759,7 @@ let ReportExecutionService = class ReportExecutionService {
         };
         for (const f of fields) {
             const key = (0, report_constants_1.getFieldOutputKey)(f);
-            let value = this.extractFieldValue(row, primaryTable, f, relationMap);
+            let value = this.extractFieldValue(row, primaryTable, f, relationMap, scopedPolicyId);
             if (f.table === "Invoice" &&
                 f.field === "terms_breach_reason" &&
                 value != null) {
@@ -802,7 +802,7 @@ let ReportExecutionService = class ReportExecutionService {
         }
         return out;
     }
-    extractFieldValue(row, primaryTable, f, relationMap) {
+    extractFieldValue(row, primaryTable, f, relationMap, scopedPolicyId) {
         if (f.table === primaryTable) {
             const computed = (0, report_virtual_fields_util_1.extractComputedFieldValue)(primaryTable, f.field, row);
             if (computed !== undefined) {
@@ -849,7 +849,7 @@ let ReportExecutionService = class ReportExecutionService {
             }
             if (primaryTable === "Customer" &&
                 (0, report_customer_policy_fields_util_1.isCustomerPolicyBackedReportField)(f.field)) {
-                const policyValue = (0, report_customer_policy_fields_util_1.extractCustomerPolicyReportField)(row, f.field);
+                const policyValue = (0, report_customer_policy_fields_util_1.extractCustomerPolicyReportField)(row, f.field, undefined, scopedPolicyId);
                 if (policyValue !== null && policyValue !== undefined) {
                     return policyValue;
                 }

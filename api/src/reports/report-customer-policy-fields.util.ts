@@ -32,7 +32,8 @@ type CustomerPolicyRow = Record<string, unknown> & {
 
 export function getCustomerPolicyRow(
     row: unknown,
-    invoiceRow?: unknown
+    invoiceRow?: unknown,
+    scopedPolicyId?: number
 ): CustomerPolicyRow | null {
     if (!row || typeof row !== "object") {
         return null;
@@ -54,17 +55,36 @@ export function getCustomerPolicyRow(
         return null;
     }
 
+    const matchPolicy = (policyId: number): CustomerPolicyRow | undefined => {
+        const ofPolicy = validPolicies.filter(
+            (p) =>
+                (p as { insurance_policy_id?: unknown }).insurance_policy_id ===
+                policyId
+        );
+        return (
+            ofPolicy.find(
+                (p) => (p as { is_active?: unknown }).is_active === true
+            ) ?? ofPolicy[0]
+        );
+    };
+
     if (invoiceRow && typeof invoiceRow === "object") {
         const policyId = (invoiceRow as { policy_id?: unknown }).policy_id;
         if (typeof policyId === "number") {
-            const matched = validPolicies.find(
-                (p) =>
-                    (p as { insurance_policy_id?: unknown })
-                        .insurance_policy_id === policyId
-            );
+            const matched = matchPolicy(policyId);
             if (matched) {
                 return matched;
             }
+        }
+    }
+
+    // A customer may hold several policies, so with a policy scope selected the
+    // row has to describe that policy. Falling through to "first active" made a
+    // scoped grid label rows with an unrelated policy.
+    if (typeof scopedPolicyId === "number") {
+        const matched = matchPolicy(scopedPolicyId);
+        if (matched) {
+            return matched;
         }
     }
 
@@ -81,9 +101,10 @@ export function getCustomerPolicyRow(
 export function extractCustomerPolicyReportField(
     row: unknown,
     field: string,
-    invoiceRow?: unknown
+    invoiceRow?: unknown,
+    scopedPolicyId?: number
 ): unknown {
-    const active = getCustomerPolicyRow(row, invoiceRow);
+    const active = getCustomerPolicyRow(row, invoiceRow, scopedPolicyId);
     if (!active) {
         return null;
     }

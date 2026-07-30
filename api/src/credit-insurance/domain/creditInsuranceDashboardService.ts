@@ -2141,6 +2141,13 @@ async function buildCapacityGapCandidates(
         if (ar <= 0) {
             continue;
         }
+        // The "over limit customers" card sums active CustomerPolicy rows only.
+        // enrichCustomersWithPolicyScope falls back to the latest inactive row
+        // when a customer has no active one for the scoped policy, which pulled
+        // stale gaps into this list and made the grid disagree with the card.
+        if (!c.is_active) {
+            continue;
+        }
         const gapAmount = dashboardCapacityGapFromStored(c);
         if (gapAmount > 0) {
             withGap.push({
@@ -2225,6 +2232,9 @@ async function buildCapacityGapCandidates(
         }
 
         for (const c of all) {
+            if (!c.is_active) {
+                continue;
+            }
             const gapAmount = gapByCustomer.get(c.id) ?? 0;
             if (gapAmount <= 0) {
                 continue;

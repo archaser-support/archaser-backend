@@ -34,15 +34,16 @@ function optionalTrimmed(value) {
 const CONTENT_USER_TOKEN_RE = /\{\{user:([^}]+)\}\}/g;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ACTOR_PARAM_FIELDS = [
-    ["userId", "userName"],
-    ["assigneeId", "assigneeName"],
+    { idField: "userId", nameField: "userName", fromCreator: true },
+    { idField: "assigneeId", nameField: "assigneeName", fromCreator: false },
 ];
-const SPECIAL_ACTOR_KEYS = {
-    system: "{{activities.values.system}}",
-    system_user: "{{activities.values.system}}",
-    portal_user: "{{users.values.portal_user}}",
-    "portal user": "{{users.values.portal_user}}",
-};
+const SPECIAL_ACTOR_KEYS = new Map([
+    ["system", "{{activities.values.system}}"],
+    ["system_user", "{{activities.values.system}}"],
+    ["system user", "{{activities.values.system}}"],
+    ["portal_user", "{{users.values.portal_user}}"],
+    ["portal user", "{{users.values.portal_user}}"],
+]);
 const UNKNOWN_ACTOR_KEY = "{{users.values.unknown_user}}";
 function asParamsObject(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -495,9 +496,10 @@ let CustomersService = class CustomersService {
                     collectId(token);
                 }
             }
+            collectId(activity.created_by);
             const params = asParamsObject(activity.title_params);
             if (params) {
-                for (const [idField] of ACTOR_PARAM_FIELDS) {
+                for (const { idField } of ACTOR_PARAM_FIELDS) {
                     collectId(params[idField]);
                 }
             }
@@ -527,14 +529,18 @@ let CustomersService = class CustomersService {
             if (!raw) {
                 return stored;
             }
-            const special = SPECIAL_ACTOR_KEYS[raw.toLowerCase()];
+            const special = SPECIAL_ACTOR_KEYS.get(raw.toLowerCase());
             if (special) {
                 return special;
             }
             if (!UUID_RE.test(raw)) {
                 return raw;
             }
-            return names.get(raw) || stored || UNKNOWN_ACTOR_KEY;
+            const resolved = names.get(raw);
+            if (!resolved) {
+                return stored || UNKNOWN_ACTOR_KEY;
+            }
+            return SPECIAL_ACTOR_KEYS.get(resolved.toLowerCase()) || resolved;
         };
         return activities.map((activity) => {
             const hydrated = { ...activity };
@@ -542,17 +548,21 @@ let CustomersService = class CustomersService {
                 hydrated.content = String(activity.content).replace(CONTENT_USER_TOKEN_RE, (match, token) => resolveActor(token, null) ?? match);
             }
             const params = asParamsObject(activity.title_params);
-            if (params) {
-                const next = { ...params };
-                for (const [idField, nameField] of ACTOR_PARAM_FIELDS) {
-                    const display = resolveActor(next[idField], next[nameField]);
+            if (params || optionalTrimmed(activity.title)) {
+                const next = { ...(params || {}) };
+                for (const { idField, nameField, fromCreator, } of ACTOR_PARAM_FIELDS) {
+                    const idValue = next[idField] ??
+                        (fromCreator ? activity.created_by : null);
+                    const display = resolveActor(idValue, next[nameField]);
                     if (!display) {
                         continue;
                     }
                     next[idField] = display;
                     next[nameField] = display;
                 }
-                hydrated.title_params = next;
+                if (Object.keys(next).length > 0) {
+                    hydrated.title_params = next;
+                }
             }
             return hydrated;
         });
@@ -607,7 +617,10 @@ let CustomersService = class CustomersService {
                 { notes: { contains: search, mode: "insensitive" } },
                 {
                     InsurancePolicy: {
-                        policy_number: { contains: search, mode: "insensitive" },
+                        policy_number: {
+                            contains: search,
+                            mode: "insensitive",
+                        },
                     },
                 },
                 {
@@ -629,7 +642,10 @@ let CustomersService = class CustomersService {
                         },
                     },
                 },
-                orderBy: [{ [sortField]: sortDirection }, { id: "desc" }],
+                orderBy: [
+                    { [sortField]: sortDirection },
+                    { id: "desc" },
+                ],
                 skip: (page - 1) * limit,
                 take: limit,
             }),
@@ -697,7 +713,9 @@ let CustomersService = class CustomersService {
             select: { id: true, policy_kind: true },
         });
         if (!policy) {
-            throw new common_1.NotFoundException({ error: "Insurance policy not found" });
+            throw new common_1.NotFoundException({
+                error: "Insurance policy not found",
+            });
         }
         if (policy.policy_kind !== "TopUp") {
             throw new common_1.BadRequestException({
@@ -823,7 +841,12 @@ let CustomersService = class CustomersService {
         if (Number.isFinite(contactId) && contactId > 0) {
             const found = await this.db.contact.findFirst({
                 where: { id: contactId, customer_id: id },
-                select: { id: true, full_name: true, first_name: true, last_name: true },
+                select: {
+                    id: true,
+                    full_name: true,
+                    first_name: true,
+                    last_name: true,
+                },
             });
             if (!found) {
                 throw new common_1.BadRequestException({
@@ -1027,13 +1050,17 @@ let CustomersService = class CustomersService {
         const contactIds = body.contactIds;
         const subject = body.subject;
         const emailBody = body.emailBody;
-        if (!contactIds || !Array.isArray(contactIds) || contactIds.length === 0) {
+        if (!contactIds ||
+            !Array.isArray(contactIds) ||
+            contactIds.length === 0) {
             throw new common_1.BadRequestException({
                 error: "At least one contact is required",
             });
         }
         if (!subject || !subject.trim()) {
-            throw new common_1.BadRequestException({ error: "Email subject is required" });
+            throw new common_1.BadRequestException({
+                error: "Email subject is required",
+            });
         }
         if (!emailBody || !emailBody.trim()) {
             throw new common_1.BadRequestException({ error: "Email body is required" });
@@ -1051,7 +1078,10 @@ let CustomersService = class CustomersService {
                 created_by: effectiveUserId,
             },
         });
-        return (0, serialize_bigint_1.serializeBigInt)({ ok: true, activity: (0, serialize_bigint_1.serializeBigInt)(activity) });
+        return (0, serialize_bigint_1.serializeBigInt)({
+            ok: true,
+            activity: (0, serialize_bigint_1.serializeBigInt)(activity),
+        });
     }
     async updateDispute(user, id, disputeId, op, body) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
