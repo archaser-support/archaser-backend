@@ -26,7 +26,7 @@ export function isPublicPagesApiPath(urlPath: string): boolean {
         return true;
     }
     // Public customer portal UUID leaves (also owned by PortalCustomers controller)
-    if (/^\/api\/customers\/[^/]+\/(portal-data|agent-portal|invoices|bank-details|banks|disputes|create-dispute|view-disputes|wrong-contact|top-ups)(\/|$)/.test(path)) {
+    if (/^\/api\/customers\/[^/]+\/(portal-data|agent-portal|invoices|bank-details|banks|disputes|create-dispute|view-disputes|wrong-contact)(\/|$)/.test(path)) {
         return true;
     }
     return false;

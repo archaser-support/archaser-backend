@@ -16,11 +16,21 @@ type PortalCollectionPeriod = {
     period_end_date: Date | null;
 };
 
+const UUID_PATTERN =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 @Injectable()
 export class PortalService {
     constructor(private readonly db: DatabaseService) {}
 
     private async findCustomerByUuid(customerUUID: string) {
+        // `customer_uuid` is a Postgres uuid column, so a non-UUID segment makes
+        // Prisma fail the query itself (P2023) and surface a 500. The portal
+        // route matches any first segment, so reject the value here instead.
+        if (!UUID_PATTERN.test(customerUUID)) {
+            throw new NotFoundException({ error: "Customer not found" });
+        }
+
         const customer = await this.db.customer.findFirst({
             where: { customer_uuid: customerUUID },
             select: {
@@ -94,8 +104,6 @@ export class PortalService {
                 return { banks: [] };
             case "wrong-contact":
                 return { ok: true };
-            case "top-ups":
-                return { topUps: [] };
             default:
                 throw new NotFoundException({
                     error: "Portal customer path not served by Nest domain",

@@ -3,6 +3,7 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import {
     AccessScopeService,
     AccessUserInfo,
@@ -1663,19 +1664,31 @@ export class ReportExecutionService {
             return value.toString();
         }
         if (typeof value === "number") {
-            try {
-                return new Intl.NumberFormat(locale).format(value);
-            } catch {
-                return String(value);
-            }
+            return this.formatNumber(value, locale);
         }
         if (typeof value === "boolean") {
             return value ? "Yes" : "No";
+        }
+        // Decimal columns (approved_limit, capacity_gap_amount, ...) are objects whose
+        // toJSON() returns a string, so JSON.stringify would wrap them in literal quotes.
+        if (Prisma.Decimal.isDecimal(value)) {
+            return this.formatNumber(value.toNumber(), locale);
         }
         if (typeof value === "object") {
             return JSON.stringify(value);
         }
         return String(value);
+    }
+
+    private formatNumber(value: number, locale: string): string {
+        if (!Number.isFinite(value)) {
+            return String(value);
+        }
+        try {
+            return new Intl.NumberFormat(locale).format(value);
+        } catch {
+            return String(value);
+        }
     }
 
     private looksLikeDateField(field: string, value: unknown): boolean {

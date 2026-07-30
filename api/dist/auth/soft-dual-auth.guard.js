@@ -27,7 +27,7 @@ function isPublicPagesApiPath(urlPath) {
     if (prefixes.some((p) => path === p.slice(0, -1) || path.startsWith(p))) {
         return true;
     }
-    if (/^\/api\/customers\/[^/]+\/(portal-data|agent-portal|invoices|bank-details|banks|disputes|create-dispute|view-disputes|wrong-contact|top-ups)(\/|$)/.test(path)) {
+    if (/^\/api\/customers\/[^/]+\/(portal-data|agent-portal|invoices|bank-details|banks|disputes|create-dispute|view-disputes|wrong-contact)(\/|$)/.test(path)) {
         return true;
     }
     return false;

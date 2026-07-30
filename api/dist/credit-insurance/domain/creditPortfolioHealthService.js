@@ -22,11 +22,11 @@ exports.computeDailyTopUpUtilizationPct = computeDailyTopUpUtilizationPct;
 exports.assignUtilizationDistributionBin = assignUtilizationDistributionBin;
 exports.buildUtilizationDistribution = buildUtilizationDistribution;
 exports.computePolicyEfficiency = computePolicyEfficiency;
+exports.computeDclVsNamedFootprints = computeDclVsNamedFootprints;
 exports.computeSelfVsApprovedShares = computeSelfVsApprovedShares;
 exports.computeUtilizationPeriodMetrics = computeUtilizationPeriodMetrics;
 exports.emptyUtilizationSection = emptyUtilizationSection;
 exports.buildUtilizationSection = buildUtilizationSection;
-exports.computePeriodCost = computePeriodCost;
 exports.computeEffectiveCost = computeEffectiveCost;
 exports.computeAverageCompliantExposure = computeAverageCompliantExposure;
 exports.emptyCostsSection = emptyCostsSection;
@@ -37,13 +37,15 @@ const domain_db_1 = require("../domain-db");
 const portfolioHealthDateRange_1 = require("./shared/portfolioHealthDateRange");
 const policyExclusion_1 = require("./shared/policyExclusion");
 const creditDashboardSnapshotService_1 = require("./creditDashboardSnapshotService");
+const customerPolicyDailyCost_1 = require("./customerPolicyDailyCost");
+const portfolioRangeCost_1 = require("./portfolioRangeCost");
+const resolveEffectiveApprovedLimit_1 = require("./resolveEffectiveApprovedLimit");
 exports.PORTFOLIO_HEALTH_BELOW_THRESHOLD_PCT = 85;
 exports.INSURER_DECLINED_REASON = "Insurer declined";
 exports.NO_COVERAGE_REASON_KEYS = [
     "pending_review",
     "credit_hold",
     "insurer_declined",
-    "other",
     "no_linked_policy",
 ];
 exports.UTILIZATION_DISTRIBUTION_BIN_KEYS = [
@@ -236,7 +238,7 @@ function classifyNoCoverageReason(input) {
     if (lower === "insurer declined") {
         return "insurer_declined";
     }
-    return "other";
+    return normalized;
 }
 function isApprovedCoverageCustomer(input) {
     return classifyNoCoverageReason(input) == null;
@@ -267,6 +269,22 @@ function pickMainViolationReason(amountsByReason) {
 function emptyNoCoverageReasonMaps() {
     return { amountByReason: {}, customerCountByReason: {} };
 }
+function collectNoCoverageReasonKeys(daily) {
+    const keys = new Set(exports.NO_COVERAGE_REASON_KEYS);
+    for (const day of daily) {
+        for (const key of Object.keys(day.amountByReason)) {
+            if (key) {
+                keys.add(key);
+            }
+        }
+        for (const key of Object.keys(day.customerCountByReason)) {
+            if (key) {
+                keys.add(key);
+            }
+        }
+    }
+    return Array.from(keys);
+}
 function applyWithoutPolicyToNoCoverageDay(day, withoutPolicy, includeNoPolicyExposure) {
     if (!includeNoPolicyExposure || withoutPolicy == null) {
         return day;
@@ -291,13 +309,15 @@ function applyWithoutPolicyToNoCoverageDay(day, withoutPolicy, includeNoPolicyEx
         },
     };
 }
-function buildNoCoverageSection(daily) {
+function buildNoCoverageSection(daily, accountCurrency = "USD") {
+    const currency = accountCurrency.trim().toUpperCase() || "USD";
+    const reasonKeys = collectNoCoverageReasonKeys(daily);
     if (daily.length === 0) {
         return {
             averageUncoveredCustomerPct: 0,
             averageUncoveredAmount: 0,
             averageUncoveredCustomerCount: 0,
-            reasons: exports.NO_COVERAGE_REASON_KEYS.map((reason) => ({
+            reasons: reasonKeys.map((reason) => ({
                 reason,
                 averageAmount: 0,
                 averageCustomerCount: 0,
@@ -306,6 +326,7 @@ function buildNoCoverageSection(daily) {
             mainViolationReason: null,
             mainViolationReasonSharePct: 0,
             totalBreachAmount: 0,
+            accountCurrency: currency,
         };
     }
     const dayCount = daily.length;
@@ -313,8 +334,8 @@ function buildNoCoverageSection(daily) {
     let sumUncoveredAmount = 0;
     let sumUncoveredCustomers = 0;
     let sumViolationPct = 0;
-    const sumAmountByReason = Object.fromEntries(exports.NO_COVERAGE_REASON_KEYS.map((key) => [key, 0]));
-    const sumCustomersByReason = Object.fromEntries(exports.NO_COVERAGE_REASON_KEYS.map((key) => [key, 0]));
+    const sumAmountByReason = Object.fromEntries(reasonKeys.map((key) => [key, 0]));
+    const sumCustomersByReason = Object.fromEntries(reasonKeys.map((key) => [key, 0]));
     const breachTotals = {};
     for (const day of daily) {
         sumCustomerPct +=
@@ -328,7 +349,7 @@ function buildNoCoverageSection(daily) {
                 ? (100 * day.approvedTermsBreachAmount) /
                     day.approvedTotalReceivables
                 : 0;
-        for (const key of exports.NO_COVERAGE_REASON_KEYS) {
+        for (const key of reasonKeys) {
             sumAmountByReason[key] += day.amountByReason[key] ?? 0;
             sumCustomersByReason[key] += day.customerCountByReason[key] ?? 0;
         }
@@ -345,7 +366,7 @@ function buildNoCoverageSection(daily) {
         averageUncoveredCustomerPct: sumCustomerPct / dayCount,
         averageUncoveredAmount: sumUncoveredAmount / dayCount,
         averageUncoveredCustomerCount: roundToOneDecimal(sumUncoveredCustomers / dayCount),
-        reasons: exports.NO_COVERAGE_REASON_KEYS.map((reason) => ({
+        reasons: reasonKeys.map((reason) => ({
             reason,
             averageAmount: sumAmountByReason[reason] / dayCount,
             averageCustomerCount: roundToOneDecimal(sumCustomersByReason[reason] / dayCount),
@@ -354,6 +375,7 @@ function buildNoCoverageSection(daily) {
         mainViolationReason: main.reason,
         mainViolationReasonSharePct: main.sharePct,
         totalBreachAmount: main.totalAmount,
+        accountCurrency: currency,
     };
 }
 function computeDailyPortfolioUtilizationPct(usageSum, effectiveLimitSum) {
@@ -402,19 +424,85 @@ function computePolicyEfficiency(healthPct, utilizationPct) {
     }
     return healthPct / utilizationPct;
 }
+function computeDclVsNamedFootprints(daily) {
+    if (daily.length === 0) {
+        return {
+            selfUnderwrittenCustomerPct: 0,
+            selfUnderwrittenArSharePct: 0,
+            selfUnderwrittenAverageAr: 0,
+            selfUnderwrittenAverageUtilizationPct: null,
+            approvedCustomerPct: 0,
+            approvedArSharePct: 0,
+            approvedAverageAr: 0,
+            approvedAverageUtilizationPct: null,
+        };
+    }
+    let sumDclCustomerPct = 0;
+    let sumNamedCustomerPct = 0;
+    let customerShareDays = 0;
+    let sumDclArShare = 0;
+    let sumNamedArShare = 0;
+    let arShareDays = 0;
+    let sumDclAr = 0;
+    let sumNamedAr = 0;
+    let sumDclUtil = 0;
+    let dclUtilDays = 0;
+    let sumNamedUtil = 0;
+    let namedUtilDays = 0;
+    for (const day of daily) {
+        const coveredCustomers = day.dclCustomerCount + day.namedCustomerCount;
+        if (coveredCustomers > 0) {
+            customerShareDays += 1;
+            sumDclCustomerPct += (100 * day.dclCustomerCount) / coveredCustomers;
+            sumNamedCustomerPct +=
+                (100 * day.namedCustomerCount) / coveredCustomers;
+        }
+        const coveredAr = day.dclAr + day.namedAr;
+        if (coveredAr > 0) {
+            arShareDays += 1;
+            sumDclArShare += (100 * day.dclAr) / coveredAr;
+            sumNamedArShare += (100 * day.namedAr) / coveredAr;
+        }
+        sumDclAr += day.dclAr;
+        sumNamedAr += day.namedAr;
+        if (day.dclUtilizationPct != null) {
+            dclUtilDays += 1;
+            sumDclUtil += day.dclUtilizationPct;
+        }
+        if (day.namedUtilizationPct != null) {
+            namedUtilDays += 1;
+            sumNamedUtil += day.namedUtilizationPct;
+        }
+    }
+    const n = daily.length;
+    return {
+        selfUnderwrittenCustomerPct: customerShareDays > 0 ? sumDclCustomerPct / customerShareDays : 0,
+        selfUnderwrittenArSharePct: arShareDays > 0 ? sumDclArShare / arShareDays : 0,
+        selfUnderwrittenAverageAr: sumDclAr / n,
+        selfUnderwrittenAverageUtilizationPct: dclUtilDays > 0 ? sumDclUtil / dclUtilDays : null,
+        approvedCustomerPct: customerShareDays > 0 ? sumNamedCustomerPct / customerShareDays : 0,
+        approvedArSharePct: arShareDays > 0 ? sumNamedArShare / arShareDays : 0,
+        approvedAverageAr: sumNamedAr / n,
+        approvedAverageUtilizationPct: namedUtilDays > 0 ? sumNamedUtil / namedUtilDays : null,
+    };
+}
 function computeSelfVsApprovedShares(daily) {
     if (daily.length === 0) {
         return {
             selfUnderwrittenCustomerPct: 0,
             selfUnderwrittenArSharePct: 0,
+            selfUnderwrittenAverageAr: 0,
             approvedCustomerPct: 0,
             approvedArSharePct: 0,
+            approvedAverageAr: 0,
         };
     }
     let sumSelfCustomerPct = 0;
     let sumApprovedCustomerPct = 0;
     let sumSelfArShare = 0;
     let sumApprovedArShare = 0;
+    let sumSelfAr = 0;
+    let sumApprovedAr = 0;
     for (const day of daily) {
         sumSelfCustomerPct +=
             day.totalCustomerCount > 0
@@ -433,19 +521,22 @@ function computeSelfVsApprovedShares(daily) {
             totalAr > 0
                 ? (100 * day.approvedTotalReceivables) / totalAr
                 : 0;
+        sumSelfAr += day.uncoveredAmount;
+        sumApprovedAr += day.approvedTotalReceivables;
     }
     const n = daily.length;
     return {
         selfUnderwrittenCustomerPct: sumSelfCustomerPct / n,
         selfUnderwrittenArSharePct: sumSelfArShare / n,
+        selfUnderwrittenAverageAr: sumSelfAr / n,
         approvedCustomerPct: sumApprovedCustomerPct / n,
         approvedArSharePct: sumApprovedArShare / n,
+        approvedAverageAr: sumApprovedAr / n,
     };
 }
 function computeUtilizationPeriodMetrics(daily) {
     const utilDays = daily.filter((d) => d.utilizationPct != null);
     if (utilDays.length === 0) {
-        const dayCount = daily.length;
         const topUpDays = daily.filter((d) => d.topUpUtilizationPct != null);
         return {
             averageUtilizationPct: 0,
@@ -457,13 +548,6 @@ function computeUtilizationPeriodMetrics(daily) {
             averageTopUpUtilizationPct: topUpDays.length > 0
                 ? topUpDays.reduce((sum, d) => sum + (d.topUpUtilizationPct ?? 0), 0) / topUpDays.length
                 : null,
-            averageDailyTopUpCount: dayCount > 0
-                ? roundToOneDecimal(daily.reduce((sum, d) => sum + d.activeTopUpCountSum, 0) /
-                    dayCount)
-                : 0,
-            averageDailyCustomersWithTopUp: dayCount > 0
-                ? roundToOneDecimal(daily.reduce((sum, d) => sum + d.customersWithActiveTopUp, 0) / dayCount)
-                : 0,
         };
     }
     const averageUtilizationPct = utilDays.reduce((sum, d) => sum + d.utilizationPct, 0) /
@@ -476,7 +560,6 @@ function computeUtilizationPeriodMetrics(daily) {
         value: d.utilizationPct,
     })), peakUtilizationPct);
     const topUpDays = daily.filter((d) => d.topUpUtilizationPct != null);
-    const dayCount = daily.length;
     return {
         averageUtilizationPct,
         pctDaysAbove100,
@@ -487,13 +570,6 @@ function computeUtilizationPeriodMetrics(daily) {
         averageTopUpUtilizationPct: topUpDays.length > 0
             ? topUpDays.reduce((sum, d) => sum + (d.topUpUtilizationPct ?? 0), 0) / topUpDays.length
             : null,
-        averageDailyTopUpCount: dayCount > 0
-            ? roundToOneDecimal(daily.reduce((sum, d) => sum + d.activeTopUpCountSum, 0) /
-                dayCount)
-            : 0,
-        averageDailyCustomersWithTopUp: dayCount > 0
-            ? roundToOneDecimal(daily.reduce((sum, d) => sum + d.customersWithActiveTopUp, 0) / dayCount)
-            : 0,
     };
 }
 function emptyUtilizationSection() {
@@ -506,11 +582,15 @@ function emptyUtilizationSection() {
         peakUtilizationStreakEnd: null,
         selfUnderwrittenCustomerPct: 0,
         selfUnderwrittenArSharePct: 0,
+        selfUnderwrittenAverageAr: 0,
+        selfUnderwrittenAverageUtilizationPct: null,
         approvedCustomerPct: 0,
         approvedArSharePct: 0,
+        approvedAverageAr: 0,
+        approvedAverageUtilizationPct: null,
         averageTopUpUtilizationPct: null,
-        averageDailyTopUpCount: 0,
-        averageDailyCustomersWithTopUp: 0,
+        periodActiveTopUpCount: 0,
+        periodCustomersWithTopUp: 0,
         topCustomers: [],
         efficiencyA: null,
         efficiencyB: null,
@@ -520,11 +600,12 @@ function emptyUtilizationSection() {
             customerPct: 0,
         })),
         distributionCustomerCount: 0,
+        daily: [],
     };
 }
 function buildUtilizationSection(input) {
     const period = computeUtilizationPeriodMetrics(input.daily);
-    const shares = computeSelfVsApprovedShares(input.noCoverageDaily);
+    const footprints = computeDclVsNamedFootprints(input.daily);
     const distribution = buildUtilizationDistribution(input.distributionCustomers);
     return {
         averageUtilizationPct: period.averageUtilizationPct,
@@ -533,22 +614,24 @@ function buildUtilizationSection(input) {
         peakUtilizationStreakDays: period.peakUtilizationStreakDays,
         peakUtilizationStreakStart: period.peakUtilizationStreakStart,
         peakUtilizationStreakEnd: period.peakUtilizationStreakEnd,
-        selfUnderwrittenCustomerPct: shares.selfUnderwrittenCustomerPct,
-        selfUnderwrittenArSharePct: shares.selfUnderwrittenArSharePct,
-        approvedCustomerPct: shares.approvedCustomerPct,
-        approvedArSharePct: shares.approvedArSharePct,
+        selfUnderwrittenCustomerPct: footprints.selfUnderwrittenCustomerPct,
+        selfUnderwrittenArSharePct: footprints.selfUnderwrittenArSharePct,
+        selfUnderwrittenAverageAr: footprints.selfUnderwrittenAverageAr,
+        selfUnderwrittenAverageUtilizationPct: footprints.selfUnderwrittenAverageUtilizationPct,
+        approvedCustomerPct: footprints.approvedCustomerPct,
+        approvedArSharePct: footprints.approvedArSharePct,
+        approvedAverageAr: footprints.approvedAverageAr,
+        approvedAverageUtilizationPct: footprints.approvedAverageUtilizationPct,
         averageTopUpUtilizationPct: period.averageTopUpUtilizationPct,
-        averageDailyTopUpCount: period.averageDailyTopUpCount,
-        averageDailyCustomersWithTopUp: period.averageDailyCustomersWithTopUp,
+        periodActiveTopUpCount: input.periodActiveTopUpCount,
+        periodCustomersWithTopUp: input.periodCustomersWithTopUp,
         topCustomers: input.topCustomers,
         efficiencyA: computePolicyEfficiency(input.healthAverageA, period.averageUtilizationPct),
-        efficiencyB: computePolicyEfficiency(input.healthAverageB, period.averageUtilizationPct),
+        efficiencyB: null,
         distribution: distribution.bins,
         distributionCustomerCount: distribution.customerCount,
+        daily: [...input.daily].sort((a, b) => a.snapshotDate.localeCompare(b.snapshotDate)),
     };
-}
-function computePeriodCost(daily) {
-    return daily.reduce((sum, d) => sum + d.totalDailyCost, 0);
 }
 function computeEffectiveCost(periodCost, averageCompliantExposure) {
     if (!(averageCompliantExposure > 0)) {
@@ -567,31 +650,37 @@ function emptyCostsSection(accountCurrency = "USD") {
     return {
         periodCost: 0,
         daily: [],
+        monthly: [],
         averageCompliantExposure: 0,
         effectiveCost: null,
         accountCurrency,
         selfUnderwrittenCustomerPct: 0,
         selfUnderwrittenArSharePct: 0,
+        selfUnderwrittenAverageAr: 0,
         approvedCustomerPct: 0,
         approvedArSharePct: 0,
+        approvedAverageAr: 0,
         deductiblePct: null,
     };
 }
 function buildCostsSection(input) {
-    const periodCost = computePeriodCost(input.daily);
     const averageCompliantExposure = computeAverageCompliantExposure(input.dailyHealth);
-    const shares = computeSelfVsApprovedShares(input.noCoverageDaily);
+    const footprints = computeDclVsNamedFootprints(input.footprintDaily);
     const currency = input.accountCurrency.trim().toUpperCase() || "USD";
+    const monthly = [...input.monthly].sort((a, b) => a.month.localeCompare(b.month));
     return {
-        periodCost,
-        daily: [...input.daily].sort((a, b) => a.snapshotDate.localeCompare(b.snapshotDate)),
+        periodCost: input.periodCost,
+        daily: [],
+        monthly,
         averageCompliantExposure,
-        effectiveCost: computeEffectiveCost(periodCost, averageCompliantExposure),
+        effectiveCost: computeEffectiveCost(input.periodCost, averageCompliantExposure),
         accountCurrency: currency,
-        selfUnderwrittenCustomerPct: shares.selfUnderwrittenCustomerPct,
-        selfUnderwrittenArSharePct: shares.selfUnderwrittenArSharePct,
-        approvedCustomerPct: shares.approvedCustomerPct,
-        approvedArSharePct: shares.approvedArSharePct,
+        selfUnderwrittenCustomerPct: footprints.selfUnderwrittenCustomerPct,
+        selfUnderwrittenArSharePct: footprints.selfUnderwrittenArSharePct,
+        selfUnderwrittenAverageAr: footprints.selfUnderwrittenAverageAr,
+        approvedCustomerPct: footprints.approvedCustomerPct,
+        approvedArSharePct: footprints.approvedArSharePct,
+        approvedAverageAr: footprints.approvedAverageAr,
         deductiblePct: null,
     };
 }
@@ -783,8 +872,18 @@ async function fetchWithoutPolicyByDate(accountId, options) {
     }
     return map;
 }
-function isNoCoverageReasonKey(value) {
+function isCanonicalNoCoverageReasonKey(value) {
     return exports.NO_COVERAGE_REASON_KEYS.includes(value);
+}
+function normalizeNoCoverageReasonKey(value) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+    if (isCanonicalNoCoverageReasonKey(trimmed)) {
+        return trimmed;
+    }
+    return trimmed;
 }
 async function fetchCptNoCoverageDayAggregates(accountId, options) {
     const pendingReviewLiteral = "pending review";
@@ -848,7 +947,7 @@ async function fetchCptNoCoverageReasonDayAggregates(accountId, options) {
                 WHEN LOWER(TRIM(t.policy_exclusion_reason)) = 'pending review' THEN 'pending_review'
                 WHEN LOWER(TRIM(t.policy_exclusion_reason)) = 'credit hold' THEN 'credit_hold'
                 WHEN LOWER(TRIM(t.policy_exclusion_reason)) = 'insurer declined' THEN 'insurer_declined'
-                WHEN NULLIF(TRIM(t.policy_exclusion_reason), '') IS NOT NULL THEN 'other'
+                WHEN NULLIF(TRIM(t.policy_exclusion_reason), '') IS NOT NULL THEN TRIM(t.policy_exclusion_reason)
                 ELSE NULL
             END AS reason_key,
             COUNT(DISTINCT t.customer_id)::float8 AS customer_count,
@@ -918,15 +1017,16 @@ async function fetchCptApprovedBreachReasonDayAggregates(accountId, options) {
 function buildNoCoverageDailyPoints(input) {
     const reasonsByDate = new Map();
     for (const row of input.reasonRows) {
-        if (!isNoCoverageReasonKey(row.reason_key)) {
+        const reasonKey = normalizeNoCoverageReasonKey(row.reason_key);
+        if (reasonKey == null) {
             continue;
         }
         const date = normalizeDateString(row.snapshot_date);
         const bucket = reasonsByDate.get(date) ?? emptyNoCoverageReasonMaps();
-        bucket.amountByReason[row.reason_key] =
-            (bucket.amountByReason[row.reason_key] ?? 0) + toNumber(row.amount);
-        bucket.customerCountByReason[row.reason_key] =
-            (bucket.customerCountByReason[row.reason_key] ?? 0) +
+        bucket.amountByReason[reasonKey] =
+            (bucket.amountByReason[reasonKey] ?? 0) + toNumber(row.amount);
+        bucket.customerCountByReason[reasonKey] =
+            (bucket.customerCountByReason[reasonKey] ?? 0) +
                 toNumber(row.customer_count);
         reasonsByDate.set(date, bucket);
     }
@@ -955,6 +1055,16 @@ function buildNoCoverageDailyPoints(input) {
         return applyWithoutPolicyToNoCoverageDay(base, input.withoutPolicyByDate.get(snapshotDate), input.includeNoPolicyExposure);
     });
 }
+function optionalFiniteNumber(value) {
+    if (value == null || value === "") {
+        return null;
+    }
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+function startOfUtcDayFromYmd(ymd) {
+    return new Date(`${ymd}T00:00:00.000Z`);
+}
 async function fetchAccountCurrency(accountId) {
     const account = await domain_db_1.prisma.account.findUnique({
         where: { id: accountId },
@@ -963,18 +1073,21 @@ async function fetchAccountCurrency(accountId) {
     const code = account?.currency?.trim();
     return code ? code.toUpperCase() : "USD";
 }
-async function fetchCptCostDayAggregates(accountId, options) {
+async function fetchPortfolioRangeCostInputs(accountId, options) {
     const pendingReviewLiteral = "pending review";
-    return domain_db_1.prisma.$queryRaw `
+    const rows = await domain_db_1.prisma.$queryRaw `
         SELECT
             t.snapshot_date,
-            COALESCE(
-                SUM(COALESCE(t.total_daily_cost, 0)) FILTER (
-                    WHERE t.insurance_policy_id IS NOT NULL
-                      AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
-                ),
-                0
-            )::float8 AS approved_total_daily_cost
+            t.customer_id,
+            t.insurance_policy_id,
+            t.approved_limit,
+            t.usage_amount,
+            t.approved_limit_currency,
+            t.excluded_from_policy,
+            t.outdated_dcl,
+            t.cost_calculation_method,
+            t.cost_percent,
+            t.policy_exclusion_reason
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${accountId}
           AND t.snapshot_date >= ${options.fromDateUtc}::date
@@ -992,18 +1105,135 @@ async function fetchCptCostDayAggregates(accountId, options) {
             OR COALESCE(t.total_receivables, 0) <= 0
             OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, ''))) IS DISTINCT FROM ${pendingReviewLiteral}
           )
-        GROUP BY t.snapshot_date
-        ORDER BY t.snapshot_date ASC
+        ORDER BY t.snapshot_date ASC, t.customer_id ASC
     `;
-}
-function buildCostDailyPoints(rows) {
-    return rows.map((row) => ({
-        snapshotDate: normalizeDateString(row.snapshot_date),
-        totalDailyCost: toNumber(row.approved_total_daily_cost),
+    const topUpWhere = {
+        cancelled_at: null,
+        start_date: { lte: options.toDateUtc },
+        end_date: { gte: options.fromDateUtc },
+        InsurancePolicy: {
+            policy_kind: "TopUp",
+        },
+        Customer: {
+            account_id: accountId,
+            ...(options.scopedCustomerIds != null
+                ? { id: { in: options.scopedCustomerIds } }
+                : {}),
+        },
+    };
+    const [topUpRows, invoiceRows] = await Promise.all([
+        domain_db_1.prisma.customerTopUp.findMany({
+            where: topUpWhere,
+            select: {
+                customer_id: true,
+                premium: true,
+                premium_currency: true,
+                start_date: true,
+                end_date: true,
+                cancelled_at: true,
+                InsurancePolicy: {
+                    select: {
+                        parent_insurance_policy_id: true,
+                    },
+                },
+            },
+        }),
+        domain_db_1.prisma.invoice.findMany({
+            where: {
+                account_id: accountId,
+                invoice_date: {
+                    gte: options.fromDateUtc,
+                    lte: options.toDateUtc,
+                },
+                status: {
+                    notIn: [...portfolioRangeCost_1.RANGE_COST_EXCLUDED_INVOICE_STATUSES],
+                },
+                ...(options.policyId != null
+                    ? { policy_id: options.policyId }
+                    : {}),
+                ...(options.scopedCustomerIds != null
+                    ? { customer_id: { in: options.scopedCustomerIds } }
+                    : {}),
+            },
+            select: {
+                invoice_date: true,
+                customer_id: true,
+                amount: true,
+                policy_id: true,
+                status: true,
+            },
+        }),
+    ]);
+    const topUpsByCustomerId = new Map();
+    for (const topUp of topUpRows) {
+        const list = topUpsByCustomerId.get(topUp.customer_id) ?? [];
+        list.push(topUp);
+        topUpsByCustomerId.set(topUp.customer_id, list);
+    }
+    const dayRows = [];
+    const topUpSlices = [];
+    for (const row of rows) {
+        const snapshotDate = normalizeDateString(row.snapshot_date);
+        dayRows.push({
+            snapshotDate,
+            customerId: row.customer_id,
+            insurancePolicyId: row.insurance_policy_id,
+            approvedLimit: optionalFiniteNumber(row.approved_limit),
+            costCalculationMethod: row.cost_calculation_method,
+            costPercent: optionalFiniteNumber(row.cost_percent),
+            excludedFromPolicy: row.excluded_from_policy,
+            outdatedDcl: row.outdated_dcl,
+            policyExclusionReason: row.policy_exclusion_reason,
+        });
+        const approved = isApprovedCoverageCustomer({
+            hasLinkedPolicy: row.insurance_policy_id != null,
+            exclusionReason: row.policy_exclusion_reason,
+        });
+        if (!approved ||
+            row.excluded_from_policy ||
+            row.outdated_dcl) {
+            continue;
+        }
+        const asOfDate = startOfUtcDayFromYmd(snapshotDate);
+        const scopedTopUps = (topUpsByCustomerId.get(row.customer_id) ?? [])
+            .filter((topUp) => (0, resolveEffectiveApprovedLimit_1.isActiveTopUp)({
+            start_date: topUp.start_date,
+            end_date: topUp.end_date,
+            cancelled_at: topUp.cancelled_at,
+        }, asOfDate) &&
+            (row.insurance_policy_id == null ||
+                topUp.InsurancePolicy.parent_insurance_policy_id ===
+                    row.insurance_policy_id))
+            .map((topUp) => ({
+            premium: optionalFiniteNumber(topUp.premium),
+            premiumCurrency: topUp.premium_currency,
+            startDate: topUp.start_date,
+            endDate: topUp.end_date,
+            cancelledAt: topUp.cancelled_at,
+        }));
+        const topUpPart = (0, customerPolicyDailyCost_1.computeTopUpDailyCostAggregate)(scopedTopUps, asOfDate);
+        if (topUpPart != null && topUpPart.amount !== 0) {
+            topUpSlices.push({
+                snapshotDate,
+                amount: topUpPart.amount,
+            });
+        }
+    }
+    const invoices = invoiceRows
+        .filter((inv) => inv.customer_id != null)
+        .map((inv) => ({
+        invoiceDate: normalizeDateString(inv.invoice_date),
+        customerId: inv.customer_id,
+        amount: toNumber(inv.amount),
+        policyId: inv.policy_id,
+        status: inv.status,
     }));
+    return { dayRows, invoices, topUpSlices };
 }
 async function fetchCptUtilizationDayAggregates(accountId, options) {
     const pendingReviewLiteral = "pending review";
+    const dclLiteral = "DCL";
+    const namedLiteral = "Named";
     return domain_db_1.prisma.$queryRaw `
         SELECT
             t.snapshot_date,
@@ -1023,6 +1253,68 @@ async function fetchCptUtilizationDayAggregates(accountId, options) {
                 ),
                 0
             )::float8 AS approved_effective_limit_sum,
+            COALESCE(
+                SUM(t.usage_amount) FILTER (
+                    WHERE t.insurance_policy_id IS NOT NULL
+                      AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                      AND t.limit_type::text = ${dclLiteral}
+                ),
+                0
+            )::float8 AS dcl_usage_sum,
+            COALESCE(
+                SUM(
+                    COALESCE(t.effective_approved_limit, 0)::float8
+                ) FILTER (
+                    WHERE t.insurance_policy_id IS NOT NULL
+                      AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                      AND t.limit_type::text = ${dclLiteral}
+                ),
+                0
+            )::float8 AS dcl_effective_limit_sum,
+            COUNT(*) FILTER (
+                WHERE t.insurance_policy_id IS NOT NULL
+                  AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                  AND t.limit_type::text = ${dclLiteral}
+            )::float8 AS dcl_customer_count,
+            COALESCE(
+                SUM(COALESCE(t.total_receivables, 0)::float8) FILTER (
+                    WHERE t.insurance_policy_id IS NOT NULL
+                      AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                      AND t.limit_type::text = ${dclLiteral}
+                ),
+                0
+            )::float8 AS dcl_ar_sum,
+            COALESCE(
+                SUM(t.usage_amount) FILTER (
+                    WHERE t.insurance_policy_id IS NOT NULL
+                      AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                      AND t.limit_type::text = ${namedLiteral}
+                ),
+                0
+            )::float8 AS named_usage_sum,
+            COALESCE(
+                SUM(
+                    COALESCE(t.effective_approved_limit, 0)::float8
+                ) FILTER (
+                    WHERE t.insurance_policy_id IS NOT NULL
+                      AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                      AND t.limit_type::text = ${namedLiteral}
+                ),
+                0
+            )::float8 AS named_effective_limit_sum,
+            COUNT(*) FILTER (
+                WHERE t.insurance_policy_id IS NOT NULL
+                  AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                  AND t.limit_type::text = ${namedLiteral}
+            )::float8 AS named_customer_count,
+            COALESCE(
+                SUM(COALESCE(t.total_receivables, 0)::float8) FILTER (
+                    WHERE t.insurance_policy_id IS NOT NULL
+                      AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                      AND t.limit_type::text = ${namedLiteral}
+                ),
+                0
+            )::float8 AS named_ar_sum,
             COALESCE(
                 SUM(
                     CASE
@@ -1089,16 +1381,57 @@ function buildUtilizationDailyPoints(rows) {
     return rows.map((row) => {
         const usageSum = toNumber(row.approved_usage_sum);
         const limitSum = toNumber(row.approved_effective_limit_sum);
+        const dclUsage = toNumber(row.dcl_usage_sum);
+        const dclLimit = toNumber(row.dcl_effective_limit_sum);
+        const namedUsage = toNumber(row.named_usage_sum);
+        const namedLimit = toNumber(row.named_effective_limit_sum);
         const topUpWeighted = toNumber(row.top_up_weighted_usage_sum);
         const topUpTotal = toNumber(row.top_up_total_sum);
         return {
             snapshotDate: normalizeDateString(row.snapshot_date),
             utilizationPct: computeDailyPortfolioUtilizationPct(usageSum, limitSum),
+            dclUtilizationPct: computeDailyPortfolioUtilizationPct(dclUsage, dclLimit),
+            namedUtilizationPct: computeDailyPortfolioUtilizationPct(namedUsage, namedLimit),
+            dclCustomerCount: toNumber(row.dcl_customer_count),
+            namedCustomerCount: toNumber(row.named_customer_count),
+            dclAr: toNumber(row.dcl_ar_sum),
+            namedAr: toNumber(row.named_ar_sum),
             topUpUtilizationPct: computeDailyTopUpUtilizationPct(topUpWeighted, topUpTotal),
             activeTopUpCountSum: toNumber(row.active_top_up_count_sum),
             customersWithActiveTopUp: toNumber(row.customers_with_active_top_up),
         };
     });
+}
+async function fetchPeriodTopUpUniques(accountId, options) {
+    const topUpWhere = {
+        cancelled_at: null,
+        start_date: { lte: options.toDateUtc },
+        end_date: { gte: options.fromDateUtc },
+        InsurancePolicy: {
+            policy_kind: "TopUp",
+            ...(options.policyId != null
+                ? { parent_insurance_policy_id: options.policyId }
+                : {}),
+        },
+        Customer: {
+            account_id: accountId,
+            ...(options.scopedCustomerIds != null
+                ? { id: { in: options.scopedCustomerIds } }
+                : {}),
+        },
+    };
+    const rows = await domain_db_1.prisma.customerTopUp.findMany({
+        where: topUpWhere,
+        select: {
+            id: true,
+            customer_id: true,
+        },
+    });
+    const customerIds = new Set(rows.map((row) => row.customer_id));
+    return {
+        periodActiveTopUpCount: rows.length,
+        periodCustomersWithTopUp: customerIds.size,
+    };
 }
 async function fetchCptTopUtilizationCustomers(accountId, options) {
     const pendingReviewLiteral = "pending review";
@@ -1212,7 +1545,7 @@ async function getCreditPortfolioHealth(accountId, query) {
             daysAvailable: 0,
             daysInRange: parsed.daysInRange,
             portfolioHealth: buildPortfolioHealthSection([], []),
-            noCoverage: buildNoCoverageSection([]),
+            noCoverage: buildNoCoverageSection([], accountCurrency),
             utilization: emptyUtilizationSection(),
             costs: emptyCostsSection(accountCurrency),
         };
@@ -1230,14 +1563,14 @@ async function getCreditPortfolioHealth(accountId, query) {
         scopedCustomerIds,
         includeNoPolicyExposure: query.includeNoPolicyExposure,
     };
-    const [accountCurrency, cptRows, noCoverageRows, reasonRows, breachRows, utilizationRows, costRows, topCustomers, distributionCustomers, withoutPolicyByDate,] = await Promise.all([
+    const [accountCurrency, cptRows, noCoverageRows, reasonRows, breachRows, utilizationRows, rangeCostInputs, topCustomers, distributionCustomers, withoutPolicyByDate, periodTopUps,] = await Promise.all([
         fetchAccountCurrency(accountId),
         fetchCptDailyHealthAggregates(accountId, cptScope),
         fetchCptNoCoverageDayAggregates(accountId, cptScope),
         fetchCptNoCoverageReasonDayAggregates(accountId, cptScope),
         fetchCptApprovedBreachReasonDayAggregates(accountId, cptScope),
         fetchCptUtilizationDayAggregates(accountId, cptScope),
-        fetchCptCostDayAggregates(accountId, cptScope),
+        fetchPortfolioRangeCostInputs(accountId, cptScope),
         fetchCptTopUtilizationCustomers(accountId, asOfScope),
         fetchCptUtilizationDistribution(accountId, asOfScope),
         query.includeNoPolicyExposure
@@ -1250,6 +1583,12 @@ async function getCreditPortfolioHealth(accountId, query) {
                 isAdmin: query.isAdmin,
             })
             : Promise.resolve(new Map()),
+        fetchPeriodTopUpUniques(accountId, {
+            fromDateUtc: parsed.fromDateUtc,
+            toDateUtc: parsed.toDateUtc,
+            policyId: query.policyId,
+            scopedCustomerIds,
+        }),
     ]);
     const withoutPolicyAmountByDate = new Map();
     withoutPolicyByDate.forEach((value, date) => {
@@ -1273,26 +1612,32 @@ async function getCreditPortfolioHealth(accountId, query) {
     });
     const portfolioHealth = buildPortfolioHealthSection(dailyA, dailyB);
     const utilizationDaily = buildUtilizationDailyPoints(utilizationRows);
-    const costDaily = buildCostDailyPoints(costRows);
+    const rangeCost = (0, portfolioRangeCost_1.computePortfolioRangeCost)({
+        dayRows: rangeCostInputs.dayRows,
+        invoices: rangeCostInputs.invoices,
+        topUpSlices: rangeCostInputs.topUpSlices,
+        policyId: query.policyId,
+    });
     return {
         from: parsed.from,
         to: parsed.to,
         daysAvailable: dailyA.length,
         daysInRange: parsed.daysInRange,
         portfolioHealth,
-        noCoverage: buildNoCoverageSection(noCoverageDaily),
+        noCoverage: buildNoCoverageSection(noCoverageDaily, accountCurrency),
         utilization: buildUtilizationSection({
             daily: utilizationDaily,
-            noCoverageDaily,
             healthAverageA: portfolioHealth.seriesA.averageHealthPct,
-            healthAverageB: portfolioHealth.seriesB.averageHealthPct,
             topCustomers,
             distributionCustomers,
+            periodActiveTopUpCount: periodTopUps.periodActiveTopUpCount,
+            periodCustomersWithTopUp: periodTopUps.periodCustomersWithTopUp,
         }),
         costs: buildCostsSection({
-            daily: costDaily,
+            periodCost: rangeCost.periodCost,
+            monthly: rangeCost.monthly,
             dailyHealth: dailyA,
-            noCoverageDaily,
+            footprintDaily: utilizationDaily,
             accountCurrency,
         }),
     };

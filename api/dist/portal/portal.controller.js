@@ -61,7 +61,6 @@ const PORTAL_SUFFIXES = [
     "create-dispute",
     "view-disputes",
     "wrong-contact",
-    "top-ups",
 ];
 let PortalCustomersDomainController = class PortalCustomersDomainController {
     constructor(portal) {

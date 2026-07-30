@@ -2,8 +2,9 @@ import { Prisma } from "@prisma/client";
 import type { TermsBreachByReasonSnapshotKey } from "./customerPolicyTrendTermsBreachByReason";
 export declare const PORTFOLIO_HEALTH_BELOW_THRESHOLD_PCT = 85;
 export declare const INSURER_DECLINED_REASON = "Insurer declined";
-export declare const NO_COVERAGE_REASON_KEYS: readonly ["pending_review", "credit_hold", "insurer_declined", "other", "no_linked_policy"];
-export type NoCoverageReasonKey = (typeof NO_COVERAGE_REASON_KEYS)[number];
+export declare const NO_COVERAGE_REASON_KEYS: readonly ["pending_review", "credit_hold", "insurer_declined", "no_linked_policy"];
+export type CanonicalNoCoverageReasonKey = (typeof NO_COVERAGE_REASON_KEYS)[number];
+export type NoCoverageReasonKey = CanonicalNoCoverageReasonKey | string;
 export type ExactValueStreakWindow = {
     days: number;
     start: string | null;
@@ -45,12 +46,12 @@ export type PortfolioNoCoverageDailyPoint = {
     uncoveredAmount: number;
     approvedTotalReceivables: number;
     approvedTermsBreachAmount: number;
-    amountByReason: Partial<Record<NoCoverageReasonKey, number>>;
-    customerCountByReason: Partial<Record<NoCoverageReasonKey, number>>;
+    amountByReason: Partial<Record<string, number>>;
+    customerCountByReason: Partial<Record<string, number>>;
     breachAmountByReason: Partial<Record<TermsBreachByReasonSnapshotKey | string, number>>;
 };
 export type PortfolioNoCoverageReasonItem = {
-    reason: NoCoverageReasonKey;
+    reason: string;
     averageAmount: number;
     averageCustomerCount: number;
 };
@@ -63,12 +64,19 @@ export type PortfolioNoCoverageSection = {
     mainViolationReason: string | null;
     mainViolationReasonSharePct: number;
     totalBreachAmount: number;
+    accountCurrency: string;
 };
 export declare const UTILIZATION_DISTRIBUTION_BIN_KEYS: readonly ["0_10", "10_20", "20_50", "50_75", "75_plus"];
 export type UtilizationDistributionBinKey = (typeof UTILIZATION_DISTRIBUTION_BIN_KEYS)[number];
 export type PortfolioUtilizationDailyPoint = {
     snapshotDate: string;
     utilizationPct: number | null;
+    dclUtilizationPct: number | null;
+    namedUtilizationPct: number | null;
+    dclCustomerCount: number;
+    namedCustomerCount: number;
+    dclAr: number;
+    namedAr: number;
     topUpUtilizationPct: number | null;
     activeTopUpCountSum: number;
     customersWithActiveTopUp: number;
@@ -93,31 +101,43 @@ export type PortfolioUtilizationSection = {
     peakUtilizationStreakEnd: string | null;
     selfUnderwrittenCustomerPct: number;
     selfUnderwrittenArSharePct: number;
+    selfUnderwrittenAverageAr: number;
+    selfUnderwrittenAverageUtilizationPct: number | null;
     approvedCustomerPct: number;
     approvedArSharePct: number;
+    approvedAverageAr: number;
+    approvedAverageUtilizationPct: number | null;
     averageTopUpUtilizationPct: number | null;
-    averageDailyTopUpCount: number;
-    averageDailyCustomersWithTopUp: number;
+    periodActiveTopUpCount: number;
+    periodCustomersWithTopUp: number;
     topCustomers: PortfolioUtilizationTopCustomer[];
     efficiencyA: number | null;
     efficiencyB: number | null;
     distribution: PortfolioUtilizationDistributionBin[];
     distributionCustomerCount: number;
+    daily: PortfolioUtilizationDailyPoint[];
 };
 export type PortfolioCostDailyPoint = {
     snapshotDate: string;
     totalDailyCost: number;
 };
+export type PortfolioCostMonthlyPoint = {
+    month: string;
+    totalCost: number;
+};
 export type PortfolioCostsSection = {
     periodCost: number;
     daily: PortfolioCostDailyPoint[];
+    monthly: PortfolioCostMonthlyPoint[];
     averageCompliantExposure: number;
     effectiveCost: number | null;
     accountCurrency: string;
     selfUnderwrittenCustomerPct: number;
     selfUnderwrittenArSharePct: number;
+    selfUnderwrittenAverageAr: number;
     approvedCustomerPct: number;
     approvedArSharePct: number;
+    approvedAverageAr: number;
     deductiblePct: null;
 };
 export type CreditPortfolioHealthResponse = {
@@ -190,14 +210,14 @@ export declare function pickMainViolationReason(amountsByReason: Record<string, 
     totalAmount: number;
 };
 export declare function emptyNoCoverageReasonMaps(): {
-    amountByReason: Partial<Record<NoCoverageReasonKey, number>>;
-    customerCountByReason: Partial<Record<NoCoverageReasonKey, number>>;
+    amountByReason: Partial<Record<string, number>>;
+    customerCountByReason: Partial<Record<string, number>>;
 };
 export declare function applyWithoutPolicyToNoCoverageDay(day: PortfolioNoCoverageDailyPoint, withoutPolicy: {
     customerCount: number;
     amount: number;
 } | undefined, includeNoPolicyExposure: boolean): PortfolioNoCoverageDailyPoint;
-export declare function buildNoCoverageSection(daily: PortfolioNoCoverageDailyPoint[]): PortfolioNoCoverageSection;
+export declare function buildNoCoverageSection(daily: PortfolioNoCoverageDailyPoint[], accountCurrency?: string): PortfolioNoCoverageSection;
 export declare function computeDailyPortfolioUtilizationPct(usageSum: number, effectiveLimitSum: number): number | null;
 export declare function computeDailyTopUpUtilizationPct(weightedUsageSum: number, topUpTotalSum: number): number | null;
 export declare function assignUtilizationDistributionBin(utilizationPct: number): UtilizationDistributionBinKey;
@@ -208,11 +228,30 @@ export declare function buildUtilizationDistribution(customers: Array<{
     customerCount: number;
 };
 export declare function computePolicyEfficiency(healthPct: number, utilizationPct: number): number | null;
+export declare function computeDclVsNamedFootprints(daily: Array<{
+    dclCustomerCount: number;
+    namedCustomerCount: number;
+    dclAr: number;
+    namedAr: number;
+    dclUtilizationPct: number | null;
+    namedUtilizationPct: number | null;
+}>): {
+    selfUnderwrittenCustomerPct: number;
+    selfUnderwrittenArSharePct: number;
+    selfUnderwrittenAverageAr: number;
+    selfUnderwrittenAverageUtilizationPct: number | null;
+    approvedCustomerPct: number;
+    approvedArSharePct: number;
+    approvedAverageAr: number;
+    approvedAverageUtilizationPct: number | null;
+};
 export declare function computeSelfVsApprovedShares(daily: PortfolioNoCoverageDailyPoint[]): {
     selfUnderwrittenCustomerPct: number;
     selfUnderwrittenArSharePct: number;
+    selfUnderwrittenAverageAr: number;
     approvedCustomerPct: number;
     approvedArSharePct: number;
+    approvedAverageAr: number;
 };
 export declare function computeUtilizationPeriodMetrics(daily: PortfolioUtilizationDailyPoint[]): {
     averageUtilizationPct: number;
@@ -222,32 +261,37 @@ export declare function computeUtilizationPeriodMetrics(daily: PortfolioUtilizat
     peakUtilizationStreakStart: string | null;
     peakUtilizationStreakEnd: string | null;
     averageTopUpUtilizationPct: number | null;
-    averageDailyTopUpCount: number;
-    averageDailyCustomersWithTopUp: number;
 };
 export declare function emptyUtilizationSection(): PortfolioUtilizationSection;
 export declare function buildUtilizationSection(input: {
     daily: PortfolioUtilizationDailyPoint[];
-    noCoverageDaily: PortfolioNoCoverageDailyPoint[];
     healthAverageA: number;
-    healthAverageB: number;
     topCustomers: PortfolioUtilizationTopCustomer[];
     distributionCustomers: Array<{
         utilizationPct: number;
     }>;
+    periodActiveTopUpCount: number;
+    periodCustomersWithTopUp: number;
 }): PortfolioUtilizationSection;
-export declare function computePeriodCost(daily: PortfolioCostDailyPoint[]): number;
 export declare function computeEffectiveCost(periodCost: number, averageCompliantExposure: number): number | null;
 export declare function computeAverageCompliantExposure(dailyHealth: Array<{
     compliantExposure: number;
 }>): number;
 export declare function emptyCostsSection(accountCurrency?: string): PortfolioCostsSection;
 export declare function buildCostsSection(input: {
-    daily: PortfolioCostDailyPoint[];
+    periodCost: number;
+    monthly: PortfolioCostMonthlyPoint[];
     dailyHealth: Array<{
         compliantExposure: number;
     }>;
-    noCoverageDaily: PortfolioNoCoverageDailyPoint[];
+    footprintDaily: Array<{
+        dclCustomerCount: number;
+        namedCustomerCount: number;
+        dclAr: number;
+        namedAr: number;
+        dclUtilizationPct: number | null;
+        namedUtilizationPct: number | null;
+    }>;
     accountCurrency: string;
 }): PortfolioCostsSection;
 export declare function getCreditPortfolioHealth(accountId: number, query: CreditPortfolioHealthQuery): Promise<CreditPortfolioHealthResponse | {

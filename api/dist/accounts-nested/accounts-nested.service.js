@@ -14,6 +14,7 @@ const common_1 = require("@nestjs/common");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
+const billing_connector_backfill_options_1 = require("./billing-connector-backfill-options");
 const ADMIN_ACCOUNT_ID = 10013;
 const CREDIT_PRODUCT = "credit_insurance";
 const GENERIC_ENTITIES = ["customer", "contact", "invoice", "payment"];
@@ -332,6 +333,10 @@ let AccountsNestedService = class AccountsNestedService {
             enabled_entities: connector.enabled_entities,
             sync_overlap_minutes: connector.sync_overlap_minutes,
             consecutive_auth_failures: connector.consecutive_auth_failures,
+            backfill_start_date: (0, billing_connector_backfill_options_1.formatBackfillStartDateForApi)(connector.backfill_start_date),
+            include_older_open_invoices: connector.include_older_open_invoices ?? true,
+            skip_reporting_breach_on_backfill: connector.skip_reporting_breach_on_backfill ?? false,
+            backfill_options_locked: (0, billing_connector_backfill_options_1.areBackfillOptionsLocked)(connector.backfill_started_at),
             last_connection_test_at: connector.last_connection_test_at?.toISOString() ?? null,
             last_connection_error: connector.last_connection_error,
             created_at: connector.created_at.toISOString(),
@@ -400,6 +405,67 @@ let AccountsNestedService = class AccountsNestedService {
         const existing = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
         });
+        let startDateChange;
+        try {
+            startDateChange = (0, billing_connector_backfill_options_1.resolveBackfillStartDateChange)({
+                backfillStartedAt: existing?.backfill_started_at,
+                existingStartDate: existing?.backfill_start_date,
+                nextInput: body.backfill_start_date === undefined
+                    ? undefined
+                    : body.backfill_start_date,
+            });
+        }
+        catch (error) {
+            const err = error;
+            if (err?.code === "INVALID_BACKFILL_START_DATE") {
+                throw new common_1.BadRequestException({
+                    error: err.message ?? "Invalid backfill_start_date",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (!startDateChange.ok) {
+            throw new common_1.ConflictException({
+                error: startDateChange.message,
+                code: startDateChange.code,
+            });
+        }
+        const includeOlderChange = (0, billing_connector_backfill_options_1.resolveIncludeOlderOpenInvoicesChange)({
+            backfillStartedAt: existing?.backfill_started_at,
+            existingValue: existing?.include_older_open_invoices,
+            nextInput: body.include_older_open_invoices === undefined
+                ? undefined
+                : Boolean(body.include_older_open_invoices),
+        });
+        if (!includeOlderChange.ok) {
+            throw new common_1.ConflictException({
+                error: includeOlderChange.message,
+                code: includeOlderChange.code,
+            });
+        }
+        const skipBreachChange = (0, billing_connector_backfill_options_1.resolveSkipReportingBreachOnBackfillChange)({
+            backfillStartedAt: existing?.backfill_started_at,
+            existingValue: existing?.skip_reporting_breach_on_backfill,
+            nextInput: body.skip_reporting_breach_on_backfill === undefined
+                ? undefined
+                : Boolean(body.skip_reporting_breach_on_backfill),
+        });
+        if (!skipBreachChange.ok) {
+            throw new common_1.ConflictException({
+                error: skipBreachChange.message,
+                code: skipBreachChange.code,
+            });
+        }
+        if (startDateChange.value !== undefined) {
+            data.backfill_start_date = startDateChange.value;
+        }
+        if (includeOlderChange.value !== undefined) {
+            data.include_older_open_invoices = includeOlderChange.value;
+        }
+        if (skipBreachChange.value !== undefined) {
+            data.skip_reporting_breach_on_backfill = skipBreachChange.value;
+        }
         const connector = existing
             ? await this.db.billingConnector.update({
                 where: { account_id: accountId },
@@ -409,6 +475,12 @@ let AccountsNestedService = class AccountsNestedService {
                 data: {
                     account_id: accountId,
                     created_by: actor,
+                    include_older_open_invoices: includeOlderChange.value !== undefined
+                        ? includeOlderChange.value
+                        : true,
+                    skip_reporting_breach_on_backfill: skipBreachChange.value !== undefined
+                        ? skipBreachChange.value
+                        : false,
                     ...data,
                 },
             });
@@ -448,8 +520,21 @@ let AccountsNestedService = class AccountsNestedService {
                     where: { connector_id: connector.id },
                     data: {
                         backfill_completed: false,
+                        backfill_completed_at: null,
                         backfill_cursor: null,
                         backfill_records_pulled: 0,
+                        backfill_last_checkpoint_at: null,
+                        backfill_total_records: null,
+                        last_max_updated_at: null,
+                        last_error: null,
+                    },
+                });
+                await this.db.billingConnector.update({
+                    where: { id: connector.id },
+                    data: {
+                        sync_mode: "BACKFILL",
+                        backfill_started_at: null,
+                        modified_at: new Date(),
                     },
                 });
             }

@@ -275,6 +275,10 @@ export declare class BillingConnectorController {
             enabled_entities: unknown;
             sync_overlap_minutes: number;
             consecutive_auth_failures: number;
+            backfill_start_date: string | null;
+            include_older_open_invoices: boolean;
+            skip_reporting_breach_on_backfill: boolean;
+            backfill_options_locked: boolean;
             last_connection_test_at: string | null;
             last_connection_error: string | null;
             created_at: string;
@@ -302,6 +306,10 @@ export declare class BillingConnectorController {
             enabled_entities: unknown;
             sync_overlap_minutes: number;
             consecutive_auth_failures: number;
+            backfill_start_date: string | null;
+            include_older_open_invoices: boolean;
+            skip_reporting_breach_on_backfill: boolean;
+            backfill_options_locked: boolean;
             last_connection_test_at: string | null;
             last_connection_error: string | null;
             created_at: string;
