@@ -123,7 +123,8 @@ function buildDailyHealthPoint(input) {
     };
 }
 function computePortfolioHealthSeriesMetrics(daily) {
-    if (daily.length === 0) {
+    const eligible = daily.filter((d) => d.totalReceivables > 0);
+    if (eligible.length === 0) {
         return {
             averageHealthPct: 0,
             lowestHealthPct: 0,
@@ -133,10 +134,10 @@ function computePortfolioHealthSeriesMetrics(daily) {
             pctDaysBelow85: 0,
         };
     }
-    const healthValues = daily.map((d) => d.healthIndex);
+    const healthValues = eligible.map((d) => d.healthIndex);
     const averageHealthPct = healthValues.reduce((sum, v) => sum + v, 0) / healthValues.length;
     const lowestHealthPct = Math.min(...healthValues);
-    const troughWindow = longestExactValueStreakWindow(daily.map((d) => ({
+    const troughWindow = longestExactValueStreakWindow(eligible.map((d) => ({
         snapshotDate: d.snapshotDate,
         value: d.healthIndex,
     })), lowestHealthPct);
@@ -1246,7 +1247,7 @@ async function fetchCptUtilizationDayAggregates(accountId, options) {
             )::float8 AS approved_usage_sum,
             COALESCE(
                 SUM(
-                    COALESCE(t.effective_approved_limit, 0)::float8
+                    COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8
                 ) FILTER (
                     WHERE t.insurance_policy_id IS NOT NULL
                       AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
@@ -1263,7 +1264,7 @@ async function fetchCptUtilizationDayAggregates(accountId, options) {
             )::float8 AS dcl_usage_sum,
             COALESCE(
                 SUM(
-                    COALESCE(t.effective_approved_limit, 0)::float8
+                    COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8
                 ) FILTER (
                     WHERE t.insurance_policy_id IS NOT NULL
                       AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
@@ -1294,7 +1295,7 @@ async function fetchCptUtilizationDayAggregates(accountId, options) {
             )::float8 AS named_usage_sum,
             COALESCE(
                 SUM(
-                    COALESCE(t.effective_approved_limit, 0)::float8
+                    COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8
                 ) FILTER (
                     WHERE t.insurance_policy_id IS NOT NULL
                       AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
@@ -1442,6 +1443,7 @@ async function fetchCptTopUtilizationCustomers(accountId, options) {
             t.usage_amount,
             t.effective_usage_pct,
             t.effective_approved_limit,
+            t.approved_limit,
             p.full_name AS person_name,
             co.name AS company_name
         FROM "CustomerPolicyTrend" t
@@ -1468,8 +1470,8 @@ async function fetchCptTopUtilizationCustomers(accountId, options) {
             COALESCE(
                 t.effective_usage_pct,
                 CASE
-                    WHEN COALESCE(t.effective_approved_limit, 0) > 0
-                    THEN (t.usage_amount / COALESCE(t.effective_approved_limit, 0)::float8) * 100
+                    WHEN COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
+                    THEN (t.usage_amount / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8) * 100
                     ELSE 0
                 END
             ) DESC,
@@ -1478,7 +1480,7 @@ async function fetchCptTopUtilizationCustomers(accountId, options) {
     `;
     return rows.map((row) => {
         const usageAmount = toNumber(row.usage_amount);
-        const effectiveLimit = toNumber(row.effective_approved_limit);
+        const effectiveLimit = toNumber(row.effective_approved_limit ?? row.approved_limit);
         const storedPct = row.effective_usage_pct == null
             ? null
             : toNumber(row.effective_usage_pct);
@@ -1505,14 +1507,14 @@ async function fetchCptUtilizationDistribution(accountId, options) {
             t.customer_id,
             CASE
                 WHEN t.effective_usage_pct IS NOT NULL THEN t.effective_usage_pct
-                ELSE (t.usage_amount / COALESCE(t.effective_approved_limit, 0)::float8) * 100
+                ELSE (t.usage_amount / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8) * 100
             END AS utilization_pct
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${accountId}
           AND t.snapshot_date = ${options.asOfDateUtc}::date
           AND t.insurance_policy_id IS NOT NULL
           AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
-          AND COALESCE(t.effective_approved_limit, 0) > 0
+          AND COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
           AND (
             ${options.policyId ?? null}::int IS NULL
             OR t.insurance_policy_id = ${options.policyId ?? null}

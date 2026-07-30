@@ -554,7 +554,9 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
         const approvedLimit = decimalToNumber(cp.approved_limit);
         let topUpTotal = null;
         let activeTopUpCount = null;
-        let effectiveApprovedLimit = null;
+        let effectiveApprovedLimit = cp.approved_limit != null
+            ? new client_1.Prisma.Decimal(cp.approved_limit)
+            : null;
         if (accountHasTopUp) {
             const resolved = await (0, resolveEffectiveApprovedLimit_1.resolveEffectiveApprovedLimit)(cp.customer_id, {
                 baseApprovedLimit: cp.approved_limit,
@@ -564,7 +566,7 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
                 parentPrimaryPolicyId: cp.insurance_policy_id ?? undefined,
             });
             if (resolved) {
-                effectiveApprovedLimit = new client_1.Prisma.Decimal(resolved.effectiveApprovedLimit ?? 0);
+                effectiveApprovedLimit = new client_1.Prisma.Decimal(resolved.effectiveApprovedLimit ?? approvedLimit ?? 0);
                 topUpTotal = new client_1.Prisma.Decimal(resolved.topUpTotalInLimitCurrency);
                 activeTopUpCount = resolved.topUpByPolicy.reduce((s, p) => s + p.rows.length, 0);
             }
@@ -608,7 +610,6 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
         if (!accountHasTopUp) {
             topUpTotal = null;
             activeTopUpCount = null;
-            effectiveApprovedLimit = null;
         }
         const scopedTopUps = (topUpsByCustomerId.get(cp.customer_id) ?? []).filter((row) => cp.insurance_policy_id == null ||
             row.InsurancePolicy.parent_insurance_policy_id ===
