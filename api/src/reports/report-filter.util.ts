@@ -99,9 +99,14 @@ export function operatorToPrisma(
         }
         case "is_null":
         case "isnull":
+        // FilterBuilder's empty operators carry no user value, so the incoming
+        // `value` is a placeholder and must never reach Prisma — a DateTime or
+        // Int column rejects it and the whole report execution throws.
+        case "is_empty":
             return { equals: null };
         case "is_not_null":
         case "isnotnull":
+        case "is_not_empty":
             return { not: null };
         case "between": {
             if (Array.isArray(v) && v.length >= 2) {

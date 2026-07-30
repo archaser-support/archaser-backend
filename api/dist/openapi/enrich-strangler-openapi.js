@@ -31,7 +31,6 @@ const PORTAL_CUSTOMER_SUFFIXES = [
     "create-dispute",
     "view-disputes",
     "wrong-contact",
-    "top-ups",
 ];
 function methods(summary, tag, opts = {}) {
     const security = opts.public ? [] : [{ bearer: [] }];

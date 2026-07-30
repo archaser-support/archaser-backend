@@ -7,6 +7,8 @@ import {
 import { AccessScopeService, AccessUserInfo } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
+import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
+import { resolveCustomerHeaderOpenArAmounts } from "../credit-insurance/domain/openReceivableByCustomerCurrency";
 import { DatabaseService } from "../database/database.service";
 
 export type CustomersListQuery = {
@@ -28,6 +30,46 @@ export type CustomerActivityQuery = {
     filter_type?: string;
 };
 
+export type CustomerTopUpsQuery = {
+    page?: string;
+    limit?: string;
+    query?: string;
+    sortField?: string;
+    sortDirection?: string;
+};
+
+/** Sortable top-up columns, kept as an allow-list so the param can't reach Prisma raw. */
+const TOP_UP_SORT_FIELDS = new Set([
+    "start_date",
+    "end_date",
+    "top_up_type",
+    "top_up_value",
+    "premium",
+    "created_at",
+]);
+
+function optionalTrimmed(value: unknown): string | null {
+    if (value == null) {
+        return null;
+    }
+    const trimmed = String(value).trim();
+    return trimmed === "" ? null : trimmed;
+}
+
+/** `start_date`/`end_date` are date-only columns; anchor at UTC midnight. */
+function parseDateOnly(value: unknown): Date | null {
+    const raw = optionalTrimmed(value);
+    if (!raw) {
+        return null;
+    }
+    const ymd = raw.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+        return null;
+    }
+    const parsed = new Date(`${ymd}T00:00:00.000Z`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 const ACTIVITY_TYPES = [
     "SMS",
     "Email",
@@ -45,7 +87,11 @@ export class CustomersService {
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService
-    ) {}
+    ) {
+        // Header AR resolution reaches into the credit-insurance domain, whose FX
+        // lookup reads the module-level client rather than one we pass in.
+        bindCreditInsurancePrisma(this.db);
+    }
 
     async listOrStats(user: JwtPayload, query: CustomersListQuery) {
         if (query.stats === "true") {
@@ -310,6 +356,21 @@ export class CustomersService {
                 CustomerCollectionPeriod: {
                     where: { period_end_date: null },
                 },
+                CustomerPolicy: {
+                    include: {
+                        InsurancePolicy: true,
+                        User_CustomerPolicy_modified_byToUser: {
+                            select: {
+                                id: true,
+                                name: true,
+                                first_name: true,
+                                last_name: true,
+                                email: true,
+                            },
+                        },
+                    },
+                    orderBy: [{ is_active: "desc" }, { id: "desc" }],
+                },
             },
         });
 
@@ -320,7 +381,36 @@ export class CustomersService {
             });
         }
 
-        return serializeBigInt(customer);
+        // The customer detail screen reads policy history from `customerPolicies`
+        // and the row it edits from `activeCustomerPolicy`. Prisma names the
+        // relation `CustomerPolicy`, so publish it under the keys the client
+        // expects; without them the Policies tab lists nothing and the Dashboard
+        // tab decides the customer has no linked policy.
+        const { CustomerPolicy: customerPolicies, ...rest } = customer;
+
+        // `total_ar` is derived, not stored: live open Due/Overdue receivables in
+        // account currency, falling back to the denormalized due + overdue rollups.
+        // The header's Total AR card reads it straight off this payload, so without
+        // it the card renders 0 even when the customer has open invoices.
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { currency: true },
+        });
+        const headerAr = await resolveCustomerHeaderOpenArAmounts({
+            accountId,
+            customerId: id,
+            accountCurrency: account?.currency,
+            customer,
+            dbClient: this.db,
+        });
+
+        return serializeBigInt({
+            ...rest,
+            ...headerAr,
+            customerPolicies,
+            activeCustomerPolicy:
+                customerPolicies.find((policy) => policy.is_active) ?? null,
+        });
     }
 
     async update(
@@ -351,6 +441,13 @@ export class CustomersService {
         delete data.ParentCustomer;
         delete data.CustomerCollectionPeriod;
         delete data.Invoice;
+        delete data.CustomerPolicy;
+        delete data.customerPolicies;
+        delete data.activeCustomerPolicy;
+        // Derived on GET, not columns — Prisma rejects them as unknown arguments.
+        delete data.total_ar;
+        delete data.total_ar_secondary;
+        delete data.credit_insurance_secondary_currency;
 
         const updated = await this.db.customer.update({
             where: { id },
@@ -464,6 +561,195 @@ export class CustomersService {
         });
 
         return serializeBigInt({ policies, totalRecords: policies.length });
+    }
+
+    async listTopUps(user: JwtPayload, id: number, query: CustomerTopUpsQuery) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        await this.assertCustomerInAccount(userInfo, id);
+
+        const page = Math.max(parseInt(query.page || "1", 10) || 1, 1);
+        const limit = Math.min(
+            Math.max(parseInt(query.limit || "50", 10) || 50, 1),
+            200
+        );
+        const search = (query.query || "").trim();
+        const sortField = TOP_UP_SORT_FIELDS.has(query.sortField || "")
+            ? (query.sortField as string)
+            : "start_date";
+        const sortDirection = query.sortDirection === "asc" ? "asc" : "desc";
+
+        const where: Record<string, unknown> = { customer_id: id };
+        if (search) {
+            where.OR = [
+                { notes: { contains: search, mode: "insensitive" } },
+                {
+                    InsurancePolicy: {
+                        policy_number: { contains: search, mode: "insensitive" },
+                    },
+                },
+                {
+                    InsurancePolicy: {
+                        insurer_name: { contains: search, mode: "insensitive" },
+                    },
+                },
+            ];
+        }
+
+        const [rows, totalRecords] = await Promise.all([
+            this.db.customerTopUp.findMany({
+                where: where as never,
+                include: {
+                    InsurancePolicy: {
+                        select: {
+                            id: true,
+                            policy_number: true,
+                            insurer_name: true,
+                        },
+                    },
+                },
+                orderBy: [{ [sortField]: sortDirection }, { id: "desc" }] as never,
+                skip: (page - 1) * limit,
+                take: limit,
+            }),
+            this.db.customerTopUp.count({ where: where as never }),
+        ]);
+
+        // The grid reads `policy_number` and `insurer_name` off the row itself.
+        const data = rows.map(({ InsurancePolicy, ...row }) => ({
+            ...row,
+            policy_number: InsurancePolicy?.policy_number ?? null,
+            insurer_name: InsurancePolicy?.insurer_name ?? null,
+        }));
+
+        return serializeBigInt({ data, totalRecords, page, limit });
+    }
+
+    async createTopUp(
+        user: JwtPayload,
+        id: number,
+        body: Record<string, unknown>
+    ) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const { accountId, effectiveUserId } =
+            await this.assertCustomerInAccount(userInfo, id);
+
+        const insurancePolicyId = Number(body.insurancePolicyId);
+        if (!Number.isInteger(insurancePolicyId) || insurancePolicyId <= 0) {
+            throw new BadRequestException({
+                error: "insurancePolicyId is required",
+            });
+        }
+
+        const topUpType = body.topUpType === "Percentage" ? "Percentage" : "Fixed";
+        const topUpValue = Number(body.topUpValue);
+        if (!Number.isFinite(topUpValue) || topUpValue <= 0) {
+            throw new BadRequestException({
+                error: "topUpValue must be a positive number",
+            });
+        }
+
+        const currency = optionalTrimmed(body.currency);
+        if (topUpType === "Fixed" && !currency) {
+            throw new BadRequestException({
+                error: "currency is required for a fixed top-up",
+            });
+        }
+
+        const startDate = parseDateOnly(body.startDate);
+        const endDate = parseDateOnly(body.endDate);
+        if (!startDate) {
+            throw new BadRequestException({ error: "startDate is required" });
+        }
+        if (!endDate) {
+            throw new BadRequestException({ error: "endDate is required" });
+        }
+        if (endDate < startDate) {
+            // The add-top-up dialog matches on this text to flag the end date field.
+            throw new BadRequestException({
+                error: "endDate must be on or after startDate",
+            });
+        }
+
+        let premium: number | null = null;
+        if (body.premium != null && body.premium !== "") {
+            premium = Number(body.premium);
+            if (!Number.isFinite(premium) || premium < 0) {
+                throw new BadRequestException({
+                    error: "premium must be a positive number",
+                });
+            }
+        }
+        const premiumCurrency = optionalTrimmed(body.premiumCurrency);
+        if (premium != null && !premiumCurrency) {
+            throw new BadRequestException({
+                error: "premiumCurrency is required when a premium is set",
+            });
+        }
+
+        const policy = await this.db.insurancePolicy.findFirst({
+            where: { id: insurancePolicyId, account_id: accountId },
+            select: { id: true, policy_kind: true },
+        });
+        if (!policy) {
+            throw new NotFoundException({ error: "Insurance policy not found" });
+        }
+        if (policy.policy_kind !== "TopUp") {
+            throw new BadRequestException({
+                error: "Insurance policy is not a top-up policy",
+            });
+        }
+
+        const topUp = await this.db.customerTopUp.create({
+            data: {
+                customer_id: id,
+                insurance_policy_id: insurancePolicyId,
+                top_up_type: topUpType,
+                top_up_value: topUpValue,
+                currency,
+                start_date: startDate,
+                end_date: endDate,
+                notes: optionalTrimmed(body.notes),
+                premium,
+                premium_currency: premium == null ? null : premiumCurrency,
+                created_by: effectiveUserId,
+                modified_by: effectiveUserId,
+            } as never,
+        });
+
+        return serializeBigInt(topUp);
+    }
+
+    /**
+     * Cancels rather than deletes: the grid keeps cancelled rows and badges
+     * them, and cost calculations still need the historical coverage window.
+     */
+    async cancelTopUp(user: JwtPayload, id: number, topUpId: number) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const { effectiveUserId } = await this.assertCustomerInAccount(
+            userInfo,
+            id
+        );
+
+        const topUp = await this.db.customerTopUp.findFirst({
+            where: { id: topUpId, customer_id: id },
+            select: { id: true, cancelled_at: true },
+        });
+        if (!topUp) {
+            throw new NotFoundException({ error: "Top-up not found" });
+        }
+        if (topUp.cancelled_at) {
+            return serializeBigInt(topUp);
+        }
+
+        const cancelled = await this.db.customerTopUp.update({
+            where: { id: topUpId },
+            data: {
+                cancelled_at: new Date(),
+                modified_by: effectiveUserId,
+            } as never,
+        });
+
+        return serializeBigInt(cancelled);
     }
 
     async stuckActivities(user: JwtPayload, id: number) {

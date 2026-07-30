@@ -1,11 +1,12 @@
 import {
+    Body,
     Controller,
+    Delete,
     Get,
     Param,
     ParseIntPipe,
-    Put,
     Post,
-    Body,
+    Put,
     Query,
     UseGuards,
 } from "@nestjs/common";
@@ -18,10 +19,12 @@ import {
 import { CurrentUser } from "../auth/current-user.decorator";
 import { DualAuthGuard } from "../auth/dual-auth.guard";
 import { JwtPayload } from "../auth/auth.service";
+import { CustomerCheckpointService } from "./customer-checkpoint.service";
 import {
     CustomerActivityQuery,
     CustomersListQuery,
     CustomersService,
+    CustomerTopUpsQuery,
 } from "./customers.service";
 
 @ApiTags("entities")
@@ -29,7 +32,10 @@ import {
 @UseGuards(DualAuthGuard)
 @Controller("api/entities/customers")
 export class CustomersController {
-    constructor(private readonly customers: CustomersService) {}
+    constructor(
+        private readonly customers: CustomersService,
+        private readonly checkpoints: CustomerCheckpointService
+    ) {}
 
     @Get()
     @ApiOperation({ summary: "Customers list / stats (Nest-native)" })
@@ -86,6 +92,65 @@ export class CustomersController {
         @Param("id", ParseIntPipe) id: number
     ) {
         return this.customers.listPolicies(user, id);
+    }
+
+    @Get(":id/top-ups")
+    @ApiOperation({ summary: "Customer top-ups list (Nest-native)" })
+    async topUps(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number,
+        @Query() query: CustomerTopUpsQuery
+    ) {
+        return this.customers.listTopUps(user, id, query);
+    }
+
+    @Post(":id/top-ups")
+    @ApiOperation({ summary: "Create a customer top-up (Nest-native)" })
+    async createTopUp(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.customers.createTopUp(user, id, body);
+    }
+
+    @Delete(":id/top-ups/:topUpId")
+    @ApiOperation({ summary: "Cancel a customer top-up (Nest-native)" })
+    async cancelTopUp(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number,
+        @Param("topUpId", ParseIntPipe) topUpId: number
+    ) {
+        return this.customers.cancelTopUp(user, id, topUpId);
+    }
+
+    @Get(":id/checkpoint")
+    @ApiOperation({ summary: "Customer checkpoint status (non-production only)" })
+    async checkpointStatus(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        return this.checkpoints.getStatus(user, id);
+    }
+
+    @Post(":id/checkpoint/save")
+    @ApiOperation({ summary: "Save a customer checkpoint (non-production only)" })
+    async checkpointSave(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        return this.checkpoints.save(user, id);
+    }
+
+    @Post(":id/checkpoint/restore")
+    @ApiOperation({
+        summary: "Restore a customer checkpoint (non-production only)",
+    })
+    async checkpointRestore(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        return this.checkpoints.restore(user, id);
     }
 
     @Get(":id/stuck-activities")

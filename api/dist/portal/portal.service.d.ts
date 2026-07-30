@@ -95,15 +95,9 @@ export declare class PortalService {
     } | {
         bank_details: null;
         banks?: undefined;
-        topUps?: undefined;
     } | {
         banks: never[];
         bank_details?: undefined;
-        topUps?: undefined;
-    } | {
-        topUps: never[];
-        bank_details?: undefined;
-        banks?: undefined;
     }>;
     private resolveCustomerDisplayName;
     private resolveCustomerFirstCurrency;

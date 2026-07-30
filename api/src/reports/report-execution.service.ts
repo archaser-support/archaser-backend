@@ -3,6 +3,7 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import {
     AccessScopeService,
     AccessUserInfo,
@@ -56,12 +57,14 @@ import {
     buildAccountScopeWhere,
     nestBusinessUnitScopeWhere,
     nestOwnerScopeWhere,
+    reportVisibilityWhere,
 } from "./report-scope.util";
 import {
     applyComputedFieldSelect,
     extractComputedFieldValue,
     formatTermsBreachReasonForDisplay,
     isComputedReportField,
+    isPrismaListRelation,
     isPrismaScalarField,
 } from "./report-virtual-fields.util";
 import { REPORT_METADATA } from "./report-metadata";
@@ -114,14 +117,7 @@ export class ReportExecutionService {
         const role = userInfo.viewAsUserRole || userInfo.role;
 
         const report = await this.db.report.findFirst({
-            where: {
-                id: reportId,
-                OR: [
-                    { account_id: accountId },
-                    { is_system: true },
-                    { is_public: true },
-                ],
-            },
+            where: { id: reportId, ...reportVisibilityWhere(accountId) },
         });
         if (!report) {
             throw new NotFoundException("Report not found");
@@ -237,7 +233,11 @@ export class ReportExecutionService {
         for (const [table, where] of Object.entries(nested)) {
             const rel = relationMap[table];
             if (rel) {
-                nestedWhere[rel] = where;
+                // Filters on a to-many relation belong inside `some` so they
+                // must all be satisfied by the same related row.
+                nestedWhere[rel] = isPrismaListRelation(primaryTable, rel)
+                    ? { some: where }
+                    : where;
             }
         }
 
@@ -1663,19 +1663,31 @@ export class ReportExecutionService {
             return value.toString();
         }
         if (typeof value === "number") {
-            try {
-                return new Intl.NumberFormat(locale).format(value);
-            } catch {
-                return String(value);
-            }
+            return this.formatNumber(value, locale);
         }
         if (typeof value === "boolean") {
             return value ? "Yes" : "No";
+        }
+        // Decimal columns (approved_limit, capacity_gap_amount, ...) are objects whose
+        // toJSON() returns a string, so JSON.stringify would wrap them in literal quotes.
+        if (Prisma.Decimal.isDecimal(value)) {
+            return this.formatNumber(value.toNumber(), locale);
         }
         if (typeof value === "object") {
             return JSON.stringify(value);
         }
         return String(value);
+    }
+
+    private formatNumber(value: number, locale: string): string {
+        if (!Number.isFinite(value)) {
+            return String(value);
+        }
+        try {
+            return new Intl.NumberFormat(locale).format(value);
+        } catch {
+            return String(value);
+        }
     }
 
     private looksLikeDateField(field: string, value: unknown): boolean {

@@ -38,6 +38,7 @@ export declare class ReportExecutionService {
     private extractCustomerName;
     private extractParentCustomerName;
     private formatValue;
+    private formatNumber;
     private looksLikeDateField;
 }
 export {};

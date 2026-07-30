@@ -1,6 +1,17 @@
 type PrismaWhere = Record<string, unknown>;
 
 /**
+ * Tenant isolation for report *definitions* (the `Report` rows themselves).
+ *
+ * `Report.account_id` is mandatory and system templates are seeded per account, so
+ * every account owns its own `is_system` copies. Matching `is_system` or `is_public`
+ * without an account filter therefore exposes every other tenant's reports.
+ */
+export function reportVisibilityWhere(accountId: number): PrismaWhere {
+    return { account_id: accountId };
+}
+
+/**
  * Account isolation for report primary tables.
  * Contact has no account_id — scope through Company → Customer (leaves parity).
  */

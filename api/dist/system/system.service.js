@@ -26,6 +26,25 @@ const OPEN_INVOICE_STATUSES = [
     "Overdue",
 ];
 const LINKED_PAYMENT = { invoice_id: { gt: 0 } };
+const AGING_BUCKETS = [
+    { daysRange: "0_7", min: 0, max: 7 },
+    { daysRange: "8_30", min: 8, max: 30 },
+    { daysRange: "31_60", min: 31, max: 60 },
+    { daysRange: "61_90", min: 61, max: 90 },
+    { daysRange: "91_180", min: 91, max: 180 },
+    { daysRange: "181_365", min: 181, max: 365 },
+    { daysRange: "365_2000", min: 366, max: 9999 },
+];
+const UNPAID_INVOICE_STATUSES = [
+    "Open",
+    "Overdue",
+    "Partially_Paid",
+    "Under_Dispute",
+    "Due",
+    "Draft",
+    "Sent",
+    "Viewed",
+];
 let SystemService = class SystemService {
     constructor(db, accessScope) {
         this.db = db;
@@ -197,15 +216,7 @@ let SystemService = class SystemService {
     }
     async buildAgingPortfolio(accountId) {
         const today = this.startOfUtcDay(new Date());
-        const ranges = [
-            { daysRange: "0-7", min: 0, max: 7 },
-            { daysRange: "8-30", min: 8, max: 30 },
-            { daysRange: "31-60", min: 31, max: 60 },
-            { daysRange: "61-90", min: 61, max: 90 },
-            { daysRange: "91-180", min: 91, max: 180 },
-            { daysRange: "181-365", min: 181, max: 365 },
-            { daysRange: "365+", min: 366, max: 99999 },
-        ];
+        const ranges = AGING_BUCKETS;
         const overdueInvoices = await this.db.invoice.findMany({
             where: {
                 account_id: accountId,
@@ -379,7 +390,119 @@ let SystemService = class SystemService {
         };
         return (0, serialize_bigint_1.serializeBigInt)(response);
     }
-    async getChartDetails(_user, _query = {}) {
+    openCollectionPeriodFilter() {
+        return {
+            period_end_date: null,
+            total_outstanding_amount: { gt: 0 },
+        };
+    }
+    async selectedBusinessUnitFilter(query) {
+        const selected = query.businessUnitId
+            ? parseInt(String(query.businessUnitId), 10)
+            : NaN;
+        if (!Number.isFinite(selected) || selected <= 0) {
+            return null;
+        }
+        const ids = [
+            selected,
+            ...(await this.accessScope.getBusinessUnitHierarchy(selected)),
+        ];
+        return { business_unit_id: { in: ids } };
+    }
+    resolveAgingBucket(daysRange) {
+        if (!daysRange) {
+            return null;
+        }
+        const normalized = daysRange
+            .trim()
+            .replace(/-/g, "_")
+            .replace(/\+$/, "");
+        return (AGING_BUCKETS.find((b) => b.daysRange === normalized) ??
+            AGING_BUCKETS.find((b) => b.daysRange.startsWith(`${normalized}_`)) ??
+            null);
+    }
+    async getChartDetails(user, query = {}) {
+        const { userInfo, accountId } = await this.scope(user);
+        if (query.type === "aging-portfolio") {
+            const bucket = this.resolveAgingBucket(query.daysRange);
+            const today = this.startOfUtcDay(new Date());
+            const customerScope = [
+                ...(await this.accessScope.buildCustomerAccessWhere(userInfo)),
+                { collection_status: "Active" },
+            ];
+            const selectedBu = await this.selectedBusinessUnitFilter(query);
+            if (selectedBu) {
+                customerScope.push(selectedBu);
+            }
+            const where = {
+                account_id: accountId,
+                status: { in: [...UNPAID_INVOICE_STATUSES] },
+                Customer: { AND: customerScope },
+                due_date: bucket
+                    ? {
+                        gte: this.startOfUtcDay(this.addDays(today, -bucket.max)),
+                        lte: this.endOfUtcDay(this.addDays(today, -bucket.min)),
+                    }
+                    : { lt: today },
+            };
+            const [totalRecords, amountAgg, currency] = await Promise.all([
+                this.db.invoice.count({ where }),
+                this.db.invoice.aggregate({
+                    where,
+                    _sum: { outstanding_debt: true },
+                }),
+                this.accountCurrency(accountId),
+            ]);
+            return (0, serialize_bigint_1.serializeBigInt)({
+                details: [],
+                data: [],
+                totalRecords,
+                summary: {
+                    totalRecords,
+                    totalAmount: Number(amountAgg._sum.outstanding_debt ?? 0),
+                },
+                currency,
+            });
+        }
+        if (query.type === "overdue-amount" ||
+            query.type === "overdue-customers") {
+            const periodFilter = this.openCollectionPeriodFilter();
+            const customerScope = [
+                ...(await this.accessScope.buildCustomerAccessWhere(userInfo)),
+            ];
+            const selectedBu = await this.selectedBusinessUnitFilter(query);
+            if (selectedBu) {
+                customerScope.push(selectedBu);
+            }
+            const [totalRecords, amountAgg, currency] = await Promise.all([
+                this.db.customer.count({
+                    where: {
+                        AND: [
+                            ...customerScope,
+                            { CustomerCollectionPeriod: { some: periodFilter } },
+                        ],
+                    },
+                }),
+                this.db.customerCollectionPeriod.aggregate({
+                    where: {
+                        ...periodFilter,
+                        Customer: { AND: customerScope },
+                    },
+                    _sum: { total_outstanding_amount: true },
+                }),
+                this.accountCurrency(accountId),
+            ]);
+            return (0, serialize_bigint_1.serializeBigInt)({
+                details: [],
+                data: [],
+                totalRecords,
+                summary: {
+                    totalRecords,
+                    totalAmount: Number(amountAgg._sum.total_outstanding_amount ?? 0),
+                },
+                currency,
+            });
+        }
         return { details: [], totalRecords: 0 };
     }
     async getControlCenter(user, operation) {
