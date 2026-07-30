@@ -19,6 +19,26 @@ export type AgingRangeRow = {
     amountPercentage: string;
     progress: number;
 };
+export type EntityAmount = {
+    customer: string;
+    amount: number;
+    percentage: number;
+    color: string;
+};
+export type MaturityRow = {
+    id: number;
+    invoices: number;
+    accounts: number;
+    amount: number;
+    daysRange: string;
+    amountPercentage: string;
+};
+export type BucketTotals = {
+    daysRange: string;
+    invoices: number;
+    accounts: number;
+    amount: number;
+};
 export declare function lastSixMonthLabels(now?: Date): string[];
 export declare function buildAudienceReportChart(collectedData: number[], promiseToPayData: number[], now?: Date): {
     options: {
@@ -61,6 +81,82 @@ export declare function buildAgingRangeRows(buckets: Array<{
     accounts: number;
     amount: number;
 }>): AgingRangeRow[];
+export declare function buildTopEntityAmounts(entries: Array<{
+    label: string;
+    amount: number;
+}>, limit?: number): EntityAmount[];
+export declare function buildMaturityRows(buckets: BucketTotals[]): MaturityRow[];
+export declare function buildActiveCustomersChart(addedData: number[], removedData: number[], now?: Date): {
+    options: {
+        chart: {
+            type: string;
+        };
+        xaxis: {
+            categories: string[];
+            title: {
+                text: string;
+                style: {
+                    readonly color: "#2F3B52";
+                    readonly fontSize: "12px";
+                    readonly fontWeight: 600;
+                };
+            };
+        };
+        yaxis: {
+            title: {
+                text: string;
+                style: {
+                    readonly color: "#2F3B52";
+                    readonly fontSize: "12px";
+                    readonly fontWeight: 600;
+                };
+            };
+        };
+    };
+    series: {
+        name: string;
+        type: string;
+        data: number[];
+    }[];
+};
+export declare function buildAutomatedPhaseSplitChart(steps: Array<{
+    label: string;
+    customers: number;
+    invoices: number;
+}>): {
+    options: {
+        chart: {
+            type: string;
+            stacked: boolean;
+        };
+        xaxis: {
+            categories: string[];
+            title: {
+                text: string;
+                style: {
+                    readonly color: "#2F3B52";
+                    readonly fontSize: "12px";
+                    readonly fontWeight: 600;
+                };
+            };
+        };
+        yaxis: {
+            title: {
+                text: string;
+                style: {
+                    readonly color: "#2F3B52";
+                    readonly fontSize: "12px";
+                    readonly fontWeight: 600;
+                };
+            };
+        };
+    };
+    series: {
+        name: string;
+        type: string;
+        data: number[];
+    }[];
+};
 export declare function reconstructDashboardFromCache(cached: {
     active_customers: number;
     overdue_amount: number;

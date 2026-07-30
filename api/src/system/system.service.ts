@@ -8,11 +8,16 @@ import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import {
+    buildActiveCustomersChart,
     buildAgingRangeRows,
     buildAudienceReportChart,
+    buildAutomatedPhaseSplitChart,
     buildCollectionEffortsPhase,
     buildCollectionStat,
+    buildMaturityRows,
+    buildTopEntityAmounts,
     reconstructDashboardFromCache,
+    type EntityAmount,
 } from "./financial-dashboard.builder";
 
 const COLLECTION_ROLES = [
@@ -70,10 +75,6 @@ export class SystemService {
         const userInfo = await this.accessScope.resolveUserInfo(user);
         const accountId = this.accessScope.getEffectiveAccountId(userInfo);
         return { userInfo, accountId };
-    }
-
-    private emptyChart() {
-        return { options: {}, series: [] };
     }
 
     private startOfUtcDay(d: Date): Date {
@@ -378,6 +379,215 @@ export class SystemService {
         };
     }
 
+    /**
+     * Top-10 amount slices by customer and by business unit for one invoice
+     * scope. Both charts are derived from the same grouped rows so a customer's
+     * amount can never disagree with the unit it rolls up into. Customers with
+     * no business unit are left out of the unit chart rather than bucketed into
+     * a synthetic "unassigned" slice.
+     */
+    private async buildEntityBreakdowns(
+        accountId: number,
+        invoiceWhere: Record<string, unknown>
+    ): Promise<{
+        byCustomer: EntityAmount[];
+        byBusinessUnit: EntityAmount[];
+    }> {
+        const groups = await this.db.invoice.groupBy({
+            by: ["customer_id"],
+            where: {
+                ...invoiceWhere,
+                account_id: accountId,
+                customer_id: { not: null },
+            } as never,
+            _sum: { outstanding_debt: true },
+        });
+
+        const customerIds = groups
+            .map((group) => group.customer_id)
+            .filter((id): id is number => id != null);
+        if (customerIds.length === 0) {
+            return { byCustomer: [], byBusinessUnit: [] };
+        }
+
+        const customers = await this.db.customer.findMany({
+            where: { id: { in: customerIds } },
+            select: {
+                id: true,
+                Person: { select: { full_name: true } },
+                Company: { select: { name: true } },
+                BusinessUnit: { select: { id: true, name: true } },
+            },
+        });
+        const byId = new Map(customers.map((customer) => [customer.id, customer]));
+
+        const customerEntries: Array<{ label: string; amount: number }> = [];
+        const unitTotals = new Map<number, { label: string; amount: number }>();
+
+        for (const group of groups) {
+            const amount = Number(group._sum.outstanding_debt ?? 0);
+            if (group.customer_id == null || amount <= 0) {
+                continue;
+            }
+            const customer = byId.get(group.customer_id);
+            customerEntries.push({
+                label:
+                    customer?.Person?.full_name ||
+                    customer?.Company?.name ||
+                    `#${group.customer_id}`,
+                amount,
+            });
+
+            const unit = customer?.BusinessUnit;
+            if (!unit) {
+                continue;
+            }
+            const existing = unitTotals.get(unit.id);
+            if (existing) {
+                existing.amount += amount;
+            } else {
+                unitTotals.set(unit.id, {
+                    label: unit.name || `#${unit.id}`,
+                    amount,
+                });
+            }
+        }
+
+        return {
+            byCustomer: buildTopEntityAmounts(customerEntries),
+            byBusinessUnit: buildTopEntityAmounts([...unitTotals.values()]),
+        };
+    }
+
+    /**
+     * Due-tab counterpart of the aging table: still-open invoices bucketed by
+     * how many days remain until they fall due.
+     */
+    private async buildReceivablesMaturitySchedule(accountId: number) {
+        const today = this.startOfUtcDay(new Date());
+
+        const upcoming = await this.db.invoice.findMany({
+            where: {
+                account_id: accountId,
+                status: { in: [...OPEN_INVOICE_STATUSES] },
+                due_date: { gte: today },
+                customer_id: { not: null },
+            },
+            select: {
+                customer_id: true,
+                outstanding_debt: true,
+                due_date: true,
+            },
+            take: 20000,
+        });
+
+        const buckets = AGING_BUCKETS.map((range) => {
+            const inRange = upcoming.filter((invoice) => {
+                if (!invoice.due_date) {
+                    return false;
+                }
+                const days = Math.floor(
+                    (invoice.due_date.getTime() - today.getTime()) /
+                        (1000 * 60 * 60 * 24)
+                );
+                return days >= range.min && days <= range.max;
+            });
+            const customers = new Set(
+                inRange
+                    .map((invoice) => invoice.customer_id)
+                    .filter((id): id is number => id != null)
+            );
+            return {
+                daysRange: range.daysRange,
+                invoices: inRange.length,
+                accounts: customers.size,
+                amount: inRange.reduce(
+                    (sum, invoice) => sum + Number(invoice.outstanding_debt ?? 0),
+                    0
+                ),
+            };
+        });
+
+        return buildMaturityRows(buckets);
+    }
+
+    /**
+     * Customers gained vs lost per month. "Removed" leans on `modified_at`
+     * because deactivation is not journalled anywhere — a customer edited after
+     * being deactivated counts in the month of that later edit.
+     */
+    private async buildActiveCustomersSeries(accountId: number) {
+        const now = new Date();
+        const added: number[] = [];
+        const removed: number[] = [];
+
+        for (let i = 5; i >= 0; i--) {
+            const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const monthEnd = new Date(
+                now.getFullYear(),
+                now.getMonth() - i + 1,
+                0,
+                23,
+                59,
+                59,
+                999
+            );
+            const window = { gte: monthStart, lte: monthEnd };
+            const [addedCount, removedCount] = await Promise.all([
+                this.db.customer.count({
+                    where: {
+                        account_id: accountId,
+                        collection_status: "Active",
+                        created_at: window,
+                    },
+                }),
+                this.db.customer.count({
+                    where: {
+                        account_id: accountId,
+                        collection_status: "Inactive",
+                        modified_at: window,
+                    },
+                }),
+            ]);
+            added.push(addedCount);
+            removed.push(removedCount);
+        }
+
+        return buildActiveCustomersChart(added, removed, now);
+    }
+
+    /** Where active automated collection periods sit in the step sequence. */
+    private async buildAutomatedPhaseSplit(accountId: number) {
+        const groups = await this.db.customerCollectionPeriod.groupBy({
+            by: ["last_automated_step"],
+            where: {
+                period_end_date: null,
+                current_category: "Automated",
+                Customer: {
+                    account_id: accountId,
+                    collection_status: "Active",
+                },
+            },
+            _count: { _all: true },
+            _sum: { no_of_overdue_invoices: true },
+        });
+
+        const steps = groups
+            .map((group) => ({
+                step: group.last_automated_step ?? 0,
+                customers: group._count._all,
+                invoices: Number(group._sum.no_of_overdue_invoices ?? 0),
+            }))
+            .sort((a, b) => a.step - b.step)
+            .map((entry) => ({
+                label: `Step ${entry.step}`,
+                customers: entry.customers,
+                invoices: entry.invoices,
+            }));
+
+        return buildAutomatedPhaseSplitChart(steps);
+    }
+
     async getDashboard(user: JwtPayload, query: SystemListQuery = {}) {
         const { accountId } = await this.scope(user);
         const viewMode =
@@ -451,6 +661,11 @@ export class SystemService {
             audienceReport,
             categoryWidgets,
             agingPortfolio,
+            overdueByEntity,
+            dueByEntity,
+            receivablesMaturitySchedule,
+            activeCustomersChart,
+            automatedPhaseSplit,
         ] = await Promise.all([
             this.db.invoice.aggregate({
                 where: overdueWhere,
@@ -526,6 +741,14 @@ export class SystemService {
             this.buildCollectedVsPromiseSeries(accountId),
             this.buildCategoryWidgets(accountId, currency),
             this.buildAgingPortfolio(accountId),
+            this.buildEntityBreakdowns(accountId, { status: "Overdue" }),
+            this.buildEntityBreakdowns(accountId, {
+                status: { in: [...OPEN_INVOICE_STATUSES] },
+                due_date: { gte: today },
+            }),
+            this.buildReceivablesMaturitySchedule(accountId),
+            this.buildActiveCustomersSeries(accountId),
+            this.buildAutomatedPhaseSplit(accountId),
         ]);
 
         const response = {
@@ -552,13 +775,13 @@ export class SystemService {
             audienceReport,
             agingPortfolio,
             collectionEffortsPhase: categoryWidgets.collectionEffortsPhase,
-            automatedPhaseSplit: this.emptyChart(),
-            activeCustomersChart: this.emptyChart(),
-            receivablesMaturitySchedule: [],
-            invoicesByCustomer: [],
-            invoicesByBusinessUnit: [],
-            overdueInvoicesByCustomer: [],
-            overdueInvoicesByBusinessUnit: [],
+            automatedPhaseSplit,
+            activeCustomersChart,
+            receivablesMaturitySchedule,
+            invoicesByCustomer: dueByEntity.byCustomer,
+            invoicesByBusinessUnit: dueByEntity.byBusinessUnit,
+            overdueInvoicesByCustomer: overdueByEntity.byCustomer,
+            overdueInvoicesByBusinessUnit: overdueByEntity.byBusinessUnit,
             lastSynced: new Date().toISOString(),
             viewMode,
             hasChildBusinessUnits: childBuCount > 0,

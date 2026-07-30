@@ -25,6 +25,43 @@ export type AgingRangeRow = {
     progress: number;
 };
 
+/** A slice of an "amount by customer / business unit (Top 10)" bar+donut pair. */
+export type EntityAmount = {
+    customer: string;
+    amount: number;
+    percentage: number;
+    color: string;
+};
+
+export type MaturityRow = {
+    id: number;
+    invoices: number;
+    accounts: number;
+    amount: number;
+    daysRange: string;
+    amountPercentage: string;
+};
+
+export type BucketTotals = {
+    daysRange: string;
+    invoices: number;
+    accounts: number;
+    amount: number;
+};
+
+/**
+ * Palette the dashboard cache was written with. `AmountByEntityChart` re-colours
+ * every slice from the account theme, so this only keeps freshly built payloads
+ * shaped like cached ones.
+ */
+const ENTITY_COLORS = ["#6B46C1", "#9F7AEA", "#4A5568", "#718096"] as const;
+
+const AXIS_TITLE_STYLE = {
+    color: "#2F3B52",
+    fontSize: "12px",
+    fontWeight: 600,
+} as const;
+
 const MONTH_NAMES = [
     "Jan",
     "Feb",
@@ -142,6 +179,102 @@ export function buildAgingRangeRows(
             progress: pct,
         };
     });
+}
+
+/**
+ * Top-N slices for the "amount by entity" charts. Percentages are relative to
+ * the slices actually returned, not to the account-wide total, so the donut adds
+ * up to 100 rather than to whatever share the top N happen to represent.
+ */
+export function buildTopEntityAmounts(
+    entries: Array<{ label: string; amount: number }>,
+    limit = 10
+): EntityAmount[] {
+    const ranked = entries
+        .filter((entry) => entry.amount > 0)
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, limit);
+    const total = ranked.reduce((sum, entry) => sum + entry.amount, 0);
+    return ranked.map((entry, index) => ({
+        customer: entry.label,
+        amount: Math.round(entry.amount),
+        percentage:
+            total > 0 ? Math.round((entry.amount / total) * 10000) / 100 : 0,
+        color: ENTITY_COLORS[index % ENTITY_COLORS.length],
+    }));
+}
+
+/** Forward-looking counterpart of `buildAgingRangeRows` for the Due tab table. */
+export function buildMaturityRows(buckets: BucketTotals[]): MaturityRow[] {
+    const totalAmount = buckets.reduce(
+        (sum, bucket) => sum + (bucket.amount || 0),
+        0
+    );
+    return buckets.map((bucket, index) => {
+        const pct =
+            totalAmount > 0 ? ((bucket.amount || 0) / totalAmount) * 100 : 0;
+        return {
+            id: index + 1,
+            invoices: bucket.invoices,
+            accounts: bucket.accounts,
+            amount: Math.round(bucket.amount || 0),
+            daysRange: bucket.daysRange,
+            amountPercentage: `${pct.toFixed(2)}%`,
+        };
+    });
+}
+
+/** "Overdue Accounts Dynamics": customers gained vs lost per month. */
+export function buildActiveCustomersChart(
+    addedData: number[],
+    removedData: number[],
+    now = new Date()
+) {
+    return {
+        options: {
+            chart: { type: "line" },
+            xaxis: {
+                categories: lastSixMonthLabels(now),
+                title: { text: "Month", style: AXIS_TITLE_STYLE },
+            },
+            yaxis: { title: { text: "Customers", style: AXIS_TITLE_STYLE } },
+        },
+        series: [
+            { name: "Added Customers", type: "column", data: addedData },
+            { name: "Removed Customers", type: "line", data: removedData },
+        ],
+    };
+}
+
+/** Customers and invoices sitting on each step of the automated sequence. */
+export function buildAutomatedPhaseSplitChart(
+    steps: Array<{ label: string; customers: number; invoices: number }>
+) {
+    return {
+        options: {
+            chart: { type: "bar", stacked: false },
+            xaxis: {
+                categories: steps.map((step) => step.label),
+                title: {
+                    text: "Automated Collection Steps",
+                    style: AXIS_TITLE_STYLE,
+                },
+            },
+            yaxis: { title: { text: "Count", style: AXIS_TITLE_STYLE } },
+        },
+        series: [
+            {
+                name: "Customers",
+                type: "column",
+                data: steps.map((step) => step.customers),
+            },
+            {
+                name: "Invoices",
+                type: "column",
+                data: steps.map((step) => step.invoices),
+            },
+        ],
+    };
 }
 
 export function reconstructDashboardFromCache(cached: {

@@ -61,18 +61,77 @@ export declare class SystemController {
             stats: import("./financial-dashboard.builder").PhaseStat[];
         };
         automatedPhaseSplit: {
-            options: {};
-            series: never[];
+            options: {
+                chart: {
+                    type: string;
+                    stacked: boolean;
+                };
+                xaxis: {
+                    categories: string[];
+                    title: {
+                        text: string;
+                        style: {
+                            readonly color: "#2F3B52";
+                            readonly fontSize: "12px";
+                            readonly fontWeight: 600;
+                        };
+                    };
+                };
+                yaxis: {
+                    title: {
+                        text: string;
+                        style: {
+                            readonly color: "#2F3B52";
+                            readonly fontSize: "12px";
+                            readonly fontWeight: 600;
+                        };
+                    };
+                };
+            };
+            series: {
+                name: string;
+                type: string;
+                data: number[];
+            }[];
         };
         activeCustomersChart: {
-            options: {};
-            series: never[];
+            options: {
+                chart: {
+                    type: string;
+                };
+                xaxis: {
+                    categories: string[];
+                    title: {
+                        text: string;
+                        style: {
+                            readonly color: "#2F3B52";
+                            readonly fontSize: "12px";
+                            readonly fontWeight: 600;
+                        };
+                    };
+                };
+                yaxis: {
+                    title: {
+                        text: string;
+                        style: {
+                            readonly color: "#2F3B52";
+                            readonly fontSize: "12px";
+                            readonly fontWeight: 600;
+                        };
+                    };
+                };
+            };
+            series: {
+                name: string;
+                type: string;
+                data: number[];
+            }[];
         };
-        receivablesMaturitySchedule: never[];
-        invoicesByCustomer: never[];
-        invoicesByBusinessUnit: never[];
-        overdueInvoicesByCustomer: never[];
-        overdueInvoicesByBusinessUnit: never[];
+        receivablesMaturitySchedule: import("./financial-dashboard.builder").MaturityRow[];
+        invoicesByCustomer: import("./financial-dashboard.builder").EntityAmount[];
+        invoicesByBusinessUnit: import("./financial-dashboard.builder").EntityAmount[];
+        overdueInvoicesByCustomer: import("./financial-dashboard.builder").EntityAmount[];
+        overdueInvoicesByBusinessUnit: import("./financial-dashboard.builder").EntityAmount[];
         lastSynced: string;
         viewMode: string;
         hasChildBusinessUnits: boolean;
