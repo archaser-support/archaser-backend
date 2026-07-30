@@ -26,7 +26,7 @@ function isCustomerPolicyBackedReportField(field) {
         field.startsWith("InsurancePolicy.") ||
         exports.CUSTOMER_POLICY_BACKED_REPORT_FIELDS.has(field));
 }
-function getCustomerPolicyRow(row, invoiceRow) {
+function getCustomerPolicyRow(row, invoiceRow, scopedPolicyId) {
     if (!row || typeof row !== "object") {
         return null;
     }
@@ -41,14 +41,24 @@ function getCustomerPolicyRow(row, invoiceRow) {
     if (validPolicies.length === 0) {
         return null;
     }
+    const matchPolicy = (policyId) => {
+        const ofPolicy = validPolicies.filter((p) => p.insurance_policy_id ===
+            policyId);
+        return (ofPolicy.find((p) => p.is_active === true) ?? ofPolicy[0]);
+    };
     if (invoiceRow && typeof invoiceRow === "object") {
         const policyId = invoiceRow.policy_id;
         if (typeof policyId === "number") {
-            const matched = validPolicies.find((p) => p
-                .insurance_policy_id === policyId);
+            const matched = matchPolicy(policyId);
             if (matched) {
                 return matched;
             }
+        }
+    }
+    if (typeof scopedPolicyId === "number") {
+        const matched = matchPolicy(scopedPolicyId);
+        if (matched) {
+            return matched;
         }
     }
     const active = validPolicies.find((p) => p.is_active === true);
@@ -57,8 +67,8 @@ function getCustomerPolicyRow(row, invoiceRow) {
     }
     return validPolicies[0];
 }
-function extractCustomerPolicyReportField(row, field, invoiceRow) {
-    const active = getCustomerPolicyRow(row, invoiceRow);
+function extractCustomerPolicyReportField(row, field, invoiceRow, scopedPolicyId) {
+    const active = getCustomerPolicyRow(row, invoiceRow, scopedPolicyId);
     if (!active) {
         return null;
     }

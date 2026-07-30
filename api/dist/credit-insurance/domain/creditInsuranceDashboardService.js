@@ -1374,6 +1374,9 @@ async function buildCapacityGapCandidates(accountId, options = {}) {
         if (ar <= 0) {
             continue;
         }
+        if (!c.is_active) {
+            continue;
+        }
         const gapAmount = dashboardCapacityGapFromStored(c);
         if (gapAmount > 0) {
             withGap.push({
@@ -1438,6 +1441,9 @@ async function buildCapacityGapCandidates(accountId, options = {}) {
                 normalizedContribution);
         }
         for (const c of all) {
+            if (!c.is_active) {
+                continue;
+            }
             const gapAmount = gapByCustomer.get(c.id) ?? 0;
             if (gapAmount <= 0) {
                 continue;

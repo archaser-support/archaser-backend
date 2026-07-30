@@ -286,7 +286,13 @@ export class ReportExecutionService {
             });
             const locale = body.locale || "en-US";
             const data = topUpResult.rows.map((row) =>
-                this.formatRow(row, primaryTable, fields, locale)
+                this.formatRow(
+                    row,
+                    primaryTable,
+                    fields,
+                    locale,
+                    creditDashboardPolicyId
+                )
             );
             const formulaResult = applyFormulasToRows(data, config, {
                 locale,
@@ -383,7 +389,13 @@ export class ReportExecutionService {
 
         const locale = body.locale || "en-US";
         const data = rows.map((row) =>
-            this.formatRow(row, primaryTable, fields, locale)
+            this.formatRow(
+                row,
+                primaryTable,
+                fields,
+                locale,
+                creditDashboardPolicyId
+            )
         );
         const formulaResult = applyFormulasToRows(data, config, {
             locale,
@@ -1158,7 +1170,8 @@ export class ReportExecutionService {
             alias?: string;
             aggregation?: string;
         }>,
-        locale: string
+        locale: string,
+        scopedPolicyId?: number
     ): Record<string, unknown> {
         const out: Record<string, unknown> = {
             id: row.id,
@@ -1187,7 +1200,8 @@ export class ReportExecutionService {
                 row,
                 primaryTable,
                 f,
-                relationMap
+                relationMap,
+                scopedPolicyId
             );
             if (
                 f.table === "Invoice" &&
@@ -1267,7 +1281,8 @@ export class ReportExecutionService {
         row: Record<string, unknown>,
         primaryTable: string,
         f: { table: string; field: string },
-        relationMap: Record<string, string>
+        relationMap: Record<string, string>,
+        scopedPolicyId?: number
     ): unknown {
         if (f.table === primaryTable) {
             const computed = extractComputedFieldValue(
@@ -1343,7 +1358,9 @@ export class ReportExecutionService {
             ) {
                 const policyValue = extractCustomerPolicyReportField(
                     row,
-                    f.field
+                    f.field,
+                    undefined,
+                    scopedPolicyId
                 );
                 if (policyValue !== null && policyValue !== undefined) {
                     return policyValue;
