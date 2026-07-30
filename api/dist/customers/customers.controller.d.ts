@@ -248,6 +248,9 @@ export declare class CustomersController {
             uninsured_currency2: string | null;
             retained_capacity_gap: number | null;
         }) | null;
+        total_ar: number;
+        total_ar_secondary: number | null;
+        credit_insurance_secondary_currency: string | null;
         Country: {
             name: string;
             id: number;
