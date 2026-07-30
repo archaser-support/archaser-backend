@@ -344,6 +344,12 @@ repos’ plan folders before or with the implementation PRs.
 
 ## Further Notes
 
+### Follow-on
+
+- Jul 30 Nest port of monolith `ca50cdd37` (zero-AR health KPIs, sticky
+  capacity-gap KPI, CPT effective-limit defaults): see
+  `ci-jul30-ca50-kpi-health-split-port.prd.md`.
+
 ### Source commits (monolith `credit-insurance`)
 
 - `d7e6120d3` — Billing connector dated backfill PRD + Credit Portfolio Health
