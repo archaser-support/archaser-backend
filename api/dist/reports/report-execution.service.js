@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportExecutionService = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
@@ -1075,20 +1076,29 @@ let ReportExecutionService = class ReportExecutionService {
             return value.toString();
         }
         if (typeof value === "number") {
-            try {
-                return new Intl.NumberFormat(locale).format(value);
-            }
-            catch {
-                return String(value);
-            }
+            return this.formatNumber(value, locale);
         }
         if (typeof value === "boolean") {
             return value ? "Yes" : "No";
+        }
+        if (client_1.Prisma.Decimal.isDecimal(value)) {
+            return this.formatNumber(value.toNumber(), locale);
         }
         if (typeof value === "object") {
             return JSON.stringify(value);
         }
         return String(value);
+    }
+    formatNumber(value, locale) {
+        if (!Number.isFinite(value)) {
+            return String(value);
+        }
+        try {
+            return new Intl.NumberFormat(locale).format(value);
+        }
+        catch {
+            return String(value);
+        }
     }
     looksLikeDateField(field, value) {
         if (field.includes("_at") ||

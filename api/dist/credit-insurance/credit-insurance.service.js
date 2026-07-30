@@ -17,6 +17,7 @@ const database_service_1 = require("../database/database.service");
 const credit_dashboard_access_service_1 = require("./credit-dashboard-access.service");
 const credit_insurance_leaves_service_1 = require("./credit-insurance-leaves.service");
 const domain_db_1 = require("./domain-db");
+const customerDashboardKpisService_1 = require("./domain/customerDashboardKpisService");
 const creditInsuranceDashboardService_1 = require("./domain/creditInsuranceDashboardService");
 let CreditInsuranceService = class CreditInsuranceService {
     constructor(db, accessScope, access, leaves) {
@@ -86,27 +87,43 @@ let CreditInsuranceService = class CreditInsuranceService {
         const summary = await (0, creditInsuranceDashboardService_1.getCreditDashboardSummary)(ctx.accountId, policyId, ctx.businessUnitFilter, includeNoPolicy);
         return (0, serialize_bigint_1.serializeBigInt)(summary);
     }
+    parseCustomerId(query) {
+        const raw = query.customerId ?? query.customer_id;
+        if (raw == null || String(raw).trim() === "") {
+            return null;
+        }
+        const parsed = Number.parseInt(String(raw), 10);
+        return Number.isFinite(parsed) && parsed >= 1 ? parsed : null;
+    }
+    parseDays(query) {
+        const raw = query.days;
+        if (raw == null || String(raw).trim() === "") {
+            return undefined;
+        }
+        const parsed = Number.parseInt(String(raw), 10);
+        return Number.isFinite(parsed) && parsed >= 1 ? parsed : undefined;
+    }
     async customerDashboardKpis(user, query) {
         const accountId = await this.accountId(user);
-        const customerId = query.customer_id
-            ? parseInt(String(query.customer_id), 10)
-            : null;
+        const customerId = this.parseCustomerId(query);
         if (!customerId) {
-            return { kpis: {} };
+            throw new common_1.BadRequestException({ error: "customerId is required" });
         }
         const customer = await this.db.customer.findFirst({
             where: { id: customerId, account_id: accountId },
-            include: { CustomerPolicy: true },
+            select: { id: true },
         });
         if (!customer) {
-            return { kpis: {} };
+            throw new common_1.NotFoundException({
+                error: "Customer not found",
+                code: "CUSTOMER_NOT_FOUND",
+            });
         }
-        return (0, serialize_bigint_1.serializeBigInt)({
-            kpis: {
-                approvedLimit: customer.CustomerPolicy?.[0]?.approved_limit ?? null,
-                capacityGap: customer.CustomerPolicy?.[0]?.capacity_gap_amount ?? 0,
-            },
+        const kpis = await (0, customerDashboardKpisService_1.getCustomerDashboardKpis)(accountId, customerId, {
+            policyId: this.parsePolicyId(query),
+            days: this.parseDays(query),
         });
+        return (0, serialize_bigint_1.serializeBigInt)(kpis);
     }
     async markReported(user, body) {
         const accountId = await this.accountId(user);

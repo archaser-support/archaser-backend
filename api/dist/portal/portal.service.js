@@ -13,11 +13,15 @@ exports.PortalService = void 0;
 const common_1 = require("@nestjs/common");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 let PortalService = class PortalService {
     constructor(db) {
         this.db = db;
     }
     async findCustomerByUuid(customerUUID) {
+        if (!UUID_PATTERN.test(customerUUID)) {
+            throw new common_1.NotFoundException({ error: "Customer not found" });
+        }
         const customer = await this.db.customer.findFirst({
             where: { customer_uuid: customerUUID },
             select: {
@@ -85,8 +89,6 @@ let PortalService = class PortalService {
                 return { banks: [] };
             case "wrong-contact":
                 return { ok: true };
-            case "top-ups":
-                return { topUps: [] };
             default:
                 throw new common_1.NotFoundException({
                     error: "Portal customer path not served by Nest domain",

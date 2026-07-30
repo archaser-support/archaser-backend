@@ -37,7 +37,6 @@ const PORTAL_SUFFIXES = [
     "create-dispute",
     "view-disputes",
     "wrong-contact",
-    "top-ups",
 ] as const;
 
 @ApiTags("portal-customers")

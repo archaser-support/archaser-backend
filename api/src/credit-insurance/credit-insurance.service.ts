@@ -1,6 +1,7 @@
 import {
     BadRequestException,
     Injectable,
+    NotFoundException,
     OnModuleInit,
 } from "@nestjs/common";
 import { AccessScopeService } from "../auth/access-scope.service";
@@ -10,6 +11,7 @@ import { DatabaseService } from "../database/database.service";
 import { CreditDashboardAccessService } from "./credit-dashboard-access.service";
 import { CreditInsuranceLeavesService } from "./credit-insurance-leaves.service";
 import { bindCreditInsurancePrisma } from "./domain-db";
+import { getCustomerDashboardKpis } from "./domain/customerDashboardKpisService";
 import { getCreditDashboardSummary } from "./domain/creditInsuranceDashboardService";
 
 /**
@@ -109,34 +111,52 @@ export class CreditInsuranceService implements OnModuleInit {
         return serializeBigInt(summary);
     }
 
+    private parseCustomerId(query: Record<string, unknown>): number | null {
+        // The customer dashboard sends `customerId`; older callers use `customer_id`.
+        const raw = query.customerId ?? query.customer_id;
+        if (raw == null || String(raw).trim() === "") {
+            return null;
+        }
+        const parsed = Number.parseInt(String(raw), 10);
+        return Number.isFinite(parsed) && parsed >= 1 ? parsed : null;
+    }
+
+    private parseDays(query: Record<string, unknown>): number | undefined {
+        const raw = query.days;
+        if (raw == null || String(raw).trim() === "") {
+            return undefined;
+        }
+        const parsed = Number.parseInt(String(raw), 10);
+        return Number.isFinite(parsed) && parsed >= 1 ? parsed : undefined;
+    }
+
     private async customerDashboardKpis(
         user: JwtPayload,
         query: Record<string, unknown>
     ) {
         const accountId = await this.accountId(user);
-        const customerId = query.customer_id
-            ? parseInt(String(query.customer_id), 10)
-            : null;
+        const customerId = this.parseCustomerId(query);
         if (!customerId) {
-            return { kpis: {} };
+            throw new BadRequestException({ error: "customerId is required" });
         }
 
         const customer = await this.db.customer.findFirst({
             where: { id: customerId, account_id: accountId },
-            include: { CustomerPolicy: true },
+            select: { id: true },
         });
         if (!customer) {
-            return { kpis: {} };
+            throw new NotFoundException({
+                error: "Customer not found",
+                code: "CUSTOMER_NOT_FOUND",
+            });
         }
 
-        return serializeBigInt({
-            kpis: {
-                approvedLimit:
-                    customer.CustomerPolicy?.[0]?.approved_limit ?? null,
-                capacityGap:
-                    customer.CustomerPolicy?.[0]?.capacity_gap_amount ?? 0,
-            },
+        const kpis = await getCustomerDashboardKpis(accountId, customerId, {
+            policyId: this.parsePolicyId(query),
+            days: this.parseDays(query),
         });
+
+        return serializeBigInt(kpis);
     }
 
     private async markReported(
