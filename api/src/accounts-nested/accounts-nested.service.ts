@@ -9,6 +9,13 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+import {
+    areBackfillOptionsLocked,
+    formatBackfillStartDateForApi,
+    resolveBackfillStartDateChange,
+    resolveIncludeOlderOpenInvoicesChange,
+    resolveSkipReportingBreachOnBackfillChange,
+} from "./billing-connector-backfill-options";
 
 const ADMIN_ACCOUNT_ID = 10013;
 const CREDIT_PRODUCT = "credit_insurance" as const;
@@ -403,6 +410,10 @@ export class AccountsNestedService {
         enabled_entities: unknown;
         sync_overlap_minutes: number;
         consecutive_auth_failures: number;
+        backfill_started_at?: Date | null;
+        backfill_start_date?: Date | null;
+        include_older_open_invoices?: boolean;
+        skip_reporting_breach_on_backfill?: boolean;
         last_connection_test_at: Date | null;
         last_connection_error: string | null;
         created_at: Date;
@@ -422,6 +433,16 @@ export class AccountsNestedService {
             enabled_entities: connector.enabled_entities,
             sync_overlap_minutes: connector.sync_overlap_minutes,
             consecutive_auth_failures: connector.consecutive_auth_failures,
+            backfill_start_date: formatBackfillStartDateForApi(
+                connector.backfill_start_date
+            ),
+            include_older_open_invoices:
+                connector.include_older_open_invoices ?? true,
+            skip_reporting_breach_on_backfill:
+                connector.skip_reporting_breach_on_backfill ?? false,
+            backfill_options_locked: areBackfillOptionsLocked(
+                connector.backfill_started_at
+            ),
             last_connection_test_at:
                 connector.last_connection_test_at?.toISOString() ?? null,
             last_connection_error: connector.last_connection_error,
@@ -506,6 +527,74 @@ export class AccountsNestedService {
         const existing = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
         });
+
+        let startDateChange;
+        try {
+            startDateChange = resolveBackfillStartDateChange({
+                backfillStartedAt: existing?.backfill_started_at,
+                existingStartDate: existing?.backfill_start_date,
+                nextInput:
+                    body.backfill_start_date === undefined
+                        ? undefined
+                        : (body.backfill_start_date as string | null),
+            });
+        } catch (error: unknown) {
+            const err = error as { code?: string; message?: string };
+            if (err?.code === "INVALID_BACKFILL_START_DATE") {
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid backfill_start_date",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (!startDateChange.ok) {
+            throw new ConflictException({
+                error: startDateChange.message,
+                code: startDateChange.code,
+            });
+        }
+
+        const includeOlderChange = resolveIncludeOlderOpenInvoicesChange({
+            backfillStartedAt: existing?.backfill_started_at,
+            existingValue: existing?.include_older_open_invoices,
+            nextInput:
+                body.include_older_open_invoices === undefined
+                    ? undefined
+                    : Boolean(body.include_older_open_invoices),
+        });
+        if (!includeOlderChange.ok) {
+            throw new ConflictException({
+                error: includeOlderChange.message,
+                code: includeOlderChange.code,
+            });
+        }
+
+        const skipBreachChange = resolveSkipReportingBreachOnBackfillChange({
+            backfillStartedAt: existing?.backfill_started_at,
+            existingValue: existing?.skip_reporting_breach_on_backfill,
+            nextInput:
+                body.skip_reporting_breach_on_backfill === undefined
+                    ? undefined
+                    : Boolean(body.skip_reporting_breach_on_backfill),
+        });
+        if (!skipBreachChange.ok) {
+            throw new ConflictException({
+                error: skipBreachChange.message,
+                code: skipBreachChange.code,
+            });
+        }
+
+        if (startDateChange.value !== undefined) {
+            data.backfill_start_date = startDateChange.value;
+        }
+        if (includeOlderChange.value !== undefined) {
+            data.include_older_open_invoices = includeOlderChange.value;
+        }
+        if (skipBreachChange.value !== undefined) {
+            data.skip_reporting_breach_on_backfill = skipBreachChange.value;
+        }
+
         const connector = existing
             ? await this.db.billingConnector.update({
                   where: { account_id: accountId },
@@ -515,6 +604,14 @@ export class AccountsNestedService {
                   data: {
                       account_id: accountId,
                       created_by: actor,
+                      include_older_open_invoices:
+                          includeOlderChange.value !== undefined
+                              ? includeOlderChange.value
+                              : true,
+                      skip_reporting_breach_on_backfill:
+                          skipBreachChange.value !== undefined
+                              ? skipBreachChange.value
+                              : false,
                       ...data,
                   },
               });
@@ -564,8 +661,21 @@ export class AccountsNestedService {
                     where: { connector_id: connector.id },
                     data: {
                         backfill_completed: false,
+                        backfill_completed_at: null,
                         backfill_cursor: null,
                         backfill_records_pulled: 0,
+                        backfill_last_checkpoint_at: null,
+                        backfill_total_records: null,
+                        last_max_updated_at: null,
+                        last_error: null,
+                    },
+                });
+                await this.db.billingConnector.update({
+                    where: { id: connector.id },
+                    data: {
+                        sync_mode: "BACKFILL",
+                        backfill_started_at: null,
+                        modified_at: new Date(),
                     },
                 });
             }

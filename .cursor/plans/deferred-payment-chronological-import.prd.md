@@ -317,18 +317,40 @@ Customer `1111`, January 2026: 25 invoices, 13 payments referencing invoice numb
 
 ### Two executors summary
 
-| Executor | Trigger | Handles |
-|----------|---------|---------|
-| **Replay** | Invoice import job complete; connector after Payment + Invoice ingest | Historical timeline in imported batch |
-| **Maturity** | Billing connector sync (when run) | Deferred rows with `payment_date <= today` and invoice now exists |
+- **Replay** — Invoice job complete; payment job complete; backdated UI
+  payment create; connector after Invoice or payment-only fallback.
+  Restamps assessed limits for affected customers.
+- **Maturity** — Connector after Invoice; also payment-only fallback.
+  Applies deferred rows with `payment_date <= today` when the invoice
+  exists.
 
 ### Manual import recommendation
 
-Document recommended order: **customers (if new) → payments → invoices**. Not enforced in UI except optional warning.
+Document recommended order: **customers (if new) → payments →
+invoices**. Not enforced in UI except optional warning. When
+invoices already exist, a later **payments-only** import must
+still run chronological AR replay (see payment-triggered
+addendum).
 
 ### Open follow-up
 
-If manual-import accounts need future-dated payment maturity without a connector, add a lightweight daily cron that calls the same maturity helper for accounts with unlinked deferred rows — explicitly deferred from MVP per D16.
+If manual-import accounts need future-dated payment maturity
+without a connector, add a lightweight daily cron that calls
+the same maturity helper for accounts with unlinked deferred
+rows — explicitly deferred from MVP per D16.
+
+## Implementation addendum — payment-triggered replay
+
+Late payments (file import, backdated UI/API create, connector
+payment-only sync) must run the **same chronological AR replay**
+and **live overdue/MEP/capacity refresh** as invoice completion.
+Past CustomerPolicyTrend / CreditDashboardDailySnapshot days
+stay on **next-morning** as-of rewrite drain (no in-request
+drain).
+
+Authoritative ready-for-agent brief:
+[payment-triggered-ar-replay.prd.md](./payment-triggered-ar-replay.prd.md)
+(grill decisions D1–D10).
 
 ## Issues (vertical slices)
 
