@@ -13,6 +13,8 @@ exports.CustomersService = void 0;
 const common_1 = require("@nestjs/common");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
+const domain_db_1 = require("../credit-insurance/domain-db");
+const openReceivableByCustomerCurrency_1 = require("../credit-insurance/domain/openReceivableByCustomerCurrency");
 const database_service_1 = require("../database/database.service");
 const TOP_UP_SORT_FIELDS = new Set([
     "start_date",
@@ -56,6 +58,7 @@ let CustomersService = class CustomersService {
     constructor(db, accessScope) {
         this.db = db;
         this.accessScope = accessScope;
+        (0, domain_db_1.bindCreditInsurancePrisma)(this.db);
     }
     async listOrStats(user, query) {
         if (query.stats === "true") {
@@ -316,8 +319,20 @@ let CustomersService = class CustomersService {
             });
         }
         const { CustomerPolicy: customerPolicies, ...rest } = customer;
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { currency: true },
+        });
+        const headerAr = await (0, openReceivableByCustomerCurrency_1.resolveCustomerHeaderOpenArAmounts)({
+            accountId,
+            customerId: id,
+            accountCurrency: account?.currency,
+            customer,
+            dbClient: this.db,
+        });
         return (0, serialize_bigint_1.serializeBigInt)({
             ...rest,
+            ...headerAr,
             customerPolicies,
             activeCustomerPolicy: customerPolicies.find((policy) => policy.is_active) ?? null,
         });
@@ -345,6 +360,9 @@ let CustomersService = class CustomersService {
         delete data.CustomerPolicy;
         delete data.customerPolicies;
         delete data.activeCustomerPolicy;
+        delete data.total_ar;
+        delete data.total_ar_secondary;
+        delete data.credit_insurance_secondary_currency;
         const updated = await this.db.customer.update({
             where: { id },
             data: data,

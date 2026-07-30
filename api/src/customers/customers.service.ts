@@ -7,6 +7,8 @@ import {
 import { AccessScopeService, AccessUserInfo } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
+import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
+import { resolveCustomerHeaderOpenArAmounts } from "../credit-insurance/domain/openReceivableByCustomerCurrency";
 import { DatabaseService } from "../database/database.service";
 
 export type CustomersListQuery = {
@@ -85,7 +87,11 @@ export class CustomersService {
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService
-    ) {}
+    ) {
+        // Header AR resolution reaches into the credit-insurance domain, whose FX
+        // lookup reads the module-level client rather than one we pass in.
+        bindCreditInsurancePrisma(this.db);
+    }
 
     async listOrStats(user: JwtPayload, query: CustomersListQuery) {
         if (query.stats === "true") {
@@ -382,8 +388,25 @@ export class CustomersService {
         // tab decides the customer has no linked policy.
         const { CustomerPolicy: customerPolicies, ...rest } = customer;
 
+        // `total_ar` is derived, not stored: live open Due/Overdue receivables in
+        // account currency, falling back to the denormalized due + overdue rollups.
+        // The header's Total AR card reads it straight off this payload, so without
+        // it the card renders 0 even when the customer has open invoices.
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { currency: true },
+        });
+        const headerAr = await resolveCustomerHeaderOpenArAmounts({
+            accountId,
+            customerId: id,
+            accountCurrency: account?.currency,
+            customer,
+            dbClient: this.db,
+        });
+
         return serializeBigInt({
             ...rest,
+            ...headerAr,
             customerPolicies,
             activeCustomerPolicy:
                 customerPolicies.find((policy) => policy.is_active) ?? null,
@@ -421,6 +444,10 @@ export class CustomersService {
         delete data.CustomerPolicy;
         delete data.customerPolicies;
         delete data.activeCustomerPolicy;
+        // Derived on GET, not columns — Prisma rejects them as unknown arguments.
+        delete data.total_ar;
+        delete data.total_ar_secondary;
+        delete data.credit_insurance_secondary_currency;
 
         const updated = await this.db.customer.update({
             where: { id },

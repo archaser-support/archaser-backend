@@ -44,6 +44,12 @@ function buildService(policies: unknown[]) {
             }),
             findFirst,
         },
+        // getById also derives the header Total AR amounts.
+        account: {
+            findUnique: jest.fn().mockResolvedValue({ currency: "ILS" }),
+        },
+        invoice: { findMany: jest.fn().mockResolvedValue([]) },
+        currencyRate: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as DatabaseService;
 
     const accessScope = {
