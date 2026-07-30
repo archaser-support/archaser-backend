@@ -3,6 +3,13 @@ import {
     isComputedReportField,
     isPrismaScalarField,
 } from "./report-virtual-fields.util";
+import {
+    DatePresetMarker,
+    isDatePresetMarker,
+    isPeriodPreset,
+    resolveDatePreset,
+    resolveDatePresetRange,
+} from "./date-preset.util";
 
 type PrismaWhere = Record<string, unknown>;
 
@@ -48,12 +55,69 @@ function isYmdString(value: unknown): value is string {
     return typeof value === "string" && YMD_RE.test(value);
 }
 
+/**
+ * Resolve a relative date preset marker (e.g. `{ __datePreset: "today" }`) into
+ * a Prisma scalar filter. Point presets resolve to a single date and reuse the
+ * normal operator handling; period presets resolve to a [start, end] range and
+ * map comparison operators onto the appropriate bound.
+ */
+function datePresetToPrisma(
+    op: string,
+    marker: DatePresetMarker
+): PrismaWhere | null {
+    const preset = marker.__datePreset;
+    const input = marker.__datePresetInput;
+
+    if (isPeriodPreset(preset)) {
+        const range = resolveDatePresetRange(preset, input);
+        if (!range) {
+            return null;
+        }
+        const [start, end] = range;
+        const startBound = coerceDateTimeBound(start, "start");
+        const endBound = coerceDateTimeBound(end, "end");
+        switch (op) {
+            case "<":
+            case "less_than":
+                return { lt: startBound };
+            case "<=":
+            case "less_than_or_equal":
+                return { lte: endBound };
+            case ">":
+            case "greater_than":
+                return { gt: endBound };
+            case ">=":
+            case "greater_than_or_equal":
+                return { gte: startBound };
+            case "!=":
+            case "not_equals":
+            case "not":
+                return { not: { gte: startBound, lte: endBound } };
+            case "=":
+            case "equals":
+            case "between":
+            default:
+                return { gte: startBound, lte: endBound };
+        }
+    }
+
+    const resolved = resolveDatePreset(preset, input);
+    if (!resolved) {
+        return null;
+    }
+    // Reuse the normal date-string handling (full-day range for equals, etc.).
+    return operatorToPrisma(op, resolved);
+}
+
 /** Map a report filter operator to a Prisma scalar filter object. */
 export function operatorToPrisma(
     operator: string,
     value: unknown
 ): PrismaWhere | null {
     const op = (operator || "equals").toLowerCase();
+    if (isDatePresetMarker(value)) {
+        return datePresetToPrisma(op, value);
+    }
     const v = coerceValue(value);
 
     switch (op) {

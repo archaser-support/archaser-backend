@@ -32,6 +32,77 @@ describe("operatorToPrisma date coercion", () => {
     });
 });
 
+describe("operatorToPrisma date preset markers", () => {
+    const ymd = (d: Date): string => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+    };
+    const today = () => {
+        const now = new Date();
+        return ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+    };
+
+    it("resolves a point preset (today) instead of leaking the raw marker", () => {
+        const clause = operatorToPrisma("less_than", {
+            __datePreset: "today",
+        });
+        expect(clause).toEqual({
+            lt: new Date(`${today()}T23:59:59.999Z`),
+        });
+        // The bug: the raw marker object used to reach Prisma unchanged.
+        expect(JSON.stringify(clause)).not.toContain("__datePreset");
+    });
+
+    it("resolves an equals point preset into a full-day range", () => {
+        expect(operatorToPrisma("equals", { __datePreset: "today" })).toEqual({
+            gte: new Date(`${today()}T00:00:00.000Z`),
+            lte: new Date(`${today()}T23:59:59.999Z`),
+        });
+    });
+
+    it("resolves a period preset (this_month) into a bounded range", () => {
+        const now = new Date();
+        const start = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
+        const end = ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+        expect(
+            operatorToPrisma("equals", { __datePreset: "this_month" })
+        ).toEqual({
+            gte: new Date(`${start}T00:00:00.000Z`),
+            lte: new Date(`${end}T23:59:59.999Z`),
+        });
+    });
+
+    it("maps greater_than on a period preset to its end bound", () => {
+        const now = new Date();
+        const end = ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+        expect(
+            operatorToPrisma("greater_than", { __datePreset: "this_month" })
+        ).toEqual({
+            gt: new Date(`${end}T23:59:59.999Z`),
+        });
+    });
+
+    it("drops the marker from Prisma where via splitFiltersByTable", () => {
+        const { primary } = splitFiltersByTable(
+            [
+                {
+                    table: "Invoice",
+                    field: "due_date",
+                    operator: "less_than",
+                    value: { __datePreset: "today" } as never,
+                },
+            ],
+            "Invoice"
+        );
+        expect(JSON.stringify(primary)).not.toContain("__datePreset");
+        expect(primary.due_date).toEqual({
+            lt: new Date(`${today()}T23:59:59.999Z`),
+        });
+    });
+});
+
 describe("splitFiltersByTable drops dashboard markers from primary", () => {
     it("does not put __dashboard_activity_identity into Prisma field map", () => {
         const { primary } = splitFiltersByTable(

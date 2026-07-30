@@ -114,6 +114,7 @@ let AuthService = class AuthService {
                     name: true,
                     primary_color: true,
                     secondary_color: true,
+                    currency: true,
                 },
             })
             : null;
@@ -130,6 +131,7 @@ let AuthService = class AuthService {
             account_name: account?.name ?? null,
             primary_color: account?.primary_color ?? null,
             secondary_color: account?.secondary_color ?? null,
+            currency: account?.currency ?? null,
             sidebar_collapsed: user.sidebar_collapsed ?? null,
         });
     }
@@ -159,6 +161,7 @@ let AuthService = class AuthService {
                     name: true,
                     primary_color: true,
                     secondary_color: true,
+                    currency: true,
                 },
             })
             : null;
@@ -175,6 +178,7 @@ let AuthService = class AuthService {
             account_name: account?.name ?? null,
             primary_color: account?.primary_color ?? null,
             secondary_color: account?.secondary_color ?? null,
+            currency: account?.currency ?? null,
             sidebar_collapsed: dbUser.sidebar_collapsed ?? null,
         };
     }
@@ -349,6 +353,7 @@ let AuthService = class AuthService {
                 select: {
                     sso_enabled: true,
                     sso_providers: true,
+                    currency: true,
                 },
             });
             if (!account?.sso_enabled) {
@@ -370,6 +375,7 @@ let AuthService = class AuthService {
                     account_id: dbUser.account_id,
                     role: dbUser.role,
                     name: dbUser.name,
+                    currency: account.currency ?? null,
                 },
             };
         }

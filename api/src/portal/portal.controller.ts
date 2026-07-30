@@ -1,4 +1,4 @@
-import { All, Body, Controller, Param, Post } from "@nestjs/common";
+import { All, Body, Controller, Param, Post, Query } from "@nestjs/common";
 import { ApiOperation, ApiParam, ApiTags } from "@nestjs/swagger";
 import { PortalService } from "./portal.service";
 
@@ -44,6 +44,10 @@ const PORTAL_SUFFIXES = [
 export class PortalCustomersDomainController {
     constructor(private readonly portal: PortalService) {}
 
+    /**
+     * Read-only portal bootstrap leaves. Kept separate from POST so a page load
+     * can never be routed into a create handler.
+     */
     @All(":customerUUID/:suffix")
     @ApiParam({ name: "customerUUID", description: "Portal customer UUID" })
     @ApiParam({
@@ -57,8 +61,8 @@ export class PortalCustomersDomainController {
     async publicPortalRoute(
         @Param("customerUUID") customerUUID: string,
         @Param("suffix") suffix: string,
-        @Body() body: Record<string, unknown>
+        @Query("language") language?: string
     ) {
-        return this.portal.handleSuffix(customerUUID, suffix, body);
+        return this.portal.handleSuffix(customerUUID, suffix, language);
     }
 }

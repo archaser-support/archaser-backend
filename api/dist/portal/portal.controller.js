@@ -66,8 +66,8 @@ let PortalCustomersDomainController = class PortalCustomersDomainController {
     constructor(portal) {
         this.portal = portal;
     }
-    async publicPortalRoute(customerUUID, suffix, body) {
-        return this.portal.handleSuffix(customerUUID, suffix, body);
+    async publicPortalRoute(customerUUID, suffix, language) {
+        return this.portal.handleSuffix(customerUUID, suffix, language);
     }
 };
 exports.PortalCustomersDomainController = PortalCustomersDomainController;
@@ -84,9 +84,9 @@ __decorate([
     }),
     __param(0, (0, common_1.Param)("customerUUID")),
     __param(1, (0, common_1.Param)("suffix")),
-    __param(2, (0, common_1.Body)()),
+    __param(2, (0, common_1.Query)("language")),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, Object]),
+    __metadata("design:paramtypes", [String, String, String]),
     __metadata("design:returntype", Promise)
 ], PortalCustomersDomainController.prototype, "publicPortalRoute", null);
 exports.PortalCustomersDomainController = PortalCustomersDomainController = __decorate([

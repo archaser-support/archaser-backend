@@ -47,6 +47,9 @@ export class MeResponseDto {
     secondary_color?: string | null;
 
     @ApiProperty({ required: false, nullable: true })
+    currency?: string | null;
+
+    @ApiProperty({ required: false, nullable: true })
     sidebar_collapsed?: boolean | null;
 }
 

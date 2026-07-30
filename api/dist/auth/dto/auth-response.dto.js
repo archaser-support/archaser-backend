@@ -77,6 +77,10 @@ __decorate([
 __decorate([
     (0, swagger_1.ApiProperty)({ required: false, nullable: true }),
     __metadata("design:type", Object)
+], MeResponseDto.prototype, "currency", void 0);
+__decorate([
+    (0, swagger_1.ApiProperty)({ required: false, nullable: true }),
+    __metadata("design:type", Object)
 ], MeResponseDto.prototype, "sidebar_collapsed", void 0);
 class AccountBySubdomainResponseDto {
 }

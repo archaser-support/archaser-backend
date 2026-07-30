@@ -12,6 +12,10 @@ describe("Portal + credit insurance + remainder HTTP contract", () => {
     let app: INestApplication;
     let jwtService: JwtService;
 
+    // `customer_uuid` is a Postgres uuid column, and PortalService rejects
+    // non-UUID path segments before querying, so the fixture needs a real one.
+    const PORTAL_UUID = "b7c94418-6e39-48a5-8390-dab8c730f7d2";
+
     const databaseMock = {
         user: {
             count: jest.fn().mockResolvedValue(0),
@@ -79,10 +83,11 @@ describe("Portal + credit insurance + remainder HTTP contract", () => {
             count: jest.fn().mockResolvedValue(0),
             findFirst: jest.fn().mockImplementation(
                 async ({ where }: { where: { customer_uuid?: string } }) => {
-                    if (where.customer_uuid !== "uuid-1") return null;
+                    if (where.customer_uuid !== PORTAL_UUID) return null;
                     return {
                         id: 1,
-                        customer_uuid: "uuid-1",
+                        account_id: 42,
+                        customer_uuid: PORTAL_UUID,
                         customer_number: "C-1",
                         type: "Person",
                         language: "en",
@@ -100,7 +105,8 @@ describe("Portal + credit insurance + remainder HTTP contract", () => {
                             name: "Acme",
                             logo: null,
                             currency: "USD",
-                            promise_to_pay: true,
+                            // Days ahead a payment date may be promised, not a flag.
+                            promise_to_pay: 10,
                             max_promise_to_pay_allowed_per_cycle: 3,
                             sub_domain: null,
                             portal_verification_enabled: false,
@@ -253,23 +259,61 @@ describe("Portal + credit insurance + remainder HTTP contract", () => {
 
     it("GET portal customer UUID route is public (no JWT) — Nest-native PortalService", async () => {
         const res = await request(app.getHttpServer())
-            .get("/api/customers/uuid-1/portal-data")
+            .get(`/api/customers/${PORTAL_UUID}/portal-data`)
             .expect(200);
-        expect(res.body.customer_uuid).toBe("uuid-1");
+        expect(res.body.customer_uuid).toBe(PORTAL_UUID);
+        expect(databaseMock.customerCollectionPeriod.findFirst).toHaveBeenCalled();
+        expect(databaseMock.customerDispute.count).toHaveBeenCalled();
+    });
+
+    it("GET portal-data allows a promise to pay when the cycle cap is unused", () => {
+        // Guards the portal's promise-to-pay page: reading an unset or unreached
+        // cap as "none allowed" hid the date picker behind a maxed-out state.
+        return request(app.getHttpServer())
+            .get(`/api/customers/${PORTAL_UUID}/portal-data`)
+            .expect(200)
+            .expect((res) => {
+                expect(res.body).toMatchObject({
+                    promise_to_pay: 10,
+                    isPromiseToPayAllowed: true,
+                    isPromiseToPayMaxedOut: false,
+                });
+            });
+    });
+
+    it("GET portal invoices route returns branding alongside the invoices", async () => {
+        const res = await request(app.getHttpServer())
+            .get(`/api/customers/${PORTAL_UUID}/invoices`)
+            .expect(200);
+        // The portal sub-page layout reads the header logo and name from here.
+        expect(res.body).toMatchObject({
+            invoices: [],
+            totalRecords: 0,
+            logo: null,
+        });
         expect(databaseMock.invoice.findMany).toHaveBeenCalled();
     });
 
     it("GET portal customer UUID route 404s for unknown uuid", async () => {
         await request(app.getHttpServer())
+            .get("/api/customers/2f1c9d64-0000-4000-8000-000000000000/portal-data")
+            .expect(404);
+    });
+
+    it("GET portal customer UUID route 404s for a malformed uuid", async () => {
+        // Reaching Prisma with a non-uuid would raise P2023 and surface a 500.
+        await request(app.getHttpServer())
             .get("/api/customers/does-not-exist/portal-data")
             .expect(404);
     });
 
-    it("POST /api/portal/create-dispute is public", async () => {
+    it("POST /api/portal/create-dispute is public but validates its body", async () => {
+        // Public: the failure is a 400 from the handler, not a 401 from the guard.
+        // An empty body used to be answered with a silent 201 and no dispute row.
         await request(app.getHttpServer())
             .post("/api/portal/create-dispute")
             .send({})
-            .expect(201);
+            .expect(400);
     });
 
     it("GET /api/system (bare, no sub-route) is 404 — no pages-bundle fallback exists", async () => {

@@ -1,6 +1,21 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+    BadRequestException,
+    Injectable,
+    NotFoundException,
+} from "@nestjs/common";
+import {
+    dbLanguageToLocale,
+    resolveDbLanguage,
+} from "../common/language.util";
+import { presignS3Object } from "../common/s3-presign";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+
+/** Invoice statuses a portal visitor may raise a dispute against. */
+const PORTAL_DISPUTABLE_INVOICE_STATUSES = ["Due", "Overdue"] as const;
+
+/** Logo links outlive a page view but should not be indefinitely valid. */
+const PORTAL_LOGO_URL_TTL_SECONDS = 6 * 60 * 60;
 
 type PortalCollectionPeriod = {
     id: number;
@@ -79,7 +94,7 @@ export class PortalService {
     async handleSuffix(
         customerUUID: string,
         suffix: string,
-        body: Record<string, unknown>
+        language?: string
     ) {
         const customer = await this.findCustomerByUuid(customerUUID);
 
@@ -92,12 +107,12 @@ export class PortalService {
                     customer_number: customer.customer_number,
                 });
             case "invoices":
-                return this.invoicesFor(customer.id);
+                return this.invoicesFor(customer);
             case "disputes":
             case "view-disputes":
                 return this.disputesFor(customer.id);
             case "create-dispute":
-                return this.createDispute(customer.id, body);
+                return this.createDisputeBootstrap(customer, language);
             case "bank-details":
                 return { bank_details: null };
             case "banks":
@@ -126,6 +141,25 @@ export class PortalService {
             return personName;
         }
         return customer.Account?.name ?? "N/A";
+    }
+
+    /**
+     * Account.logo holds an S3 object key. A portal visitor has no session, so
+     * it must be signed here — otherwise the browser gets a bare key, renders it
+     * as a relative <img src>, 404s, and falls back to a placeholder icon.
+     */
+    private async resolvePortalLogo(
+        logo: string | null | undefined
+    ): Promise<string | null> {
+        if (!logo) {
+            return null;
+        }
+        if (/^(https?:|data:)/i.test(logo)) {
+            return logo;
+        }
+        return (
+            (await presignS3Object(logo, PORTAL_LOGO_URL_TTL_SECONDS)) ?? logo
+        );
     }
 
     private resolveCustomerFirstCurrency(input: {
@@ -227,7 +261,7 @@ export class PortalService {
 
         const accountName = account?.name ?? "N/A";
         const customerName = this.resolveCustomerDisplayName(customer);
-        const logo = account?.logo ?? null;
+        const logo = await this.resolvePortalLogo(account?.logo);
         const currency = this.resolveCustomerFirstCurrency({
             customerCurrencyPrimary: customer.customer_due_currency1,
             customerCurrencySecondary: customer.customer_due_currency2,
@@ -241,14 +275,21 @@ export class PortalService {
         const overdueAmount1 = collection.customer_outstanding_amount1 ?? 0;
         const totalCombinedAmount = dueAmount1 + overdueAmount1;
 
-        const maxPromisePerCycle =
-            account?.max_promise_to_pay_allowed_per_cycle ?? 0;
+        // An unset cap means "not configured", not "zero promises allowed" —
+        // reading it as zero blocked the portal's promise-to-pay page outright
+        // for every account that never set a limit.
+        const rawCap = account?.max_promise_to_pay_allowed_per_cycle;
+        const maxPromisePerCycle = rawCap != null && rawCap > 0 ? rawCap : null;
         const promiseCount = collection.promise_to_pay_count ?? 0;
         const promiseDate = collection.promise_to_pay_date;
 
-        const isPromiseToPayAllowed =
-            maxPromisePerCycle > promiseCount &&
-            (promiseDate === null || new Date(promiseDate) < new Date());
+        const isPromiseToPayMaxedOut =
+            maxPromisePerCycle != null && promiseCount >= maxPromisePerCycle;
+        // A promise still in the future is the one already in play; the customer
+        // may make another only once that date has passed.
+        const hasOpenPromise =
+            promiseDate != null && new Date(promiseDate) >= new Date();
+        const isPromiseToPayAllowed = !isPromiseToPayMaxedOut && !hasOpenPromise;
 
         const nextPaymentDate =
             promiseDate && new Date(promiseDate) > new Date()
@@ -280,8 +321,7 @@ export class PortalService {
             number_of_overdue_invoices: customer.number_of_overdue_invoices,
             isPromiseToPayAllowed,
             nextPaymentDate,
-            isPromiseToPayMaxedOut:
-                maxPromisePerCycle === promiseCount,
+            isPromiseToPayMaxedOut,
             disputeCount,
             sub_domain: account?.sub_domain ?? null,
             language: customer.language ?? "English",
@@ -294,7 +334,7 @@ export class PortalService {
                 ? {
                       id: account.id,
                       name: account.name,
-                      logo: account.logo,
+                      logo,
                       currency: account.currency,
                       promise_to_pay: account.promise_to_pay,
                       max_promise_to_pay_allowed_per_cycle:
@@ -315,13 +355,76 @@ export class PortalService {
         });
     }
 
-    private async invoicesFor(customerId: number) {
+    /** Portal grids read camelCase keys, not raw Prisma columns. */
+    private toPortalInvoice(invoice: {
+        id: number;
+        invoice_number: string | null;
+        amount: number | null;
+        customer_amount: number | null;
+        due_date: Date | null;
+        total_paid: number | null;
+        customer_total_paid: number | null;
+        outstanding_debt: number | null;
+        customer_outstanding_debt: number | null;
+        status: string | null;
+        customer_currency: string | null;
+    }) {
+        // Invoice has no account-level currency column; customer_currency is the
+        // only one stored, so both fields the portal reads resolve to it.
+        const currency = invoice.customer_currency ?? "";
+        return {
+            id: invoice.id,
+            invoiceNumber: invoice.invoice_number ?? "",
+            amount: invoice.amount ?? 0,
+            customerAmount: invoice.customer_amount ?? invoice.amount ?? 0,
+            dueDate: invoice.due_date ? invoice.due_date.toISOString() : "",
+            totalPaid: invoice.total_paid ?? 0,
+            customerTotalPaid:
+                invoice.customer_total_paid ?? invoice.total_paid ?? 0,
+            outstandingDebt: invoice.outstanding_debt ?? 0,
+            customerOutstandingDebt:
+                invoice.customer_outstanding_debt ??
+                invoice.outstanding_debt ??
+                0,
+            status: invoice.status ?? "",
+            currency,
+            customerCurrency: currency,
+        };
+    }
+
+    private static readonly PORTAL_INVOICE_SELECT = {
+        id: true,
+        invoice_number: true,
+        amount: true,
+        customer_amount: true,
+        due_date: true,
+        total_paid: true,
+        customer_total_paid: true,
+        outstanding_debt: true,
+        customer_outstanding_debt: true,
+        status: true,
+        customer_currency: true,
+    } as const;
+
+    private async invoicesFor(
+        customer: Awaited<ReturnType<PortalService["findCustomerByUuid"]>>
+    ) {
         const invoices = await this.db.invoice.findMany({
-            where: { customer_id: customerId },
+            where: { customer_id: customer.id },
+            select: PortalService.PORTAL_INVOICE_SELECT,
             orderBy: { invoice_date: "desc" },
             take: 200,
         });
-        return serializeBigInt({ invoices, totalRecords: invoices.length });
+        // The sub-pages layout sources the header logo and name from here, so
+        // branding has to travel with this response too.
+        return serializeBigInt({
+            invoices: invoices.map((invoice) => this.toPortalInvoice(invoice)),
+            totalRecords: invoices.length,
+            logo: await this.resolvePortalLogo(customer.Account?.logo),
+            customerName: this.resolveCustomerDisplayName(customer),
+            accountName: customer.Account?.name ?? null,
+            sub_domain: customer.Account?.sub_domain ?? null,
+        });
     }
 
     private async disputesFor(customerId: number) {
@@ -332,22 +435,309 @@ export class PortalService {
         return serializeBigInt({ disputes, totalRecords: disputes.length });
     }
 
-    private async createDispute(
-        customerId: number,
-        body: Record<string, unknown>
+    /**
+     * Accounts are provisioned with their own copies of the ten master-template
+     * reasons, and only those copies carry `DisputeReasonLanguage` translations.
+     * Selecting `account_id OR master_template` therefore returns every reason
+     * twice and mixes in untranslated originals, so the templates are used only
+     * as a fallback for an account that has no reasons of its own yet.
+     */
+    private async disputeReasonsFor(accountId: number | null) {
+        const select = {
+            id: true,
+            name: true,
+            editable: true,
+            DisputeReasonLanguage: {
+                select: { language: true, name: true },
+            },
+        } as const;
+
+        if (accountId != null) {
+            const owned = await this.db.disputeReason.findMany({
+                where: { status: "Active", account_id: accountId },
+                select,
+                orderBy: { id: "asc" },
+            });
+            if (owned.length) {
+                return owned;
+            }
+        }
+
+        return this.db.disputeReason.findMany({
+            where: { status: "Active", master_template: true },
+            select,
+            orderBy: { id: "asc" },
+        });
+    }
+
+    /**
+     * Bootstrap for the portal's create-dispute page. Returning anything without
+     * an `invoices` array makes that page throw during render and trip the
+     * portal error boundary, so the shape here is load-bearing.
+     */
+    private async createDisputeBootstrap(
+        customer: Awaited<ReturnType<PortalService["findCustomerByUuid"]>>,
+        language?: string
     ) {
-        void customerId;
-        void body;
-        return { ok: true };
+        const [invoices, reasons, disputeCount] = await Promise.all([
+            this.db.invoice.findMany({
+                where: {
+                    customer_id: customer.id,
+                    status: { in: [...PORTAL_DISPUTABLE_INVOICE_STATUSES] },
+                    outstanding_debt: { gt: 0 },
+                },
+                select: PortalService.PORTAL_INVOICE_SELECT,
+                orderBy: [{ due_date: "asc" }, { id: "asc" }],
+            }),
+            this.disputeReasonsFor(customer.account_id),
+            this.db.customerDispute.count({
+                where: {
+                    customer_id: customer.id,
+                    NOT: { dispute_status: "Resolved" },
+                },
+            }),
+        ]);
+
+        // `DisputeReasonLanguage.language` holds enum names ("Hebrew"), but the
+        // page sends a locale code ("he"), so both sides go through the resolver.
+        const requested = resolveDbLanguage(
+            language,
+            resolveDbLanguage(customer.language)
+        );
+        const localizedReasons = reasons.map((reason) => {
+            const translated = reason.DisputeReasonLanguage.find(
+                (entry) => resolveDbLanguage(entry.language) === requested
+            );
+            return {
+                id: reason.id,
+                name: translated?.name || reason.name,
+                editable: reason.editable,
+            };
+        });
+
+        return serializeBigInt({
+            customer_id: customer.id,
+            invoices: invoices.map((invoice) => this.toPortalInvoice(invoice)),
+            reasons: localizedReasons,
+            customerName: this.resolveCustomerDisplayName(customer),
+            logo: await this.resolvePortalLogo(customer.Account?.logo),
+            sub_domain: customer.Account?.sub_domain ?? null,
+            hasDisputedInvoices: disputeCount > 0,
+            // Echoed as a locale code, matching the `?language=` the page sent.
+            language: dbLanguageToLocale(requested),
+        });
     }
 
     async createPublicDispute(body: Record<string, unknown>) {
-        void body;
-        return { ok: true };
+        const customerId = parseInt(String(body.customer_id ?? ""), 10);
+        const reasonId = parseInt(String(body.dispute_reason_id ?? ""), 10);
+        if (!Number.isFinite(customerId) || !Number.isFinite(reasonId)) {
+            throw new BadRequestException({
+                error: "customer_id and dispute_reason_id are required",
+            });
+        }
+
+        const customer = await this.db.customer.findFirst({
+            where: { id: customerId },
+            select: { id: true, account_id: true },
+        });
+        if (!customer) {
+            throw new NotFoundException({ error: "Customer not found" });
+        }
+
+        const reason = await this.db.disputeReason.findFirst({
+            where: {
+                id: reasonId,
+                status: "Active",
+                OR: [
+                    { account_id: customer.account_id },
+                    { master_template: true },
+                ],
+            },
+            select: { id: true, name: true },
+        });
+        if (!reason) {
+            throw new BadRequestException({ error: "Unknown dispute reason" });
+        }
+
+        // The portal submits invoice numbers (space/comma separated), not ids.
+        const invoiceNumbers = String(body.invoices_in_dispute ?? "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+        if (invoiceNumbers.length === 0) {
+            throw new BadRequestException({
+                error: "At least one invoice is required",
+            });
+        }
+
+        const invoices = await this.db.invoice.findMany({
+            where: {
+                customer_id: customer.id,
+                invoice_number: { in: invoiceNumbers },
+            },
+            select: { id: true, invoice_number: true },
+        });
+        if (invoices.length === 0) {
+            throw new BadRequestException({
+                error: "No matching invoices for this customer",
+            });
+        }
+
+        const collection = await this.db.customerCollectionPeriod.findFirst({
+            where: { customer_id: customer.id, period_end_date: null },
+            select: { id: true },
+            orderBy: { id: "desc" },
+        });
+
+        const comment = String(body.dispute_comment ?? "");
+        const now = new Date();
+
+        const dispute = await this.db.$transaction(async (tx) => {
+            const created = await tx.customerDispute.create({
+                data: {
+                    customer_id: customer.id,
+                    dispute_reason_id: reason.id,
+                    dispute_status: "Under_Review",
+                    customer_comment: comment,
+                    customer_collection_period_id: collection?.id ?? null,
+                    invoices_in_dispute: invoices
+                        .map((invoice) => invoice.invoice_number)
+                        .filter(Boolean)
+                        .join(","),
+                } as never,
+                select: { id: true },
+            });
+
+            await tx.disputeInvoice.createMany({
+                data: invoices.map((invoice) => ({
+                    dispute_id: created.id,
+                    invoice_id: invoice.id,
+                })) as never,
+            });
+
+            await tx.activity.create({
+                data: {
+                    customer_id: customer.id,
+                    account_id: customer.account_id,
+                    type: "Dispute",
+                    status: "COMPLETED",
+                    title: "{{disputes.fields.filed_portal_title}}",
+                    title_params: {
+                        userId: "portal_user",
+                        disputeId: String(created.id),
+                        disputeReason: reason.name,
+                    },
+                    content: comment,
+                    collection_period_id: collection?.id ?? null,
+                    schedule_time: now,
+                    actual_delivery_time: now,
+                    system_generated: true,
+                } as never,
+            });
+
+            if (collection) {
+                await tx.customerCollectionPeriod.update({
+                    where: { id: collection.id },
+                    data: { last_dispute_date: now } as never,
+                });
+            }
+
+            return created;
+        });
+
+        return serializeBigInt({
+            ok: true,
+            disputeId: dispute.id,
+            invoicesLinked: invoices.length,
+        });
     }
 
     async updatePromiseToPay(body: Record<string, unknown>) {
-        void body;
-        return { ok: true };
+        const customerId = parseInt(String(body.customer_id ?? ""), 10);
+        if (!Number.isFinite(customerId)) {
+            throw new BadRequestException({ error: "customer_id is required" });
+        }
+
+        const raw = String(body.promise_to_pay_date ?? "").slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+            throw new BadRequestException({
+                error: "promise_to_pay_date must be YYYY-MM-DD",
+            });
+        }
+        const promiseDate = new Date(`${raw}T00:00:00.000Z`);
+        if (Number.isNaN(promiseDate.getTime())) {
+            throw new BadRequestException({
+                error: "promise_to_pay_date is not a valid date",
+            });
+        }
+
+        const customer = await this.db.customer.findFirst({
+            where: { id: customerId },
+            select: {
+                id: true,
+                account_id: true,
+                Account: {
+                    select: { max_promise_to_pay_allowed_per_cycle: true },
+                },
+            },
+        });
+        if (!customer) {
+            throw new NotFoundException({ error: "Customer not found" });
+        }
+
+        const collection = await this.db.customerCollectionPeriod.findFirst({
+            where: { customer_id: customer.id, period_end_date: null },
+            select: { id: true, promise_to_pay_count: true },
+            orderBy: { id: "desc" },
+        });
+        if (!collection) {
+            throw new BadRequestException({
+                error: "Customer has no open collection period",
+            });
+        }
+
+        // An unset cap means "not configured", not "zero promises allowed".
+        const cap = customer.Account?.max_promise_to_pay_allowed_per_cycle ?? 0;
+        if (cap > 0 && (collection.promise_to_pay_count ?? 0) >= cap) {
+            throw new BadRequestException({
+                error: "Promise to pay limit reached for this collection period",
+            });
+        }
+
+        const now = new Date();
+        const comment = String(body.comment ?? "");
+
+        await this.db.$transaction(async (tx) => {
+            await tx.customerCollectionPeriod.update({
+                where: { id: collection.id },
+                data: {
+                    promise_to_pay_date: promiseDate,
+                    promise_to_pay_count: { increment: 1 },
+                } as never,
+            });
+
+            await tx.activity.create({
+                data: {
+                    customer_id: customer.id,
+                    account_id: customer.account_id,
+                    type: "Promise_to_pay",
+                    status: "COMPLETED",
+                    title: "{{activities.fields.activity_promise_to_pay_from_portal}}",
+                    title_params: { userId: "portal_user", date: raw },
+                    content: comment,
+                    collection_period_id: collection.id,
+                    schedule_time: now,
+                    actual_delivery_time: now,
+                    system_generated: true,
+                } as never,
+            });
+        });
+
+        return serializeBigInt({
+            ok: true,
+            promise_to_pay_date: promiseDate,
+            promise_to_pay_count: (collection.promise_to_pay_count ?? 0) + 1,
+        });
     }
 }

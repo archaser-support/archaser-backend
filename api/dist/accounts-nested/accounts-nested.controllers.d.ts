@@ -9,11 +9,11 @@ export declare class AccountsController {
             locale: string | null;
             primary_color: string | null;
             secondary_color: string | null;
+            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
-            currency: string | null;
             created_by: string | null;
             modified_by: string | null;
             address_line1: string | null;
@@ -85,8 +85,8 @@ export declare class AccountsController {
         };
         SMSVendor: {
             name: string;
-            id: number;
             currency: string | null;
+            id: number;
             provider: string;
             priority: number | null;
             is_active: boolean | null;
@@ -115,8 +115,8 @@ export declare class AccountsController {
         };
         SMSVendor: {
             name: string;
-            id: number;
             currency: string | null;
+            id: number;
             provider: string;
             priority: number | null;
             is_active: boolean | null;
@@ -138,8 +138,8 @@ export declare class AccountsController {
         SMSVendor: {
             phone_number: string | null;
             name: string;
-            id: number;
             currency: string | null;
+            id: number;
             provider: string;
             priority: number | null;
             is_active: boolean | null;
@@ -175,8 +175,8 @@ export declare class AccountsController {
         };
         SMSVendor: {
             name: string;
-            id: number;
             currency: string | null;
+            id: number;
             provider: string;
             priority: number | null;
             is_active: boolean | null;

@@ -162,6 +162,15 @@ export class CustomersController {
         return this.customers.stuckActivities(user, id);
     }
 
+    @Get(":id/invoices-available-for-dispute")
+    @ApiOperation({ summary: "Invoices selectable for a dispute (Nest-native)" })
+    async invoicesAvailableForDispute(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        return this.customers.invoicesAvailableForDispute(user, id);
+    }
+
     @Post(":id/activity/log-call-activity")
     @ApiOperation({ summary: "Log a call activity (Nest-native)" })
     async logCallActivity(

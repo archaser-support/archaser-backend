@@ -770,6 +770,11 @@ let ReportExecutionService = class ReportExecutionService {
             }
             out[key] = value ?? null;
             out[`___formatted_${key}`] = this.formatValue(value, f.field, locale);
+            if (f.table === "Dispute" &&
+                f.field === "dispute_number" &&
+                value != null) {
+                out[`___formatted_${key}`] = `#${value}`;
+            }
             const linkMetadata = (0, report_link_util_1.getFieldLinkMetadata)(f, linkRow, primaryTable, key);
             if (linkMetadata) {
                 out[`__link_${key}`] = linkMetadata;
