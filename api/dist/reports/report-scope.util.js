@@ -1,8 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.reportVisibilityWhere = reportVisibilityWhere;
 exports.buildAccountScopeWhere = buildAccountScopeWhere;
 exports.nestOwnerScopeWhere = nestOwnerScopeWhere;
 exports.nestBusinessUnitScopeWhere = nestBusinessUnitScopeWhere;
+function reportVisibilityWhere(accountId) {
+    return { account_id: accountId };
+}
 function buildAccountScopeWhere(primaryTable, accountId) {
     if (primaryTable === "Contact") {
         return {

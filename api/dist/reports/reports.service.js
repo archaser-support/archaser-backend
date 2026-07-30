@@ -17,6 +17,7 @@ const database_service_1 = require("../database/database.service");
 const report_constants_1 = require("./report.constants");
 const report_metadata_1 = require("./report-metadata");
 const report_relationships_1 = require("./report-relationships");
+const report_scope_util_1 = require("./report-scope.util");
 const REPORT_AUDIT_USERS_INCLUDE = {
     User_Report_created_byToUser: {
         select: {
@@ -83,26 +84,7 @@ let ReportsService = class ReportsService {
             ? "asc"
             : "desc";
         const where = {
-            AND: [
-                {
-                    OR: [
-                        { account_id: accountId },
-                        { is_system: true },
-                        {
-                            is_public: true,
-                            ReportShare: {
-                                some: {
-                                    OR: [
-                                        { shared_with_user_id: userId },
-                                        { shared_with_role: role },
-                                    ],
-                                },
-                            },
-                        },
-                        { created_by: userId },
-                    ],
-                },
-            ],
+            AND: [(0, report_scope_util_1.reportVisibilityWhere)(accountId)],
         };
         if (context) {
             where.AND.push({ context });
@@ -161,14 +143,7 @@ let ReportsService = class ReportsService {
         const userInfo = await this.access.resolveUserInfo(user);
         const accountId = this.access.getEffectiveAccountId(userInfo);
         const report = await this.db.report.findFirst({
-            where: {
-                id,
-                OR: [
-                    { account_id: accountId },
-                    { is_system: true },
-                    { is_public: true },
-                ],
-            },
+            where: { id, ...(0, report_scope_util_1.reportVisibilityWhere)(accountId) },
             include: REPORT_AUDIT_USERS_INCLUDE,
         });
         if (!report) {
@@ -304,10 +279,7 @@ let ReportsService = class ReportsService {
         const accountId = this.access.getEffectiveAccountId(userInfo);
         const userId = this.access.getEffectiveUserId(userInfo);
         const report = await this.db.report.findFirst({
-            where: {
-                id: reportId,
-                OR: [{ account_id: accountId }, { is_system: true }],
-            },
+            where: { id: reportId, ...(0, report_scope_util_1.reportVisibilityWhere)(accountId) },
         });
         if (!report) {
             throw new common_1.NotFoundException("Report not found");
@@ -421,7 +393,7 @@ let ReportsService = class ReportsService {
         const where = {
             context,
             is_default: true,
-            OR: [{ account_id: accountId }, { is_system: true }],
+            ...(0, report_scope_util_1.reportVisibilityWhere)(accountId),
         };
         if (filterCi) {
             where.NOT = {
