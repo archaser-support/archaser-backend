@@ -1,13 +1,13 @@
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { DatabaseService } from "../database/database.service";
+import { type EntityAmount } from "./financial-dashboard.builder";
 export type SystemListQuery = Record<string, string | undefined>;
 export declare class SystemService {
     private readonly db;
     private readonly accessScope;
     constructor(db: DatabaseService, accessScope: AccessScopeService);
     private scope;
-    private emptyChart;
     private startOfUtcDay;
     private endOfUtcDay;
     private addDays;
@@ -18,6 +18,10 @@ export declare class SystemService {
     private buildCollectedVsPromiseSeries;
     private buildCategoryWidgets;
     private buildAgingPortfolio;
+    private buildEntityBreakdowns;
+    private buildReceivablesMaturitySchedule;
+    private buildActiveCustomersSeries;
+    private buildAutomatedPhaseSplit;
     getDashboard(user: JwtPayload, query?: SystemListQuery): Promise<Record<string, unknown> | {
         activeCustomers: number;
         overdueAmount: number;
@@ -76,18 +80,77 @@ export declare class SystemService {
             stats: import("./financial-dashboard.builder").PhaseStat[];
         };
         automatedPhaseSplit: {
-            options: {};
-            series: never[];
+            options: {
+                chart: {
+                    type: string;
+                    stacked: boolean;
+                };
+                xaxis: {
+                    categories: string[];
+                    title: {
+                        text: string;
+                        style: {
+                            readonly color: "#2F3B52";
+                            readonly fontSize: "12px";
+                            readonly fontWeight: 600;
+                        };
+                    };
+                };
+                yaxis: {
+                    title: {
+                        text: string;
+                        style: {
+                            readonly color: "#2F3B52";
+                            readonly fontSize: "12px";
+                            readonly fontWeight: 600;
+                        };
+                    };
+                };
+            };
+            series: {
+                name: string;
+                type: string;
+                data: number[];
+            }[];
         };
         activeCustomersChart: {
-            options: {};
-            series: never[];
+            options: {
+                chart: {
+                    type: string;
+                };
+                xaxis: {
+                    categories: string[];
+                    title: {
+                        text: string;
+                        style: {
+                            readonly color: "#2F3B52";
+                            readonly fontSize: "12px";
+                            readonly fontWeight: 600;
+                        };
+                    };
+                };
+                yaxis: {
+                    title: {
+                        text: string;
+                        style: {
+                            readonly color: "#2F3B52";
+                            readonly fontSize: "12px";
+                            readonly fontWeight: 600;
+                        };
+                    };
+                };
+            };
+            series: {
+                name: string;
+                type: string;
+                data: number[];
+            }[];
         };
-        receivablesMaturitySchedule: never[];
-        invoicesByCustomer: never[];
-        invoicesByBusinessUnit: never[];
-        overdueInvoicesByCustomer: never[];
-        overdueInvoicesByBusinessUnit: never[];
+        receivablesMaturitySchedule: import("./financial-dashboard.builder").MaturityRow[];
+        invoicesByCustomer: EntityAmount[];
+        invoicesByBusinessUnit: EntityAmount[];
+        overdueInvoicesByCustomer: EntityAmount[];
+        overdueInvoicesByBusinessUnit: EntityAmount[];
         lastSynced: string;
         viewMode: string;
         hasChildBusinessUnits: boolean;

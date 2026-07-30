@@ -5,7 +5,17 @@ exports.buildAudienceReportChart = buildAudienceReportChart;
 exports.buildCollectionEffortsPhase = buildCollectionEffortsPhase;
 exports.buildCollectionStat = buildCollectionStat;
 exports.buildAgingRangeRows = buildAgingRangeRows;
+exports.buildTopEntityAmounts = buildTopEntityAmounts;
+exports.buildMaturityRows = buildMaturityRows;
+exports.buildActiveCustomersChart = buildActiveCustomersChart;
+exports.buildAutomatedPhaseSplitChart = buildAutomatedPhaseSplitChart;
 exports.reconstructDashboardFromCache = reconstructDashboardFromCache;
+const ENTITY_COLORS = ["#6B46C1", "#9F7AEA", "#4A5568", "#718096"];
+const AXIS_TITLE_STYLE = {
+    color: "#2F3B52",
+    fontSize: "12px",
+    fontWeight: 600,
+};
 const MONTH_NAMES = [
     "Jan",
     "Feb",
@@ -95,6 +105,76 @@ function buildAgingRangeRows(buckets) {
             progress: pct,
         };
     });
+}
+function buildTopEntityAmounts(entries, limit = 10) {
+    const ranked = entries
+        .filter((entry) => entry.amount > 0)
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, limit);
+    const total = ranked.reduce((sum, entry) => sum + entry.amount, 0);
+    return ranked.map((entry, index) => ({
+        customer: entry.label,
+        amount: Math.round(entry.amount),
+        percentage: total > 0 ? Math.round((entry.amount / total) * 10000) / 100 : 0,
+        color: ENTITY_COLORS[index % ENTITY_COLORS.length],
+    }));
+}
+function buildMaturityRows(buckets) {
+    const totalAmount = buckets.reduce((sum, bucket) => sum + (bucket.amount || 0), 0);
+    return buckets.map((bucket, index) => {
+        const pct = totalAmount > 0 ? ((bucket.amount || 0) / totalAmount) * 100 : 0;
+        return {
+            id: index + 1,
+            invoices: bucket.invoices,
+            accounts: bucket.accounts,
+            amount: Math.round(bucket.amount || 0),
+            daysRange: bucket.daysRange,
+            amountPercentage: `${pct.toFixed(2)}%`,
+        };
+    });
+}
+function buildActiveCustomersChart(addedData, removedData, now = new Date()) {
+    return {
+        options: {
+            chart: { type: "line" },
+            xaxis: {
+                categories: lastSixMonthLabels(now),
+                title: { text: "Month", style: AXIS_TITLE_STYLE },
+            },
+            yaxis: { title: { text: "Customers", style: AXIS_TITLE_STYLE } },
+        },
+        series: [
+            { name: "Added Customers", type: "column", data: addedData },
+            { name: "Removed Customers", type: "line", data: removedData },
+        ],
+    };
+}
+function buildAutomatedPhaseSplitChart(steps) {
+    return {
+        options: {
+            chart: { type: "bar", stacked: false },
+            xaxis: {
+                categories: steps.map((step) => step.label),
+                title: {
+                    text: "Automated Collection Steps",
+                    style: AXIS_TITLE_STYLE,
+                },
+            },
+            yaxis: { title: { text: "Count", style: AXIS_TITLE_STYLE } },
+        },
+        series: [
+            {
+                name: "Customers",
+                type: "column",
+                data: steps.map((step) => step.customers),
+            },
+            {
+                name: "Invoices",
+                type: "column",
+                data: steps.map((step) => step.invoices),
+            },
+        ],
+    };
 }
 function reconstructDashboardFromCache(cached) {
     const chart = (cached.chart_data || {});
