@@ -4,78 +4,41 @@ export declare class PortalDomainController {
     constructor(portal: PortalService);
     createDispute(body: Record<string, unknown>): Promise<{
         ok: boolean;
+        disputeId: number;
+        invoicesLinked: number;
     }>;
     updatePromise(body: Record<string, unknown>): Promise<{
         ok: boolean;
+        promise_to_pay_date: Date;
+        promise_to_pay_count: number;
     }>;
 }
 export declare class PortalCustomersDomainController {
     private readonly portal;
     constructor(portal: PortalService);
-    publicPortalRoute(customerUUID: string, suffix: string, body: Record<string, unknown>): Promise<{
+    publicPortalRoute(customerUUID: string, suffix: string, language?: string): Promise<{
         customer_uuid: string;
         customer_number: string | null;
     } | {
         invoices: {
-            account_id: number;
             id: number;
-            created_at: Date;
-            modified_at: Date;
-            status: import(".prisma/client").$Enums.invoice_status;
-            created_by: string | null;
-            modified_by: string | null;
-            promise_to_pay: number | null;
-            customer_number: number | null;
-            generic_text1: string | null;
-            generic_text2: string | null;
-            generic_number1: number | null;
-            generic_number2: number | null;
-            generic_date1: Date | null;
-            generic_date2: Date | null;
-            customer_id: number | null;
-            collection_period_id: number | null;
-            amount: number | null;
-            policy_id: number | null;
-            invoice_number: string | null;
-            due_date: Date | null;
-            oldest_overdue_invoice_date: Date | null;
-            total_paid: number | null;
-            last_payment_date: Date | null;
-            zero_limit_alert: boolean;
-            invoice_date: Date;
-            outstanding_debt: number | null;
-            first_activity_date: Date | null;
-            customer_total_paid: number | null;
-            customer_amount: number | null;
-            customer_outstanding_debt: number | null;
-            customer_currency: string | null;
-            credit_for_invoice_id: number | null;
-            net_amount: number | null;
-            credit_for_invoice_number: string | null;
-            customer_net_amount: number | null;
-            due_notification_state: import("@prisma/client/runtime/library").JsonValue | null;
-            payment_term: number | null;
-            target_reporting_date: Date | null;
-            actual_reporting_date: Date | null;
-            reporting_comment: string | null;
-            reporting_captured_at: Date | null;
-            target_mep_date: Date | null;
-            reported_status: import(".prisma/client").$Enums.invoice_reported_status | null;
-            reporting_breach: boolean;
-            ctv_payment_term: boolean;
-            ctv_customer_overdue_mep: boolean;
-            ctv_customer_excluded_from_policy: boolean;
-            ctv_outdated_dcl: boolean;
-            ctv_invoice_after_policy_end: boolean;
-            in_capacity_gap: boolean;
-            limit_assessed_amount: import("@prisma/client/runtime/library").Decimal | null;
-            limit_assessed_at: Date | null;
-            limit_assessed_currency: string | null;
-            capacity_gap_amount: import("@prisma/client/runtime/library").Decimal | null;
-            capacity_gap_amount_limit: import("@prisma/client/runtime/library").Decimal | null;
-            capacity_gap_amount_date: Date | null;
+            invoiceNumber: string;
+            amount: number;
+            customerAmount: number;
+            dueDate: string;
+            totalPaid: number;
+            customerTotalPaid: number;
+            outstandingDebt: number;
+            customerOutstandingDebt: number;
+            status: string;
+            currency: string;
+            customerCurrency: string;
         }[];
         totalRecords: number;
+        logo: string | null;
+        customerName: string;
+        accountName: string | null;
+        sub_domain: string | null;
     } | {
         disputes: {
             id: number;
@@ -100,12 +63,42 @@ export declare class PortalCustomersDomainController {
         }[];
         totalRecords: number;
     } | {
-        ok: boolean;
+        customer_id: number;
+        invoices: {
+            id: number;
+            invoiceNumber: string;
+            amount: number;
+            customerAmount: number;
+            dueDate: string;
+            totalPaid: number;
+            customerTotalPaid: number;
+            outstandingDebt: number;
+            customerOutstandingDebt: number;
+            status: string;
+            currency: string;
+            customerCurrency: string;
+        }[];
+        reasons: {
+            id: number;
+            name: string;
+            editable: boolean | null;
+        }[];
+        customerName: string;
+        logo: string | null;
+        sub_domain: string | null;
+        hasDisputedInvoices: boolean;
+        language: string;
     } | {
         bank_details: null;
         banks?: undefined;
+        ok?: undefined;
     } | {
         banks: never[];
         bank_details?: undefined;
+        ok?: undefined;
+    } | {
+        ok: boolean;
+        bank_details?: undefined;
+        banks?: undefined;
     }>;
 }

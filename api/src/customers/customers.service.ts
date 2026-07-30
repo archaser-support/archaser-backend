@@ -56,6 +56,38 @@ function optionalTrimmed(value: unknown): string | null {
     return trimmed === "" ? null : trimmed;
 }
 
+/** Activity.content embeds the acting user as `{{user:<uuid>}}` or `{{user:<name>}}`. */
+const CONTENT_USER_TOKEN_RE = /\{\{user:([^}]+)\}\}/g;
+const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `title_params` actor fields, paired with the name field the locale strings and
+ * the client fall back to. Titles interpolate the id field verbatim, so it has to
+ * carry a display name by the time it leaves the API.
+ */
+const ACTOR_PARAM_FIELDS: ReadonlyArray<readonly [string, string]> = [
+    ["userId", "userName"],
+    ["assigneeId", "assigneeName"],
+];
+
+/** Actors with no User row; mapped to keys so the client renders them translated. */
+const SPECIAL_ACTOR_KEYS: Record<string, string> = {
+    system: "{{activities.values.system}}",
+    system_user: "{{activities.values.system}}",
+    portal_user: "{{users.values.portal_user}}",
+    "portal user": "{{users.values.portal_user}}",
+};
+
+const UNKNOWN_ACTOR_KEY = "{{users.values.unknown_user}}";
+
+function asParamsObject(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return null;
+    }
+    return value as Record<string, unknown>;
+}
+
 /** `start_date`/`end_date` are date-only columns; anchor at UTC midnight. */
 function parseDateOnly(value: unknown): Date | null {
     const raw = optionalTrimmed(value);
@@ -68,6 +100,56 @@ function parseDateOnly(value: unknown): Date | null {
     }
     const parsed = new Date(`${ymd}T00:00:00.000Z`);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * Activity.title stores a wrapped i18n key and Activity.title_params the values
+ * to interpolate — the timeline renders a row's text purely from those two, with
+ * no outcome-based fallback. So every call outcome must map to a key that exists
+ * in locales/<lang>/activities.json, or the row renders blank.
+ */
+const CALL_OUTCOME_TITLE_KEYS: Record<string, string> = {
+    no_answer: "activity_no_answer_call",
+    bad_number: "activity_bad_number_call",
+    schedule_follow_up: "activity_follow_up_scheduled",
+    general: "activity_general_call",
+    add_new_contact: "activity_contact_added",
+    promise_to_pay: "activity_promise_to_pay_call",
+    open_dispute: "activity_general_call",
+    generic_comment: "activity_comment_title_format",
+};
+
+/**
+ * Outcome/direction params are stored as namespaced keys rather than English
+ * text so the timeline resolves them per viewer language.
+ */
+const CALL_OUTCOME_LABEL_KEYS: Record<string, string> = {
+    no_answer: "activities.values.outcomes_no_answer",
+    bad_number: "activities.values.outcomes_bad_number",
+    schedule_follow_up: "activities.values.outcomes_schedule_follow_up",
+    general: "activities.values.outcomes_general",
+    add_new_contact: "activities.values.outcomes_add_new_contact",
+    promise_to_pay: "activities.values.outcomes_promise_to_pay",
+    open_dispute: "activities.values.outcomes_open_dispute",
+    generic_comment: "activities.values.outcomes_generic_comment",
+};
+
+const CALL_DIRECTION_LABEL_KEYS: Record<string, string> = {
+    outgoing: "activities.values.call_direction_outgoing",
+    incoming: "activities.values.call_direction_incoming",
+};
+
+/** Invoice statuses that may be attached to a dispute. */
+const DISPUTABLE_INVOICE_STATUSES = ["Due", "Overdue"] as const;
+
+function parseIdList(value: unknown): number[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const ids = value
+        .map((entry) => parseInt(String(entry), 10))
+        .filter((id) => Number.isFinite(id) && id > 0);
+    return [...new Set(ids)];
 }
 
 const ACTIVITY_TYPES = [
@@ -353,6 +435,14 @@ export class CustomersService {
                     },
                 },
                 ParentCustomer: true,
+                // The Log Activity promise-to-pay picker derives its selectable
+                // window and per-cycle cap from these two account settings.
+                Account: {
+                    select: {
+                        promise_to_pay: true,
+                        max_promise_to_pay_allowed_per_cycle: true,
+                    },
+                },
                 CustomerCollectionPeriod: {
                     where: { period_end_date: null },
                 },
@@ -518,8 +608,121 @@ export class CustomersService {
         });
 
         return serializeBigInt({
-            activities,
+            activities: await this.hydrateActivityUsers(activities),
             totalRecords: activities.length,
+        });
+    }
+
+    /**
+     * Activity rows reference users by id in two places the timeline cannot
+     * resolve on its own: `{{user:<uuid>}}` tokens inside `content`, and the
+     * `userId`/`assigneeId` params the stored title interpolates verbatim. Both
+     * otherwise render as raw uuids, so swap in display names here — one batched
+     * lookup for the whole page rather than a query per row.
+     */
+    private async hydrateActivityUsers<
+        T extends { content?: string | null; title_params?: unknown },
+    >(activities: T[]): Promise<T[]> {
+        const ids = new Set<string>();
+        const collectId = (value: unknown) => {
+            const raw = optionalTrimmed(value);
+            if (raw && UUID_RE.test(raw)) {
+                ids.add(raw);
+            }
+        };
+
+        for (const activity of activities) {
+            const content = optionalTrimmed(activity.content);
+            if (content) {
+                for (const [, token] of content.matchAll(
+                    CONTENT_USER_TOKEN_RE
+                )) {
+                    collectId(token);
+                }
+            }
+            const params = asParamsObject(activity.title_params);
+            if (params) {
+                for (const [idField] of ACTOR_PARAM_FIELDS) {
+                    collectId(params[idField]);
+                }
+            }
+        }
+
+        const names = new Map<string, string>();
+        if (ids.size > 0) {
+            const users = await this.db.user.findMany({
+                where: { id: { in: [...ids] } },
+                select: {
+                    id: true,
+                    name: true,
+                    first_name: true,
+                    last_name: true,
+                },
+            });
+            for (const user of users) {
+                const composed =
+                    `${user.first_name || ""} ${user.last_name || ""}`.trim();
+                const display =
+                    optionalTrimmed(user.name) || optionalTrimmed(composed);
+                if (display) {
+                    names.set(user.id, display);
+                }
+            }
+        }
+
+        /**
+         * Legacy rows store the display name inside the token instead of an id,
+         * so anything that isn't a uuid is already presentable. `storedName` is
+         * the point-in-time name recorded alongside the id and is preferred over
+         * "unknown" when the user has since been deleted.
+         */
+        const resolveActor = (
+            idValue: unknown,
+            storedName: unknown
+        ): string | null => {
+            const raw = optionalTrimmed(idValue);
+            const stored = optionalTrimmed(storedName);
+            if (!raw) {
+                return stored;
+            }
+            const special = SPECIAL_ACTOR_KEYS[raw.toLowerCase()];
+            if (special) {
+                return special;
+            }
+            if (!UUID_RE.test(raw)) {
+                return raw;
+            }
+            return names.get(raw) || stored || UNKNOWN_ACTOR_KEY;
+        };
+
+        return activities.map((activity) => {
+            const hydrated = { ...activity };
+
+            if (optionalTrimmed(activity.content)) {
+                hydrated.content = String(activity.content).replace(
+                    CONTENT_USER_TOKEN_RE,
+                    (match, token: string) => resolveActor(token, null) ?? match
+                );
+            }
+
+            const params = asParamsObject(activity.title_params);
+            if (params) {
+                const next = { ...params };
+                for (const [idField, nameField] of ACTOR_PARAM_FIELDS) {
+                    const display = resolveActor(
+                        next[idField],
+                        next[nameField]
+                    );
+                    if (!display) {
+                        continue;
+                    }
+                    next[idField] = display;
+                    next[nameField] = display;
+                }
+                hydrated.title_params = next;
+            }
+
+            return hydrated;
         });
     }
 
@@ -769,6 +972,62 @@ export class CustomersService {
         };
     }
 
+    /** Display name for activity title_params, so the timeline never shows a raw user id. */
+    private async actingUserName(userId: string): Promise<string | null> {
+        const user = await this.db.user.findFirst({
+            where: { id: userId },
+            select: { name: true, first_name: true, last_name: true },
+        });
+        if (!user) {
+            return null;
+        }
+        const composed = `${user.first_name || ""} ${user.last_name || ""}`.trim();
+        return optionalTrimmed(user.name) || optionalTrimmed(composed);
+    }
+
+    /** Open collection period a logged call and its side effects attach to. */
+    private async openCollectionPeriod(customerId: number) {
+        return this.db.customerCollectionPeriod.findFirst({
+            where: { customer_id: customerId, period_end_date: null },
+            select: { id: true, promise_to_pay_count: true },
+            orderBy: { id: "desc" },
+        });
+    }
+
+    async invoicesAvailableForDispute(
+        user: JwtPayload,
+        id: number
+    ) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const { accountId } = await this.assertCustomerInAccount(userInfo, id);
+
+        const invoices = await this.db.invoice.findMany({
+            where: {
+                customer_id: id,
+                account_id: accountId,
+                status: { in: [...DISPUTABLE_INVOICE_STATUSES] },
+                outstanding_debt: { gt: 0 },
+            },
+            select: {
+                id: true,
+                invoice_number: true,
+                amount: true,
+                outstanding_debt: true,
+                customer_amount: true,
+                customer_outstanding_debt: true,
+                customer_currency: true,
+                due_date: true,
+                status: true,
+            },
+            orderBy: [{ due_date: "asc" }, { id: "asc" }],
+        });
+
+        return serializeBigInt({
+            invoices,
+            totalRecords: invoices.length,
+        });
+    }
+
     async logCallActivity(
         user: JwtPayload,
         id: number,
@@ -784,22 +1043,242 @@ export class CustomersService {
                 error: "Call outcome is required",
             });
         }
+        if (!CALL_OUTCOME_TITLE_KEYS[callOutcome]) {
+            throw new BadRequestException({
+                error: `Unsupported call outcome: ${callOutcome}`,
+            });
+        }
 
-        const activity = await this.db.activity.create({
-            data: {
-                customer_id: id,
-                account_id: accountId,
-                type: "Call",
-                status: "COMPLETED",
-                content: (body.notes as string) || "",
-                call_outcome: callOutcome,
-                schedule_time: new Date(),
-                actual_delivery_time: new Date(),
-                created_by: effectiveUserId,
-            } as never,
+        const contactInput = (body.contact || null) as {
+            id?: unknown;
+            name?: unknown;
+        } | null;
+        const contactId = contactInput?.id
+            ? parseInt(String(contactInput.id), 10)
+            : NaN;
+        let contact: { id: number; name: string } | null = null;
+        if (Number.isFinite(contactId) && contactId > 0) {
+            const found = await this.db.contact.findFirst({
+                where: { id: contactId, customer_id: id },
+                select: { id: true, full_name: true, first_name: true, last_name: true },
+            });
+            if (!found) {
+                throw new BadRequestException({
+                    error: "Contact does not belong to this customer",
+                });
+            }
+            contact = {
+                id: found.id,
+                name:
+                    optionalTrimmed(found.full_name) ||
+                    `${found.first_name || ""} ${found.last_name || ""}`.trim(),
+            };
+        }
+
+        const followUpTime = optionalTrimmed(body.follow_up_time);
+        if (callOutcome === "schedule_follow_up" && !followUpTime) {
+            throw new BadRequestException({
+                error: "Follow-up time is required to schedule a follow-up",
+            });
+        }
+
+        const promiseDate =
+            callOutcome === "promise_to_pay"
+                ? parseDateOnly(body.follow_up_time)
+                : null;
+        if (callOutcome === "promise_to_pay" && !promiseDate) {
+            throw new BadRequestException({
+                error: "A valid payment date (YYYY-MM-DD) is required for a promise to pay",
+            });
+        }
+
+        const disputeInvoiceIds = parseIdList(body.disputed_invoices);
+        const disputeReasonId = body.dispute_reason
+            ? parseInt(String(body.dispute_reason), 10)
+            : NaN;
+        let disputeInvoices: { id: number; invoice_number: string | null }[] = [];
+        if (callOutcome === "open_dispute") {
+            if (disputeInvoiceIds.length === 0) {
+                throw new BadRequestException({
+                    error: "At least one invoice is required to open a dispute",
+                });
+            }
+            if (!Number.isFinite(disputeReasonId)) {
+                throw new BadRequestException({
+                    error: "A dispute reason is required to open a dispute",
+                });
+            }
+            disputeInvoices = await this.db.invoice.findMany({
+                where: {
+                    id: { in: disputeInvoiceIds },
+                    customer_id: id,
+                    account_id: accountId,
+                },
+                select: { id: true, invoice_number: true },
+            });
+            if (disputeInvoices.length !== disputeInvoiceIds.length) {
+                throw new BadRequestException({
+                    error: "One or more invoices do not belong to this customer",
+                });
+            }
+        }
+
+        const collectionPeriod = await this.openCollectionPeriod(id);
+        const userName = await this.actingUserName(effectiveUserId);
+        const now = new Date();
+
+        const titleParams: Record<string, unknown> = {
+            userId: effectiveUserId,
+            ...(userName ? { userName } : {}),
+        };
+        if (contact) {
+            titleParams.contact = contact.name;
+        }
+        if (callOutcome === "schedule_follow_up") {
+            titleParams.time = followUpTime;
+        }
+        if (
+            callOutcome === "general" ||
+            callOutcome === "promise_to_pay" ||
+            callOutcome === "open_dispute"
+        ) {
+            titleParams.outcome = CALL_OUTCOME_LABEL_KEYS[callOutcome];
+            const direction = optionalTrimmed(body.call_direction);
+            titleParams.callType = direction
+                ? (CALL_DIRECTION_LABEL_KEYS[direction.toLowerCase()] ??
+                  direction)
+                : CALL_OUTCOME_LABEL_KEYS.general;
+        }
+
+        // The dialog's timer sends elapsed seconds, but Activity has no duration
+        // column. Keeping it in title_params is the only lossless place for it
+        // without a migration, so the recorded time is not simply thrown away.
+        const duration = parseInt(String(body.duration ?? ""), 10);
+        if (Number.isFinite(duration) && duration > 0) {
+            titleParams.duration = duration;
+        }
+
+        const result = await this.db.$transaction(async (tx) => {
+            const activity = await tx.activity.create({
+                data: {
+                    customer_id: id,
+                    account_id: accountId,
+                    type: "Call",
+                    status: "COMPLETED",
+                    title: `{{activities.fields.${CALL_OUTCOME_TITLE_KEYS[callOutcome]}}}`,
+                    title_params: titleParams,
+                    content: (body.notes as string) || "",
+                    call_outcome: callOutcome,
+                    contact_id: contact?.id ?? null,
+                    collection_period_id: collectionPeriod?.id ?? null,
+                    schedule_time: now,
+                    actual_delivery_time: now,
+                    created_by: effectiveUserId,
+                } as never,
+            });
+
+            if (contact) {
+                await tx.activityContact.create({
+                    data: {
+                        activity_id: activity.id,
+                        contact_id: contact.id,
+                        communication_channel: "Call",
+                        sent_at: now,
+                        created_by: effectiveUserId,
+                    } as never,
+                });
+            }
+
+            let dispute: { id: number } | null = null;
+            if (callOutcome === "open_dispute") {
+                dispute = await tx.customerDispute.create({
+                    data: {
+                        customer_id: id,
+                        dispute_reason_id: disputeReasonId,
+                        dispute_status: "Under_Review",
+                        customer_comment: (body.notes as string) || "",
+                        customer_collection_period_id:
+                            collectionPeriod?.id ?? null,
+                        invoices_in_dispute: disputeInvoices
+                            .map((inv) => inv.invoice_number)
+                            .filter(Boolean)
+                            .join(","),
+                        owner_id: effectiveUserId,
+                        created_by: effectiveUserId,
+                    } as never,
+                    select: { id: true },
+                });
+                await tx.disputeInvoice.createMany({
+                    data: disputeInvoices.map((inv) => ({
+                        dispute_id: dispute!.id,
+                        invoice_id: inv.id,
+                        created_by: effectiveUserId,
+                    })) as never,
+                });
+                const reason = await tx.disputeReason.findFirst({
+                    where: { id: disputeReasonId },
+                    select: { name: true },
+                });
+                // Separate Dispute-type activity so the dispute shows on the
+                // timeline with a gavel badge, matching the pre-migration feed.
+                await tx.activity.create({
+                    data: {
+                        customer_id: id,
+                        account_id: accountId,
+                        type: "Dispute",
+                        status: "COMPLETED",
+                        title: "{{activities.fields.dispute_opened}}",
+                        title_params: {
+                            userId: effectiveUserId,
+                            ...(userName ? { userName } : {}),
+                            disputeId: String(dispute.id),
+                            disputeReason: reason?.name ?? "",
+                        },
+                        content: (body.notes as string) || "",
+                        contact_id: contact?.id ?? null,
+                        collection_period_id: collectionPeriod?.id ?? null,
+                        schedule_time: now,
+                        actual_delivery_time: now,
+                        created_by: effectiveUserId,
+                    } as never,
+                });
+            }
+
+            if (collectionPeriod) {
+                const periodUpdate: Record<string, unknown> = {
+                    last_call: now,
+                    last_call_result: callOutcome,
+                    modified_by: effectiveUserId,
+                };
+                if (promiseDate) {
+                    periodUpdate.promise_to_pay_date = promiseDate;
+                    periodUpdate.promise_to_pay_count = { increment: 1 };
+                }
+                if (callOutcome === "schedule_follow_up" && followUpTime) {
+                    const parsed = new Date(followUpTime);
+                    if (!Number.isNaN(parsed.getTime())) {
+                        periodUpdate.follow_up_time = parsed;
+                    }
+                }
+                if (callOutcome === "open_dispute") {
+                    periodUpdate.last_dispute_date = now;
+                }
+                await tx.customerCollectionPeriod.update({
+                    where: { id: collectionPeriod.id },
+                    data: periodUpdate as never,
+                });
+            }
+
+            return { activity, disputeId: dispute?.id ?? null };
         });
 
-        return serializeBigInt(activity);
+        return serializeBigInt({
+            ok: true,
+            activity: result.activity,
+            disputeId: result.disputeId,
+            promiseToPayDate: promiseDate,
+            durationSeconds: Number.isFinite(duration) ? duration : null,
+        });
     }
 
     async sendEmailActivity(

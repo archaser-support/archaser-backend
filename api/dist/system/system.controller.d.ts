@@ -310,10 +310,10 @@ export declare class SystemController {
                 owner_id: string | null;
             };
         } & {
+            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
-            currency: string | null;
             created_by: string | null;
             modified_by: string | null;
             next_activity_date: Date | null;
@@ -399,10 +399,10 @@ export declare class SystemController {
                 owner_id: string | null;
             };
         } & {
+            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
-            currency: string | null;
             created_by: string | null;
             modified_by: string | null;
             next_activity_date: Date | null;
@@ -470,10 +470,10 @@ export declare class SystemController {
                 owner_id: string | null;
             };
         } & {
+            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
-            currency: string | null;
             created_by: string | null;
             modified_by: string | null;
             next_activity_date: Date | null;
@@ -527,10 +527,10 @@ export declare class SystemController {
                 oldest_invoice_overdue_date: Date | null;
             };
         } & {
+            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
-            currency: string | null;
             created_by: string | null;
             modified_by: string | null;
             next_activity_date: Date | null;

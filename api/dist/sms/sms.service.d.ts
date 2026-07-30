@@ -22,10 +22,10 @@ export declare class SmsService {
     }>;
     listVendors(user: JwtPayload): Promise<{
         name: string;
+        currency: string | null;
         id: number;
         created_at: Date | null;
         modified_at: Date | null;
-        currency: string | null;
         created_by: string | null;
         modified_by: string | null;
         provider: string;
@@ -41,10 +41,10 @@ export declare class SmsService {
     }[]>;
     createVendor(user: JwtPayload, body: Record<string, unknown>): Promise<{
         name: string;
+        currency: string | null;
         id: number;
         created_at: Date | null;
         modified_at: Date | null;
-        currency: string | null;
         created_by: string | null;
         modified_by: string | null;
         provider: string;
@@ -60,10 +60,10 @@ export declare class SmsService {
     }>;
     getVendor(user: JwtPayload, id: number): Promise<{
         name: string;
+        currency: string | null;
         id: number;
         created_at: Date | null;
         modified_at: Date | null;
-        currency: string | null;
         created_by: string | null;
         modified_by: string | null;
         provider: string;
@@ -79,10 +79,10 @@ export declare class SmsService {
     }>;
     updateVendor(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         name: string;
+        currency: string | null;
         id: number;
         created_at: Date | null;
         modified_at: Date | null;
-        currency: string | null;
         created_by: string | null;
         modified_by: string | null;
         provider: string;
@@ -114,10 +114,10 @@ export declare class SmsService {
                 is_active: boolean | null;
             };
         } & {
+            currency: string | null;
             id: number;
             created_at: Date | null;
             modified_at: Date | null;
-            currency: string | null;
             created_by: string | null;
             modified_by: string | null;
             country_id: number;
@@ -135,10 +135,10 @@ export declare class SmsService {
     createCountryVendor(user: JwtPayload, body: Record<string, unknown>): Promise<{
         Country: {
             name: string;
+            currency: string | null;
             id: number;
             created_at: Date | null;
             modified_at: Date;
-            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -163,10 +163,10 @@ export declare class SmsService {
         };
         SMSVendor: {
             name: string;
+            currency: string | null;
             id: number;
             created_at: Date | null;
             modified_at: Date | null;
-            currency: string | null;
             created_by: string | null;
             modified_by: string | null;
             provider: string;
@@ -181,10 +181,10 @@ export declare class SmsService {
             use_account_sender_name: boolean | null;
         };
     } & {
+        currency: string | null;
         id: number;
         created_at: Date | null;
         modified_at: Date | null;
-        currency: string | null;
         created_by: string | null;
         modified_by: string | null;
         country_id: number;
@@ -198,10 +198,10 @@ export declare class SmsService {
     getCountryVendor(user: JwtPayload, id: number): Promise<{
         Country: {
             name: string;
+            currency: string | null;
             id: number;
             created_at: Date | null;
             modified_at: Date;
-            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -226,10 +226,10 @@ export declare class SmsService {
         };
         SMSVendor: {
             name: string;
+            currency: string | null;
             id: number;
             created_at: Date | null;
             modified_at: Date | null;
-            currency: string | null;
             created_by: string | null;
             modified_by: string | null;
             provider: string;
@@ -244,10 +244,10 @@ export declare class SmsService {
             use_account_sender_name: boolean | null;
         };
     } & {
+        currency: string | null;
         id: number;
         created_at: Date | null;
         modified_at: Date | null;
-        currency: string | null;
         created_by: string | null;
         modified_by: string | null;
         country_id: number;
@@ -261,10 +261,10 @@ export declare class SmsService {
     updateCountryVendor(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         Country: {
             name: string;
+            currency: string | null;
             id: number;
             created_at: Date | null;
             modified_at: Date;
-            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -289,10 +289,10 @@ export declare class SmsService {
         };
         SMSVendor: {
             name: string;
+            currency: string | null;
             id: number;
             created_at: Date | null;
             modified_at: Date | null;
-            currency: string | null;
             created_by: string | null;
             modified_by: string | null;
             provider: string;
@@ -307,10 +307,10 @@ export declare class SmsService {
             use_account_sender_name: boolean | null;
         };
     } & {
+        currency: string | null;
         id: number;
         created_at: Date | null;
         modified_at: Date | null;
-        currency: string | null;
         created_by: string | null;
         modified_by: string | null;
         country_id: number;

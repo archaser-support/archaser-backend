@@ -5,6 +5,7 @@ exports.operatorToPrisma = operatorToPrisma;
 exports.splitFiltersByTable = splitFiltersByTable;
 exports.mergeAndWhere = mergeAndWhere;
 const report_virtual_fields_util_1 = require("./report-virtual-fields.util");
+const date_preset_util_1 = require("./date-preset.util");
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 function coerceValue(value) {
     if (value === null || value === undefined) {
@@ -34,8 +35,52 @@ function coerceDateTimeBound(value, bound) {
 function isYmdString(value) {
     return typeof value === "string" && YMD_RE.test(value);
 }
+function datePresetToPrisma(op, marker) {
+    const preset = marker.__datePreset;
+    const input = marker.__datePresetInput;
+    if ((0, date_preset_util_1.isPeriodPreset)(preset)) {
+        const range = (0, date_preset_util_1.resolveDatePresetRange)(preset, input);
+        if (!range) {
+            return null;
+        }
+        const [start, end] = range;
+        const startBound = coerceDateTimeBound(start, "start");
+        const endBound = coerceDateTimeBound(end, "end");
+        switch (op) {
+            case "<":
+            case "less_than":
+                return { lt: startBound };
+            case "<=":
+            case "less_than_or_equal":
+                return { lte: endBound };
+            case ">":
+            case "greater_than":
+                return { gt: endBound };
+            case ">=":
+            case "greater_than_or_equal":
+                return { gte: startBound };
+            case "!=":
+            case "not_equals":
+            case "not":
+                return { not: { gte: startBound, lte: endBound } };
+            case "=":
+            case "equals":
+            case "between":
+            default:
+                return { gte: startBound, lte: endBound };
+        }
+    }
+    const resolved = (0, date_preset_util_1.resolveDatePreset)(preset, input);
+    if (!resolved) {
+        return null;
+    }
+    return operatorToPrisma(op, resolved);
+}
 function operatorToPrisma(operator, value) {
     const op = (operator || "equals").toLowerCase();
+    if ((0, date_preset_util_1.isDatePresetMarker)(value)) {
+        return datePresetToPrisma(op, value);
+    }
     const v = coerceValue(value);
     switch (op) {
         case "=":

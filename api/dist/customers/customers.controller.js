@@ -63,6 +63,9 @@ let CustomersController = class CustomersController {
     async stuckActivities(user, id) {
         return this.customers.stuckActivities(user, id);
     }
+    async invoicesAvailableForDispute(user, id) {
+        return this.customers.invoicesAvailableForDispute(user, id);
+    }
     async logCallActivity(user, id, body) {
         return this.customers.logCallActivity(user, id, body);
     }
@@ -199,6 +202,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, Number]),
     __metadata("design:returntype", Promise)
 ], CustomersController.prototype, "stuckActivities", null);
+__decorate([
+    (0, common_1.Get)(":id/invoices-available-for-dispute"),
+    (0, swagger_1.ApiOperation)({ summary: "Invoices selectable for a dispute (Nest-native)" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("id", common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number]),
+    __metadata("design:returntype", Promise)
+], CustomersController.prototype, "invoicesAvailableForDispute", null);
 __decorate([
     (0, common_1.Post)(":id/activity/log-call-activity"),
     (0, swagger_1.ApiOperation)({ summary: "Log a call activity (Nest-native)" }),

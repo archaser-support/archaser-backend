@@ -1208,6 +1208,17 @@ export class ReportExecutionService {
                 f.field,
                 locale
             );
+            // dispute_number aliases the primary key, and the rest of the product
+            // renders a dispute as "#<id>". Overriding only the display key keeps
+            // the raw value numeric for sorting and search — and sidesteps
+            // formatValue's thousands separator turning id 1726 into "1,726".
+            if (
+                f.table === "Dispute" &&
+                f.field === "dispute_number" &&
+                value != null
+            ) {
+                out[`___formatted_${key}`] = `#${value}`;
+            }
             const linkMetadata = getFieldLinkMetadata(
                 f,
                 linkRow,

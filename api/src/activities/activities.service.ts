@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
+import { clampExpiry, presignS3Object } from "../common/s3-presign";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 
@@ -750,48 +751,11 @@ export class ActivitiesService {
             });
         }
 
-        const expiresIn = Math.min(
-            Math.max(Number(body.expiresIn) || 3600, 60),
-            86400
-        );
+        const expiresIn = clampExpiry(body.expiresIn);
 
-        const bucket =
-            process.env.NEXT_APP_AWS_S3_BUCKET_NAME ||
-            process.env.AWS_S3_BUCKET ||
-            process.env.S3_BUCKET;
-        const region =
-            process.env.AWS_REGION || process.env.S3_REGION || "us-east-1";
-        const accessKeyId =
-            process.env.NEXT_APP_AWS_ACCESS_KEY_ID ||
-            process.env.AWS_ACCESS_KEY_ID;
-        const secretAccessKey =
-            process.env.NEXT_APP_AWS_SECRET_ACCESS_KEY ||
-            process.env.AWS_SECRET_ACCESS_KEY;
-
-        if (bucket && accessKeyId && secretAccessKey) {
-            try {
-                const { S3Client, GetObjectCommand } = await import(
-                    "@aws-sdk/client-s3"
-                );
-                const { getSignedUrl } = await import(
-                    "@aws-sdk/s3-request-presigner"
-                );
-                const client = new S3Client({
-                    region,
-                    credentials: { accessKeyId, secretAccessKey },
-                });
-                const key = filePath
-                    .replace(/^s3:\/\//, "")
-                    .replace(/^\/+/, "");
-                const command = new GetObjectCommand({
-                    Bucket: bucket,
-                    Key: key,
-                });
-                const url = await getSignedUrl(client, command, { expiresIn });
-                return { url };
-            } catch {
-                // Fall through to stub when SDK unavailable or signing fails
-            }
+        const signed = await presignS3Object(filePath, expiresIn);
+        if (signed) {
+            return { url: signed };
         }
 
         // Stub when S3 credentials are not configured (do not invent secrets)

@@ -79,7 +79,7 @@ let OperationsService = class OperationsService {
     async getDisputeStats(user) {
         const accountId = await this.scope(user);
         const where = { Customer: { account_id: accountId } };
-        const [total, open, resolved, inProgress] = await Promise.all([
+        const [total, open, resolved, inProgress, account] = await Promise.all([
             this.db.customerDispute.count({ where }),
             this.db.customerDispute.count({
                 where: {
@@ -95,6 +95,10 @@ let OperationsService = class OperationsService {
             this.db.customerDispute.count({
                 where: { AND: [where, { dispute_status: "Under_Review" }] },
             }),
+            this.db.account.findUnique({
+                where: { id: accountId },
+                select: { currency: true },
+            }),
         ]);
         return {
             stats: {
@@ -104,6 +108,7 @@ let OperationsService = class OperationsService {
                     resolved,
                     inProgress,
                 },
+                currency: account?.currency || "USD",
                 pieChartData: [
                     { name: "Open", value: open },
                     { name: "In Progress", value: inProgress },

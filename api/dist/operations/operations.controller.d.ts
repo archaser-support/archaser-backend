@@ -119,6 +119,7 @@ export declare class OperationsDomainController {
                 resolved: number;
                 inProgress: number;
             };
+            currency: string;
             pieChartData: {
                 name: string;
                 value: number;
@@ -145,6 +146,7 @@ export declare class OperationsDomainController {
                 resolved: number;
                 inProgress: number;
             };
+            currency: string;
             pieChartData: {
                 name: string;
                 value: number;

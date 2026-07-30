@@ -98,10 +98,10 @@ export declare class AccountAdminEntitiesService {
         data: ({
             Country: {
                 name: string;
+                currency: string | null;
                 id: number;
                 created_at: Date | null;
                 modified_at: Date;
-                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -269,10 +269,10 @@ export declare class AccountAdminEntitiesService {
         data: ({
             Country: {
                 name: string;
+                currency: string | null;
                 id: number;
                 created_at: Date | null;
                 modified_at: Date;
-                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -341,10 +341,10 @@ export declare class AccountAdminEntitiesService {
     createAccountBankAccount(user: JwtPayload, accountId: number, body: Record<string, unknown>): Promise<{
         Country: {
             name: string;
+            currency: string | null;
             id: number;
             created_at: Date | null;
             modified_at: Date;
-            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -411,10 +411,10 @@ export declare class AccountAdminEntitiesService {
     updateAccountBankAccount(user: JwtPayload, accountId: number, id: number, body: Record<string, unknown>): Promise<{
         Country: {
             name: string;
+            currency: string | null;
             id: number;
             created_at: Date | null;
             modified_at: Date;
-            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;

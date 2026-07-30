@@ -167,6 +167,7 @@ export declare class ActivitiesController {
                 name: string | null;
                 language: import(".prisma/client").$Enums.language;
                 locale: string | null;
+                currency: string | null;
                 sidebar_collapsed: boolean | null;
                 id: string;
                 emailVerified: Date | null;
@@ -180,7 +181,6 @@ export declare class ActivitiesController {
                 last_name: string | null;
                 mobile: string | null;
                 time_zone: string | null;
-                currency: string | null;
                 session_version: number;
                 freeze: boolean;
                 failed_login_attempts: number;
@@ -201,6 +201,7 @@ export declare class ActivitiesController {
                 name: string | null;
                 language: import(".prisma/client").$Enums.language;
                 locale: string | null;
+                currency: string | null;
                 sidebar_collapsed: boolean | null;
                 id: string;
                 emailVerified: Date | null;
@@ -214,7 +215,6 @@ export declare class ActivitiesController {
                 last_name: string | null;
                 mobile: string | null;
                 time_zone: string | null;
-                currency: string | null;
                 session_version: number;
                 freeze: boolean;
                 failed_login_attempts: number;
@@ -265,6 +265,7 @@ export declare class ActivitiesController {
             name: string | null;
             language: import(".prisma/client").$Enums.language;
             locale: string | null;
+            currency: string | null;
             sidebar_collapsed: boolean | null;
             id: string;
             emailVerified: Date | null;
@@ -278,7 +279,6 @@ export declare class ActivitiesController {
             last_name: string | null;
             mobile: string | null;
             time_zone: string | null;
-            currency: string | null;
             session_version: number;
             freeze: boolean;
             failed_login_attempts: number;
@@ -299,6 +299,7 @@ export declare class ActivitiesController {
             name: string | null;
             language: import(".prisma/client").$Enums.language;
             locale: string | null;
+            currency: string | null;
             sidebar_collapsed: boolean | null;
             id: string;
             emailVerified: Date | null;
@@ -312,7 +313,6 @@ export declare class ActivitiesController {
             last_name: string | null;
             mobile: string | null;
             time_zone: string | null;
-            currency: string | null;
             session_version: number;
             freeze: boolean;
             failed_login_attempts: number;
@@ -364,6 +364,7 @@ export declare class ActivitiesController {
             name: string | null;
             language: import(".prisma/client").$Enums.language;
             locale: string | null;
+            currency: string | null;
             sidebar_collapsed: boolean | null;
             id: string;
             emailVerified: Date | null;
@@ -377,7 +378,6 @@ export declare class ActivitiesController {
             last_name: string | null;
             mobile: string | null;
             time_zone: string | null;
-            currency: string | null;
             session_version: number;
             freeze: boolean;
             failed_login_attempts: number;
@@ -398,6 +398,7 @@ export declare class ActivitiesController {
             name: string | null;
             language: import(".prisma/client").$Enums.language;
             locale: string | null;
+            currency: string | null;
             sidebar_collapsed: boolean | null;
             id: string;
             emailVerified: Date | null;
@@ -411,7 +412,6 @@ export declare class ActivitiesController {
             last_name: string | null;
             mobile: string | null;
             time_zone: string | null;
-            currency: string | null;
             session_version: number;
             freeze: boolean;
             failed_login_attempts: number;
@@ -463,6 +463,7 @@ export declare class ActivitiesController {
             name: string | null;
             language: import(".prisma/client").$Enums.language;
             locale: string | null;
+            currency: string | null;
             sidebar_collapsed: boolean | null;
             id: string;
             emailVerified: Date | null;
@@ -476,7 +477,6 @@ export declare class ActivitiesController {
             last_name: string | null;
             mobile: string | null;
             time_zone: string | null;
-            currency: string | null;
             session_version: number;
             freeze: boolean;
             failed_login_attempts: number;
@@ -497,6 +497,7 @@ export declare class ActivitiesController {
             name: string | null;
             language: import(".prisma/client").$Enums.language;
             locale: string | null;
+            currency: string | null;
             sidebar_collapsed: boolean | null;
             id: string;
             emailVerified: Date | null;
@@ -510,7 +511,6 @@ export declare class ActivitiesController {
             last_name: string | null;
             mobile: string | null;
             time_zone: string | null;
-            currency: string | null;
             session_version: number;
             freeze: boolean;
             failed_login_attempts: number;
