@@ -109,7 +109,9 @@ let ReportExecutionService = class ReportExecutionService {
         for (const [table, where] of Object.entries(nested)) {
             const rel = relationMap[table];
             if (rel) {
-                nestedWhere[rel] = where;
+                nestedWhere[rel] = (0, report_virtual_fields_util_1.isPrismaListRelation)(primaryTable, rel)
+                    ? { some: where }
+                    : where;
             }
         }
         const searchWhere = this.buildSearchWhere(primaryTable, body.search, config.fields || []);

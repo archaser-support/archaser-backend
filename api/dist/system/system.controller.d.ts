@@ -80,6 +80,15 @@ export declare class SystemController {
     }>;
     chartDetails(user: JwtPayload, query: SystemListQuery): Promise<{
         details: never[];
+        data: never[];
+        totalRecords: number;
+        summary: {
+            totalRecords: number;
+            totalAmount: number;
+        };
+        currency: string;
+    } | {
+        details: never[];
         totalRecords: number;
     }>;
     controlCenter(user: JwtPayload, operation?: string): Promise<{

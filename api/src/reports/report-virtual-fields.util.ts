@@ -24,6 +24,7 @@ const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
 };
 
 const scalarFieldCache = new Map<string, Set<string>>();
+const listRelationCache = new Map<string, Set<string>>();
 
 /** Calendar-day age past due_date (0 when not yet overdue). */
 export function calculateDaysOverdue(
@@ -155,6 +156,34 @@ export function isPrismaScalarField(
         scalarFieldCache.set(modelName, scalars);
     }
     return scalars.has(field);
+}
+
+/**
+ * True when `relationField` is a to-many relation on the Prisma model for
+ * `reportTable`. Prisma requires `some`/`every`/`none` on list relations, so
+ * callers must wrap field filters instead of nesting them directly.
+ */
+export function isPrismaListRelation(
+    reportTable: string,
+    relationField: string
+): boolean {
+    const modelName = REPORT_TABLE_TO_PRISMA_MODEL[reportTable];
+    if (!modelName) {
+        return false;
+    }
+    let lists = listRelationCache.get(modelName);
+    if (!lists) {
+        const model = Prisma.dmmf.datamodel.models.find(
+            (m) => m.name === modelName
+        );
+        lists = new Set(
+            (model?.fields || [])
+                .filter((f) => f.kind === "object" && f.isList)
+                .map((f) => f.name)
+        );
+        listRelationCache.set(modelName, lists);
+    }
+    return lists.has(relationField);
 }
 
 /**

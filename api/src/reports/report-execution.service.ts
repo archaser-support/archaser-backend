@@ -64,6 +64,7 @@ import {
     extractComputedFieldValue,
     formatTermsBreachReasonForDisplay,
     isComputedReportField,
+    isPrismaListRelation,
     isPrismaScalarField,
 } from "./report-virtual-fields.util";
 import { REPORT_METADATA } from "./report-metadata";
@@ -232,7 +233,11 @@ export class ReportExecutionService {
         for (const [table, where] of Object.entries(nested)) {
             const rel = relationMap[table];
             if (rel) {
-                nestedWhere[rel] = where;
+                // Filters on a to-many relation belong inside `some` so they
+                // must all be satisfied by the same related row.
+                nestedWhere[rel] = isPrismaListRelation(primaryTable, rel)
+                    ? { some: where }
+                    : where;
             }
         }
 
