@@ -30,6 +30,7 @@ const report_scope_util_1 = require("./report-scope.util");
 const report_virtual_fields_util_1 = require("./report-virtual-fields.util");
 const report_metadata_1 = require("./report-metadata");
 const formula_execution_1 = require("./report-formula/formula-execution");
+const report_datetime_util_1 = require("./report-datetime.util");
 let ReportExecutionService = class ReportExecutionService {
     constructor(db, access) {
         this.db = db;
@@ -138,7 +139,8 @@ let ReportExecutionService = class ReportExecutionService {
                 withinDays: creditDashboardWithinDays ?? 30,
             });
             const locale = body.locale || "en-US";
-            const data = topUpResult.rows.map((row) => this.formatRow(row, primaryTable, fields, locale, creditDashboardPolicyId));
+            const timezone = body.timezone;
+            const data = topUpResult.rows.map((row) => this.formatRow(row, primaryTable, fields, locale, creditDashboardPolicyId, timezone));
             const formulaResult = (0, formula_execution_1.applyFormulasToRows)(data, config, {
                 locale,
                 metadataTables: report_metadata_1.REPORT_METADATA.tables,
@@ -198,7 +200,8 @@ let ReportExecutionService = class ReportExecutionService {
             rows = rows.slice(skip, skip + limit);
         }
         const locale = body.locale || "en-US";
-        const data = rows.map((row) => this.formatRow(row, primaryTable, fields, locale, creditDashboardPolicyId));
+        const timezone = body.timezone;
+        const data = rows.map((row) => this.formatRow(row, primaryTable, fields, locale, creditDashboardPolicyId, timezone));
         const formulaResult = (0, formula_execution_1.applyFormulasToRows)(data, config, {
             locale,
             metadataTables: report_metadata_1.REPORT_METADATA.tables,
@@ -741,7 +744,7 @@ let ReportExecutionService = class ReportExecutionService {
         }
         return null;
     }
-    formatRow(row, primaryTable, fields, locale, scopedPolicyId) {
+    formatRow(row, primaryTable, fields, locale, scopedPolicyId, timezone) {
         const out = {
             id: row.id,
         };
@@ -769,11 +772,14 @@ let ReportExecutionService = class ReportExecutionService {
                 }
             }
             out[key] = value ?? null;
-            out[`___formatted_${key}`] = this.formatValue(value, f.field, locale);
+            out[`___formatted_${key}`] = this.formatValue(value, f.field, locale, timezone);
             if (f.table === "Dispute" &&
                 f.field === "dispute_number" &&
                 value != null) {
-                out[`___formatted_${key}`] = `#${value}`;
+                const id = typeof value === "number" ? value : Number(value);
+                out[`___formatted_${key}`] = Number.isFinite(id)
+                    ? `DIS-${String(id).padStart(6, "0")}`
+                    : `DIS-${String(value)}`;
             }
             const linkMetadata = (0, report_link_util_1.getFieldLinkMetadata)(f, linkRow, primaryTable, key);
             if (linkMetadata) {
@@ -1054,7 +1060,7 @@ let ReportExecutionService = class ReportExecutionService {
         }
         return parent.Company?.name || null;
     }
-    formatValue(value, field, locale) {
+    formatValue(value, field, locale, timezone) {
         if (value == null) {
             return null;
         }
@@ -1062,10 +1068,7 @@ let ReportExecutionService = class ReportExecutionService {
             const d = value instanceof Date ? value : new Date(String(value));
             if (!Number.isNaN(d.getTime())) {
                 try {
-                    return new Intl.DateTimeFormat(locale, {
-                        dateStyle: "short",
-                        timeStyle: "short",
-                    }).format(d);
+                    return (0, report_datetime_util_1.formatReportDateTime)(d, locale, timezone);
                 }
                 catch {
                     return d.toISOString();

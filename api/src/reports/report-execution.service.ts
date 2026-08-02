@@ -76,6 +76,7 @@ import {
     FormulaWarningSummary,
     ReportFormula,
 } from "./report-formula/types";
+import { formatReportDateTime } from "./report-datetime.util";
 
 type ReportConfig = {
     tables?: string[];
@@ -285,13 +286,15 @@ export class ReportExecutionService {
                 withinDays: creditDashboardWithinDays ?? 30,
             });
             const locale = body.locale || "en-US";
+            const timezone = body.timezone;
             const data = topUpResult.rows.map((row) =>
                 this.formatRow(
                     row,
                     primaryTable,
                     fields,
                     locale,
-                    creditDashboardPolicyId
+                    creditDashboardPolicyId,
+                    timezone
                 )
             );
             const formulaResult = applyFormulasToRows(data, config, {
@@ -388,13 +391,15 @@ export class ReportExecutionService {
         }
 
         const locale = body.locale || "en-US";
+        const timezone = body.timezone;
         const data = rows.map((row) =>
             this.formatRow(
                 row,
                 primaryTable,
                 fields,
                 locale,
-                creditDashboardPolicyId
+                creditDashboardPolicyId,
+                timezone
             )
         );
         const formulaResult = applyFormulasToRows(data, config, {
@@ -1171,7 +1176,8 @@ export class ReportExecutionService {
             aggregation?: string;
         }>,
         locale: string,
-        scopedPolicyId?: number
+        scopedPolicyId?: number,
+        timezone?: string
     ): Record<string, unknown> {
         const out: Record<string, unknown> = {
             id: row.id,
@@ -1220,18 +1226,21 @@ export class ReportExecutionService {
             out[`___formatted_${key}`] = this.formatValue(
                 value,
                 f.field,
-                locale
+                locale,
+                timezone
             );
-            // dispute_number aliases the primary key, and the rest of the product
-            // renders a dispute as "#<id>". Overriding only the display key keeps
-            // the raw value numeric for sorting and search — and sidesteps
-            // formatValue's thousands separator turning id 1726 into "1,726".
+            // dispute_number aliases the primary key. Override display to
+            // "DIS-000726" so formatValue's thousands separator does not turn
+            // id 1726 into "1,726". Raw value stays numeric for sort/search.
             if (
                 f.table === "Dispute" &&
                 f.field === "dispute_number" &&
                 value != null
             ) {
-                out[`___formatted_${key}`] = `#${value}`;
+                const id = typeof value === "number" ? value : Number(value);
+                out[`___formatted_${key}`] = Number.isFinite(id)
+                    ? `DIS-${String(id).padStart(6, "0")}`
+                    : `DIS-${String(value)}`;
             }
             const linkMetadata = getFieldLinkMetadata(
                 f,
@@ -1668,7 +1677,8 @@ export class ReportExecutionService {
     private formatValue(
         value: unknown,
         field: string,
-        locale: string
+        locale: string,
+        timezone?: string
     ): string | null {
         if (value == null) {
             return null;
@@ -1678,10 +1688,7 @@ export class ReportExecutionService {
                 value instanceof Date ? value : new Date(String(value));
             if (!Number.isNaN(d.getTime())) {
                 try {
-                    return new Intl.DateTimeFormat(locale, {
-                        dateStyle: "short",
-                        timeStyle: "short",
-                    }).format(d);
+                    return formatReportDateTime(d, locale, timezone);
                 } catch {
                     return d.toISOString();
                 }
