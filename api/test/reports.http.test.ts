@@ -383,6 +383,9 @@ describe("Reports Nest-native HTTP", () => {
 
         expect(res.body.data[0]["Customer.name"]).toBe("Acme");
         expect(res.body.data[0]["Dispute.dispute_number"]).toBe(55);
+        expect(res.body.data[0]["___formatted_Dispute.dispute_number"]).toBe(
+            "DIS-000055"
+        );
         expect(res.body.data[0]["Dispute.amount_in_dispute"]).toBe(150);
         expect(res.body.data[0]["Dispute.dispute_reason"]).toBe("Pricing");
         expect(res.body.data[0]["Dispute.assigned_to"]).toBe("Agent One");
