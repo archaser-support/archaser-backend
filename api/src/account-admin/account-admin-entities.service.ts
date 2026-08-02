@@ -15,7 +15,6 @@ export const ACCOUNT_ADMIN_ENTITY_TYPES = [
     "business-units",
     "bank-accounts",
     "customer-banks",
-    "business-unit-banks",
 ] as const;
 
 export type AccountAdminEntityType =
@@ -28,8 +27,7 @@ type EntityConfig = {
         | "user"
         | "businessUnit"
         | "accountBankAccounts"
-        | "customerBanks"
-        | "businessUnitBankAccounts";
+        | "customerBanks";
     /** How the row is scoped to the caller's account. */
     scopeField: "id" | "account_id";
     listKey: string;
@@ -70,12 +68,6 @@ const ENTITY_CONFIG: Record<AccountAdminEntityType, EntityConfig> = {
         delegate: "customerBanks",
         scopeField: "account_id",
         listKey: "customerBanks",
-        idType: "number",
-    },
-    "business-unit-banks": {
-        delegate: "businessUnitBankAccounts",
-        scopeField: "account_id",
-        listKey: "businessUnitBanks",
         idType: "number",
     },
 };
@@ -1022,5 +1014,147 @@ export class AccountAdminEntitiesService {
         });
 
         return serializeBigInt(agentsWithNames);
+    }
+
+    private parseNumericId(raw: string, label: string): number {
+        const id = parseInt(raw, 10);
+        if (Number.isNaN(id)) {
+            throw new BadRequestException({ error: `Invalid ${label}` });
+        }
+        return id;
+    }
+
+    async listBusinessUnitBanks(user: JwtPayload, businessUnitIdRaw: string) {
+        const { accountId } = await this.scope(user);
+        const businessUnitId = this.parseNumericId(
+            businessUnitIdRaw,
+            "business unit ID"
+        );
+
+        const bu = await this.db.businessUnit.findFirst({
+            where: { id: businessUnitId, account_id: accountId },
+        });
+        if (!bu) {
+            throw new NotFoundException({ error: "Business unit not found" });
+        }
+
+        const buBanks = await this.db.businessUnitBankAccounts.findMany({
+            where: { business_unit_id: businessUnitId },
+            include: {
+                AccountBankAccounts: {
+                    include: { Country: true },
+                },
+            },
+        });
+
+        const transformed = buBanks.map((b) => ({
+            ...b,
+            CustomerBankAccount: b.AccountBankAccounts,
+        }));
+        return serializeBigInt(transformed);
+    }
+
+    async addBusinessUnitBank(
+        user: JwtPayload,
+        businessUnitIdRaw: string,
+        body: Record<string, unknown>
+    ) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const businessUnitId = this.parseNumericId(
+            businessUnitIdRaw,
+            "business unit ID"
+        );
+        const bankAccountId = this.parseNumericId(
+            String(body.bank_account_id ?? ""),
+            "bank account ID"
+        );
+
+        const bu = await this.db.businessUnit.findFirst({
+            where: { id: businessUnitId, account_id: accountId },
+        });
+        if (!bu) {
+            throw new NotFoundException({ error: "Business unit not found" });
+        }
+
+        const bankAccount = await this.db.accountBankAccounts.findFirst({
+            where: { id: bankAccountId, account_id: accountId },
+        });
+        if (!bankAccount) {
+            throw new NotFoundException({ error: "Bank account not found" });
+        }
+
+        const existing = await this.db.businessUnitBankAccounts.findFirst({
+            where: {
+                business_unit_id: businessUnitId,
+                bank_account_id: bankAccountId,
+            },
+        });
+        if (existing) {
+            throw new BadRequestException({
+                error: "Bank account is already assigned to this business unit",
+            });
+        }
+
+        const created = await this.db.businessUnitBankAccounts.create({
+            data: {
+                business_unit_id: businessUnitId,
+                account_id: accountId,
+                bank_account_id: bankAccountId,
+                created_by: userInfo.userId,
+                modified_by: userInfo.userId,
+            },
+            include: {
+                AccountBankAccounts: {
+                    include: { Country: true },
+                },
+            },
+        });
+
+        return serializeBigInt({
+            ...created,
+            CustomerBankAccount: created.AccountBankAccounts,
+        });
+    }
+
+    async removeBusinessUnitBank(
+        user: JwtPayload,
+        businessUnitIdRaw: string,
+        junctionIdRaw: string
+    ) {
+        const { accountId } = await this.scope(user);
+        const businessUnitId = this.parseNumericId(
+            businessUnitIdRaw,
+            "business unit ID"
+        );
+        const junctionId = this.parseNumericId(junctionIdRaw, "junction ID");
+
+        const bu = await this.db.businessUnit.findFirst({
+            where: { id: businessUnitId, account_id: accountId },
+        });
+        if (!bu) {
+            throw new NotFoundException({ error: "Business unit not found" });
+        }
+
+        const buBank = await this.db.businessUnitBankAccounts.findFirst({
+            where: {
+                id: junctionId,
+                business_unit_id: businessUnitId,
+                account_id: accountId,
+            },
+        });
+        if (!buBank) {
+            throw new NotFoundException({
+                error: "Business unit bank assignment not found",
+            });
+        }
+
+        await this.db.businessUnitBankAccounts.delete({
+            where: { id: buBank.id },
+        });
+
+        return {
+            message: "Bank account removed from business unit successfully",
+        };
     }
 }

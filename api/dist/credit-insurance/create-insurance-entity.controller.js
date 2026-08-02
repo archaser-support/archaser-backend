@@ -26,11 +26,17 @@ function createInsuranceEntityController(entityType) {
         async list(user, query) {
             return this.service.list(entityType, user, query);
         }
+        async create(user, body) {
+            return this.service.create(entityType, user, body);
+        }
         async byId(user, id) {
             return this.service.getById(entityType, user, this.service.parseId(entityType, id));
         }
         async update(user, id, body) {
             return this.service.update(entityType, user, this.service.parseId(entityType, id), body);
+        }
+        async remove(user, id) {
+            return this.service.remove(entityType, user, this.service.parseId(entityType, id));
         }
     };
     __decorate([
@@ -45,6 +51,16 @@ function createInsuranceEntityController(entityType) {
         __metadata("design:paramtypes", [Object, Object]),
         __metadata("design:returntype", Promise)
     ], InsuranceEntityController.prototype, "list", null);
+    __decorate([
+        (0, common_1.Post)(),
+        (0, common_1.HttpCode)(200),
+        (0, swagger_1.ApiOperation)({ summary: `${entityType} create / upsert (Nest-native)` }),
+        __param(0, (0, current_user_decorator_1.CurrentUser)()),
+        __param(1, (0, common_1.Body)()),
+        __metadata("design:type", Function),
+        __metadata("design:paramtypes", [Object, Object]),
+        __metadata("design:returntype", Promise)
+    ], InsuranceEntityController.prototype, "create", null);
     __decorate([
         (0, common_1.Get)(":id"),
         (0, swagger_1.ApiOperation)({ summary: `${entityType} detail (Nest-native)` }),
@@ -64,6 +80,16 @@ function createInsuranceEntityController(entityType) {
         __metadata("design:paramtypes", [Object, String, Object]),
         __metadata("design:returntype", Promise)
     ], InsuranceEntityController.prototype, "update", null);
+    __decorate([
+        (0, common_1.Delete)(":id"),
+        (0, common_1.HttpCode)(200),
+        (0, swagger_1.ApiOperation)({ summary: `${entityType} delete (Nest-native)` }),
+        __param(0, (0, current_user_decorator_1.CurrentUser)()),
+        __param(1, (0, common_1.Param)("id")),
+        __metadata("design:type", Function),
+        __metadata("design:paramtypes", [Object, String]),
+        __metadata("design:returntype", Promise)
+    ], InsuranceEntityController.prototype, "remove", null);
     InsuranceEntityController = __decorate([
         (0, swagger_1.ApiTags)("entities"),
         (0, swagger_1.ApiBearerAuth)(),

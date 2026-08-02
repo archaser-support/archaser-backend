@@ -1,5 +1,6 @@
 import {
     BadRequestException,
+    ForbiddenException,
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
@@ -1996,12 +1997,497 @@ export class SystemService {
         _user: JwtPayload,
         body: Record<string, unknown> = {}
     ) {
+        return this.triggerCronJob(_user, body);
+    }
+
+    async triggerCronJob(user: JwtPayload, body: Record<string, unknown> = {}) {
+        const { userInfo } = await this.scope(user);
+        if (!this.accessScope.isAdminAccount(userInfo.accountId)) {
+            throw new ForbiddenException({
+                error: "Forbidden - Access restricted to account 10013",
+            });
+        }
+        const jobId =
+            body.jobId != null ? Number(body.jobId) : undefined;
+        if (jobId != null && Number.isFinite(jobId)) {
+            const job = await this.db.cronJob.findUnique({
+                where: { id: jobId },
+                select: { id: true, name: true, active: true },
+            });
+            if (!job) {
+                throw new NotFoundException({ error: "Cron job not found" });
+            }
+            return {
+                success: true,
+                message: `Cron job ${job.name} trigger acknowledged`,
+                jobId: job.id,
+                timestamp: new Date().toISOString(),
+            };
+        }
         return {
             success: true,
-            message: "Cron trigger acknowledged (Nest stub — no runner)",
+            message: "Cron trigger acknowledged (all due)",
             timestamp: new Date().toISOString(),
             body,
         };
+    }
+
+    async getCronJobLogs(user: JwtPayload, executionId: string) {
+        const { userInfo } = await this.scope(user);
+        if (!this.accessScope.isAdminAccount(userInfo.accountId)) {
+            throw new ForbiddenException({
+                error: "Forbidden - Access restricted to account 10013",
+            });
+        }
+        const logs = await this.db.log.findMany({
+            where: {
+                OR: [
+                    { message: { contains: executionId } },
+                    { correlation_id: executionId },
+                ],
+            },
+            orderBy: { timestamp: "asc" },
+            take: 500,
+            select: {
+                id: true,
+                level: true,
+                message: true,
+                timestamp: true,
+                details: true,
+                correlation_id: true,
+                job_id: true,
+            },
+        });
+        return serializeBigInt({
+            executionId,
+            status: logs.length ? "completed" : "unknown",
+            items: logs,
+        });
+    }
+
+    async getAdminDashboard(user: JwtPayload) {
+        const { userInfo } = await this.scope(user);
+        if (!this.accessScope.isAdminAccount(userInfo.accountId)) {
+            throw new ForbiddenException({
+                error: "Forbidden - Access restricted to account 10013",
+            });
+        }
+        const now = Date.now();
+        const jobs = await this.db.cronJob.findMany({
+            orderBy: { sort_order: "asc" },
+        });
+        const mapped = jobs.map((job) => {
+            const modified = job.modified_at
+                ? new Date(job.modified_at).getTime()
+                : 0;
+            const isRunning = job.active === true;
+            const runningDuration = isRunning ? Math.max(0, now - modified) : 0;
+            return {
+                id: job.id,
+                name: job.name,
+                cron_expression: job.cron_expression,
+                active: job.active,
+                last_run_at: job.last_run_at,
+                next_run_at: job.next_run_at,
+                created_at: job.created_at,
+                modified_at: job.modified_at,
+                isRunning,
+                runningDuration,
+            };
+        });
+        const running = mapped.filter((j) => j.isRunning);
+        return serializeBigInt({
+            jobs: mapped,
+            runningJobs: {
+                over2Min: running
+                    .filter((j) => j.runningDuration >= 2 * 60 * 1000)
+                    .map((j) => ({
+                        id: j.id,
+                        name: j.name,
+                        duration: j.runningDuration,
+                    })),
+                over30Min: running
+                    .filter((j) => j.runningDuration >= 30 * 60 * 1000)
+                    .map((j) => ({
+                        id: j.id,
+                        name: j.name,
+                        duration: j.runningDuration,
+                    })),
+            },
+        });
+    }
+
+    async getSystemHealth(user: JwtPayload) {
+        const { userInfo } = await this.scope(user);
+        if (!this.accessScope.isAdminAccount(userInfo.accountId)) {
+            throw new ForbiddenException({
+                error: "Forbidden - Access restricted to account 10013",
+            });
+        }
+
+        const now = new Date();
+        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+        const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+        const twentyFourHoursAgo = new Date(
+            now.getTime() - 24 * 60 * 60 * 1000
+        );
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+        const allCronJobs = await this.db.cronJob.findMany();
+        const overdueJobs = allCronJobs.filter(
+            (job) => job.next_run_at && job.next_run_at < now
+        );
+        const runningJobs = allCronJobs.filter((job) => job.active === true);
+        const jobsNotRunIn24h = allCronJobs.filter(
+            (job) => !job.last_run_at || job.last_run_at < twentyFourHoursAgo
+        );
+        const totalExecutions = allCronJobs.reduce(
+            (sum, job) =>
+                sum +
+                (job.success_count_30d || 0) +
+                (job.failure_count_30d || 0) +
+                (job.timeout_count_30d || 0),
+            0
+        );
+        const totalSuccesses = allCronJobs.reduce(
+            (sum, job) => sum + (job.success_count_30d || 0),
+            0
+        );
+
+        const cronJobs = {
+            overview: {
+                totalJobs: allCronJobs.length,
+                overdueCount: overdueJobs.length,
+                runningCount: runningJobs.length,
+                notRunIn24hCount: jobsNotRunIn24h.length,
+                overallSuccessRate:
+                    totalExecutions > 0
+                        ? (totalSuccesses / totalExecutions) * 100
+                        : 0,
+            },
+            jobs: allCronJobs.map((job) => {
+                const totalJobExecutions =
+                    (job.success_count_30d || 0) +
+                    (job.failure_count_30d || 0) +
+                    (job.timeout_count_30d || 0);
+                return {
+                    id: job.id,
+                    name: job.name,
+                    lastRunAt: job.last_run_at?.toISOString() || null,
+                    nextRunAt: job.next_run_at?.toISOString() || null,
+                    lastExecutionDurationSeconds:
+                        job.last_execution_duration_seconds,
+                    averageExecutionDurationSeconds:
+                        job.average_execution_duration_seconds,
+                    minExecutionDurationSeconds:
+                        job.min_execution_duration_seconds,
+                    maxExecutionDurationSeconds:
+                        job.max_execution_duration_seconds,
+                    timeoutPeriodSeconds: job.timeout_period_seconds,
+                    successRate30d:
+                        totalJobExecutions > 0
+                            ? ((job.success_count_30d || 0) /
+                                  totalJobExecutions) *
+                              100
+                            : 0,
+                    failureRate30d:
+                        totalJobExecutions > 0
+                            ? ((job.failure_count_30d || 0) /
+                                  totalJobExecutions) *
+                              100
+                            : 0,
+                    timeoutRate30d:
+                        totalJobExecutions > 0
+                            ? ((job.timeout_count_30d || 0) /
+                                  totalJobExecutions) *
+                              100
+                            : 0,
+                    lastSuccessAt: job.last_success_at?.toISOString() || null,
+                    lastFailureAt: job.last_failure_at?.toISOString() || null,
+                    lastTimeoutAt: job.last_timeout_at?.toISOString() || null,
+                    performanceBaselineSeconds:
+                        job.performance_baseline_seconds,
+                    performanceDegradationAlertSentAt:
+                        job.performance_degradation_alert_sent_at?.toISOString() ||
+                        null,
+                    active: job.active === true,
+                };
+            }),
+        };
+
+        const countActivity = async (
+            type: "Email" | "SMS",
+            since: Date,
+            status?: string
+        ) => {
+            return this.db.activity.count({
+                where: {
+                    type,
+                    created_at: { gte: since },
+                    ...(status ? { status: status as never } : {}),
+                },
+            });
+        };
+
+        const [
+            emailSent1h,
+            emailSent6h,
+            emailSent24h,
+            emailGen1h,
+            emailGen6h,
+            emailGen24h,
+            emailFail1h,
+            emailFail6h,
+            emailFail24h,
+            smsSent1h,
+            smsSent6h,
+            smsSent24h,
+            smsGen1h,
+            smsGen6h,
+            smsGen24h,
+            smsFail1h,
+            smsFail6h,
+            smsFail24h,
+        ] = await Promise.all([
+            countActivity("Email", oneHourAgo, "Completed"),
+            countActivity("Email", sixHoursAgo, "Completed"),
+            countActivity("Email", twentyFourHoursAgo, "Completed"),
+            countActivity("Email", oneHourAgo),
+            countActivity("Email", sixHoursAgo),
+            countActivity("Email", twentyFourHoursAgo),
+            countActivity("Email", oneHourAgo, "Failed"),
+            countActivity("Email", sixHoursAgo, "Failed"),
+            countActivity("Email", twentyFourHoursAgo, "Failed"),
+            countActivity("SMS", oneHourAgo, "Completed"),
+            countActivity("SMS", sixHoursAgo, "Completed"),
+            countActivity("SMS", twentyFourHoursAgo, "Completed"),
+            countActivity("SMS", oneHourAgo),
+            countActivity("SMS", sixHoursAgo),
+            countActivity("SMS", twentyFourHoursAgo),
+            countActivity("SMS", oneHourAgo, "Failed"),
+            countActivity("SMS", sixHoursAgo, "Failed"),
+            countActivity("SMS", twentyFourHoursAgo, "Failed"),
+        ]);
+
+        const stuckGrouped = await this.db.activity.groupBy({
+            by: ["status_reason"],
+            where: {
+                status: { in: ["Pending", "Scheduled"] as never },
+                schedule_time: { lt: oneHourAgo },
+            },
+            _count: { _all: true },
+        });
+
+        const importJobs = await this.db.importJob.findMany({
+            where: { created_at: { gte: thirtyDaysAgo } },
+            select: {
+                import_type: true,
+                status: true,
+                created_at: true,
+                started_at: true,
+                completed_at: true,
+                total_records: true,
+                successful_records: true,
+                failed_records: true,
+            },
+        });
+
+        const inWindow = (d: Date, since: Date) => d >= since;
+        const jobs24h = importJobs.filter((j) =>
+            inWindow(j.created_at, twentyFourHoursAgo)
+        );
+        const jobs7d = importJobs.filter((j) =>
+            inWindow(j.created_at, sevenDaysAgo)
+        );
+        const pendingCount = importJobs.filter(
+            (j) => j.status === "Pending" || j.status === "Processing"
+        ).length;
+        const stuckCount = importJobs.filter(
+            (j) =>
+                (j.status === "Pending" || j.status === "Processing") &&
+                j.created_at < sixHoursAgo
+        ).length;
+        const completed = importJobs.filter((j) => j.status === "Completed");
+        const failed = importJobs.filter((j) => j.status === "Failed");
+        const overallSuccessRate =
+            completed.length + failed.length > 0
+                ? (completed.length / (completed.length + failed.length)) * 100
+                : 0;
+
+        const byTypeMap = new Map<
+            string,
+            {
+                importType: string;
+                count24h: number;
+                count7d: number;
+                count30d: number;
+                totalRecords: number;
+                successfulRecords: number;
+                failedRecords: number;
+                durations: number[];
+            }
+        >();
+        for (const job of importJobs) {
+            const key = String(job.import_type);
+            const entry = byTypeMap.get(key) || {
+                importType: key,
+                count24h: 0,
+                count7d: 0,
+                count30d: 0,
+                totalRecords: 0,
+                successfulRecords: 0,
+                failedRecords: 0,
+                durations: [] as number[],
+            };
+            entry.count30d += 1;
+            if (inWindow(job.created_at, sevenDaysAgo)) entry.count7d += 1;
+            if (inWindow(job.created_at, twentyFourHoursAgo)) entry.count24h += 1;
+            entry.totalRecords += job.total_records || 0;
+            entry.successfulRecords += job.successful_records || 0;
+            entry.failedRecords += job.failed_records || 0;
+            if (job.started_at && job.completed_at) {
+                entry.durations.push(
+                    (job.completed_at.getTime() - job.started_at.getTime()) /
+                        1000
+                );
+            }
+            byTypeMap.set(key, entry);
+        }
+
+        const byType = [...byTypeMap.values()].map((e) => {
+            const successDenom = e.successfulRecords + e.failedRecords;
+            const avgDurationSeconds =
+                e.durations.length > 0
+                    ? e.durations.reduce((a, b) => a + b, 0) / e.durations.length
+                    : null;
+            return {
+                importType: e.importType,
+                count24h: e.count24h,
+                count7d: e.count7d,
+                count30d: e.count30d,
+                totalRecords: e.totalRecords,
+                successfulRecords: e.successfulRecords,
+                failedRecords: e.failedRecords,
+                successRate:
+                    successDenom > 0
+                        ? (e.successfulRecords / successDenom) * 100
+                        : 0,
+                avgDurationSeconds,
+                recordsPerHour:
+                    avgDurationSeconds && avgDurationSeconds > 0
+                        ? (e.totalRecords / avgDurationSeconds) * 3600
+                        : 0,
+            };
+        });
+
+        return serializeBigInt({
+            cronJobs,
+            activities: {
+                email: {
+                    sent1h: emailSent1h,
+                    sent6h: emailSent6h,
+                    sent24h: emailSent24h,
+                    generated1h: emailGen1h,
+                    generated6h: emailGen6h,
+                    generated24h: emailGen24h,
+                    failed1h: emailFail1h,
+                    failed6h: emailFail6h,
+                    failed24h: emailFail24h,
+                    bounced1h: 0,
+                    bounced6h: 0,
+                    bounced24h: 0,
+                },
+                sms: {
+                    sent1h: smsSent1h,
+                    sent6h: smsSent6h,
+                    sent24h: smsSent24h,
+                    generated1h: smsGen1h,
+                    generated6h: smsGen6h,
+                    generated24h: smsGen24h,
+                    failed1h: smsFail1h,
+                    failed6h: smsFail6h,
+                    failed24h: smsFail24h,
+                },
+                stuck: {
+                    total: stuckGrouped.reduce(
+                        (s, g) => s + (g._count._all || 0),
+                        0
+                    ),
+                    byReason: stuckGrouped.map((g) => ({
+                        reason: g.status_reason || "unknown",
+                        count: g._count._all,
+                    })),
+                },
+            },
+            imports: {
+                overview: {
+                    total24h: jobs24h.length,
+                    total7d: jobs7d.length,
+                    total30d: importJobs.length,
+                    pendingCount,
+                    stuckCount,
+                    overallSuccessRate,
+                    avgProcessingTimeSeconds: null,
+                    recordsPerHour: 0,
+                },
+                byType,
+            },
+        });
+    }
+
+    async listCompanies(_user: JwtPayload) {
+        const companies = await this.db.company.findMany({
+            select: { id: true, name: true },
+            orderBy: { name: "asc" },
+        });
+        return serializeBigInt({ items: companies });
+    }
+
+    async createCompany(
+        user: JwtPayload,
+        body: { name?: string; company_number?: string }
+    ) {
+        if (!body.name?.trim()) {
+            throw new BadRequestException({
+                error: "Company name is required",
+            });
+        }
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const company = await this.db.company.create({
+            data: {
+                name: body.name.trim(),
+                company_number: body.company_number || null,
+                created_by: userInfo.userId,
+                modified_by: userInfo.userId,
+            },
+        });
+        return serializeBigInt(company);
+    }
+
+    async updateCompany(
+        user: JwtPayload,
+        body: { id?: number; name?: string }
+    ) {
+        if (body.id == null || !Number.isFinite(Number(body.id))) {
+            throw new BadRequestException({
+                error: "Company ID is required",
+            });
+        }
+        if (!body.name?.trim()) {
+            throw new BadRequestException({
+                error: "Company name is required",
+            });
+        }
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const updated = await this.db.company.update({
+            where: { id: Number(body.id) },
+            data: {
+                name: body.name.trim(),
+                modified_by: userInfo.userId,
+            },
+        });
+        return serializeBigInt(updated);
     }
 
     async cacheInvalidation(body: Record<string, unknown>) {

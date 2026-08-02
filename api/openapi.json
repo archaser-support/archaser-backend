@@ -81,6 +81,70 @@
         ]
       }
     },
+    "/auth/forget-password": {
+      "post": {
+        "operationId": "AuthController_forgetPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgetPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Request password reset email",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/reset-password": {
+      "post": {
+        "operationId": "AuthController_resetPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Reset password with token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/auth/scope-probe": {
       "get": {
         "operationId": "AuthController_scopeProbe",
@@ -607,6 +671,64 @@
             "description": "Not found / not strangler’d"
           }
         }
+      }
+    },
+    "/api/ws/notifications": {
+      "get": {
+        "operationId": "RealtimeWsController_notifications",
+        "parameters": [
+          {
+            "name": "access_token",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "SSE notification stream (Nest-owned). EventSource may pass ?access_token= for Amplify cross-origin.",
+        "tags": [
+          "realtime"
+        ]
+      }
+    },
+    "/api/ws/control-center": {
+      "get": {
+        "operationId": "RealtimeWsController_controlCenter",
+        "parameters": [
+          {
+            "name": "access_token",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "SSE control-center stream (Nest-owned). EventSource may pass ?access_token=.",
+        "tags": [
+          "realtime"
+        ]
       }
     },
     "/api/gateway/cron/sync-schedules": {
@@ -1144,6 +1266,186 @@
         ]
       }
     },
+    "/api/entities/customers/{id}/top-ups": {
+      "get": {
+        "operationId": "CustomersController_topUps",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Customer top-ups list (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      },
+      "post": {
+        "operationId": "CustomersController_createTopUp",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a customer top-up (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/customers/{id}/top-ups/{topUpId}": {
+      "delete": {
+        "operationId": "CustomersController_cancelTopUp",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "topUpId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cancel a customer top-up (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/customers/{id}/checkpoint": {
+      "get": {
+        "operationId": "CustomersController_checkpointStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Customer checkpoint status (non-production only)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/customers/{id}/checkpoint/save": {
+      "post": {
+        "operationId": "CustomersController_checkpointSave",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Save a customer checkpoint (non-production only)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/customers/{id}/checkpoint/restore": {
+      "post": {
+        "operationId": "CustomersController_checkpointRestore",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Restore a customer checkpoint (non-production only)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/customers/{id}/stuck-activities": {
       "get": {
         "operationId": "CustomersController_stuckActivities",
@@ -1168,6 +1470,64 @@
           }
         ],
         "summary": "Customer stuck-activities flag (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/customers/{id}/invoices-available-for-dispute": {
+      "get": {
+        "operationId": "CustomersController_invoicesAvailableForDispute",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Invoices selectable for a dispute (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/customers/{id}/comments": {
+      "post": {
+        "operationId": "CustomersController_addComment",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Add an internal comment activity on a customer",
         "tags": [
           "entities"
         ]
@@ -1271,6 +1631,181 @@
           }
         ],
         "summary": "Update a customer dispute (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/customers/search": {
+      "get": {
+        "operationId": "CustomersLeafController_search",
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "excludeId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Customer typeahead search",
+        "tags": [
+          "customers"
+        ]
+      }
+    },
+    "/api/customers/aggregated-data/{customerId}": {
+      "get": {
+        "operationId": "CustomersLeafController_aggregatedData",
+        "parameters": [
+          {
+            "name": "customerId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Parent customer aggregated child metrics",
+        "tags": [
+          "customers"
+        ]
+      }
+    },
+    "/api/customers/validate-business-unit-access": {
+      "post": {
+        "operationId": "CustomersLeafController_validateBusinessUnitAccess",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Validate access to customers by customer number (import)",
+        "tags": [
+          "customers"
+        ]
+      }
+    },
+    "/api/business-units/validate-access": {
+      "post": {
+        "operationId": "BusinessUnitsController_validateAccess",
+        "parameters": [],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Validate user access to business units by external id",
+        "tags": [
+          "business-units"
+        ]
+      }
+    },
+    "/api/entities/invoices/status": {
+      "get": {
+        "operationId": "InvoicesController_statuses",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Invoice status catalog",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/invoices/available-for-credit/{customerId}": {
+      "get": {
+        "operationId": "InvoicesController_availableForCredit",
+        "parameters": [
+          {
+            "name": "customerId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Open invoices that can receive credit",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/invoices/assign-credit": {
+      "post": {
+        "operationId": "InvoicesController_assignCredit",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Assign a credit invoice to a target invoice",
         "tags": [
           "entities"
         ]
@@ -1988,6 +2523,35 @@
         ]
       }
     },
+    "/api/entities/accounts/{id}/status": {
+      "put": {
+        "operationId": "AccountsAccountAdminController_updateStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "accounts status update (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/accounts/{id}": {
       "get": {
         "tags": [
@@ -2033,6 +2597,28 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — accounts",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
       "post": {
         "tags": [
           "entities"
@@ -2056,28 +2642,6 @@
         }
       },
       "patch": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity by id — accounts",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
         "tags": [
           "entities"
         ],
@@ -2232,6 +2796,35 @@
         ]
       }
     },
+    "/api/entities/users/{id}/status": {
+      "put": {
+        "operationId": "UsersAccountAdminController_updateStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "users status update (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/users/{id}": {
       "get": {
         "tags": [
@@ -2277,6 +2870,28 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — users",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
       "post": {
         "tags": [
           "entities"
@@ -2300,28 +2915,6 @@
         }
       },
       "patch": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity by id — users",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
         "tags": [
           "entities"
         ],
@@ -2476,6 +3069,35 @@
         ]
       }
     },
+    "/api/entities/business-units/{id}/status": {
+      "put": {
+        "operationId": "BusinessUnitsAccountAdminController_updateStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "business-units status update (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/business-units/{id}": {
       "get": {
         "tags": [
@@ -2521,6 +3143,28 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — business-units",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
       "post": {
         "tags": [
           "entities"
@@ -2544,28 +3188,6 @@
         }
       },
       "patch": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity by id — business-units",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
         "tags": [
           "entities"
         ],
@@ -2720,6 +3342,35 @@
         ]
       }
     },
+    "/api/entities/bank-accounts/{id}/status": {
+      "put": {
+        "operationId": "BankAccountsAccountAdminController_updateStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "bank-accounts status update (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/bank-accounts/{id}": {
       "get": {
         "tags": [
@@ -2765,6 +3416,28 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — bank-accounts",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
       "post": {
         "tags": [
           "entities"
@@ -2788,28 +3461,6 @@
         }
       },
       "patch": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity by id — bank-accounts",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
         "tags": [
           "entities"
         ],
@@ -2964,6 +3615,35 @@
         ]
       }
     },
+    "/api/entities/customer-banks/{id}/status": {
+      "put": {
+        "operationId": "CustomerBanksAccountAdminController_updateStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "customer-banks status update (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/customer-banks/{id}": {
       "get": {
         "tags": [
@@ -3009,6 +3689,28 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — customer-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
       "post": {
         "tags": [
           "entities"
@@ -3052,146 +3754,85 @@
             "description": "Not found / not strangler’d"
           }
         }
-      },
-      "delete": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity by id — customer-banks",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
       }
     },
-    "/api/entities/business-unit-banks": {
+    "/api/entities/business-unit-banks/{businessUnitId}": {
       "get": {
-        "tags": [
-          "entities"
+        "operationId": "BusinessUnitBanksController_list",
+        "parameters": [
+          {
+            "name": "businessUnitId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
-        "summary": "Entity list/create — business-unit-banks",
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
         "security": [
           {
             "bearer": []
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
+        "summary": "List bank accounts assigned to a business unit",
+        "tags": [
+          "entities"
+        ]
       },
       "post": {
-        "tags": [
-          "entities"
+        "operationId": "BusinessUnitBanksController_add",
+        "parameters": [
+          {
+            "name": "businessUnitId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
-        "summary": "Entity list/create — business-unit-banks",
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
         "security": [
           {
             "bearer": []
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "put": {
+        "summary": "Assign a bank account to a business unit",
         "tags": [
           "entities"
-        ],
-        "summary": "Entity list/create — business-unit-banks",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity list/create — business-unit-banks",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity list/create — business-unit-banks",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
+        ]
       }
     },
-    "/api/entities/business-unit-banks/collection-agents": {
-      "get": {
-        "operationId": "BusinessUnitBanksAccountAdminController_collectionAgents",
-        "parameters": [],
+    "/api/entities/business-unit-banks/{businessUnitId}/{junctionId}": {
+      "delete": {
+        "operationId": "BusinessUnitBanksController_remove",
+        "parameters": [
+          {
+            "name": "businessUnitId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "junctionId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": ""
@@ -3202,122 +3843,167 @@
             "bearer": []
           }
         ],
-        "summary": "Active collection agents (users entity only)",
+        "summary": "Remove a bank account assignment from a business unit",
         "tags": [
           "entities"
         ]
       }
     },
-    "/api/entities/business-unit-banks/{id}": {
+    "/api/entities/accounts/{accountId}/business-units": {
       "get": {
-        "tags": [
-          "entities"
+        "operationId": "AccountsBusinessUnitsController_list",
+        "parameters": [
+          {
+            "name": "accountId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
         "security": [
           {
             "bearer": []
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "put": {
+        "summary": "List business units for an account (Nest-native)",
         "tags": [
           "entities"
+        ]
+      }
+    },
+    "/api/entities/accounts/{accountId}/bank-accounts": {
+      "get": {
+        "operationId": "AccountsBankAccountsController_list",
+        "parameters": [
+          {
+            "name": "accountId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
         "security": [
           {
             "bearer": []
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
+        "summary": "List bank accounts for an account (Nest-native)",
+        "tags": [
+          "entities"
+        ]
       },
       "post": {
-        "tags": [
-          "entities"
+        "operationId": "AccountsBankAccountsController_create",
+        "parameters": [
+          {
+            "name": "accountId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
         "security": [
           {
             "bearer": []
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "patch": {
+        "summary": "Create bank account for an account",
         "tags": [
           "entities"
+        ]
+      }
+    },
+    "/api/entities/accounts/{accountId}/bank-accounts/{id}": {
+      "put": {
+        "operationId": "AccountsBankAccountsController_update",
+        "parameters": [
+          {
+            "name": "accountId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
         "security": [
           {
             "bearer": []
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
+        "summary": "Update bank account for an account",
+        "tags": [
+          "entities"
+        ]
       },
       "delete": {
-        "tags": [
-          "entities"
+        "operationId": "AccountsBankAccountsController_remove",
+        "parameters": [
+          {
+            "name": "accountId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
         "security": [
           {
             "bearer": []
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
+        "summary": "Delete bank account for an account",
+        "tags": [
+          "entities"
+        ]
       }
     },
     "/api/bank-accounts": {
@@ -3354,6 +4040,151 @@
         "summary": "Active account bank accounts leaf (Nest-native)",
         "tags": [
           "bank-accounts"
+        ]
+      }
+    },
+    "/api/entities/users/system-administrator-check": {
+      "get": {
+        "operationId": "UsersExtrasController_systemAdministratorCheck",
+        "parameters": [],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Whether the caller is a system administrator",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/users/view-as": {
+      "post": {
+        "operationId": "UsersExtrasController_setViewAs",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start view-as for another user",
+        "tags": [
+          "entities"
+        ]
+      },
+      "delete": {
+        "operationId": "UsersExtrasController_clearViewAs",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Clear view-as",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/users/{id}/change-password": {
+      "post": {
+        "operationId": "UsersExtrasController_changePassword",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Change a user's password (admin)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/accounts/{id}/gdpr-report": {
+      "get": {
+        "operationId": "AccountsExtrasController_gdprReport",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Account GDPR export report metadata",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/accounts/{id}/restore": {
+      "post": {
+        "operationId": "AccountsExtrasController_restore",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Restore a soft-deleted account",
+        "tags": [
+          "entities"
         ]
       }
     },
@@ -5215,6 +6046,28 @@
           }
         }
       },
+      "put": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Operations by id — notifications",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
       "get": {
         "tags": [
           "operations"
@@ -5259,11 +6112,101 @@
           }
         }
       },
-      "put": {
+      "patch": {
         "tags": [
           "operations"
         ],
         "summary": "Operations by id — notifications",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      }
+    },
+    "/api/operations/notifications": {
+      "delete": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Operations — notifications",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Operations — notifications",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Operations — notifications",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Operations — notifications",
         "security": [
           {
             "bearer": []
@@ -5285,7 +6228,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — notifications",
+        "summary": "Operations — notifications",
         "security": [
           {
             "bearer": []
@@ -5319,6 +6262,26 @@
           }
         ],
         "summary": "Dispute statistics",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/api/operations/legal-cases/stats": {
+      "get": {
+        "operationId": "OperationsDomainController_legalCasesStats",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Legal cases statistics",
         "tags": [
           "operations"
         ]
@@ -6235,6 +7198,67 @@
           }
         ],
         "summary": "Communication intelligence learning data",
+        "tags": [
+          "communication-intelligence"
+        ]
+      }
+    },
+    "/api/communication-intelligence/analytics": {
+      "get": {
+        "operationId": "CommunicationIntelligenceController_analytics",
+        "parameters": [
+          {
+            "name": "customerId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "channel",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "startDate",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "endDate",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Channel selection analytics aggregates",
         "tags": [
           "communication-intelligence"
         ]
@@ -7536,6 +8560,55 @@
         ]
       }
     },
+    "/api/entities/insurance-policies/bulk-replace": {
+      "post": {
+        "operationId": "InsurancePoliciesActionsController_bulkReplace",
+        "parameters": [],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reassign customers from one policy to another",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/insurance-policies/{id}/customer-prefill": {
+      "get": {
+        "operationId": "InsurancePoliciesActionsController_customerPrefill",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Prefill customer insurance fields from policy / named / country",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/insurance-policies": {
       "get": {
         "tags": [
@@ -7693,6 +8766,28 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — insurance-policies",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
       "post": {
         "tags": [
           "entities"
@@ -7716,28 +8811,6 @@
         }
       },
       "patch": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity by id — insurance-policies",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
         "tags": [
           "entities"
         ],
@@ -7917,6 +8990,28 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — insurance-policy-countries",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
       "post": {
         "tags": [
           "entities"
@@ -7940,28 +9035,6 @@
         }
       },
       "patch": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity by id — insurance-policy-countries",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
         "tags": [
           "entities"
         ],
@@ -8141,6 +9214,28 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — insurance-policy-named-policies",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
       "post": {
         "tags": [
           "entities"
@@ -8164,28 +9259,6 @@
         }
       },
       "patch": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Entity by id — insurance-policy-named-policies",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
         "tags": [
           "entities"
         ],
@@ -8420,9 +9493,16 @@
                 "disputes",
                 "create-dispute",
                 "view-disputes",
-                "wrong-contact",
-                "top-ups"
+                "wrong-contact"
               ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "required": true,
+            "in": "query",
+            "schema": {
               "type": "string"
             }
           }
@@ -8464,9 +9544,16 @@
                 "disputes",
                 "create-dispute",
                 "view-disputes",
-                "wrong-contact",
-                "top-ups"
+                "wrong-contact"
               ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "required": true,
+            "in": "query",
+            "schema": {
               "type": "string"
             }
           }
@@ -8508,9 +9595,16 @@
                 "disputes",
                 "create-dispute",
                 "view-disputes",
-                "wrong-contact",
-                "top-ups"
+                "wrong-contact"
               ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "required": true,
+            "in": "query",
+            "schema": {
               "type": "string"
             }
           }
@@ -8552,9 +9646,16 @@
                 "disputes",
                 "create-dispute",
                 "view-disputes",
-                "wrong-contact",
-                "top-ups"
+                "wrong-contact"
               ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "required": true,
+            "in": "query",
+            "schema": {
               "type": "string"
             }
           }
@@ -8596,9 +9697,16 @@
                 "disputes",
                 "create-dispute",
                 "view-disputes",
-                "wrong-contact",
-                "top-ups"
+                "wrong-contact"
               ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "required": true,
+            "in": "query",
+            "schema": {
               "type": "string"
             }
           }
@@ -8640,9 +9748,16 @@
                 "disputes",
                 "create-dispute",
                 "view-disputes",
-                "wrong-contact",
-                "top-ups"
+                "wrong-contact"
               ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "required": true,
+            "in": "query",
+            "schema": {
               "type": "string"
             }
           }
@@ -8684,9 +9799,16 @@
                 "disputes",
                 "create-dispute",
                 "view-disputes",
-                "wrong-contact",
-                "top-ups"
+                "wrong-contact"
               ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "required": true,
+            "in": "query",
+            "schema": {
               "type": "string"
             }
           }
@@ -8728,9 +9850,16 @@
                 "disputes",
                 "create-dispute",
                 "view-disputes",
-                "wrong-contact",
-                "top-ups"
+                "wrong-contact"
               ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "required": true,
+            "in": "query",
+            "schema": {
               "type": "string"
             }
           }
@@ -9333,6 +10462,26 @@
         ]
       }
     },
+    "/api/system/operation-dashboard/details": {
+      "get": {
+        "operationId": "SystemController_operationDashboardDetails",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Operation dashboard drilldown (Nest-native)",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/api/system/agents": {
       "get": {
         "operationId": "SystemController_agents",
@@ -9484,6 +10633,180 @@
           }
         ],
         "summary": "Trigger cron jobs (Nest stub ack)",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/admin/dashboard": {
+      "get": {
+        "operationId": "SystemController_adminDashboard",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Admin cron monitor dashboard",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/admin/system-health": {
+      "get": {
+        "operationId": "SystemController_systemHealth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Admin system health aggregates",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/admin/cron-jobs/trigger": {
+      "post": {
+        "operationId": "SystemController_cronJobsTrigger",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Trigger a cron job by id (or all due)",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/admin/cron-jobs/logs/{executionId}": {
+      "get": {
+        "operationId": "SystemController_cronJobLogs",
+        "parameters": [
+          {
+            "name": "executionId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Fetch cron execution logs by execution id",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/company": {
+      "get": {
+        "operationId": "SystemController_listCompanies",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List companies",
+        "tags": [
+          "system"
+        ]
+      },
+      "post": {
+        "operationId": "SystemController_createCompany",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a company",
+        "tags": [
+          "system"
+        ]
+      },
+      "put": {
+        "operationId": "SystemController_updateCompany",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update a company (id in body)",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/company/{id}": {
+      "put": {
+        "operationId": "SystemController_updateCompanyById",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update a company by path id",
         "tags": [
           "system"
         ]
@@ -9665,6 +10988,230 @@
           "entities"
         ],
         "summary": "Entity list/create — customer-collection-period",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      }
+    },
+    "/api/entities/business-unit-banks": {
+      "get": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity list/create — business-unit-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity list/create — business-unit-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity list/create — business-unit-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity list/create — business-unit-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity list/create — business-unit-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      }
+    },
+    "/api/entities/business-unit-banks/{id}": {
+      "get": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — business-unit-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — business-unit-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — business-unit-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — business-unit-banks",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (legacy Pages API shape)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found / not strangler’d"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Entity by id — business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -10561,118 +12108,6 @@
           "operations"
         ],
         "summary": "Operations by id — legal-cases",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      }
-    },
-    "/api/operations/notifications": {
-      "get": {
-        "tags": [
-          "operations"
-        ],
-        "summary": "Operations — notifications",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "operations"
-        ],
-        "summary": "Operations — notifications",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "operations"
-        ],
-        "summary": "Operations — notifications",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "operations"
-        ],
-        "summary": "Operations — notifications",
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "operations"
-        ],
-        "summary": "Operations — notifications",
         "security": [
           {
             "bearer": []
@@ -12975,107 +14410,15 @@
         }
       }
     },
-    "/api/customers/{customerUUID}/top-ups": {
-      "get": {
-        "tags": [
-          "portal-customers"
-        ],
-        "summary": "Portal customer — top-ups",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "portal-customers"
-        ],
-        "summary": "Portal customer — top-ups",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "portal-customers"
-        ],
-        "summary": "Portal customer — top-ups",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "portal-customers"
-        ],
-        "summary": "Portal customer — top-ups",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "portal-customers"
-        ],
-        "summary": "Portal customer — top-ups",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "OK (legacy Pages API shape)"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not found / not strangler’d"
-          }
-        }
-      }
-    },
     "/api/ws/{path}": {
       "get": {
         "tags": [
-          "proxy-keep-on-next"
+          "realtime"
         ],
-        "summary": "WebSocket — keep on Next at reverse proxy (D2=A); Nest does not own upgrades",
+        "summary": "SSE realtime on Nest (notifications, control-center). EventSource may use ?access_token=.",
         "responses": {
-          "501": {
-            "description": "Must terminate on Next, not Nest"
+          "200": {
+            "description": "text/event-stream from Nest RealtimeWsController"
           }
         }
       }
@@ -13096,7 +14439,7 @@
   },
   "info": {
     "title": "Archaser API",
-    "description": "Archaser Nest API — Nest-native product HTTP (reports, system, activities, search, roles/permissions, entities, operations, import, portal, credit-insurance, gateway, and more). D2=A: reverse proxy keeps /api/ws and /api/auth on Next.",
+    "description": "Archaser Nest API — Nest-native product HTTP (reports, system, activities, search, roles/permissions, entities, operations, import, portal, credit-insurance, gateway, and more). Nest owns /api/ws SSE; reverse proxy keeps /api/auth on Next until Amplify-only.",
     "version": "0.4.0",
     "contact": {}
   },
@@ -13168,11 +14511,83 @@
           "name": {
             "type": "object",
             "nullable": true
+          },
+          "language": {
+            "type": "object",
+            "nullable": true
+          },
+          "timezone": {
+            "type": "object",
+            "nullable": true
+          },
+          "locale": {
+            "type": "object",
+            "nullable": true
+          },
+          "account_name": {
+            "type": "object",
+            "nullable": true
+          },
+          "primary_color": {
+            "type": "object",
+            "nullable": true
+          },
+          "secondary_color": {
+            "type": "object",
+            "nullable": true
+          },
+          "currency": {
+            "type": "object",
+            "nullable": true
+          },
+          "sidebar_collapsed": {
+            "type": "object",
+            "nullable": true
           }
         },
         "required": [
           "sub",
           "username"
+        ]
+      },
+      "ForgetPasswordDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "MessageResponseDto": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "ResetPasswordDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
         ]
       },
       "ScopeProbeResponseDto": {

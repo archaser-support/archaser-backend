@@ -1,8 +1,11 @@
 import {
     Body,
     Controller,
+    Delete,
     Get,
+    HttpCode,
     Param,
+    Post,
     Put,
     Query,
     Type,
@@ -49,6 +52,16 @@ export function createInsuranceEntityController(
             return this.service.list(entityType, user, query);
         }
 
+        @Post()
+        @HttpCode(200)
+        @ApiOperation({ summary: `${entityType} create / upsert (Nest-native)` })
+        async create(
+            @CurrentUser() user: JwtPayload,
+            @Body() body: Record<string, unknown>
+        ) {
+            return this.service.create(entityType, user, body);
+        }
+
         @Get(":id")
         @ApiOperation({ summary: `${entityType} detail (Nest-native)` })
         async byId(@CurrentUser() user: JwtPayload, @Param("id") id: string) {
@@ -71,6 +84,20 @@ export function createInsuranceEntityController(
                 user,
                 this.service.parseId(entityType, id),
                 body
+            );
+        }
+
+        @Delete(":id")
+        @HttpCode(200)
+        @ApiOperation({ summary: `${entityType} delete (Nest-native)` })
+        async remove(
+            @CurrentUser() user: JwtPayload,
+            @Param("id") id: string
+        ) {
+            return this.service.remove(
+                entityType,
+                user,
+                this.service.parseId(entityType, id)
             );
         }
     }

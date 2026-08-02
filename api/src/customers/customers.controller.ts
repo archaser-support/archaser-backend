@@ -3,6 +3,7 @@ import {
     Controller,
     Delete,
     Get,
+    HttpCode,
     Param,
     ParseIntPipe,
     Post,
@@ -169,6 +170,21 @@ export class CustomersController {
         @Param("id", ParseIntPipe) id: number
     ) {
         return this.customers.invoicesAvailableForDispute(user, id);
+    }
+
+    @Post(":id/comments")
+    @HttpCode(200)
+    @ApiOperation({ summary: "Add an internal comment activity on a customer" })
+    async addComment(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number,
+        @Body() body: { comment?: string; content?: string }
+    ) {
+        return this.customers.addComment(
+            user,
+            id,
+            body.comment || body.content || ""
+        );
     }
 
     @Post(":id/activity/log-call-activity")

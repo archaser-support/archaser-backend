@@ -127,6 +127,15 @@ export declare class OperationsDomainController {
             disputeAssignFrequencyList: never[];
         };
     }>;
+    legalCasesStats(user: JwtPayload): Promise<{
+        legalCases: never[];
+        totalRecords: number;
+        currentPage: number;
+        totalPages: number;
+        currency: string;
+        totalAmount: number;
+        totalCustomers: number;
+    }>;
     byId(operationType: string, id: string, user: JwtPayload): Promise<{
         account_id: number | null;
         name: string;
@@ -153,6 +162,14 @@ export declare class OperationsDomainController {
             }[];
             disputeAssignFrequencyList: never[];
         };
+    } | {
+        legalCases: never[];
+        totalRecords: number;
+        currentPage: number;
+        totalPages: number;
+        currency: string;
+        totalAmount: number;
+        totalCustomers: number;
     } | ({
         DisputeReason: {
             account_id: number | null;

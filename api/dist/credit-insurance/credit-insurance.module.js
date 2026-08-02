@@ -16,6 +16,7 @@ const credit_insurance_controller_1 = require("./credit-insurance.controller");
 const credit_insurance_leaves_service_1 = require("./credit-insurance-leaves.service");
 const credit_insurance_service_1 = require("./credit-insurance.service");
 const insurance_entities_service_1 = require("./insurance-entities.service");
+const insurance_policies_actions_controller_1 = require("./insurance-policies-actions.controller");
 const insuranceEntityControllers = insurance_entities_service_1.INSURANCE_ENTITY_TYPES.map((t) => (0, create_insurance_entity_controller_1.createInsuranceEntityController)(t));
 let CreditInsuranceModule = class CreditInsuranceModule {
 };
@@ -25,6 +26,7 @@ exports.CreditInsuranceModule = CreditInsuranceModule = __decorate([
         imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule],
         controllers: [
             credit_insurance_controller_1.CreditInsuranceDomainController,
+            insurance_policies_actions_controller_1.InsurancePoliciesActionsController,
             ...insuranceEntityControllers,
         ],
         providers: [
