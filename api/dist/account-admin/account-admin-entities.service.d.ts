@@ -1,6 +1,7 @@
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { DatabaseService } from "../database/database.service";
+import { SystemEmailService } from "../email/system-email.service";
 export declare const ACCOUNT_ADMIN_ENTITY_TYPES: readonly ["accounts", "users", "business-units", "bank-accounts", "customer-banks"];
 export type AccountAdminEntityType = (typeof ACCOUNT_ADMIN_ENTITY_TYPES)[number];
 export type AccountAdminListQuery = {
@@ -11,19 +12,24 @@ export type AccountAdminListQuery = {
     sortField?: string;
     sortDirection?: string;
     include?: string;
+    status?: string;
+    deletionFilter?: string;
+    account_id?: string;
 };
 export declare class AccountAdminEntitiesService {
     private readonly db;
     private readonly accessScope;
-    constructor(db: DatabaseService, accessScope: AccessScopeService);
+    private readonly systemEmail;
+    private readonly logger;
+    constructor(db: DatabaseService, accessScope: AccessScopeService, systemEmail: SystemEmailService);
     private delegate;
     parseId(entityType: AccountAdminEntityType, raw: string): number | string;
     private scope;
     list(entityType: AccountAdminEntityType, user: JwtPayload, query: AccountAdminListQuery): Promise<({
         Parent: {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
@@ -34,19 +40,19 @@ export declare class AccountAdminEntitiesService {
             is_primary: boolean;
         } | null;
         User_BusinessUnit_created_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
         User_BusinessUnit_modified_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
     } & {
-        account_id: number;
-        name: string;
         id: number;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.record_status;
@@ -58,9 +64,9 @@ export declare class AccountAdminEntitiesService {
     })[] | {
         data: ({
             Parent: {
-                account_id: number;
-                name: string;
                 id: number;
+                name: string;
+                account_id: number;
                 created_at: Date;
                 modified_at: Date;
                 status: import(".prisma/client").$Enums.record_status;
@@ -71,19 +77,19 @@ export declare class AccountAdminEntitiesService {
                 is_primary: boolean;
             } | null;
             User_BusinessUnit_created_byToUser: {
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
             } | null;
             User_BusinessUnit_modified_byToUser: {
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
             } | null;
         } & {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
@@ -97,11 +103,11 @@ export declare class AccountAdminEntitiesService {
     } | {
         data: ({
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -125,9 +131,10 @@ export declare class AccountAdminEntitiesService {
                 wikiDataId: string | null;
             } | null;
             State: {
+                id: number;
                 type: string | null;
                 name: string;
-                id: number;
+                level: number | null;
                 created_at: Date | null;
                 modified_at: Date;
                 country_id: number;
@@ -139,13 +146,13 @@ export declare class AccountAdminEntitiesService {
                 wikiDataId: string | null;
                 country_code: string;
                 fips_code: string | null;
-                level: number | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -163,17 +170,131 @@ export declare class AccountAdminEntitiesService {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         })[];
         total: number;
     } | {
-        data: any;
-        totalRecords: any;
+        accounts: ({
+            Country: {
+                id: number;
+                name: string;
+            } | null;
+            State: {
+                id: number;
+                name: string;
+            } | null;
+        } & {
+            id: number;
+            name: string | null;
+            default_language: import(".prisma/client").$Enums.language | null;
+            created_at: Date;
+            modified_at: Date;
+            status: import(".prisma/client").$Enums.record_status;
+            created_by: string | null;
+            modified_by: string | null;
+            currency: string | null;
+            locale: string | null;
+            address_line1: string | null;
+            city: string | null;
+            postal_code: string | null;
+            address_line2: string | null;
+            country_id: number | null;
+            promise_to_pay: number;
+            state_id: number | null;
+            company_number: string | null;
+            client_type: import(".prisma/client").$Enums.customer_client_type;
+            sms_from_name: string | null;
+            sub_domain: string | null;
+            no_of_auomated_steps: number;
+            category_after_automated: import(".prisma/client").$Enums.category | null;
+            allow_partial_payment: boolean;
+            bank_comments: string | null;
+            logo: string | null;
+            primary_color: string | null;
+            secondary_color: string | null;
+            chart_palette_color: string | null;
+            start_days_after_due: number;
+            email_from_name: string | null;
+            email_server_host: string | null;
+            email_from: string | null;
+            email_server_user: string | null;
+            email_server_password: string | null;
+            email_server_port: number | null;
+            wait_days_after_automated: number;
+            max_promise_to_pay_allowed_per_cycle: number | null;
+            next_activity_date: Date | null;
+            beneficiary_name: string | null;
+            bank_name: string | null;
+            branch_number: string | null;
+            branch_name: string | null;
+            swift: string | null;
+            iban: string | null;
+            account_number: string | null;
+            balance_evaluation_method: string | null;
+            generic_field_config: import("@prisma/client/runtime/library").JsonValue | null;
+            use_customer_language: boolean | null;
+            last_sync_date: Date | null;
+            default_first_activity_delay_days: number | null;
+            sms_fallback_enabled: boolean | null;
+            unlisted_country_sms_policy: string | null;
+            intelligent_channel_selection_enabled: boolean | null;
+            category_for_new_collection: import(".prisma/client").$Enums.category | null;
+            portal_verification_enabled: boolean | null;
+            sso_enabled: boolean | null;
+            sso_providers: string | null;
+            has_collection: boolean;
+            has_credit_insurance: boolean;
+            enable_customer_checkpoints: boolean;
+            credit_limit_warning_threshold_pct: number | null;
+            credit_score_validity_warning_days: number | null;
+            reporting_date_warning_days: number | null;
+            customer_limit_expiration_warning_days: number | null;
+            deleted_at: Date | null;
+            deleted_by: string | null;
+        })[];
+        totalRecords: number;
         page: number;
         limit: number;
     } | {
-        users: any;
-        total: any;
+        users: {
+            id: string;
+            name: string | null;
+            account_id: number | null;
+            created_at: Date;
+            modified_at: Date;
+            email: string;
+            status: import(".prisma/client").$Enums.record_status;
+            created_by: string | null;
+            modified_by: string | null;
+            language: import(".prisma/client").$Enums.language;
+            username: string;
+            emailVerified: Date | null;
+            image: string | null;
+            password: string | null;
+            resetToken: string | null;
+            resetTokenExpiry: Date | null;
+            first_name: string | null;
+            last_name: string | null;
+            role: import(".prisma/client").$Enums.user_role | null;
+            mobile: string | null;
+            time_zone: string | null;
+            currency: string | null;
+            locale: string | null;
+            session_version: number;
+            freeze: boolean;
+            sidebar_collapsed: boolean | null;
+            failed_login_attempts: number;
+            last_failed_login_at: Date | null;
+            deactivated_at: Date | null;
+            guided_tooltips_enabled: boolean | null;
+            is_audit_user: boolean;
+            business_unit_id: number | null;
+        }[];
+        total: number;
+        page: number;
+        limit: number;
+    } | {
+        data: any;
+        totalRecords: any;
         page: number;
         limit: number;
     } | {
@@ -182,15 +303,19 @@ export declare class AccountAdminEntitiesService {
         page: number;
         limit: number;
     }>;
+    private listAccounts;
+    private listUsers;
+    private accountOrderBy;
+    private userOrderBy;
     private businessUnitListInclude;
     private businessUnitOrderBy;
     private listBusinessUnitsDropdown;
     private sortBusinessUnitsHierarchically;
     listAccountBusinessUnits(user: JwtPayload, accountId: number, query?: AccountAdminListQuery): Promise<({
         Parent: {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
@@ -201,19 +326,19 @@ export declare class AccountAdminEntitiesService {
             is_primary: boolean;
         } | null;
         User_BusinessUnit_created_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
         User_BusinessUnit_modified_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
     } & {
-        account_id: number;
-        name: string;
         id: number;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.record_status;
@@ -225,9 +350,9 @@ export declare class AccountAdminEntitiesService {
     })[] | {
         data: ({
             Parent: {
-                account_id: number;
-                name: string;
                 id: number;
+                name: string;
+                account_id: number;
                 created_at: Date;
                 modified_at: Date;
                 status: import(".prisma/client").$Enums.record_status;
@@ -238,19 +363,19 @@ export declare class AccountAdminEntitiesService {
                 is_primary: boolean;
             } | null;
             User_BusinessUnit_created_byToUser: {
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
             } | null;
             User_BusinessUnit_modified_byToUser: {
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
             } | null;
         } & {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
@@ -268,11 +393,11 @@ export declare class AccountAdminEntitiesService {
     listAccountBankAccounts(user: JwtPayload, accountId: number, query?: AccountAdminListQuery): Promise<{
         data: ({
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -296,9 +421,10 @@ export declare class AccountAdminEntitiesService {
                 wikiDataId: string | null;
             } | null;
             State: {
+                id: number;
                 type: string | null;
                 name: string;
-                id: number;
+                level: number | null;
                 created_at: Date | null;
                 modified_at: Date;
                 country_id: number;
@@ -310,13 +436,13 @@ export declare class AccountAdminEntitiesService {
                 wikiDataId: string | null;
                 country_code: string;
                 fips_code: string | null;
-                level: number | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -334,17 +460,16 @@ export declare class AccountAdminEntitiesService {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         })[];
         total: number;
     }>;
     createAccountBankAccount(user: JwtPayload, accountId: number, body: Record<string, unknown>): Promise<{
         Country: {
-            name: string;
-            currency: string | null;
             id: number;
+            name: string;
             created_at: Date | null;
             modified_at: Date;
+            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -368,9 +493,10 @@ export declare class AccountAdminEntitiesService {
             wikiDataId: string | null;
         } | null;
         State: {
+            id: number;
             type: string | null;
             name: string;
-            id: number;
+            level: number | null;
             created_at: Date | null;
             modified_at: Date;
             country_id: number;
@@ -382,13 +508,13 @@ export declare class AccountAdminEntitiesService {
             wikiDataId: string | null;
             country_code: string;
             fips_code: string | null;
-            level: number | null;
         } | null;
     } & {
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
+        primary: boolean;
         status: boolean;
         created_by: string | null;
         modified_by: string | null;
@@ -406,15 +532,14 @@ export declare class AccountAdminEntitiesService {
         iban: string | null;
         account_number: string | null;
         comments: string | null;
-        primary: boolean;
     }>;
     updateAccountBankAccount(user: JwtPayload, accountId: number, id: number, body: Record<string, unknown>): Promise<{
         Country: {
-            name: string;
-            currency: string | null;
             id: number;
+            name: string;
             created_at: Date | null;
             modified_at: Date;
+            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -438,9 +563,10 @@ export declare class AccountAdminEntitiesService {
             wikiDataId: string | null;
         } | null;
         State: {
+            id: number;
             type: string | null;
             name: string;
-            id: number;
+            level: number | null;
             created_at: Date | null;
             modified_at: Date;
             country_id: number;
@@ -452,13 +578,13 @@ export declare class AccountAdminEntitiesService {
             wikiDataId: string | null;
             country_code: string;
             fips_code: string | null;
-            level: number | null;
         } | null;
     } & {
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
+        primary: boolean;
         status: boolean;
         created_by: string | null;
         modified_by: string | null;
@@ -476,16 +602,48 @@ export declare class AccountAdminEntitiesService {
         iban: string | null;
         account_number: string | null;
         comments: string | null;
-        primary: boolean;
     }>;
     deleteAccountBankAccount(user: JwtPayload, accountId: number, id: number): Promise<{
         success: boolean;
     }>;
+    createUser(user: JwtPayload, body: Record<string, unknown>): Promise<{
+        id: string;
+        name: string | null;
+        account_id: number | null;
+        created_at: Date;
+        modified_at: Date;
+        email: string;
+        status: import(".prisma/client").$Enums.record_status;
+        created_by: string | null;
+        modified_by: string | null;
+        language: import(".prisma/client").$Enums.language;
+        username: string;
+        emailVerified: Date | null;
+        image: string | null;
+        resetToken: string | null;
+        resetTokenExpiry: Date | null;
+        first_name: string | null;
+        last_name: string | null;
+        role: import(".prisma/client").$Enums.user_role | null;
+        mobile: string | null;
+        time_zone: string | null;
+        currency: string | null;
+        locale: string | null;
+        session_version: number;
+        freeze: boolean;
+        sidebar_collapsed: boolean | null;
+        failed_login_attempts: number;
+        last_failed_login_at: Date | null;
+        deactivated_at: Date | null;
+        guided_tooltips_enabled: boolean | null;
+        is_audit_user: boolean;
+        business_unit_id: number | null;
+    }>;
     createBusinessUnit(user: JwtPayload, body: Record<string, unknown>): Promise<{
         Parent: {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
@@ -496,19 +654,19 @@ export declare class AccountAdminEntitiesService {
             is_primary: boolean;
         } | null;
         User_BusinessUnit_created_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
         User_BusinessUnit_modified_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
     } & {
-        account_id: number;
-        name: string;
         id: number;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.record_status;
@@ -520,9 +678,9 @@ export declare class AccountAdminEntitiesService {
     }>;
     updateBusinessUnitStatus(user: JwtPayload, id: number, status: "Active" | "Inactive"): Promise<{
         Parent: {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
@@ -533,19 +691,19 @@ export declare class AccountAdminEntitiesService {
             is_primary: boolean;
         } | null;
         User_BusinessUnit_created_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
         User_BusinessUnit_modified_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
     } & {
-        account_id: number;
-        name: string;
         id: number;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.record_status;
@@ -563,28 +721,28 @@ export declare class AccountAdminEntitiesService {
     listCollectionAgents(user: JwtPayload): Promise<{
         name: string;
         businessUnitName: string | null;
-        username: string;
-        email: string;
-        role: import(".prisma/client").$Enums.user_role | null;
         id: string;
+        email: string;
         status: import(".prisma/client").$Enums.record_status;
+        username: string;
         first_name: string | null;
         last_name: string | null;
+        role: import(".prisma/client").$Enums.user_role | null;
         business_unit_id: number | null;
         BusinessUnit: {
-            name: string;
             id: number;
+            name: string;
         } | null;
     }[]>;
     private parseNumericId;
     listBusinessUnitBanks(user: JwtPayload, businessUnitIdRaw: string): Promise<{
         CustomerBankAccount: {
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -608,10 +766,11 @@ export declare class AccountAdminEntitiesService {
                 wikiDataId: string | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -629,15 +788,14 @@ export declare class AccountAdminEntitiesService {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         };
         AccountBankAccounts: {
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -661,10 +819,11 @@ export declare class AccountAdminEntitiesService {
                 wikiDataId: string | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -682,10 +841,9 @@ export declare class AccountAdminEntitiesService {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         };
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -696,11 +854,11 @@ export declare class AccountAdminEntitiesService {
     addBusinessUnitBank(user: JwtPayload, businessUnitIdRaw: string, body: Record<string, unknown>): Promise<{
         CustomerBankAccount: {
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -724,10 +882,11 @@ export declare class AccountAdminEntitiesService {
                 wikiDataId: string | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -745,15 +904,14 @@ export declare class AccountAdminEntitiesService {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         };
         AccountBankAccounts: {
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -777,10 +935,11 @@ export declare class AccountAdminEntitiesService {
                 wikiDataId: string | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -798,10 +957,9 @@ export declare class AccountAdminEntitiesService {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         };
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;

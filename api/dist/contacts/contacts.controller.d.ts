@@ -6,25 +6,25 @@ export declare class ContactsController {
     list(user: JwtPayload, query: ContactsListQuery): Promise<{
         contacts: ({
             Country: {
-                name: string;
                 id: number;
+                name: string;
             } | null;
             Company: {
-                name: string;
                 id: number;
+                name: string;
             };
         } & {
-            email: string | null;
-            role: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
+            email: string | null;
             status: import(".prisma/client").$Enums.contact_status;
-            first_name: string;
-            last_name: string | null;
-            mobile: string | null;
             created_by: string | null;
             modified_by: string | null;
+            first_name: string;
+            last_name: string | null;
+            role: string | null;
+            mobile: string | null;
             country_id: number | null;
             state_id: number | null;
             phone: string | null;
@@ -66,29 +66,29 @@ export declare class ContactsController {
     }>;
     byId(user: JwtPayload, id: number): Promise<{
         Country: {
-            name: string;
             id: number;
+            name: string;
         } | null;
         State: {
-            name: string;
             id: number;
+            name: string;
         } | null;
         Company: {
-            name: string;
             id: number;
+            name: string;
         };
     } & {
-        email: string | null;
-        role: string | null;
         id: number;
         created_at: Date;
         modified_at: Date;
+        email: string | null;
         status: import(".prisma/client").$Enums.contact_status;
-        first_name: string;
-        last_name: string | null;
-        mobile: string | null;
         created_by: string | null;
         modified_by: string | null;
+        first_name: string;
+        last_name: string | null;
+        role: string | null;
+        mobile: string | null;
         country_id: number | null;
         state_id: number | null;
         phone: string | null;
@@ -124,17 +124,17 @@ export declare class ContactsController {
         erp_contact_id: string | null;
     }>;
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
-        email: string | null;
-        role: string | null;
         id: number;
         created_at: Date;
         modified_at: Date;
+        email: string | null;
         status: import(".prisma/client").$Enums.contact_status;
-        first_name: string;
-        last_name: string | null;
-        mobile: string | null;
         created_by: string | null;
         modified_by: string | null;
+        first_name: string;
+        last_name: string | null;
+        role: string | null;
+        mobile: string | null;
         country_id: number | null;
         state_id: number | null;
         phone: string | null;

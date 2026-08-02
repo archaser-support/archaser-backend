@@ -28,8 +28,8 @@ export declare class InvoicesService {
                 customer_number: string | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.invoice_status;
@@ -92,8 +92,8 @@ export declare class InvoicesService {
     }>;
     getById(user: JwtPayload, id: number): Promise<{
         InvoicePayment: {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date | null;
             modified_at: Date | null;
             created_by: string | null;
@@ -129,8 +129,8 @@ export declare class InvoicesService {
             dispute_id: number;
         }[];
     } & {
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.invoice_status;
@@ -188,8 +188,8 @@ export declare class InvoicesService {
         capacity_gap_amount_limit: import("@prisma/client/runtime/library").Decimal | null;
     }>;
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.invoice_status;
@@ -264,8 +264,8 @@ export declare class InvoicesService {
         creditInvoiceId?: number;
         targetInvoiceId?: number;
     }): Promise<{
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.invoice_status;

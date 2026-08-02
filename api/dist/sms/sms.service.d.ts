@@ -20,14 +20,14 @@ export declare class SmsService {
         accountId: number;
         customerId: number;
     }>;
-    listVendors(user: JwtPayload): Promise<{
-        name: string;
-        currency: string | null;
+    listVendors(user: JwtPayload, query?: Record<string, string | undefined>): Promise<{
         id: number;
+        name: string;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         provider: string;
         priority: number | null;
         api_key: string | null;
@@ -39,14 +39,15 @@ export declare class SmsService {
         cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
         use_account_sender_name: boolean | null;
     }[]>;
+    private vendorOrderBy;
     createVendor(user: JwtPayload, body: Record<string, unknown>): Promise<{
-        name: string;
-        currency: string | null;
         id: number;
+        name: string;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         provider: string;
         priority: number | null;
         api_key: string | null;
@@ -59,13 +60,13 @@ export declare class SmsService {
         use_account_sender_name: boolean | null;
     }>;
     getVendor(user: JwtPayload, id: number): Promise<{
-        name: string;
-        currency: string | null;
         id: number;
+        name: string;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         provider: string;
         priority: number | null;
         api_key: string | null;
@@ -78,13 +79,13 @@ export declare class SmsService {
         use_account_sender_name: boolean | null;
     }>;
     updateVendor(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
-        name: string;
-        currency: string | null;
         id: number;
+        name: string;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         provider: string;
         priority: number | null;
         api_key: string | null;
@@ -101,44 +102,64 @@ export declare class SmsService {
     }>;
     listCountryVendors(user: JwtPayload, query: Record<string, string | undefined>): Promise<{
         countryVendors: ({
-            Country: {
-                name: string;
-                id: number;
-                iso2: string | null;
-                emoji: string | null;
-            };
             SMSVendor: {
-                name: string;
                 id: number;
+                name: string;
                 provider: string;
                 is_active: boolean | null;
             };
+            Country: {
+                id: number;
+                name: string;
+                iso2: string | null;
+                emoji: string | null;
+            };
         } & {
-            currency: string | null;
             id: number;
+            comment: string | null;
             created_at: Date | null;
             modified_at: Date | null;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             country_id: number;
             vendor_id: number;
             is_active: boolean | null;
             cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
             is_default: boolean | null;
-            comment: string | null;
             phone_number: string | null;
         })[];
         totalRecords: number;
         page: number;
         limit: number;
     }>;
+    private countryVendorOrderBy;
     createCountryVendor(user: JwtPayload, body: Record<string, unknown>): Promise<{
-        Country: {
-            name: string;
-            currency: string | null;
+        SMSVendor: {
             id: number;
+            name: string;
+            created_at: Date | null;
+            modified_at: Date | null;
+            created_by: string | null;
+            modified_by: string | null;
+            currency: string | null;
+            provider: string;
+            priority: number | null;
+            api_key: string | null;
+            api_secret: string | null;
+            account_sid: string | null;
+            auth_token: string | null;
+            webhook_url: string | null;
+            is_active: boolean | null;
+            cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
+            use_account_sender_name: boolean | null;
+        };
+        Country: {
+            id: number;
+            name: string;
             created_at: Date | null;
             modified_at: Date;
+            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -161,47 +182,47 @@ export declare class SmsService {
             flag: number;
             wikiDataId: string | null;
         };
-        SMSVendor: {
-            name: string;
-            currency: string | null;
-            id: number;
-            created_at: Date | null;
-            modified_at: Date | null;
-            created_by: string | null;
-            modified_by: string | null;
-            provider: string;
-            priority: number | null;
-            api_key: string | null;
-            api_secret: string | null;
-            account_sid: string | null;
-            auth_token: string | null;
-            webhook_url: string | null;
-            is_active: boolean | null;
-            cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
-            use_account_sender_name: boolean | null;
-        };
     } & {
-        currency: string | null;
         id: number;
+        comment: string | null;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         country_id: number;
         vendor_id: number;
         is_active: boolean | null;
         cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
         is_default: boolean | null;
-        comment: string | null;
         phone_number: string | null;
     }>;
     getCountryVendor(user: JwtPayload, id: number): Promise<{
-        Country: {
-            name: string;
-            currency: string | null;
+        SMSVendor: {
             id: number;
+            name: string;
+            created_at: Date | null;
+            modified_at: Date | null;
+            created_by: string | null;
+            modified_by: string | null;
+            currency: string | null;
+            provider: string;
+            priority: number | null;
+            api_key: string | null;
+            api_secret: string | null;
+            account_sid: string | null;
+            auth_token: string | null;
+            webhook_url: string | null;
+            is_active: boolean | null;
+            cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
+            use_account_sender_name: boolean | null;
+        };
+        Country: {
+            id: number;
+            name: string;
             created_at: Date | null;
             modified_at: Date;
+            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -224,47 +245,47 @@ export declare class SmsService {
             flag: number;
             wikiDataId: string | null;
         };
-        SMSVendor: {
-            name: string;
-            currency: string | null;
-            id: number;
-            created_at: Date | null;
-            modified_at: Date | null;
-            created_by: string | null;
-            modified_by: string | null;
-            provider: string;
-            priority: number | null;
-            api_key: string | null;
-            api_secret: string | null;
-            account_sid: string | null;
-            auth_token: string | null;
-            webhook_url: string | null;
-            is_active: boolean | null;
-            cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
-            use_account_sender_name: boolean | null;
-        };
     } & {
-        currency: string | null;
         id: number;
+        comment: string | null;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         country_id: number;
         vendor_id: number;
         is_active: boolean | null;
         cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
         is_default: boolean | null;
-        comment: string | null;
         phone_number: string | null;
     }>;
     updateCountryVendor(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
-        Country: {
-            name: string;
-            currency: string | null;
+        SMSVendor: {
             id: number;
+            name: string;
+            created_at: Date | null;
+            modified_at: Date | null;
+            created_by: string | null;
+            modified_by: string | null;
+            currency: string | null;
+            provider: string;
+            priority: number | null;
+            api_key: string | null;
+            api_secret: string | null;
+            account_sid: string | null;
+            auth_token: string | null;
+            webhook_url: string | null;
+            is_active: boolean | null;
+            cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
+            use_account_sender_name: boolean | null;
+        };
+        Country: {
+            id: number;
+            name: string;
             created_at: Date | null;
             modified_at: Date;
+            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -287,38 +308,19 @@ export declare class SmsService {
             flag: number;
             wikiDataId: string | null;
         };
-        SMSVendor: {
-            name: string;
-            currency: string | null;
-            id: number;
-            created_at: Date | null;
-            modified_at: Date | null;
-            created_by: string | null;
-            modified_by: string | null;
-            provider: string;
-            priority: number | null;
-            api_key: string | null;
-            api_secret: string | null;
-            account_sid: string | null;
-            auth_token: string | null;
-            webhook_url: string | null;
-            is_active: boolean | null;
-            cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
-            use_account_sender_name: boolean | null;
-        };
     } & {
-        currency: string | null;
         id: number;
+        comment: string | null;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         country_id: number;
         vendor_id: number;
         is_active: boolean | null;
         cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
         is_default: boolean | null;
-        comment: string | null;
         phone_number: string | null;
     }>;
     deleteCountryVendor(user: JwtPayload, id: number): Promise<{

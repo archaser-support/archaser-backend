@@ -13,11 +13,11 @@ export declare class UsersExtrasController {
     }): Promise<{
         success: boolean;
         viewAsUser: {
-            email: string;
-            account_id: number | null;
-            role: import(".prisma/client").$Enums.user_role | null;
-            name: string | null;
             id: string;
+            name: string | null;
+            account_id: number | null;
+            email: string;
+            role: import(".prisma/client").$Enums.user_role | null;
         };
     }>;
     clearViewAs(_user: JwtPayload): Promise<{
@@ -38,8 +38,8 @@ export declare class AccountsExtrasController {
     constructor(db: DatabaseService, accessScope: AccessScopeService);
     gdprReport(user: JwtPayload, id: number): Promise<{
         account: {
-            name: string | null;
             id: number;
+            name: string | null;
             status: import(".prisma/client").$Enums.record_status;
             deleted_at: Date | null;
         };
@@ -50,17 +50,16 @@ export declare class AccountsExtrasController {
         success: boolean;
         restoredAt: string;
         account: {
-            name: string | null;
-            locale: string | null;
-            primary_color: string | null;
-            secondary_color: string | null;
-            currency: string | null;
             id: number;
+            name: string | null;
+            default_language: import(".prisma/client").$Enums.language | null;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
+            locale: string | null;
             address_line1: string | null;
             city: string | null;
             postal_code: string | null;
@@ -77,8 +76,9 @@ export declare class AccountsExtrasController {
             allow_partial_payment: boolean;
             bank_comments: string | null;
             logo: string | null;
+            primary_color: string | null;
+            secondary_color: string | null;
             chart_palette_color: string | null;
-            default_language: import(".prisma/client").$Enums.language | null;
             start_days_after_due: number;
             email_from_name: string | null;
             email_server_host: string | null;

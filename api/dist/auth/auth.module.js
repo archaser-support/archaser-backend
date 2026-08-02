@@ -12,6 +12,7 @@ const config_1 = require("@nestjs/config");
 const jwt_1 = require("@nestjs/jwt");
 const passport_1 = require("@nestjs/passport");
 const database_module_1 = require("../database/database.module");
+const email_module_1 = require("../email/email.module");
 const access_scope_service_1 = require("./access-scope.service");
 const auth_controller_1 = require("./auth.controller");
 const auth_service_1 = require("./auth.service");
@@ -27,6 +28,7 @@ exports.AuthModule = AuthModule = __decorate([
     (0, common_1.Module)({
         imports: [
             database_module_1.DatabaseModule,
+            email_module_1.EmailModule,
             passport_1.PassportModule.register({ defaultStrategy: "jwt" }),
             jwt_1.JwtModule.registerAsync({
                 imports: [config_1.ConfigModule],
@@ -60,6 +62,7 @@ exports.AuthModule = AuthModule = __decorate([
             jwt_1.JwtModule,
             dual_auth_guard_1.DualAuthGuard,
             soft_dual_auth_guard_1.SoftDualAuthGuard,
+            email_module_1.EmailModule,
         ],
     })
 ], AuthModule);

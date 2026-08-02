@@ -4,10 +4,10 @@ export declare class InternalEmailTemplatesController {
     private readonly templates;
     constructor(templates: InternalEmailTemplatesService);
     list(user: JwtPayload): Promise<{
-        type: import(".prisma/client").$Enums.internal_email_template_type;
-        account_id: number;
-        name: string;
         id: number;
+        type: import(".prisma/client").$Enums.internal_email_template_type;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -18,10 +18,10 @@ export declare class InternalEmailTemplatesController {
         master_template: boolean;
     }[]>;
     master(_user: JwtPayload, type?: string): Promise<{
-        type: import(".prisma/client").$Enums.internal_email_template_type;
-        account_id: number;
-        name: string;
         id: number;
+        type: import(".prisma/client").$Enums.internal_email_template_type;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -31,10 +31,10 @@ export declare class InternalEmailTemplatesController {
         active: boolean;
         master_template: boolean;
     } | {
-        type: import(".prisma/client").$Enums.internal_email_template_type;
-        account_id: number;
-        name: string;
         id: number;
+        type: import(".prisma/client").$Enums.internal_email_template_type;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -45,10 +45,10 @@ export declare class InternalEmailTemplatesController {
         master_template: boolean;
     }[]>;
     create(user: JwtPayload, body: Record<string, unknown>): Promise<{
-        type: import(".prisma/client").$Enums.internal_email_template_type;
-        account_id: number;
-        name: string;
         id: number;
+        type: import(".prisma/client").$Enums.internal_email_template_type;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -59,10 +59,10 @@ export declare class InternalEmailTemplatesController {
         master_template: boolean;
     }>;
     getById(user: JwtPayload, id: number): Promise<{
-        type: import(".prisma/client").$Enums.internal_email_template_type;
-        account_id: number;
-        name: string;
         id: number;
+        type: import(".prisma/client").$Enums.internal_email_template_type;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -73,10 +73,10 @@ export declare class InternalEmailTemplatesController {
         master_template: boolean;
     }>;
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
-        type: import(".prisma/client").$Enums.internal_email_template_type;
-        account_id: number;
-        name: string;
         id: number;
+        type: import(".prisma/client").$Enums.internal_email_template_type;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;

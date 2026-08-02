@@ -14,13 +14,13 @@ export declare class ActivityAttachmentsController {
     }): Promise<{
         success: boolean;
         attachments: {
-            account_id: number;
             id: bigint;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            activity_id: bigint;
             created_by: string | null;
             modified_by: string | null;
-            activity_id: bigint;
             file_name: string;
             file_path: string;
             file_size: number;

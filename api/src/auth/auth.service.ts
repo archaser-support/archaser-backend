@@ -9,6 +9,7 @@ import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { DatabaseService } from "../database/database.service";
+import { SystemEmailService } from "../email/system-email.service";
 import { LoginDto } from "./dto/login.dto";
 import {
     AccountBySubdomainResponseDto,
@@ -41,7 +42,8 @@ export class AuthService {
     constructor(
         private readonly database: DatabaseService,
         private readonly jwtService: JwtService,
-        private readonly configService: ConfigService
+        private readonly configService: ConfigService,
+        private readonly systemEmail: SystemEmailService
     ) {}
 
     async login(credentials: LoginDto): Promise<LoginResponseDto> {
@@ -221,7 +223,15 @@ export class AuthService {
         const resetLink = `${origin}/reset-password/${resetToken}`;
 
         // Email delivery is best-effort; token is always persisted for reset.
-        await this.sendResetPasswordEmail(email, resetLink, language);
+        try {
+            await this.systemEmail.sendResetPasswordEmail(
+                resetLink,
+                email,
+                language
+            );
+        } catch {
+            // Token is already stored; email failure should not block the request.
+        }
 
         return { message: "Reset link sent to your email" };
     }
@@ -279,54 +289,45 @@ export class AuthService {
         return errors;
     }
 
-    private async sendResetPasswordEmail(
+    /**
+     * Adapter over SystemEmailService branded templates.
+     * Missing SMTP / send failure does not throw (token is already stored).
+     */
+    async sendPasswordSetupEmail(
         email: string,
         resetLink: string,
-        _language?: string
+        options?: { language?: string; kind?: "reset" | "welcome" }
     ): Promise<void> {
-        void _language;
-        const smtpHost = this.configService.get<string>("EMAIL_SERVER_HOST");
-        const smtpUser = this.configService.get<string>("EMAIL_SERVER_USER");
-        const smtpPass = this.configService.get<string>(
-            "EMAIL_SERVER_PASSWORD"
-        );
-        const from =
-            this.configService.get<string>("EMAIL_FROM") ||
-            smtpUser ||
-            "noreply@archaser.com";
-
-        if (!smtpHost || !smtpUser || !smtpPass) {
-            // Dev / misconfigured: allow reset via token without email.
-            return;
-        }
-
         try {
-            // Dynamic require keeps optional nodemailer off the critical path.
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            const nodemailer = require("nodemailer") as {
-                createTransport: (opts: Record<string, unknown>) => {
-                    sendMail: (opts: Record<string, unknown>) => Promise<unknown>;
-                };
-            };
-            const transporter = nodemailer.createTransport({
-                host: smtpHost,
-                port: Number(
-                    this.configService.get<string>("EMAIL_SERVER_PORT") || 587
-                ),
-                secure: false,
-                auth: { user: smtpUser, pass: smtpPass },
-            });
-            await transporter.sendMail({
-                from,
-                to: email,
-                subject: "Reset your Archaser password",
-                text: `Use this link to reset your password (valid 1 hour):\n${resetLink}`,
-                html: `<p>Use this link to reset your password (valid 1 hour):</p><p><a href="${resetLink}">${resetLink}</a></p>`,
-            });
+            if (options?.kind === "welcome") {
+                await this.systemEmail.sendWelcomeUserEmail(
+                    email,
+                    "",
+                    resetLink,
+                    options.language
+                );
+                return;
+            }
+            await this.systemEmail.sendResetPasswordEmail(
+                resetLink,
+                email,
+                options?.language
+            );
         } catch {
             // Token is already stored; email failure should not block the request.
             return;
         }
+    }
+
+    private async sendResetPasswordEmail(
+        email: string,
+        resetLink: string,
+        language?: string
+    ): Promise<void> {
+        await this.sendPasswordSetupEmail(email, resetLink, {
+            language,
+            kind: "reset",
+        });
     }
 
     probeAccountScope(

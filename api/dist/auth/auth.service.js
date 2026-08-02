@@ -48,11 +48,13 @@ const config_1 = require("@nestjs/config");
 const jwt_1 = require("@nestjs/jwt");
 const bcrypt = __importStar(require("bcryptjs"));
 const database_service_1 = require("../database/database.service");
+const system_email_service_1 = require("../email/system-email.service");
 let AuthService = class AuthService {
-    constructor(database, jwtService, configService) {
+    constructor(database, jwtService, configService, systemEmail) {
         this.database = database;
         this.jwtService = jwtService;
         this.configService = configService;
+        this.systemEmail = systemEmail;
     }
     async login(credentials) {
         const user = await this.database.user.findFirst({
@@ -201,7 +203,11 @@ let AuthService = class AuthService {
             "http://localhost:3000";
         const origin = frontendBase.replace(/\/login\/?$/, "").replace(/\/$/, "");
         const resetLink = `${origin}/reset-password/${resetToken}`;
-        await this.sendResetPasswordEmail(email, resetLink, language);
+        try {
+            await this.systemEmail.sendResetPasswordEmail(resetLink, email, language);
+        }
+        catch {
+        }
         return { message: "Reset link sent to your email" };
     }
     async resetPassword(token, password) {
@@ -248,36 +254,23 @@ let AuthService = class AuthService {
         }
         return errors;
     }
-    async sendResetPasswordEmail(email, resetLink, _language) {
-        void _language;
-        const smtpHost = this.configService.get("EMAIL_SERVER_HOST");
-        const smtpUser = this.configService.get("EMAIL_SERVER_USER");
-        const smtpPass = this.configService.get("EMAIL_SERVER_PASSWORD");
-        const from = this.configService.get("EMAIL_FROM") ||
-            smtpUser ||
-            "noreply@archaser.com";
-        if (!smtpHost || !smtpUser || !smtpPass) {
-            return;
-        }
+    async sendPasswordSetupEmail(email, resetLink, options) {
         try {
-            const nodemailer = require("nodemailer");
-            const transporter = nodemailer.createTransport({
-                host: smtpHost,
-                port: Number(this.configService.get("EMAIL_SERVER_PORT") || 587),
-                secure: false,
-                auth: { user: smtpUser, pass: smtpPass },
-            });
-            await transporter.sendMail({
-                from,
-                to: email,
-                subject: "Reset your Archaser password",
-                text: `Use this link to reset your password (valid 1 hour):\n${resetLink}`,
-                html: `<p>Use this link to reset your password (valid 1 hour):</p><p><a href="${resetLink}">${resetLink}</a></p>`,
-            });
+            if (options?.kind === "welcome") {
+                await this.systemEmail.sendWelcomeUserEmail(email, "", resetLink, options.language);
+                return;
+            }
+            await this.systemEmail.sendResetPasswordEmail(resetLink, email, options?.language);
         }
         catch {
             return;
         }
+    }
+    async sendResetPasswordEmail(email, resetLink, language) {
+        await this.sendPasswordSetupEmail(email, resetLink, {
+            language,
+            kind: "reset",
+        });
     }
     probeAccountScope(user, accountId) {
         if (user.account_id == null || Number(user.account_id) !== accountId) {
@@ -436,6 +429,7 @@ exports.AuthService = AuthService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
         jwt_1.JwtService,
-        config_1.ConfigService])
+        config_1.ConfigService,
+        system_email_service_1.SystemEmailService])
 ], AuthService);
 //# sourceMappingURL=auth.service.js.map

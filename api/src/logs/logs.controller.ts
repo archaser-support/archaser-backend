@@ -80,10 +80,26 @@ export class LogsController {
             };
         }
 
+        const sortDirection =
+            String(query.sortDirection || "").toLowerCase() === "asc"
+                ? "asc"
+                : "desc";
+        const sortField = String(query.sortField || "timestamp");
+        const allowedSortFields = new Set([
+            "timestamp",
+            "level",
+            "source",
+            "message",
+        ]);
+        const orderBy = {
+            [allowedSortFields.has(sortField) ? sortField : "timestamp"]:
+                sortDirection,
+        };
+
         const [logs, totalRecords] = await Promise.all([
             this.db.log.findMany({
                 where,
-                orderBy: { timestamp: "desc" },
+                orderBy,
                 skip: (page - 1) * limit,
                 take: limit,
             }),

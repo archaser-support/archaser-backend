@@ -6,11 +6,11 @@ export declare class BusinessUnitBanksController {
     list(user: JwtPayload, businessUnitId: string): Promise<{
         CustomerBankAccount: {
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -34,10 +34,11 @@ export declare class BusinessUnitBanksController {
                 wikiDataId: string | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -55,15 +56,14 @@ export declare class BusinessUnitBanksController {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         };
         AccountBankAccounts: {
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -87,10 +87,11 @@ export declare class BusinessUnitBanksController {
                 wikiDataId: string | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -108,10 +109,9 @@ export declare class BusinessUnitBanksController {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         };
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -122,11 +122,11 @@ export declare class BusinessUnitBanksController {
     add(user: JwtPayload, businessUnitId: string, body: Record<string, unknown>): Promise<{
         CustomerBankAccount: {
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -150,10 +150,11 @@ export declare class BusinessUnitBanksController {
                 wikiDataId: string | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -171,15 +172,14 @@ export declare class BusinessUnitBanksController {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         };
         AccountBankAccounts: {
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -203,10 +203,11 @@ export declare class BusinessUnitBanksController {
                 wikiDataId: string | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -224,10 +225,9 @@ export declare class BusinessUnitBanksController {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         };
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;

@@ -5,17 +5,16 @@ export declare class AccountsController {
     constructor(service: AccountsNestedService);
     byId(user: JwtPayload, accountId: number): Promise<{
         data: {
-            name: string | null;
-            locale: string | null;
-            primary_color: string | null;
-            secondary_color: string | null;
-            currency: string | null;
             id: number;
+            name: string | null;
+            default_language: import(".prisma/client").$Enums.language | null;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
+            locale: string | null;
             address_line1: string | null;
             city: string | null;
             postal_code: string | null;
@@ -32,8 +31,9 @@ export declare class AccountsController {
             allow_partial_payment: boolean;
             bank_comments: string | null;
             logo: string | null;
+            primary_color: string | null;
+            secondary_color: string | null;
             chart_palette_color: string | null;
-            default_language: import(".prisma/client").$Enums.language | null;
             start_days_after_due: number;
             email_from_name: string | null;
             email_server_host: string | null;
@@ -75,26 +75,26 @@ export declare class AccountsController {
         };
     }>;
     listSmsPrefs(user: JwtPayload, accountId: number, countryId?: string): Promise<({
-        Country: {
-            name: string;
-            id: number;
-            iso3: string | null;
-            iso2: string | null;
-            phonecode: string | null;
-            emoji: string | null;
-        };
         SMSVendor: {
+            id: number;
             name: string;
             currency: string | null;
-            id: number;
             provider: string;
             priority: number | null;
             is_active: boolean | null;
             cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
         };
+        Country: {
+            id: number;
+            name: string;
+            iso3: string | null;
+            iso2: string | null;
+            phonecode: string | null;
+            emoji: string | null;
+        };
     } & {
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
@@ -105,26 +105,26 @@ export declare class AccountsController {
         priority: number | null;
     })[]>;
     createSmsPref(user: JwtPayload, accountId: number, body: Record<string, unknown>): Promise<{
-        Country: {
-            name: string;
-            id: number;
-            iso3: string | null;
-            iso2: string | null;
-            phonecode: string | null;
-            emoji: string | null;
-        };
         SMSVendor: {
+            id: number;
             name: string;
             currency: string | null;
-            id: number;
             provider: string;
             priority: number | null;
             is_active: boolean | null;
             cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
         };
+        Country: {
+            id: number;
+            name: string;
+            iso3: string | null;
+            iso2: string | null;
+            phonecode: string | null;
+            emoji: string | null;
+        };
     } & {
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
@@ -137,24 +137,24 @@ export declare class AccountsController {
     getSmsPref(user: JwtPayload, accountId: number, preferenceId: number): Promise<{
         SMSVendor: {
             phone_number: string | null;
+            id: number;
             name: string;
             currency: string | null;
-            id: number;
             provider: string;
             priority: number | null;
             is_active: boolean | null;
             cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
         };
         Country: {
-            name: string;
             id: number;
+            name: string;
             iso3: string | null;
             iso2: string | null;
             phonecode: string | null;
             emoji: string | null;
         };
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;
@@ -165,26 +165,26 @@ export declare class AccountsController {
         priority: number | null;
     }>;
     updateSmsPref(user: JwtPayload, accountId: number, preferenceId: number, body: Record<string, unknown>): Promise<{
-        Country: {
-            name: string;
-            id: number;
-            iso3: string | null;
-            iso2: string | null;
-            phonecode: string | null;
-            emoji: string | null;
-        };
         SMSVendor: {
+            id: number;
             name: string;
             currency: string | null;
-            id: number;
             provider: string;
             priority: number | null;
             is_active: boolean | null;
             cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
         };
+        Country: {
+            id: number;
+            name: string;
+            iso3: string | null;
+            iso2: string | null;
+            phonecode: string | null;
+            emoji: string | null;
+        };
     } & {
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date | null;
         modified_at: Date | null;
         created_by: string | null;

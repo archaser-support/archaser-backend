@@ -105,12 +105,56 @@ export class SmsService {
         };
     }
 
-    async listVendors(user: JwtPayload) {
+    async listVendors(
+        user: JwtPayload,
+        query: Record<string, string | undefined> = {}
+    ) {
         this.assertAdmin(user);
+        const where: Record<string, unknown> = {};
+        const searchTerm = String(query.search || "").trim();
+        if (searchTerm) {
+            const or: Record<string, unknown>[] = [
+                { provider: { contains: searchTerm, mode: "insensitive" } },
+                { name: { contains: searchTerm, mode: "insensitive" } },
+                { currency: { contains: searchTerm, mode: "insensitive" } },
+            ];
+            if (/^\d+(\.\d+)?$/.test(searchTerm)) {
+                const asNumber = Number(searchTerm);
+                or.push({ priority: asNumber });
+                or.push({ cost_per_sms: asNumber });
+            }
+            where.OR = or;
+        }
+
         const vendors = await this.db.sMSVendor.findMany({
-            orderBy: [{ priority: "asc" }, { created_at: "desc" }],
+            where,
+            orderBy: this.vendorOrderBy(query.sortField, query.sortDirection),
         });
         return serializeBigInt(vendors);
+    }
+
+    private vendorOrderBy(
+        sortField?: string,
+        sortDirection?: string
+    ):
+        | Record<string, "asc" | "desc">
+        | Array<Record<string, "asc" | "desc">> {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        const fieldMap: Record<string, string> = {
+            provider: "provider",
+            name: "name",
+            priority: "priority",
+            cost_per_sms: "cost_per_sms",
+            currency: "currency",
+            status: "is_active",
+            is_active: "is_active",
+            created_at: "created_at",
+        };
+        const prismaField = fieldMap[sortField || ""];
+        if (prismaField) {
+            return { [prismaField]: dir };
+        }
+        return [{ priority: "asc" }, { created_at: "desc" }];
     }
 
     async createVendor(user: JwtPayload, body: Record<string, unknown>) {
@@ -251,7 +295,10 @@ export class SmsService {
                 },
                 skip: (page - 1) * limit,
                 take: limit,
-                orderBy: { id: "asc" },
+                orderBy: this.countryVendorOrderBy(
+                    query.sortField,
+                    query.sortDirection
+                ),
             }),
             this.db.countrySMSVendor.count({ where }),
         ]);
@@ -261,6 +308,32 @@ export class SmsService {
             page,
             limit,
         });
+    }
+
+    private countryVendorOrderBy(
+        sortField?: string,
+        sortDirection?: string
+    ):
+        | Record<string, "asc" | "desc">
+        | Record<string, Record<string, "asc" | "desc">> {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        if (sortField === "country") {
+            return { Country: { name: dir } };
+        }
+        if (sortField === "vendor") {
+            return { SMSVendor: { name: dir } };
+        }
+        if (
+            sortField === "phone_number" ||
+            sortField === "cost_per_sms" ||
+            sortField === "currency" ||
+            sortField === "is_default" ||
+            sortField === "is_active" ||
+            sortField === "id"
+        ) {
+            return { [sortField]: dir };
+        }
+        return { id: "asc" };
     }
 
     async createCountryVendor(user: JwtPayload, body: Record<string, unknown>) {

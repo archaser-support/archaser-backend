@@ -8,14 +8,14 @@ export declare class LogsController {
     constructor(db: DatabaseService, accessScope: AccessScopeService);
     list(user: JwtPayload, query: Record<string, string | undefined>): Promise<{
         logs: {
-            account_id: number | null;
-            message: string;
             id: bigint;
-            level: import(".prisma/client").$Enums.log_level;
-            user_id: string | null;
             timestamp: Date;
+            level: import(".prisma/client").$Enums.log_level;
+            message: string;
             source: string;
             details: import("@prisma/client/runtime/library").JsonValue | null;
+            account_id: number | null;
+            user_id: string | null;
             job_id: number | null;
             correlation_id: string | null;
             sub_source: string | null;

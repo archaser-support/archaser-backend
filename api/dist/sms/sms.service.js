@@ -85,12 +85,46 @@ let SmsService = class SmsService {
             customerId,
         };
     }
-    async listVendors(user) {
+    async listVendors(user, query = {}) {
         this.assertAdmin(user);
+        const where = {};
+        const searchTerm = String(query.search || "").trim();
+        if (searchTerm) {
+            const or = [
+                { provider: { contains: searchTerm, mode: "insensitive" } },
+                { name: { contains: searchTerm, mode: "insensitive" } },
+                { currency: { contains: searchTerm, mode: "insensitive" } },
+            ];
+            if (/^\d+(\.\d+)?$/.test(searchTerm)) {
+                const asNumber = Number(searchTerm);
+                or.push({ priority: asNumber });
+                or.push({ cost_per_sms: asNumber });
+            }
+            where.OR = or;
+        }
         const vendors = await this.db.sMSVendor.findMany({
-            orderBy: [{ priority: "asc" }, { created_at: "desc" }],
+            where,
+            orderBy: this.vendorOrderBy(query.sortField, query.sortDirection),
         });
         return (0, serialize_bigint_1.serializeBigInt)(vendors);
+    }
+    vendorOrderBy(sortField, sortDirection) {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        const fieldMap = {
+            provider: "provider",
+            name: "name",
+            priority: "priority",
+            cost_per_sms: "cost_per_sms",
+            currency: "currency",
+            status: "is_active",
+            is_active: "is_active",
+            created_at: "created_at",
+        };
+        const prismaField = fieldMap[sortField || ""];
+        if (prismaField) {
+            return { [prismaField]: dir };
+        }
+        return [{ priority: "asc" }, { created_at: "desc" }];
     }
     async createVendor(user, body) {
         this.assertAdmin(user);
@@ -219,7 +253,7 @@ let SmsService = class SmsService {
                 },
                 skip: (page - 1) * limit,
                 take: limit,
-                orderBy: { id: "asc" },
+                orderBy: this.countryVendorOrderBy(query.sortField, query.sortDirection),
             }),
             this.db.countrySMSVendor.count({ where }),
         ]);
@@ -229,6 +263,24 @@ let SmsService = class SmsService {
             page,
             limit,
         });
+    }
+    countryVendorOrderBy(sortField, sortDirection) {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        if (sortField === "country") {
+            return { Country: { name: dir } };
+        }
+        if (sortField === "vendor") {
+            return { SMSVendor: { name: dir } };
+        }
+        if (sortField === "phone_number" ||
+            sortField === "cost_per_sms" ||
+            sortField === "currency" ||
+            sortField === "is_default" ||
+            sortField === "is_active" ||
+            sortField === "id") {
+            return { [sortField]: dir };
+        }
+        return { id: "asc" };
     }
     async createCountryVendor(user, body) {
         this.assertAdmin(user);
