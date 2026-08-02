@@ -38,6 +38,9 @@ let OperationsDomainController = class OperationsDomainController {
     async disputeStats(user) {
         return this.operations.getDisputeStats(user);
     }
+    async legalCasesStats(user) {
+        return this.operations.getLegalCasesStats(user);
+    }
     async byId(operationType, id, user) {
         return this.operations.getById(operationType, user, id);
     }
@@ -104,6 +107,14 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], OperationsDomainController.prototype, "disputeStats", null);
+__decorate([
+    (0, common_1.Get)("legal-cases/stats"),
+    (0, swagger_1.ApiOperation)({ summary: "Legal cases statistics" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], OperationsDomainController.prototype, "legalCasesStats", null);
 __decorate([
     (0, common_1.Get)(":operationType/:id"),
     (0, swagger_1.ApiParam)({ name: "operationType", enum: route_catalog_constants_1.OPERATION_TYPES }),

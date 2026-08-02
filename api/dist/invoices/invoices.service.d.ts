@@ -45,6 +45,8 @@ export declare class InvoicesService {
             generic_date2: Date | null;
             customer_id: number | null;
             collection_period_id: number | null;
+            capacity_gap_amount: import("@prisma/client/runtime/library").Decimal | null;
+            capacity_gap_amount_date: Date | null;
             amount: number | null;
             policy_id: number | null;
             invoice_number: string | null;
@@ -82,9 +84,7 @@ export declare class InvoicesService {
             limit_assessed_amount: import("@prisma/client/runtime/library").Decimal | null;
             limit_assessed_at: Date | null;
             limit_assessed_currency: string | null;
-            capacity_gap_amount: import("@prisma/client/runtime/library").Decimal | null;
             capacity_gap_amount_limit: import("@prisma/client/runtime/library").Decimal | null;
-            capacity_gap_amount_date: Date | null;
         })[];
         totalRecords: number;
         page: number;
@@ -146,6 +146,8 @@ export declare class InvoicesService {
         generic_date2: Date | null;
         customer_id: number | null;
         collection_period_id: number | null;
+        capacity_gap_amount: import("@prisma/client/runtime/library").Decimal | null;
+        capacity_gap_amount_date: Date | null;
         amount: number | null;
         policy_id: number | null;
         invoice_number: string | null;
@@ -183,9 +185,7 @@ export declare class InvoicesService {
         limit_assessed_amount: import("@prisma/client/runtime/library").Decimal | null;
         limit_assessed_at: Date | null;
         limit_assessed_currency: string | null;
-        capacity_gap_amount: import("@prisma/client/runtime/library").Decimal | null;
         capacity_gap_amount_limit: import("@prisma/client/runtime/library").Decimal | null;
-        capacity_gap_amount_date: Date | null;
     }>;
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         account_id: number;
@@ -205,6 +205,8 @@ export declare class InvoicesService {
         generic_date2: Date | null;
         customer_id: number | null;
         collection_period_id: number | null;
+        capacity_gap_amount: import("@prisma/client/runtime/library").Decimal | null;
+        capacity_gap_amount_date: Date | null;
         amount: number | null;
         policy_id: number | null;
         invoice_number: string | null;
@@ -242,8 +244,82 @@ export declare class InvoicesService {
         limit_assessed_amount: import("@prisma/client/runtime/library").Decimal | null;
         limit_assessed_at: Date | null;
         limit_assessed_currency: string | null;
-        capacity_gap_amount: import("@prisma/client/runtime/library").Decimal | null;
         capacity_gap_amount_limit: import("@prisma/client/runtime/library").Decimal | null;
+    }>;
+    listStatuses(): Promise<{
+        id: number;
+        name: string;
+    }[]>;
+    availableForCredit(user: JwtPayload, customerId: number): Promise<{
+        items: {
+            id: number;
+            status: import(".prisma/client").$Enums.invoice_status;
+            amount: number | null;
+            invoice_number: string | null;
+            due_date: Date | null;
+            outstanding_debt: number | null;
+        }[];
+    }>;
+    assignCredit(user: JwtPayload, body: {
+        creditInvoiceId?: number;
+        targetInvoiceId?: number;
+    }): Promise<{
+        account_id: number;
+        id: number;
+        created_at: Date;
+        modified_at: Date;
+        status: import(".prisma/client").$Enums.invoice_status;
+        created_by: string | null;
+        modified_by: string | null;
+        promise_to_pay: number | null;
+        customer_number: number | null;
+        generic_text1: string | null;
+        generic_text2: string | null;
+        generic_number1: number | null;
+        generic_number2: number | null;
+        generic_date1: Date | null;
+        generic_date2: Date | null;
+        customer_id: number | null;
+        collection_period_id: number | null;
+        capacity_gap_amount: import("@prisma/client/runtime/library").Decimal | null;
         capacity_gap_amount_date: Date | null;
+        amount: number | null;
+        policy_id: number | null;
+        invoice_number: string | null;
+        due_date: Date | null;
+        oldest_overdue_invoice_date: Date | null;
+        total_paid: number | null;
+        last_payment_date: Date | null;
+        zero_limit_alert: boolean;
+        invoice_date: Date;
+        outstanding_debt: number | null;
+        first_activity_date: Date | null;
+        customer_total_paid: number | null;
+        customer_amount: number | null;
+        customer_outstanding_debt: number | null;
+        customer_currency: string | null;
+        credit_for_invoice_id: number | null;
+        net_amount: number | null;
+        credit_for_invoice_number: string | null;
+        customer_net_amount: number | null;
+        due_notification_state: import("@prisma/client/runtime/library").JsonValue | null;
+        payment_term: number | null;
+        target_reporting_date: Date | null;
+        actual_reporting_date: Date | null;
+        reporting_comment: string | null;
+        reporting_captured_at: Date | null;
+        target_mep_date: Date | null;
+        reported_status: import(".prisma/client").$Enums.invoice_reported_status | null;
+        reporting_breach: boolean;
+        ctv_payment_term: boolean;
+        ctv_customer_overdue_mep: boolean;
+        ctv_customer_excluded_from_policy: boolean;
+        ctv_outdated_dcl: boolean;
+        ctv_invoice_after_policy_end: boolean;
+        in_capacity_gap: boolean;
+        limit_assessed_amount: import("@prisma/client/runtime/library").Decimal | null;
+        limit_assessed_at: Date | null;
+        limit_assessed_currency: string | null;
+        capacity_gap_amount_limit: import("@prisma/client/runtime/library").Decimal | null;
     }>;
 }

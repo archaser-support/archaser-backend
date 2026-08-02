@@ -80,6 +80,12 @@ export class OperationsDomainController {
         return this.operations.getDisputeStats(user);
     }
 
+    @Get("legal-cases/stats")
+    @ApiOperation({ summary: "Legal cases statistics" })
+    async legalCasesStats(@CurrentUser() user: JwtPayload) {
+        return this.operations.getLegalCasesStats(user);
+    }
+
     @Get(":operationType/:id")
     @ApiParam({ name: "operationType", enum: OPERATION_TYPES })
     @ApiOperation({ summary: "Operations detail by id (Nest-native)" })

@@ -9,9 +9,6 @@ export declare function getActiveCustomerPolicyRow(customerId: number, dbClient?
     is_active: boolean;
     customer_id: number;
     insurance_policy_id: number | null;
-    outdated_dcl: boolean;
-    capacity_gap_amount: number | null;
-    capacity_gap_amount_date: Date | null;
     max_payment_term: number | null;
     max_allowed_mep: number | null;
     reporting_days: number | null;
@@ -32,6 +29,9 @@ export declare function getActiveCustomerPolicyRow(customerId: number, dbClient?
     credit_score: Prisma.Decimal | null;
     credit_score_input_date: Date | null;
     active_customer_since: Date | null;
+    outdated_dcl: boolean;
+    capacity_gap_amount: number | null;
+    capacity_gap_amount_date: Date | null;
     uninsured_amount: number | null;
     capacity_gap_amount1: number | null;
     capacity_gap_currency1: string | null;
@@ -64,9 +64,6 @@ export declare function listCustomerPolicyHistory(customerId: number): Promise<{
     is_active: boolean;
     customer_id: number;
     insurance_policy_id: number | null;
-    outdated_dcl: boolean;
-    capacity_gap_amount: number | null;
-    capacity_gap_amount_date: Date | null;
     max_payment_term: number | null;
     max_allowed_mep: number | null;
     reporting_days: number | null;
@@ -87,6 +84,9 @@ export declare function listCustomerPolicyHistory(customerId: number): Promise<{
     credit_score: Prisma.Decimal | null;
     credit_score_input_date: Date | null;
     active_customer_since: Date | null;
+    outdated_dcl: boolean;
+    capacity_gap_amount: number | null;
+    capacity_gap_amount_date: Date | null;
     uninsured_amount: number | null;
     capacity_gap_amount1: number | null;
     capacity_gap_currency1: string | null;

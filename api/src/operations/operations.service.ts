@@ -49,6 +49,9 @@ export class OperationsService {
         if (operationType === "disputes" && id === "stats") {
             return this.getDisputeStats(user);
         }
+        if (operationType === "legal-cases" && id === "stats") {
+            return this.getLegalCasesStats(user);
+        }
         if (operationType === "disputes") {
             return this.getDispute(user, this.parseId(id));
         }
@@ -140,6 +143,80 @@ export class OperationsService {
                 ],
                 disputeAssignFrequencyList: [],
             },
+        };
+    }
+
+    async getLegalCasesStats(user: JwtPayload) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const effectiveRole = userInfo.viewAsUserRole || userInfo.role;
+        const hasViewAs = await this.accessScope.hasPermission(
+            accountId,
+            effectiveRole,
+            "use_view_as"
+        );
+        const ownerFilter = await this.accessScope.getOwnerFilter(
+            userInfo.userId,
+            hasViewAs,
+            userInfo.viewAsUserId,
+            userInfo.viewAsUserRole,
+            userInfo.viewAsUserAccountId
+        );
+
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { currency: true },
+        });
+        const currency = account?.currency || "USD";
+
+        const baseFilters = {
+            Customer: {
+                account_id: accountId,
+                collection_status: "Active" as const,
+                ...ownerFilter,
+            },
+            current_category: "Legal" as const,
+        };
+
+        const [totalCases, totalCustomers, totalAmountResult] =
+            await Promise.all([
+                this.db.customerCollectionPeriod.count({
+                    where: baseFilters,
+                }),
+                this.db.customer.count({
+                    where: {
+                        account_id: accountId,
+                        collection_status: "Active",
+                        ...ownerFilter,
+                        CustomerCollectionPeriod: {
+                            some: {
+                                current_category: "Legal",
+                                period_end_date: null,
+                            },
+                        },
+                    },
+                }),
+                this.db.customerCollectionPeriod.aggregate({
+                    where: baseFilters,
+                    _sum: {
+                        total_outstanding_amount: true,
+                    },
+                }),
+            ]);
+
+        const totalAmount = Number(
+            totalAmountResult._sum.total_outstanding_amount || 0
+        );
+
+        // Nest DTO aligned with FE LegalStats / LegalCasesResponse (D5).
+        return {
+            legalCases: [],
+            totalRecords: totalCases,
+            currentPage: 1,
+            totalPages: 1,
+            currency,
+            totalAmount,
+            totalCustomers,
         };
     }
 
