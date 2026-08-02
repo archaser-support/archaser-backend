@@ -52,6 +52,9 @@ let ActivitiesController = class ActivitiesController {
     async createTemplate(user, body) {
         return this.activities.createTemplate(user, body);
     }
+    async testTemplateEmail(user, id, body) {
+        return this.activities.testTemplateEmail(user, id, body);
+    }
     async updateTemplate(user, id, body) {
         return this.activities.updateTemplate(user, id, body);
     }
@@ -170,6 +173,17 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], ActivitiesController.prototype, "createTemplate", null);
+__decorate([
+    (0, common_1.Post)("templates/:id/test-email"),
+    (0, common_1.HttpCode)(200),
+    (0, swagger_1.ApiOperation)({ summary: "Send activity template test email to caller" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("id", common_1.ParseIntPipe)),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number, Object]),
+    __metadata("design:returntype", Promise)
+], ActivitiesController.prototype, "testTemplateEmail", null);
 __decorate([
     (0, common_1.Put)("templates/:id"),
     (0, swagger_1.ApiOperation)({ summary: "Update activity template" }),

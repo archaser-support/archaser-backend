@@ -92,8 +92,8 @@ export declare class InternalEmailTemplatesController {
         emailContent?: string;
     }): Promise<{
         success: boolean;
-        dryRun: boolean;
         message: string;
+        messageId: string;
         templateId: number;
         subject: string;
     }>;

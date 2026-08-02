@@ -1,10 +1,12 @@
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { DatabaseService } from "../database/database.service";
+import { SystemEmailService } from "../email/system-email.service";
 export declare class ActivitiesService {
     private readonly db;
     private readonly accessScope;
-    constructor(db: DatabaseService, accessScope: AccessScopeService);
+    private readonly systemEmail;
+    constructor(db: DatabaseService, accessScope: AccessScopeService, systemEmail: SystemEmailService);
     private accountId;
     listSequences(user: JwtPayload, query: {
         account_id?: string;
@@ -444,6 +446,18 @@ export declare class ActivitiesService {
         dispute_resolution: import(".prisma/client").$Enums.dispute_resolution | null;
     } | null>;
     deleteTemplate(_user: JwtPayload, id: number): Promise<null>;
+    testTemplateEmail(user: JwtPayload, id: number, body: {
+        language?: string;
+        emailSubject?: string;
+        emailContent?: string;
+    }): Promise<{
+        success: boolean;
+        message: string;
+        messageId: string;
+        language: string;
+    }>;
+    private processTestTemplateContent;
+    private disableLinksInTestEmail;
     listAttachments(user: JwtPayload, activityId: string): Promise<({
         Activity: {
             account_id: number;

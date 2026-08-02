@@ -7,12 +7,14 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+import { SystemEmailService } from "../email/system-email.service";
 
 @Injectable()
 export class InternalEmailTemplatesService {
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
+        private readonly accessScope: AccessScopeService,
+        private readonly systemEmail: SystemEmailService
     ) {}
 
     private async accountId(user: JwtPayload): Promise<number> {
@@ -122,7 +124,7 @@ export class InternalEmailTemplatesService {
     }
 
     /**
-     * Test-email without EmailService: validate access and return a dry-run payload.
+     * Send a test email for an internal email template to the current user.
      */
     async testEmail(
         user: JwtPayload,
@@ -144,11 +146,37 @@ export class InternalEmailTemplatesService {
             throw new NotFoundException({ error: "Template not found" });
         }
 
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const recipientEmail =
+            user.email ||
+            (
+                await this.db.user.findUnique({
+                    where: { id: userInfo.userId },
+                    select: { email: true },
+                })
+            )?.email;
+        if (!recipientEmail) {
+            throw new BadRequestException({
+                error: "No email address found for the current user",
+            });
+        }
+
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { name: true },
+        });
+
+        const result = await this.systemEmail.sendHtmlEmail({
+            toEmail: recipientEmail,
+            subject: body.emailSubject,
+            html: body.emailContent,
+            fromName: account?.name || "ARchaser",
+        });
+
         return {
             success: true,
-            dryRun: true,
-            message:
-                "Test email validated (Nest-native dry-run; SES send not wired in this module)",
+            message: "Test email sent successfully",
+            messageId: result.messageId,
             templateId: template.id,
             subject: body.emailSubject,
         };

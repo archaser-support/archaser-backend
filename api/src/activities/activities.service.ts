@@ -1,5 +1,6 @@
 import {
     BadRequestException,
+    ForbiddenException,
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
@@ -8,6 +9,7 @@ import { JwtPayload } from "../auth/auth.service";
 import { clampExpiry, presignS3Object } from "../common/s3-presign";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+import { SystemEmailService } from "../email/system-email.service";
 
 const SEQUENCE_INCLUDE = {
     ActivitiesTemplate: {
@@ -39,7 +41,8 @@ const TEMPLATE_INCLUDE = {
 export class ActivitiesService {
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
+        private readonly accessScope: AccessScopeService,
+        private readonly systemEmail: SystemEmailService
     ) {}
 
     private async accountId(user: JwtPayload): Promise<{
@@ -611,6 +614,188 @@ export class ActivitiesService {
         });
         await this.db.activitiesTemplate.delete({ where: { id } });
         return null;
+    }
+
+    /**
+     * Send a test email for an activity template (staging parity).
+     * Uses form subject/content + sample variable replacement; sends to the caller.
+     */
+    async testTemplateEmail(
+        user: JwtPayload,
+        id: number,
+        body: {
+            language?: string;
+            emailSubject?: string;
+            emailContent?: string;
+        }
+    ) {
+        const emailSubject = body.emailSubject?.trim();
+        const emailContent = body.emailContent?.trim();
+        if (!emailSubject || !emailContent) {
+            throw new BadRequestException({
+                error: "Email subject and content are required",
+            });
+        }
+
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const effectiveAccountId =
+            this.accessScope.getEffectiveAccountId(userInfo);
+        const isAdmin = this.accessScope.isAdminAccount(userInfo.accountId);
+
+        const template = await this.db.activitiesTemplate.findUnique({
+            where: { id },
+            select: { id: true, account_id: true },
+        });
+        if (!template) {
+            throw new NotFoundException({ error: "Template not found" });
+        }
+        if (
+            !isAdmin &&
+            template.account_id !== effectiveAccountId &&
+            template.account_id !== userInfo.accountId
+        ) {
+            throw new ForbiddenException({ error: "Access denied" });
+        }
+
+        const account = await this.db.account.findUnique({
+            where: { id: template.account_id },
+            select: {
+                id: true,
+                name: true,
+                logo: true,
+                sub_domain: true,
+            },
+        });
+        if (!account) {
+            throw new NotFoundException({ error: "Account not found" });
+        }
+
+        const recipientEmail =
+            user.email ||
+            (
+                await this.db.user.findUnique({
+                    where: { id: userInfo.userId },
+                    select: { email: true },
+                })
+            )?.email;
+        if (!recipientEmail) {
+            throw new BadRequestException({
+                error: "No email address found for the current user",
+            });
+        }
+
+        const templateLanguage = body.language || "English";
+        const sampleInvoice = {
+            invoice_number: "INV-2024-001",
+            due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            outstanding_debt: 1250.5,
+            days_until_due: 7,
+        };
+
+        const processedSubject = this.processTestTemplateContent(
+            emailSubject,
+            account,
+            sampleInvoice
+        );
+        let processedContent = this.processTestTemplateContent(
+            emailContent,
+            account,
+            sampleInvoice
+        );
+        processedContent = this.disableLinksInTestEmail(processedContent);
+
+        const senderName = account.name || "ARchaser";
+        const result = await this.systemEmail.sendHtmlEmail({
+            toEmail: recipientEmail,
+            subject: processedSubject,
+            html: processedContent,
+            fromName: senderName,
+        });
+
+        return {
+            success: true,
+            message: "Test email sent successfully",
+            messageId: result.messageId,
+            language: templateLanguage,
+        };
+    }
+
+    /** Sample macro replacement for activity-template test emails. */
+    private processTestTemplateContent(
+        content: string,
+        account: {
+            id: number;
+            name: string | null;
+            logo: string | null;
+            sub_domain: string | null;
+        },
+        invoice: {
+            invoice_number: string;
+            due_date: Date;
+            outstanding_debt: number;
+            days_until_due: number;
+        }
+    ): string {
+        if (!content) return "";
+        const portalStub = "#";
+        const customerName = "John";
+        const replacements: Record<string, string> = {
+            account_name: account.name || "",
+            customer_name: customerName,
+            first_name: "John",
+            last_name: "Doe",
+            contact_name: "John Doe",
+            debor_name: "John",
+            email: "john.doe@example.com",
+            phone: "+1234567890",
+            mobile: "+1234567890",
+            role: "Test Contact",
+            customer_logo: "",
+            link: portalStub,
+            pay_now_link: portalStub,
+            settle_payment: portalStub,
+            invoice_number: invoice.invoice_number,
+            due_date: invoice.due_date.toLocaleDateString(),
+            amount: String(invoice.outstanding_debt),
+            days_until_due: String(invoice.days_until_due),
+        };
+
+        let result = content;
+        for (const [macro, value] of Object.entries(replacements)) {
+            result = result.replace(new RegExp(`\\{${macro}\\}`, "g"), value);
+        }
+        return result;
+    }
+
+    private disableLinksInTestEmail(html: string): string {
+        return html.replace(
+            /<a\s+([^>]*?)href\s*=\s*["']([^"']+)["']([^>]*?)>([\s\S]*?)<\/a>/gi,
+            (match, beforeHref, url, afterHref, linkText) => {
+                if (
+                    String(url).startsWith("mailto:") ||
+                    String(url).startsWith("tel:")
+                ) {
+                    return match;
+                }
+                const styleMatch = `${beforeHref} ${afterHref}`.match(
+                    /style\s*=\s*["']([^"']+)["']/i
+                );
+                const existingStyle = styleMatch ? styleMatch[1] : "";
+                const disabledStyles =
+                    "pointer-events: none; cursor: not-allowed; opacity: 0.6; text-decoration: none;";
+                const newStyle = existingStyle
+                    ? `style="${existingStyle}; ${disabledStyles}"`
+                    : `style="${disabledStyles}"`;
+                let cleanedAttrs = `${beforeHref} ${afterHref}`
+                    .replace(/style\s*=\s*["'][^"']*["']/gi, "")
+                    .replace(/href\s*=\s*["'][^"']*["']/gi, "")
+                    .replace(/\s+/g, " ")
+                    .trim();
+                const disabledMessage =
+                    `<span style="font-size: 12px; color: #666; font-style: italic; display: block; margin-top: 6px; padding: 4px 0; border-top: 1px dashed #ccc; text-align: inherit;">[Link disabled in test email]</span>`;
+                return `<a ${cleanedAttrs} ${newStyle} href="javascript:void(0)">${linkText}</a>${disabledMessage}`;
+            }
+        );
     }
 
     // ── Attachments ────────────────────────────────────────────

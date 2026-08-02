@@ -722,8 +722,8 @@ export declare class CustomersService {
             DisputeInvoice: ({
                 Invoice: {
                     id: number;
-                    amount: number | null;
                     invoice_number: string | null;
+                    amount: number | null;
                     outstanding_debt: number | null;
                 };
             } & {
@@ -896,9 +896,9 @@ export declare class CustomersService {
         invoices: {
             id: number;
             status: import(".prisma/client").$Enums.invoice_status;
-            amount: number | null;
             invoice_number: string | null;
             due_date: Date | null;
+            amount: number | null;
             outstanding_debt: number | null;
             customer_amount: number | null;
             customer_outstanding_debt: number | null;

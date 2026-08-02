@@ -549,6 +549,16 @@ export declare class ActivitiesController {
         master_template: boolean | null;
         dispute_resolution: import(".prisma/client").$Enums.dispute_resolution | null;
     }) | null>;
+    testTemplateEmail(user: JwtPayload, id: number, body: {
+        language?: string;
+        emailSubject?: string;
+        emailContent?: string;
+    }): Promise<{
+        success: boolean;
+        message: string;
+        messageId: string;
+        language: string;
+    }>;
     updateTemplate(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         id: number;
         name: string;
