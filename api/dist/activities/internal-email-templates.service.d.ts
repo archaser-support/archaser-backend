@@ -1,10 +1,12 @@
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { DatabaseService } from "../database/database.service";
+import { SystemEmailService } from "../email/system-email.service";
 export declare class InternalEmailTemplatesService {
     private readonly db;
     private readonly accessScope;
-    constructor(db: DatabaseService, accessScope: AccessScopeService);
+    private readonly systemEmail;
+    constructor(db: DatabaseService, accessScope: AccessScopeService, systemEmail: SystemEmailService);
     private accountId;
     list(user: JwtPayload): Promise<{
         id: number;
@@ -95,8 +97,8 @@ export declare class InternalEmailTemplatesService {
         emailContent?: string;
     }): Promise<{
         success: boolean;
-        dryRun: boolean;
         message: string;
+        messageId: string;
         templateId: number;
         subject: string;
     }>;

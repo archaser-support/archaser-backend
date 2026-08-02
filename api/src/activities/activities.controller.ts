@@ -131,6 +131,22 @@ export class ActivitiesController {
         return this.activities.createTemplate(user, body);
     }
 
+    @Post("templates/:id/test-email")
+    @HttpCode(200)
+    @ApiOperation({ summary: "Send activity template test email to caller" })
+    async testTemplateEmail(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number,
+        @Body()
+        body: {
+            language?: string;
+            emailSubject?: string;
+            emailContent?: string;
+        }
+    ) {
+        return this.activities.testTemplateEmail(user, id, body);
+    }
+
     @Put("templates/:id")
     @ApiOperation({ summary: "Update activity template" })
     async updateTemplate(

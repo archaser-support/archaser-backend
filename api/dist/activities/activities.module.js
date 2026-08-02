@@ -10,6 +10,7 @@ exports.ActivitiesModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const database_module_1 = require("../database/database.module");
+const email_module_1 = require("../email/email.module");
 const activities_controller_1 = require("./activities.controller");
 const activities_service_1 = require("./activities.service");
 const activity_attachments_controller_1 = require("./activity-attachments.controller");
@@ -23,7 +24,7 @@ let ActivitiesModule = class ActivitiesModule {
 exports.ActivitiesModule = ActivitiesModule;
 exports.ActivitiesModule = ActivitiesModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule],
+        imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule, email_module_1.EmailModule],
         controllers: [
             activities_controller_1.ActivitiesController,
             activity_sequences_controller_1.ActivitySequencesController,

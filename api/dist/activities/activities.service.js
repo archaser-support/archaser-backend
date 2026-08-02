@@ -15,6 +15,7 @@ const access_scope_service_1 = require("../auth/access-scope.service");
 const s3_presign_1 = require("../common/s3-presign");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
+const system_email_service_1 = require("../email/system-email.service");
 const SEQUENCE_INCLUDE = {
     ActivitiesTemplate: {
         select: {
@@ -40,9 +41,10 @@ const TEMPLATE_INCLUDE = {
     User_ActivitiesTemplate_modified_byToUser: true,
 };
 let ActivitiesService = class ActivitiesService {
-    constructor(db, accessScope) {
+    constructor(db, accessScope, systemEmail) {
         this.db = db;
         this.accessScope = accessScope;
+        this.systemEmail = systemEmail;
     }
     async accountId(user) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
@@ -467,6 +469,127 @@ let ActivitiesService = class ActivitiesService {
         await this.db.activitiesTemplate.delete({ where: { id } });
         return null;
     }
+    async testTemplateEmail(user, id, body) {
+        const emailSubject = body.emailSubject?.trim();
+        const emailContent = body.emailContent?.trim();
+        if (!emailSubject || !emailContent) {
+            throw new common_1.BadRequestException({
+                error: "Email subject and content are required",
+            });
+        }
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const effectiveAccountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const isAdmin = this.accessScope.isAdminAccount(userInfo.accountId);
+        const template = await this.db.activitiesTemplate.findUnique({
+            where: { id },
+            select: { id: true, account_id: true },
+        });
+        if (!template) {
+            throw new common_1.NotFoundException({ error: "Template not found" });
+        }
+        if (!isAdmin &&
+            template.account_id !== effectiveAccountId &&
+            template.account_id !== userInfo.accountId) {
+            throw new common_1.ForbiddenException({ error: "Access denied" });
+        }
+        const account = await this.db.account.findUnique({
+            where: { id: template.account_id },
+            select: {
+                id: true,
+                name: true,
+                logo: true,
+                sub_domain: true,
+            },
+        });
+        if (!account) {
+            throw new common_1.NotFoundException({ error: "Account not found" });
+        }
+        const recipientEmail = user.email ||
+            (await this.db.user.findUnique({
+                where: { id: userInfo.userId },
+                select: { email: true },
+            }))?.email;
+        if (!recipientEmail) {
+            throw new common_1.BadRequestException({
+                error: "No email address found for the current user",
+            });
+        }
+        const templateLanguage = body.language || "English";
+        const sampleInvoice = {
+            invoice_number: "INV-2024-001",
+            due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            outstanding_debt: 1250.5,
+            days_until_due: 7,
+        };
+        const processedSubject = this.processTestTemplateContent(emailSubject, account, sampleInvoice);
+        let processedContent = this.processTestTemplateContent(emailContent, account, sampleInvoice);
+        processedContent = this.disableLinksInTestEmail(processedContent);
+        const senderName = account.name || "ARchaser";
+        const result = await this.systemEmail.sendHtmlEmail({
+            toEmail: recipientEmail,
+            subject: processedSubject,
+            html: processedContent,
+            fromName: senderName,
+        });
+        return {
+            success: true,
+            message: "Test email sent successfully",
+            messageId: result.messageId,
+            language: templateLanguage,
+        };
+    }
+    processTestTemplateContent(content, account, invoice) {
+        if (!content)
+            return "";
+        const portalStub = "#";
+        const customerName = "John";
+        const replacements = {
+            account_name: account.name || "",
+            customer_name: customerName,
+            first_name: "John",
+            last_name: "Doe",
+            contact_name: "John Doe",
+            debor_name: "John",
+            email: "john.doe@example.com",
+            phone: "+1234567890",
+            mobile: "+1234567890",
+            role: "Test Contact",
+            customer_logo: "",
+            link: portalStub,
+            pay_now_link: portalStub,
+            settle_payment: portalStub,
+            invoice_number: invoice.invoice_number,
+            due_date: invoice.due_date.toLocaleDateString(),
+            amount: String(invoice.outstanding_debt),
+            days_until_due: String(invoice.days_until_due),
+        };
+        let result = content;
+        for (const [macro, value] of Object.entries(replacements)) {
+            result = result.replace(new RegExp(`\\{${macro}\\}`, "g"), value);
+        }
+        return result;
+    }
+    disableLinksInTestEmail(html) {
+        return html.replace(/<a\s+([^>]*?)href\s*=\s*["']([^"']+)["']([^>]*?)>([\s\S]*?)<\/a>/gi, (match, beforeHref, url, afterHref, linkText) => {
+            if (String(url).startsWith("mailto:") ||
+                String(url).startsWith("tel:")) {
+                return match;
+            }
+            const styleMatch = `${beforeHref} ${afterHref}`.match(/style\s*=\s*["']([^"']+)["']/i);
+            const existingStyle = styleMatch ? styleMatch[1] : "";
+            const disabledStyles = "pointer-events: none; cursor: not-allowed; opacity: 0.6; text-decoration: none;";
+            const newStyle = existingStyle
+                ? `style="${existingStyle}; ${disabledStyles}"`
+                : `style="${disabledStyles}"`;
+            let cleanedAttrs = `${beforeHref} ${afterHref}`
+                .replace(/style\s*=\s*["'][^"']*["']/gi, "")
+                .replace(/href\s*=\s*["'][^"']*["']/gi, "")
+                .replace(/\s+/g, " ")
+                .trim();
+            const disabledMessage = `<span style="font-size: 12px; color: #666; font-style: italic; display: block; margin-top: 6px; padding: 4px 0; border-top: 1px dashed #ccc; text-align: inherit;">[Link disabled in test email]</span>`;
+            return `<a ${cleanedAttrs} ${newStyle} href="javascript:void(0)">${linkText}</a>${disabledMessage}`;
+        });
+    }
     async listAttachments(user, activityId) {
         const { accountId } = await this.accountId(user);
         if (!activityId) {
@@ -597,6 +720,7 @@ exports.ActivitiesService = ActivitiesService;
 exports.ActivitiesService = ActivitiesService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
-        access_scope_service_1.AccessScopeService])
+        access_scope_service_1.AccessScopeService,
+        system_email_service_1.SystemEmailService])
 ], ActivitiesService);
 //# sourceMappingURL=activities.service.js.map

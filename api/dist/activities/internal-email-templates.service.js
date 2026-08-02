@@ -14,10 +14,12 @@ const common_1 = require("@nestjs/common");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
+const system_email_service_1 = require("../email/system-email.service");
 let InternalEmailTemplatesService = class InternalEmailTemplatesService {
-    constructor(db, accessScope) {
+    constructor(db, accessScope, systemEmail) {
         this.db = db;
         this.accessScope = accessScope;
+        this.systemEmail = systemEmail;
     }
     async accountId(user) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
@@ -132,10 +134,31 @@ let InternalEmailTemplatesService = class InternalEmailTemplatesService {
         if (!template) {
             throw new common_1.NotFoundException({ error: "Template not found" });
         }
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const recipientEmail = user.email ||
+            (await this.db.user.findUnique({
+                where: { id: userInfo.userId },
+                select: { email: true },
+            }))?.email;
+        if (!recipientEmail) {
+            throw new common_1.BadRequestException({
+                error: "No email address found for the current user",
+            });
+        }
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { name: true },
+        });
+        const result = await this.systemEmail.sendHtmlEmail({
+            toEmail: recipientEmail,
+            subject: body.emailSubject,
+            html: body.emailContent,
+            fromName: account?.name || "ARchaser",
+        });
         return {
             success: true,
-            dryRun: true,
-            message: "Test email validated (Nest-native dry-run; SES send not wired in this module)",
+            message: "Test email sent successfully",
+            messageId: result.messageId,
             templateId: template.id,
             subject: body.emailSubject,
         };
@@ -145,6 +168,7 @@ exports.InternalEmailTemplatesService = InternalEmailTemplatesService;
 exports.InternalEmailTemplatesService = InternalEmailTemplatesService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
-        access_scope_service_1.AccessScopeService])
+        access_scope_service_1.AccessScopeService,
+        system_email_service_1.SystemEmailService])
 ], InternalEmailTemplatesService);
 //# sourceMappingURL=internal-email-templates.service.js.map
