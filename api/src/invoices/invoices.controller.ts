@@ -2,8 +2,10 @@ import {
     Body,
     Controller,
     Get,
+    HttpCode,
     Param,
     ParseIntPipe,
+    Post,
     Put,
     Query,
     UseGuards,
@@ -25,6 +27,32 @@ import { InvoicesListQuery, InvoicesService } from "./invoices.service";
 @Controller("api/entities/invoices")
 export class InvoicesController {
     constructor(private readonly invoices: InvoicesService) {}
+
+    @Get("status")
+    @ApiOperation({ summary: "Invoice status catalog" })
+    async statuses() {
+        return this.invoices.listStatuses();
+    }
+
+    @Get("available-for-credit/:customerId")
+    @ApiOperation({ summary: "Open invoices that can receive credit" })
+    async availableForCredit(
+        @CurrentUser() user: JwtPayload,
+        @Param("customerId", ParseIntPipe) customerId: number
+    ) {
+        return this.invoices.availableForCredit(user, customerId);
+    }
+
+    @Post("assign-credit")
+    @HttpCode(200)
+    @ApiOperation({ summary: "Assign a credit invoice to a target invoice" })
+    async assignCredit(
+        @CurrentUser() user: JwtPayload,
+        @Body()
+        body: { creditInvoiceId?: number; targetInvoiceId?: number }
+    ) {
+        return this.invoices.assignCredit(user, body);
+    }
 
     @Get()
     @ApiOperation({ summary: "Invoices list (Nest-native)" })

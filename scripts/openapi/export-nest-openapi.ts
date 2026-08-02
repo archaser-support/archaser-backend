@@ -3,18 +3,18 @@
  * Usage: npm run openapi:export
  *
  * Requires a prior Nest build (script runs build -w @archaser/api).
- * Output: backend/api/openapi.json
+ * Output: api/openapi.json
  */
 import { NestFactory } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 // Use compiled Nest output so tsx does not re-transpile decorators.
-import { AppModule } from "../../backend/api/dist/app.module";
+import { AppModule } from "../../api/dist/app.module";
 import {
     enrichStranglerOpenApi,
     SWAGGER_DESCRIPTION,
-} from "../../backend/api/dist/openapi/enrich-strangler-openapi";
+} from "../../api/dist/openapi/enrich-strangler-openapi";
 
 async function main() {
     process.env.JWT_SECRET =
@@ -29,7 +29,7 @@ async function main() {
     const document = enrichStranglerOpenApi(
         SwaggerModule.createDocument(app, config)
     );
-    const outDir = join(__dirname, "../../backend/api");
+    const outDir = join(__dirname, "../../api");
     mkdirSync(outDir, { recursive: true });
     const outPath = join(outDir, "openapi.json");
     writeFileSync(outPath, JSON.stringify(document, null, 2));

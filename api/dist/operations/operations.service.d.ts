@@ -140,6 +140,14 @@ export declare class OperationsService {
             }[];
             disputeAssignFrequencyList: never[];
         };
+    } | {
+        legalCases: never[];
+        totalRecords: number;
+        currentPage: number;
+        totalPages: number;
+        currency: string;
+        totalAmount: number;
+        totalCustomers: number;
     } | ({
         DisputeReason: {
             account_id: number | null;
@@ -235,6 +243,15 @@ export declare class OperationsService {
             }[];
             disputeAssignFrequencyList: never[];
         };
+    }>;
+    getLegalCasesStats(user: JwtPayload): Promise<{
+        legalCases: never[];
+        totalRecords: number;
+        currentPage: number;
+        totalPages: number;
+        currency: string;
+        totalAmount: number;
+        totalCustomers: number;
     }>;
     private emptyNotificationStats;
     private listNotifications;

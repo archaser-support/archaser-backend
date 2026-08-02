@@ -100,6 +100,86 @@ let CommunicationIntelligenceController = class CommunicationIntelligenceControl
             total: rows.length,
         };
     }
+    async analytics(customerIdRaw, channel, startDateRaw, endDateRaw, query) {
+        const where = {
+            channel_selection_reason: { not: null },
+        };
+        const activityWhere = {};
+        if (customerIdRaw) {
+            const customerId = parseInt(customerIdRaw, 10);
+            if (Number.isFinite(customerId)) {
+                activityWhere.customer_id = customerId;
+            }
+        }
+        if (startDateRaw || endDateRaw) {
+            activityWhere.created_at = {
+                ...(startDateRaw ? { gte: new Date(startDateRaw) } : {}),
+                ...(endDateRaw ? { lte: new Date(endDateRaw) } : {}),
+            };
+        }
+        if (Object.keys(activityWhere).length) {
+            where.Activity = activityWhere;
+        }
+        if (channel && channel !== "all") {
+            where.communication_channel = channel;
+        }
+        if (query?.trim()) {
+            where.channel_selection_reason = {
+                contains: query.trim(),
+                mode: "insensitive",
+            };
+        }
+        const rows = await this.db.activityContact.findMany({
+            where,
+            select: {
+                communication_channel: true,
+                status: true,
+                delivered_at: true,
+                failed_at: true,
+                created_at: true,
+            },
+            take: 5000,
+        });
+        const byChannel = new Map();
+        for (const row of rows) {
+            const ch = String(row.communication_channel || "Unknown");
+            const entry = byChannel.get(ch) || {
+                totalAttempts: 0,
+                totalSuccesses: 0,
+                durations: [],
+            };
+            entry.totalAttempts += 1;
+            const success = row.status === "Delivered" ||
+                row.status === "Sent" ||
+                !!row.delivered_at;
+            if (success)
+                entry.totalSuccesses += 1;
+            if (row.delivered_at && row.created_at) {
+                entry.durations.push(row.delivered_at.getTime() - row.created_at.getTime());
+            }
+            byChannel.set(ch, entry);
+        }
+        const channelMetrics = [...byChannel.entries()].map(([ch, m]) => ({
+            channel: ch,
+            totalAttempts: m.totalAttempts,
+            totalSuccesses: m.totalSuccesses,
+            successRate: m.totalAttempts > 0
+                ? m.totalSuccesses / m.totalAttempts
+                : 0,
+            averageResponseTime: m.durations.length > 0
+                ? m.durations.reduce((a, b) => a + b, 0) / m.durations.length
+                : null,
+        }));
+        return {
+            channelMetrics,
+            totalRecords: rows.length,
+            period: {
+                startDate: startDateRaw || null,
+                endDate: endDateRaw || null,
+            },
+            generatedAt: new Date().toISOString(),
+        };
+    }
 };
 exports.CommunicationIntelligenceController = CommunicationIntelligenceController;
 __decorate([
@@ -122,6 +202,18 @@ __decorate([
     __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", Promise)
 ], CommunicationIntelligenceController.prototype, "learningData", null);
+__decorate([
+    (0, common_1.Get)("analytics"),
+    (0, swagger_1.ApiOperation)({ summary: "Channel selection analytics aggregates" }),
+    __param(0, (0, common_1.Query)("customerId")),
+    __param(1, (0, common_1.Query)("channel")),
+    __param(2, (0, common_1.Query)("startDate")),
+    __param(3, (0, common_1.Query)("endDate")),
+    __param(4, (0, common_1.Query)("query")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String, String, String]),
+    __metadata("design:returntype", Promise)
+], CommunicationIntelligenceController.prototype, "analytics", null);
 exports.CommunicationIntelligenceController = CommunicationIntelligenceController = __decorate([
     (0, swagger_1.ApiTags)("communication-intelligence"),
     (0, swagger_1.ApiBearerAuth)(),

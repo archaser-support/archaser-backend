@@ -66,6 +66,9 @@ let CustomersController = class CustomersController {
     async invoicesAvailableForDispute(user, id) {
         return this.customers.invoicesAvailableForDispute(user, id);
     }
+    async addComment(user, id, body) {
+        return this.customers.addComment(user, id, body.comment || body.content || "");
+    }
     async logCallActivity(user, id, body) {
         return this.customers.logCallActivity(user, id, body);
     }
@@ -211,6 +214,17 @@ __decorate([
     __metadata("design:paramtypes", [Object, Number]),
     __metadata("design:returntype", Promise)
 ], CustomersController.prototype, "invoicesAvailableForDispute", null);
+__decorate([
+    (0, common_1.Post)(":id/comments"),
+    (0, common_1.HttpCode)(200),
+    (0, swagger_1.ApiOperation)({ summary: "Add an internal comment activity on a customer" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("id", common_1.ParseIntPipe)),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number, Object]),
+    __metadata("design:returntype", Promise)
+], CustomersController.prototype, "addComment", null);
 __decorate([
     (0, common_1.Post)(":id/activity/log-call-activity"),
     (0, swagger_1.ApiOperation)({ summary: "Log a call activity (Nest-native)" }),
