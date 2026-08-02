@@ -1,0 +1,60 @@
+name: Sync OpenAPI to frontend
+
+# When Nest OpenAPI changes, open a PR on the frontend repo updating the vendored copy (D10).
+# Requires repo secrets:
+#   FRONTEND_REPO — e.g. owner/frontend-repo
+#   CROSS_REPO_PAT — PAT with contents:write + pull-requests:write on the frontend repo
+
+on:
+  push:
+    branches: [main, master, staging]
+    paths:
+      - "api/openapi.json"
+  workflow_dispatch:
+
+jobs:
+  sync-openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require sync secrets
+        env:
+          FRONTEND_REPO: ${{ secrets.FRONTEND_REPO }}
+          CROSS_REPO_PAT: ${{ secrets.CROSS_REPO_PAT }}
+        run: |
+          if [ -z "$FRONTEND_REPO" ] || [ -z "$CROSS_REPO_PAT" ]; then
+            echo "Skip: set FRONTEND_REPO and CROSS_REPO_PAT secrets to enable OpenAPI sync PRs."
+            exit 0
+          fi
+          echo "SYNC=1" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        if: env.SYNC == '1'
+
+      - name: Checkout frontend
+        if: env.SYNC == '1'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.FRONTEND_REPO }}
+          token: ${{ secrets.CROSS_REPO_PAT }}
+          path: frontend-sync
+
+      - name: Copy OpenAPI
+        if: env.SYNC == '1'
+        run: |
+          mkdir -p frontend-sync/openapi
+          cp api/openapi.json frontend-sync/openapi/openapi.json
+
+      - name: Create Pull Request
+        if: env.SYNC == '1'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.CROSS_REPO_PAT }}
+          path: frontend-sync
+          commit-message: "chore: sync Nest OpenAPI from backend"
+          title: "chore: sync Nest OpenAPI from backend"
+          body: |
+            Automated OpenAPI sync from the backend repo (`api/openapi.json`).
+
+            Run `npm run check:api-parity` locally after merge if you add new FE API calls.
+          branch: chore/sync-openapi-${{ github.sha }}
+          delete-branch: true

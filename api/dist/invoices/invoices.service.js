@@ -140,6 +140,72 @@ let InvoicesService = class InvoicesService {
         });
         return (0, serialize_bigint_1.serializeBigInt)(updated);
     }
+    async listStatuses() {
+        return [
+            { id: 1, name: "Draft" },
+            { id: 2, name: "Open" },
+            { id: 3, name: "Overdue" },
+            { id: 4, name: "Paid" },
+            { id: 5, name: "Cancelled" },
+            { id: 6, name: "Partially_Paid" },
+            { id: 7, name: "Under_Dispute" },
+            { id: 9, name: "Sent" },
+            { id: 10, name: "Viewed" },
+            { id: 11, name: "Void" },
+            { id: 13, name: "Due" },
+        ];
+    }
+    async availableForCredit(user, customerId) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const invoices = await this.db.invoice.findMany({
+            where: {
+                account_id: accountId,
+                customer_id: customerId,
+                status: "Open",
+                credit_for_invoice_id: null,
+                outstanding_debt: { gt: 0 },
+            },
+            orderBy: { due_date: "asc" },
+            take: 200,
+            select: {
+                id: true,
+                invoice_number: true,
+                amount: true,
+                outstanding_debt: true,
+                due_date: true,
+                status: true,
+            },
+        });
+        return (0, serialize_bigint_1.serializeBigInt)({ items: invoices });
+    }
+    async assignCredit(user, body) {
+        const creditInvoiceId = Number(body.creditInvoiceId);
+        const targetInvoiceId = Number(body.targetInvoiceId);
+        if (!Number.isFinite(creditInvoiceId) || !Number.isFinite(targetInvoiceId)) {
+            throw new common_1.BadRequestException({
+                error: "creditInvoiceId and targetInvoiceId are required",
+            });
+        }
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const [credit, target] = await Promise.all([
+            this.db.invoice.findFirst({
+                where: { id: creditInvoiceId, account_id: accountId },
+            }),
+            this.db.invoice.findFirst({
+                where: { id: targetInvoiceId, account_id: accountId },
+            }),
+        ]);
+        if (!credit || !target) {
+            throw new common_1.NotFoundException({ error: "Invoice not found" });
+        }
+        const updated = await this.db.invoice.update({
+            where: { id: creditInvoiceId },
+            data: { credit_for_invoice_id: targetInvoiceId },
+        });
+        return (0, serialize_bigint_1.serializeBigInt)(updated);
+    }
 };
 exports.InvoicesService = InvoicesService;
 exports.InvoicesService = InvoicesService = __decorate([

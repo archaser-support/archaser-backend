@@ -10,6 +10,7 @@ import {
     INSURANCE_ENTITY_TYPES,
     InsuranceEntitiesService,
 } from "./insurance-entities.service";
+import { InsurancePoliciesActionsController } from "./insurance-policies-actions.controller";
 
 const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
     createInsuranceEntityController(t)
@@ -19,6 +20,7 @@ const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
     imports: [AuthModule, DatabaseModule],
     controllers: [
         CreditInsuranceDomainController,
+        InsurancePoliciesActionsController,
         ...insuranceEntityControllers,
     ],
     providers: [

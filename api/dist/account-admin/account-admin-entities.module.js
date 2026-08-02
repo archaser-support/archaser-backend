@@ -14,12 +14,17 @@ const account_admin_entities_service_1 = require("./account-admin-entities.servi
 const accounts_bank_accounts_controller_1 = require("./accounts-bank-accounts.controller");
 const accounts_business_units_controller_1 = require("./accounts-business-units.controller");
 const bank_accounts_leaf_controller_1 = require("./bank-accounts-leaf.controller");
+const business_unit_banks_controller_1 = require("./business-unit-banks.controller");
 const create_account_admin_controller_1 = require("./create-account-admin.controller");
+const users_accounts_extras_controller_1 = require("./users-accounts-extras.controller");
 const controllers = [
     ...account_admin_entities_service_1.ACCOUNT_ADMIN_ENTITY_TYPES.map((t) => (0, create_account_admin_controller_1.createAccountAdminController)(t)),
+    business_unit_banks_controller_1.BusinessUnitBanksController,
     accounts_business_units_controller_1.AccountsBusinessUnitsController,
     accounts_bank_accounts_controller_1.AccountsBankAccountsController,
     bank_accounts_leaf_controller_1.BankAccountsLeafController,
+    users_accounts_extras_controller_1.UsersExtrasController,
+    users_accounts_extras_controller_1.AccountsExtrasController,
 ];
 let AccountAdminEntitiesModule = class AccountAdminEntitiesModule {
 };

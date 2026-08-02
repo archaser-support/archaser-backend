@@ -4,6 +4,7 @@ import {
     Get,
     Param,
     Post,
+    Put,
     Query,
     UseGuards,
 } from "@nestjs/common";
@@ -161,6 +162,73 @@ export class SystemController {
         @Body() body: Record<string, unknown>
     ) {
         return this.system.postCronJobs(user, body);
+    }
+
+    @Get("admin/dashboard")
+    @ApiOperation({ summary: "Admin cron monitor dashboard" })
+    async adminDashboard(@CurrentUser() user: JwtPayload) {
+        return this.system.getAdminDashboard(user);
+    }
+
+    @Get("admin/system-health")
+    @ApiOperation({ summary: "Admin system health aggregates" })
+    async systemHealth(@CurrentUser() user: JwtPayload) {
+        return this.system.getSystemHealth(user);
+    }
+
+    @Post("admin/cron-jobs/trigger")
+    @ApiOperation({ summary: "Trigger a cron job by id (or all due)" })
+    async cronJobsTrigger(
+        @CurrentUser() user: JwtPayload,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.system.triggerCronJob(user, body);
+    }
+
+    @Get("admin/cron-jobs/logs/:executionId")
+    @ApiOperation({ summary: "Fetch cron execution logs by execution id" })
+    async cronJobLogs(
+        @CurrentUser() user: JwtPayload,
+        @Param("executionId") executionId: string
+    ) {
+        return this.system.getCronJobLogs(user, executionId);
+    }
+
+    @Get("company")
+    @ApiOperation({ summary: "List companies" })
+    async listCompanies(@CurrentUser() user: JwtPayload) {
+        return this.system.listCompanies(user);
+    }
+
+    @Post("company")
+    @ApiOperation({ summary: "Create a company" })
+    async createCompany(
+        @CurrentUser() user: JwtPayload,
+        @Body() body: { name?: string; company_number?: string }
+    ) {
+        return this.system.createCompany(user, body);
+    }
+
+    @Put("company")
+    @ApiOperation({ summary: "Update a company (id in body)" })
+    async updateCompany(
+        @CurrentUser() user: JwtPayload,
+        @Body() body: { id?: number; name?: string }
+    ) {
+        return this.system.updateCompany(user, body);
+    }
+
+    @Put("company/:id")
+    @ApiOperation({ summary: "Update a company by path id" })
+    async updateCompanyById(
+        @CurrentUser() user: JwtPayload,
+        @Param("id") id: string,
+        @Body() body: { name?: string }
+    ) {
+        return this.system.updateCompany(user, {
+            id: parseInt(id, 10),
+            name: body.name,
+        });
     }
 
     @Get("cron")

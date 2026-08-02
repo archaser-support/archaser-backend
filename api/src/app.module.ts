@@ -6,6 +6,7 @@ import { ActivitiesModule } from "./activities/activities.module";
 import { AdminModule } from "./admin/admin.module";
 import { AgentsModule } from "./agents/agents.module";
 import { AuthModule } from "./auth/auth.module";
+import { BusinessUnitsModule } from "./business-units/business-units.module";
 import { CommunicationIntelligenceModule } from "./communication-intelligence/communication-intelligence.module";
 import { ContactsCollectionPeriodModule } from "./contacts/contacts-collection-period.module";
 import { CreditInsuranceModule } from "./credit-insurance/credit-insurance.module";
@@ -49,6 +50,7 @@ import { UserPreferencesModule } from "./user-preferences/user-preferences.modul
         RealtimeModule,
         QueueModule,
         CustomersModule,
+        BusinessUnitsModule,
         InvoicesModule,
         ContactsCollectionPeriodModule,
         AccountAdminEntitiesModule,

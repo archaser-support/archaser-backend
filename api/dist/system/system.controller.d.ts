@@ -655,8 +655,197 @@ export declare class SystemController {
     cronJobsPost(user: JwtPayload, body: Record<string, unknown>): Promise<{
         success: boolean;
         message: string;
+        jobId: number;
+        timestamp: string;
+        body?: undefined;
+    } | {
+        success: boolean;
+        message: string;
         timestamp: string;
         body: Record<string, unknown>;
+        jobId?: undefined;
+    }>;
+    adminDashboard(user: JwtPayload): Promise<{
+        jobs: {
+            id: number;
+            name: string;
+            cron_expression: string;
+            active: boolean | null;
+            last_run_at: Date | null;
+            next_run_at: Date | null;
+            created_at: Date;
+            modified_at: Date;
+            isRunning: boolean;
+            runningDuration: number;
+        }[];
+        runningJobs: {
+            over2Min: {
+                id: number;
+                name: string;
+                duration: number;
+            }[];
+            over30Min: {
+                id: number;
+                name: string;
+                duration: number;
+            }[];
+        };
+    }>;
+    systemHealth(user: JwtPayload): Promise<{
+        cronJobs: {
+            overview: {
+                totalJobs: number;
+                overdueCount: number;
+                runningCount: number;
+                notRunIn24hCount: number;
+                overallSuccessRate: number;
+            };
+            jobs: {
+                id: number;
+                name: string;
+                lastRunAt: string | null;
+                nextRunAt: string | null;
+                lastExecutionDurationSeconds: number | null;
+                averageExecutionDurationSeconds: number | null;
+                minExecutionDurationSeconds: number | null;
+                maxExecutionDurationSeconds: number | null;
+                timeoutPeriodSeconds: number;
+                successRate30d: number;
+                failureRate30d: number;
+                timeoutRate30d: number;
+                lastSuccessAt: string | null;
+                lastFailureAt: string | null;
+                lastTimeoutAt: string | null;
+                performanceBaselineSeconds: number | null;
+                performanceDegradationAlertSentAt: string | null;
+                active: boolean;
+            }[];
+        };
+        activities: {
+            email: {
+                sent1h: number;
+                sent6h: number;
+                sent24h: number;
+                generated1h: number;
+                generated6h: number;
+                generated24h: number;
+                failed1h: number;
+                failed6h: number;
+                failed24h: number;
+                bounced1h: number;
+                bounced6h: number;
+                bounced24h: number;
+            };
+            sms: {
+                sent1h: number;
+                sent6h: number;
+                sent24h: number;
+                generated1h: number;
+                generated6h: number;
+                generated24h: number;
+                failed1h: number;
+                failed6h: number;
+                failed24h: number;
+            };
+            stuck: {
+                total: number;
+                byReason: {
+                    reason: string;
+                    count: number;
+                }[];
+            };
+        };
+        imports: {
+            overview: {
+                total24h: number;
+                total7d: number;
+                total30d: number;
+                pendingCount: number;
+                stuckCount: number;
+                overallSuccessRate: number;
+                avgProcessingTimeSeconds: null;
+                recordsPerHour: number;
+            };
+            byType: {
+                importType: string;
+                count24h: number;
+                count7d: number;
+                count30d: number;
+                totalRecords: number;
+                successfulRecords: number;
+                failedRecords: number;
+                successRate: number;
+                avgDurationSeconds: number | null;
+                recordsPerHour: number;
+            }[];
+        };
+    }>;
+    cronJobsTrigger(user: JwtPayload, body: Record<string, unknown>): Promise<{
+        success: boolean;
+        message: string;
+        jobId: number;
+        timestamp: string;
+        body?: undefined;
+    } | {
+        success: boolean;
+        message: string;
+        timestamp: string;
+        body: Record<string, unknown>;
+        jobId?: undefined;
+    }>;
+    cronJobLogs(user: JwtPayload, executionId: string): Promise<{
+        executionId: string;
+        status: string;
+        items: {
+            message: string;
+            id: bigint;
+            level: import(".prisma/client").$Enums.log_level;
+            timestamp: Date;
+            details: import("@prisma/client/runtime/library").JsonValue;
+            job_id: number | null;
+            correlation_id: string | null;
+        }[];
+    }>;
+    listCompanies(user: JwtPayload): Promise<{
+        items: {
+            name: string;
+            id: number;
+        }[];
+    }>;
+    createCompany(user: JwtPayload, body: {
+        name?: string;
+        company_number?: string;
+    }): Promise<{
+        name: string;
+        id: number;
+        created_at: Date;
+        modified_at: Date;
+        created_by: string | null;
+        modified_by: string | null;
+        company_number: string | null;
+    }>;
+    updateCompany(user: JwtPayload, body: {
+        id?: number;
+        name?: string;
+    }): Promise<{
+        name: string;
+        id: number;
+        created_at: Date;
+        modified_at: Date;
+        created_by: string | null;
+        modified_by: string | null;
+        company_number: string | null;
+    }>;
+    updateCompanyById(user: JwtPayload, id: string, body: {
+        name?: string;
+    }): Promise<{
+        name: string;
+        id: number;
+        created_at: Date;
+        modified_at: Date;
+        created_by: string | null;
+        modified_by: string | null;
+        company_number: string | null;
     }>;
     cronAlias(user: JwtPayload): Promise<{
         cronJobs: {
@@ -678,8 +867,15 @@ export declare class SystemController {
     cronAliasPost(user: JwtPayload, body: Record<string, unknown>): Promise<{
         success: boolean;
         message: string;
+        jobId: number;
+        timestamp: string;
+        body?: undefined;
+    } | {
+        success: boolean;
+        message: string;
         timestamp: string;
         body: Record<string, unknown>;
+        jobId?: undefined;
     }>;
     sharedStats(user: JwtPayload, operation: string): Promise<{
         total_accounts: number;

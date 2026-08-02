@@ -70,6 +70,33 @@ let SystemController = class SystemController {
     async cronJobsPost(user, body) {
         return this.system.postCronJobs(user, body);
     }
+    async adminDashboard(user) {
+        return this.system.getAdminDashboard(user);
+    }
+    async systemHealth(user) {
+        return this.system.getSystemHealth(user);
+    }
+    async cronJobsTrigger(user, body) {
+        return this.system.triggerCronJob(user, body);
+    }
+    async cronJobLogs(user, executionId) {
+        return this.system.getCronJobLogs(user, executionId);
+    }
+    async listCompanies(user) {
+        return this.system.listCompanies(user);
+    }
+    async createCompany(user, body) {
+        return this.system.createCompany(user, body);
+    }
+    async updateCompany(user, body) {
+        return this.system.updateCompany(user, body);
+    }
+    async updateCompanyById(user, id, body) {
+        return this.system.updateCompany(user, {
+            id: parseInt(id, 10),
+            name: body.name,
+        });
+    }
     async cronAlias(user) {
         return this.system.getCronJobs(user);
     }
@@ -225,6 +252,76 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], SystemController.prototype, "cronJobsPost", null);
+__decorate([
+    (0, common_1.Get)("admin/dashboard"),
+    (0, swagger_1.ApiOperation)({ summary: "Admin cron monitor dashboard" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], SystemController.prototype, "adminDashboard", null);
+__decorate([
+    (0, common_1.Get)("admin/system-health"),
+    (0, swagger_1.ApiOperation)({ summary: "Admin system health aggregates" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], SystemController.prototype, "systemHealth", null);
+__decorate([
+    (0, common_1.Post)("admin/cron-jobs/trigger"),
+    (0, swagger_1.ApiOperation)({ summary: "Trigger a cron job by id (or all due)" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], SystemController.prototype, "cronJobsTrigger", null);
+__decorate([
+    (0, common_1.Get)("admin/cron-jobs/logs/:executionId"),
+    (0, swagger_1.ApiOperation)({ summary: "Fetch cron execution logs by execution id" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("executionId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], SystemController.prototype, "cronJobLogs", null);
+__decorate([
+    (0, common_1.Get)("company"),
+    (0, swagger_1.ApiOperation)({ summary: "List companies" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], SystemController.prototype, "listCompanies", null);
+__decorate([
+    (0, common_1.Post)("company"),
+    (0, swagger_1.ApiOperation)({ summary: "Create a company" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], SystemController.prototype, "createCompany", null);
+__decorate([
+    (0, common_1.Put)("company"),
+    (0, swagger_1.ApiOperation)({ summary: "Update a company (id in body)" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], SystemController.prototype, "updateCompany", null);
+__decorate([
+    (0, common_1.Put)("company/:id"),
+    (0, swagger_1.ApiOperation)({ summary: "Update a company by path id" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("id")),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], SystemController.prototype, "updateCompanyById", null);
 __decorate([
     (0, common_1.Get)("cron"),
     (0, swagger_1.ApiOperation)({ summary: "Cron jobs alias (Nest-native)" }),

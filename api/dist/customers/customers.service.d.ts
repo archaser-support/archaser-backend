@@ -223,9 +223,6 @@ export declare class CustomersService {
             is_active: boolean;
             customer_id: number;
             insurance_policy_id: number | null;
-            outdated_dcl: boolean;
-            capacity_gap_amount: number | null;
-            capacity_gap_amount_date: Date | null;
             max_payment_term: number | null;
             max_allowed_mep: number | null;
             reporting_days: number | null;
@@ -246,6 +243,10 @@ export declare class CustomersService {
             credit_score: import("@prisma/client/runtime/library").Decimal | null;
             credit_score_input_date: Date | null;
             active_customer_since: Date | null;
+            outdated_dcl: boolean;
+            capacity_gap_amount: number | null;
+            capacity_gap_amount_date: Date | null;
+            retained_capacity_gap: number | null;
             uninsured_amount: number | null;
             capacity_gap_amount1: number | null;
             capacity_gap_currency1: string | null;
@@ -255,7 +256,6 @@ export declare class CustomersService {
             uninsured_currency1: string | null;
             uninsured_amount2: number | null;
             uninsured_currency2: string | null;
-            retained_capacity_gap: number | null;
         })[];
         activeCustomerPolicy: ({
             InsurancePolicy: {
@@ -309,9 +309,6 @@ export declare class CustomersService {
             is_active: boolean;
             customer_id: number;
             insurance_policy_id: number | null;
-            outdated_dcl: boolean;
-            capacity_gap_amount: number | null;
-            capacity_gap_amount_date: Date | null;
             max_payment_term: number | null;
             max_allowed_mep: number | null;
             reporting_days: number | null;
@@ -332,6 +329,10 @@ export declare class CustomersService {
             credit_score: import("@prisma/client/runtime/library").Decimal | null;
             credit_score_input_date: Date | null;
             active_customer_since: Date | null;
+            outdated_dcl: boolean;
+            capacity_gap_amount: number | null;
+            capacity_gap_amount_date: Date | null;
+            retained_capacity_gap: number | null;
             uninsured_amount: number | null;
             capacity_gap_amount1: number | null;
             capacity_gap_currency1: string | null;
@@ -341,7 +342,6 @@ export declare class CustomersService {
             uninsured_currency1: string | null;
             uninsured_amount2: number | null;
             uninsured_currency2: string | null;
-            retained_capacity_gap: number | null;
         }) | null;
         total_ar: number;
         total_ar_secondary: number | null;
@@ -804,9 +804,6 @@ export declare class CustomersService {
             is_active: boolean;
             customer_id: number;
             insurance_policy_id: number | null;
-            outdated_dcl: boolean;
-            capacity_gap_amount: number | null;
-            capacity_gap_amount_date: Date | null;
             max_payment_term: number | null;
             max_allowed_mep: number | null;
             reporting_days: number | null;
@@ -827,6 +824,10 @@ export declare class CustomersService {
             credit_score: import("@prisma/client/runtime/library").Decimal | null;
             credit_score_input_date: Date | null;
             active_customer_since: Date | null;
+            outdated_dcl: boolean;
+            capacity_gap_amount: number | null;
+            capacity_gap_amount_date: Date | null;
+            retained_capacity_gap: number | null;
             uninsured_amount: number | null;
             capacity_gap_amount1: number | null;
             capacity_gap_currency1: string | null;
@@ -836,7 +837,6 @@ export declare class CustomersService {
             uninsured_currency1: string | null;
             uninsured_amount2: number | null;
             uninsured_currency2: string | null;
-            retained_capacity_gap: number | null;
         })[];
         totalRecords: number;
     }>;
@@ -993,5 +993,61 @@ export declare class CustomersService {
         contact_email: string | null;
         contact_mobile: string | null;
         closed_at: Date | null;
+    }>;
+    searchCustomers(user: JwtPayload, opts: {
+        q?: string;
+        excludeId?: number;
+    }): Promise<{
+        items: {
+            id: number;
+            customer_number: string | null;
+            type: import(".prisma/client").$Enums.client_type;
+            name: string;
+        }[];
+    }>;
+    validateBusinessUnitAccess(user: JwtPayload, customerNumbers: Array<string | number>): Promise<{
+        items: {
+            customerNumber: string;
+            hasAccess: boolean;
+            businessUnitId: number | null;
+            businessUnitExternalId: string | null;
+        }[];
+    }>;
+    addComment(user: JwtPayload, customerId: number, comment: string): Promise<{
+        type: import(".prisma/client").$Enums.activity_type;
+        title: string | null;
+        email: string | null;
+        account_id: number;
+        id: bigint;
+        created_at: Date;
+        modified_at: Date;
+        status: import(".prisma/client").$Enums.activity_status;
+        mobile: string | null;
+        created_by: string | null;
+        modified_by: string | null;
+        content: string;
+        customer_id: number;
+        collection_period_id: number | null;
+        invoice_id: number | null;
+        schedule_time: Date;
+        actual_delivery_time: Date | null;
+        status_reason: string | null;
+        last_sent_time: Date | null;
+        contact_id: number | null;
+        activity_sequence_id: number | null;
+        activity_template: number | null;
+        is_last_step: boolean;
+        system_generated: boolean;
+        title_params: import("@prisma/client/runtime/library").JsonValue | null;
+        schedule_calculation: string | null;
+        call_outcome: string | null;
+    }>;
+    getAggregatedData(user: JwtPayload, customerId: number): Promise<{
+        customerId: number;
+        childCount: number;
+        totalDueAmount: number;
+        totalOverdueAmount: number;
+        dueInvoiceCount: number;
+        overdueInvoiceCount: number;
     }>;
 }

@@ -15,6 +15,7 @@ const activities_module_1 = require("./activities/activities.module");
 const admin_module_1 = require("./admin/admin.module");
 const agents_module_1 = require("./agents/agents.module");
 const auth_module_1 = require("./auth/auth.module");
+const business_units_module_1 = require("./business-units/business-units.module");
 const communication_intelligence_module_1 = require("./communication-intelligence/communication-intelligence.module");
 const contacts_collection_period_module_1 = require("./contacts/contacts-collection-period.module");
 const credit_insurance_module_1 = require("./credit-insurance/credit-insurance.module");
@@ -61,6 +62,7 @@ exports.AppModule = AppModule = __decorate([
             realtime_module_1.RealtimeModule,
             queue_module_1.QueueModule,
             customers_module_1.CustomersModule,
+            business_units_module_1.BusinessUnitsModule,
             invoices_module_1.InvoicesModule,
             contacts_collection_period_module_1.ContactsCollectionPeriodModule,
             account_admin_entities_module_1.AccountAdminEntitiesModule,

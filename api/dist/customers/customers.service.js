@@ -1125,6 +1125,237 @@ let CustomersService = class CustomersService {
         });
         return (0, serialize_bigint_1.serializeBigInt)(updated);
     }
+    async searchCustomers(user, opts) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accessParts = await this.accessScope.buildCustomerAccessWhere(userInfo);
+        const q = (opts.q || "").trim();
+        const andClause = [...accessParts];
+        if (opts.excludeId != null && Number.isFinite(opts.excludeId)) {
+            andClause.push({ id: { not: opts.excludeId } });
+        }
+        if (q) {
+            andClause.push({
+                OR: [
+                    {
+                        customer_number: {
+                            contains: q,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        Person: {
+                            OR: [
+                                {
+                                    first_name: {
+                                        contains: q,
+                                        mode: "insensitive",
+                                    },
+                                },
+                                {
+                                    last_name: {
+                                        contains: q,
+                                        mode: "insensitive",
+                                    },
+                                },
+                                {
+                                    full_name: {
+                                        contains: q,
+                                        mode: "insensitive",
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                    {
+                        Company: {
+                            name: { contains: q, mode: "insensitive" },
+                        },
+                    },
+                ],
+            });
+        }
+        const rows = await this.db.customer.findMany({
+            where: { AND: andClause },
+            select: {
+                id: true,
+                customer_number: true,
+                type: true,
+                Person: {
+                    select: {
+                        first_name: true,
+                        last_name: true,
+                        full_name: true,
+                    },
+                },
+                Company: { select: { name: true } },
+            },
+            orderBy: [{ customer_number: "asc" }, { id: "asc" }],
+            take: 50,
+        });
+        const items = rows.map((customer) => ({
+            id: customer.id,
+            customer_number: customer.customer_number,
+            type: customer.type,
+            name: customer.type === "Person"
+                ? customer.Person?.full_name ||
+                    `${customer.Person?.first_name || ""} ${customer.Person?.last_name || ""}`.trim()
+                : customer.Company?.name || "",
+        }));
+        return (0, serialize_bigint_1.serializeBigInt)({ items });
+    }
+    async validateBusinessUnitAccess(user, customerNumbers) {
+        if (!Array.isArray(customerNumbers)) {
+            throw new common_1.BadRequestException({
+                error: "customerNumbers must be an array",
+            });
+        }
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const role = userInfo.viewAsUserRole || userInfo.role;
+        const isAdmin = this.accessScope.isAdminAccount(userInfo.accountId) ||
+            role === "archaser_admin" ||
+            role === "ARchaser Admin" ||
+            role === "Admin";
+        const numbers = customerNumbers.map((n) => String(n));
+        const customers = await this.db.customer.findMany({
+            where: {
+                customer_number: { in: numbers },
+                account_id: accountId,
+            },
+            select: {
+                customer_number: true,
+                business_unit_id: true,
+            },
+        });
+        let accessibleBuIds = null;
+        if (!isAdmin) {
+            const userBuId = userInfo.businessUnitId ?? null;
+            if (userBuId == null) {
+                accessibleBuIds = [];
+            }
+            else {
+                const descendants = await this.accessScope.getBusinessUnitHierarchy(userBuId);
+                accessibleBuIds = [userBuId, ...descendants];
+            }
+        }
+        const items = [];
+        for (const customer of customers) {
+            let hasAccess = true;
+            let businessUnitExternalId = null;
+            if (customer.business_unit_id != null) {
+                if (accessibleBuIds !== null &&
+                    !accessibleBuIds.includes(customer.business_unit_id)) {
+                    hasAccess = false;
+                }
+                const bu = await this.db.businessUnit.findUnique({
+                    where: { id: customer.business_unit_id },
+                    select: { external_id: true },
+                });
+                businessUnitExternalId = bu?.external_id ?? null;
+            }
+            items.push({
+                customerNumber: String(customer.customer_number),
+                hasAccess,
+                businessUnitId: customer.business_unit_id,
+                businessUnitExternalId,
+            });
+        }
+        const found = new Set(customers.map((c) => String(c.customer_number)));
+        for (const customerNumber of numbers) {
+            if (!found.has(customerNumber)) {
+                items.push({
+                    customerNumber,
+                    hasAccess: true,
+                    businessUnitId: null,
+                    businessUnitExternalId: null,
+                });
+            }
+        }
+        return { items };
+    }
+    async addComment(user, customerId, comment) {
+        const trimmed = (comment || "").trim();
+        if (!trimmed) {
+            throw new common_1.BadRequestException({ error: "comment is required" });
+        }
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const customer = await this.db.customer.findFirst({
+            where: { id: customerId, account_id: accountId },
+            select: { id: true },
+        });
+        if (!customer) {
+            throw new common_1.NotFoundException({ error: "Customer not found" });
+        }
+        const period = await this.db.customerCollectionPeriod.findFirst({
+            where: {
+                customer_id: customerId,
+                period_end_date: null,
+            },
+            select: { id: true },
+            orderBy: { id: "desc" },
+        });
+        const created = await this.db.activity.create({
+            data: {
+                customer_id: customerId,
+                account_id: accountId,
+                type: "Internal",
+                status: "Completed",
+                title: "Comment",
+                content: trimmed,
+                schedule_time: new Date(),
+                collection_period_id: period?.id ?? null,
+                created_by: userInfo.userId,
+                modified_by: userInfo.userId,
+                system_generated: false,
+            },
+        });
+        return (0, serialize_bigint_1.serializeBigInt)(created);
+    }
+    async getAggregatedData(user, customerId) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const customer = await this.db.customer.findFirst({
+            where: { id: customerId, account_id: accountId },
+            select: {
+                id: true,
+                total_due_amount: true,
+                total_overdue_amount: true,
+                no_of_due_invoices: true,
+                number_of_overdue_invoices: true,
+            },
+        });
+        if (!customer) {
+            throw new common_1.NotFoundException({ error: "Customer not found" });
+        }
+        const childCount = await this.db.customer.count({
+            where: { parent_customer_id: customerId },
+        });
+        if (childCount === 0) {
+            throw new common_1.NotFoundException({
+                error: "Customer has no child customers",
+                code: "NO_CHILD_CUSTOMERS",
+            });
+        }
+        const children = await this.db.customer.aggregate({
+            where: { parent_customer_id: customerId, account_id: accountId },
+            _sum: {
+                total_due_amount: true,
+                total_overdue_amount: true,
+                no_of_due_invoices: true,
+                number_of_overdue_invoices: true,
+            },
+            _count: { _all: true },
+        });
+        return (0, serialize_bigint_1.serializeBigInt)({
+            customerId,
+            childCount: children._count._all,
+            totalDueAmount: children._sum.total_due_amount ?? 0,
+            totalOverdueAmount: children._sum.total_overdue_amount ?? 0,
+            dueInvoiceCount: children._sum.no_of_due_invoices ?? 0,
+            overdueInvoiceCount: children._sum.number_of_overdue_invoices ?? 0,
+        });
+    }
 };
 exports.CustomersService = CustomersService;
 exports.CustomersService = CustomersService = __decorate([

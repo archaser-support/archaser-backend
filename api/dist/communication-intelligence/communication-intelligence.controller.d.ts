@@ -39,4 +39,19 @@ export declare class CommunicationIntelligenceController {
         }[];
         total: number;
     }>;
+    analytics(customerIdRaw?: string, channel?: string, startDateRaw?: string, endDateRaw?: string, query?: string): Promise<{
+        channelMetrics: {
+            channel: string;
+            totalAttempts: number;
+            totalSuccesses: number;
+            successRate: number;
+            averageResponseTime: number | null;
+        }[];
+        totalRecords: number;
+        period: {
+            startDate: string | null;
+            endDate: string | null;
+        };
+        generatedAt: string;
+    }>;
 }

@@ -22,6 +22,15 @@ let InvoicesController = class InvoicesController {
     constructor(invoices) {
         this.invoices = invoices;
     }
+    async statuses() {
+        return this.invoices.listStatuses();
+    }
+    async availableForCredit(user, customerId) {
+        return this.invoices.availableForCredit(user, customerId);
+    }
+    async assignCredit(user, body) {
+        return this.invoices.assignCredit(user, body);
+    }
     async list(user, query) {
         return this.invoices.list(user, query);
     }
@@ -33,6 +42,32 @@ let InvoicesController = class InvoicesController {
     }
 };
 exports.InvoicesController = InvoicesController;
+__decorate([
+    (0, common_1.Get)("status"),
+    (0, swagger_1.ApiOperation)({ summary: "Invoice status catalog" }),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], InvoicesController.prototype, "statuses", null);
+__decorate([
+    (0, common_1.Get)("available-for-credit/:customerId"),
+    (0, swagger_1.ApiOperation)({ summary: "Open invoices that can receive credit" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)("customerId", common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number]),
+    __metadata("design:returntype", Promise)
+], InvoicesController.prototype, "availableForCredit", null);
+__decorate([
+    (0, common_1.Post)("assign-credit"),
+    (0, common_1.HttpCode)(200),
+    (0, swagger_1.ApiOperation)({ summary: "Assign a credit invoice to a target invoice" }),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], InvoicesController.prototype, "assignCredit", null);
 __decorate([
     (0, common_1.Get)(),
     (0, swagger_1.ApiOperation)({ summary: "Invoices list (Nest-native)" }),
