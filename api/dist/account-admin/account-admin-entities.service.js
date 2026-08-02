@@ -1,19 +1,56 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
 var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
     var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
     if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var AccountAdminEntitiesService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AccountAdminEntitiesService = exports.ACCOUNT_ADMIN_ENTITY_TYPES = void 0;
 const common_1 = require("@nestjs/common");
+const bcrypt = __importStar(require("bcryptjs"));
+const crypto_1 = require("crypto");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
+const system_email_service_1 = require("../email/system-email.service");
 exports.ACCOUNT_ADMIN_ENTITY_TYPES = [
     "accounts",
     "users",
@@ -57,10 +94,12 @@ const ENTITY_CONFIG = {
         idType: "number",
     },
 };
-let AccountAdminEntitiesService = class AccountAdminEntitiesService {
-    constructor(db, accessScope) {
+let AccountAdminEntitiesService = AccountAdminEntitiesService_1 = class AccountAdminEntitiesService {
+    constructor(db, accessScope, systemEmail) {
         this.db = db;
         this.accessScope = accessScope;
+        this.systemEmail = systemEmail;
+        this.logger = new common_1.Logger(AccountAdminEntitiesService_1.name);
     }
     delegate(entityType) {
         const config = ENTITY_CONFIG[entityType];
@@ -98,7 +137,10 @@ let AccountAdminEntitiesService = class AccountAdminEntitiesService {
             : isAdmin && config.scopeField === "account_id"
                 ? {}
                 : { [config.scopeField]: accountId };
-        if (query.search && config.searchFields?.length) {
+        if (query.search &&
+            config.searchFields?.length &&
+            entityType !== "accounts" &&
+            entityType !== "users") {
             where.OR = config.searchFields.map((field) => ({
                 [field]: { contains: query.search, mode: "insensitive" },
             }));
@@ -174,6 +216,12 @@ let AccountAdminEntitiesService = class AccountAdminEntitiesService {
                 total: totalRecords,
             });
         }
+        if (entityType === "accounts") {
+            return this.listAccounts(query, where, page, limit);
+        }
+        if (entityType === "users") {
+            return this.listUsers(query, where, page, limit);
+        }
         const [rows, totalRecords] = await Promise.all([
             delegate.findMany({
                 where,
@@ -191,20 +239,138 @@ let AccountAdminEntitiesService = class AccountAdminEntitiesService {
                 limit,
             });
         }
-        if (entityType === "users") {
-            return (0, serialize_bigint_1.serializeBigInt)({
-                users: rows,
-                total: totalRecords,
-                page,
-                limit,
-            });
-        }
         return (0, serialize_bigint_1.serializeBigInt)({
             [config.listKey]: rows,
             totalRecords,
             page,
             limit,
         });
+    }
+    async listAccounts(query, baseWhere, page, limit) {
+        const where = { ...baseWhere };
+        delete where.OR;
+        const status = String(query.status || "").trim();
+        if (status === "Active" || status === "Inactive") {
+            where.status = status;
+        }
+        const deletionFilter = String(query.deletionFilter || "active").trim();
+        if (deletionFilter === "deleted") {
+            where.deleted_at = { not: null };
+        }
+        else if (deletionFilter !== "all") {
+            where.deleted_at = null;
+        }
+        const searchTerm = String(query.search || query.query || "").trim();
+        if (searchTerm) {
+            const or = [
+                { name: { contains: searchTerm, mode: "insensitive" } },
+                {
+                    company_number: {
+                        contains: searchTerm,
+                        mode: "insensitive",
+                    },
+                },
+                {
+                    Country: {
+                        name: { contains: searchTerm, mode: "insensitive" },
+                    },
+                },
+                {
+                    State: {
+                        name: { contains: searchTerm, mode: "insensitive" },
+                    },
+                },
+            ];
+            if (/^\d+$/.test(searchTerm)) {
+                or.push({ id: parseInt(searchTerm, 10) });
+            }
+            where.OR = or;
+        }
+        const [rows, totalRecords] = await Promise.all([
+            this.db.account.findMany({
+                where,
+                skip: (page - 1) * limit,
+                take: limit,
+                orderBy: this.accountOrderBy(query.sortField, query.sortDirection),
+                include: {
+                    Country: { select: { id: true, name: true } },
+                    State: { select: { id: true, name: true } },
+                },
+            }),
+            this.db.account.count({ where }),
+        ]);
+        return (0, serialize_bigint_1.serializeBigInt)({
+            accounts: rows,
+            totalRecords,
+            page,
+            limit,
+        });
+    }
+    async listUsers(query, baseWhere, page, limit) {
+        const where = { ...baseWhere };
+        delete where.OR;
+        const accountIdRaw = String(query.account_id || "").trim();
+        if (accountIdRaw) {
+            const parsed = parseInt(accountIdRaw, 10);
+            if (!Number.isNaN(parsed)) {
+                where.account_id = parsed;
+            }
+        }
+        const status = String(query.status || "").trim();
+        if (status === "Active" || status === "Inactive") {
+            where.status = status;
+        }
+        const searchTerm = String(query.search || query.query || "").trim();
+        if (searchTerm) {
+            where.OR = [
+                { name: { contains: searchTerm, mode: "insensitive" } },
+                { email: { contains: searchTerm, mode: "insensitive" } },
+                { username: { contains: searchTerm, mode: "insensitive" } },
+            ];
+        }
+        const [rows, totalRecords] = await Promise.all([
+            this.db.user.findMany({
+                where,
+                skip: (page - 1) * limit,
+                take: limit,
+                orderBy: this.userOrderBy(query.sortField, query.sortDirection),
+            }),
+            this.db.user.count({ where }),
+        ]);
+        return (0, serialize_bigint_1.serializeBigInt)({
+            users: rows,
+            total: totalRecords,
+            page,
+            limit,
+        });
+    }
+    accountOrderBy(sortField, sortDirection) {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        if (sortField === "id" ||
+            sortField === "name" ||
+            sortField === "status" ||
+            sortField === "company_number") {
+            return { [sortField]: dir };
+        }
+        if (sortField === "country") {
+            return { Country: { name: dir } };
+        }
+        if (sortField === "state") {
+            return { State: { name: dir } };
+        }
+        return { id: "asc" };
+    }
+    userOrderBy(sortField, sortDirection) {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        if (sortField === "name" ||
+            sortField === "email" ||
+            sortField === "username" ||
+            sortField === "status" ||
+            sortField === "role" ||
+            sortField === "freeze") {
+            return { [sortField]: dir };
+        }
+        return { name: "asc" };
     }
     businessUnitListInclude() {
         return {
@@ -541,6 +707,166 @@ let AccountAdminEntitiesService = class AccountAdminEntitiesService {
         }
         await this.db.accountBankAccounts.delete({ where: { id } });
         return { success: true };
+    }
+    async createUser(user, body) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const sessionAccountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const isAdmin = this.accessScope.isAdminAccount(userInfo.accountId);
+        const effectiveRole = userInfo.viewAsUserRole || userInfo.role;
+        const accountIdRaw = body.account_id;
+        const accountId = typeof accountIdRaw === "number"
+            ? accountIdRaw
+            : parseInt(String(accountIdRaw || sessionAccountId), 10);
+        if (!Number.isFinite(accountId) || accountId <= 0) {
+            throw new common_1.BadRequestException({ error: "Customer id required." });
+        }
+        if (!isAdmin && accountId !== sessionAccountId) {
+            throw new common_1.ForbiddenException({ error: "Access denied" });
+        }
+        const hasManageUsers = isAdmin ||
+            (await this.accessScope.hasPermission(sessionAccountId, effectiveRole, "manage_users"));
+        if (!hasManageUsers) {
+            throw new common_1.ForbiddenException({
+                error: "Access denied: You do not have permission to manage users",
+            });
+        }
+        const email = typeof body.email === "string" ? body.email.trim() : "";
+        if (!email) {
+            throw new common_1.BadRequestException({
+                error: "User email is required.",
+            });
+        }
+        const username = typeof body.username === "string" && body.username.trim()
+            ? body.username.trim()
+            : email;
+        const existingUsername = await this.db.user.findFirst({
+            where: { username },
+            select: { id: true },
+        });
+        if (existingUsername) {
+            throw new common_1.BadRequestException({
+                error: "A user with this username already exists.",
+                errorCode: "USERNAME_EXISTS",
+            });
+        }
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: {
+                id: true,
+                has_collection: true,
+                has_credit_insurance: true,
+            },
+        });
+        if (!account) {
+            throw new common_1.BadRequestException({
+                error: "Account does not exist.",
+            });
+        }
+        const role = typeof body.role === "string" ? body.role.trim() : "";
+        if (!role) {
+            throw new common_1.BadRequestException({ error: "Role is required." });
+        }
+        if (role === "archaser_admin" && accountId !== 10013) {
+            throw new common_1.BadRequestException({
+                error: "archaser_admin role is only allowed on the admin account",
+            });
+        }
+        const businessUnitId = body.business_unit_id == null || body.business_unit_id === ""
+            ? null
+            : Number(body.business_unit_id);
+        if (businessUnitId != null) {
+            if (!Number.isFinite(businessUnitId)) {
+                throw new common_1.BadRequestException({
+                    error: "Invalid business_unit_id",
+                });
+            }
+            const bu = await this.db.businessUnit.findFirst({
+                where: { id: businessUnitId, account_id: accountId },
+                select: { id: true },
+            });
+            if (!bu) {
+                throw new common_1.BadRequestException({
+                    error: "Business unit must belong to the same account",
+                });
+            }
+        }
+        const firstName = typeof body.first_name === "string" ? body.first_name : "";
+        const lastName = typeof body.last_name === "string" ? body.last_name : "";
+        const generatedPassword = (0, crypto_1.randomBytes)(6).toString("base64url");
+        const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+        const resetToken = (0, crypto_1.randomBytes)(32).toString("hex");
+        const resetTokenExpiry = new Date(Date.now() + 3600000 * 24);
+        const language = typeof body.language === "string" && body.language
+            ? body.language
+            : "English";
+        const status = body.status === "Inactive" ? "Inactive" : "Active";
+        const timeZone = typeof body.time_zone === "string" && body.time_zone
+            ? body.time_zone
+            : "Asia/Jerusalem";
+        const locale = typeof body.locale === "string" && body.locale
+            ? body.locale
+            : "en-US";
+        const mobile = typeof body.mobile === "string" ? body.mobile : null;
+        let created;
+        try {
+            created = await this.db.user.create({
+                data: {
+                    id: (0, crypto_1.randomUUID)(),
+                    account_id: accountId,
+                    email,
+                    username,
+                    mobile,
+                    first_name: firstName || null,
+                    last_name: lastName || null,
+                    name: `${firstName} ${lastName}`.trim() || email,
+                    role: role,
+                    language: language,
+                    status: status,
+                    password: hashedPassword,
+                    resetToken,
+                    resetTokenExpiry,
+                    time_zone: timeZone,
+                    locale,
+                    created_by: userInfo.userId,
+                    modified_by: userInfo.userId,
+                    business_unit_id: businessUnitId,
+                    sidebar_collapsed: false,
+                },
+            });
+        }
+        catch (error) {
+            const prismaError = error;
+            if (prismaError?.code === "P2002") {
+                const target = prismaError.meta?.target;
+                if (target?.includes("username")) {
+                    throw new common_1.BadRequestException({
+                        error: "A user with this username already exists.",
+                        errorCode: "USERNAME_EXISTS",
+                    });
+                }
+            }
+            throw error;
+        }
+        const frontendBase = process.env.NEST_AUTH_SUCCESS_REDIRECT ||
+            process.env.NEXT_PUBLIC_BASE_URL ||
+            process.env.NEXTAUTH_URL ||
+            "http://localhost:3000";
+        const origin = frontendBase
+            .replace(/\/login\/?$/, "")
+            .replace(/\/$/, "");
+        const resetPasswordUrl = `${origin}/reset-password/${resetToken}`;
+        try {
+            await this.systemEmail.sendWelcomeUserEmail(email, `${firstName} ${lastName}`.trim() || email, resetPasswordUrl, language === "Hebrew" || language === "he" ? "he" : "en", Boolean(account.has_collection), Boolean(account
+                .has_credit_insurance), { accountId, userId: created.id });
+        }
+        catch (emailError) {
+            this.logger.error(`Welcome password email failed for user ${created.id}`, emailError instanceof Error
+                ? emailError.stack
+                : String(emailError));
+        }
+        const { password: _password, ...safeUser } = created;
+        void _password;
+        return (0, serialize_bigint_1.serializeBigInt)(safeUser);
     }
     async createBusinessUnit(user, body) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
@@ -903,9 +1229,10 @@ let AccountAdminEntitiesService = class AccountAdminEntitiesService {
     }
 };
 exports.AccountAdminEntitiesService = AccountAdminEntitiesService;
-exports.AccountAdminEntitiesService = AccountAdminEntitiesService = __decorate([
+exports.AccountAdminEntitiesService = AccountAdminEntitiesService = AccountAdminEntitiesService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
-        access_scope_service_1.AccessScopeService])
+        access_scope_service_1.AccessScopeService,
+        system_email_service_1.SystemEmailService])
 ], AccountAdminEntitiesService);
 //# sourceMappingURL=account-admin-entities.service.js.map

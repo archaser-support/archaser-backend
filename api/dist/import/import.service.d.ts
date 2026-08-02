@@ -10,15 +10,15 @@ export declare class ImportService {
         message: string;
     }>;
     createJob(user: JwtPayload, body: Record<string, unknown>): Promise<{
-        account_id: number;
         id: string;
+        account_id: number;
+        user_id: string | null;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.ImportStatus;
         created_by: string | null;
         modified_by: string | null;
         import_type: import(".prisma/client").$Enums.ImportType;
-        user_id: string | null;
         metadata: import("@prisma/client/runtime/library").JsonValue | null;
         total_records: number;
         processed_records: number;
@@ -29,15 +29,15 @@ export declare class ImportService {
         error_message: string | null;
     }>;
     completeJob(user: JwtPayload, body: Record<string, unknown>): Promise<{
-        account_id: number;
         id: string;
+        account_id: number;
+        user_id: string | null;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.ImportStatus;
         created_by: string | null;
         modified_by: string | null;
         import_type: import(".prisma/client").$Enums.ImportType;
-        user_id: string | null;
         metadata: import("@prisma/client/runtime/library").JsonValue | null;
         total_records: number;
         processed_records: number;
@@ -65,15 +65,15 @@ export declare class ImportService {
             entity_id: number | null;
         }[];
     } & {
-        account_id: number;
         id: string;
+        account_id: number;
+        user_id: string | null;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.ImportStatus;
         created_by: string | null;
         modified_by: string | null;
         import_type: import(".prisma/client").$Enums.ImportType;
-        user_id: string | null;
         metadata: import("@prisma/client/runtime/library").JsonValue | null;
         total_records: number;
         processed_records: number;

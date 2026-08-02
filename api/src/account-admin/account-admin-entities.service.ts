@@ -2,12 +2,16 @@ import {
     BadRequestException,
     ForbiddenException,
     Injectable,
+    Logger,
     NotFoundException,
 } from "@nestjs/common";
+import * as bcrypt from "bcryptjs";
+import { randomBytes, randomUUID } from "crypto";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+import { SystemEmailService } from "../email/system-email.service";
 
 export const ACCOUNT_ADMIN_ENTITY_TYPES = [
     "accounts",
@@ -80,13 +84,19 @@ export type AccountAdminListQuery = {
     sortField?: string;
     sortDirection?: string;
     include?: string;
+    status?: string;
+    deletionFilter?: string;
+    account_id?: string;
 };
 
 @Injectable()
 export class AccountAdminEntitiesService {
+    private readonly logger = new Logger(AccountAdminEntitiesService.name);
+
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
+        private readonly accessScope: AccessScopeService,
+        private readonly systemEmail: SystemEmailService
     ) {}
 
     private delegate(entityType: AccountAdminEntityType) {
@@ -139,7 +149,13 @@ export class AccountAdminEntitiesService {
                   ? {}
                   : { [config.scopeField]: accountId };
 
-        if (query.search && config.searchFields?.length) {
+        // Accounts/users build their own search OR (id, relations, etc.).
+        if (
+            query.search &&
+            config.searchFields?.length &&
+            entityType !== "accounts" &&
+            entityType !== "users"
+        ) {
             (where.OR as unknown) = config.searchFields.map((field) => ({
                 [field]: { contains: query.search, mode: "insensitive" },
             }));
@@ -227,6 +243,14 @@ export class AccountAdminEntitiesService {
             });
         }
 
+        if (entityType === "accounts") {
+            return this.listAccounts(query, where, page, limit);
+        }
+
+        if (entityType === "users") {
+            return this.listUsers(query, where, page, limit);
+        }
+
         const [rows, totalRecords] = await Promise.all([
             delegate.findMany({
                 where,
@@ -246,14 +270,6 @@ export class AccountAdminEntitiesService {
                 limit,
             });
         }
-        if (entityType === "users") {
-            return serializeBigInt({
-                users: rows,
-                total: totalRecords,
-                page,
-                limit,
-            });
-        }
 
         return serializeBigInt({
             [config.listKey]: rows,
@@ -261,6 +277,175 @@ export class AccountAdminEntitiesService {
             page,
             limit,
         });
+    }
+
+    private async listAccounts(
+        query: AccountAdminListQuery,
+        baseWhere: Record<string, unknown>,
+        page: number,
+        limit: number
+    ) {
+        const where: Record<string, unknown> = { ...baseWhere };
+        delete where.OR;
+
+        const status = String(query.status || "").trim();
+        if (status === "Active" || status === "Inactive") {
+            where.status = status;
+        }
+
+        const deletionFilter = String(query.deletionFilter || "active").trim();
+        if (deletionFilter === "deleted") {
+            where.deleted_at = { not: null };
+        } else if (deletionFilter !== "all") {
+            // Default "active" — hide soft-deleted accounts.
+            where.deleted_at = null;
+        }
+
+        const searchTerm = String(query.search || query.query || "").trim();
+        if (searchTerm) {
+            const or: Record<string, unknown>[] = [
+                { name: { contains: searchTerm, mode: "insensitive" } },
+                {
+                    company_number: {
+                        contains: searchTerm,
+                        mode: "insensitive",
+                    },
+                },
+                {
+                    Country: {
+                        name: { contains: searchTerm, mode: "insensitive" },
+                    },
+                },
+                {
+                    State: {
+                        name: { contains: searchTerm, mode: "insensitive" },
+                    },
+                },
+            ];
+            if (/^\d+$/.test(searchTerm)) {
+                or.push({ id: parseInt(searchTerm, 10) });
+            }
+            where.OR = or;
+        }
+
+        const [rows, totalRecords] = await Promise.all([
+            this.db.account.findMany({
+                where,
+                skip: (page - 1) * limit,
+                take: limit,
+                orderBy: this.accountOrderBy(
+                    query.sortField,
+                    query.sortDirection
+                ),
+                include: {
+                    Country: { select: { id: true, name: true } },
+                    State: { select: { id: true, name: true } },
+                },
+            }),
+            this.db.account.count({ where }),
+        ]);
+
+        return serializeBigInt({
+            accounts: rows,
+            totalRecords,
+            page,
+            limit,
+        });
+    }
+
+    private async listUsers(
+        query: AccountAdminListQuery,
+        baseWhere: Record<string, unknown>,
+        page: number,
+        limit: number
+    ) {
+        const where: Record<string, unknown> = { ...baseWhere };
+        delete where.OR;
+
+        // Always honor account_id when the UI sends it (Account Users tab).
+        const accountIdRaw = String(query.account_id || "").trim();
+        if (accountIdRaw) {
+            const parsed = parseInt(accountIdRaw, 10);
+            if (!Number.isNaN(parsed)) {
+                where.account_id = parsed;
+            }
+        }
+
+        const status = String(query.status || "").trim();
+        if (status === "Active" || status === "Inactive") {
+            where.status = status;
+        }
+
+        const searchTerm = String(query.search || query.query || "").trim();
+        if (searchTerm) {
+            where.OR = [
+                { name: { contains: searchTerm, mode: "insensitive" } },
+                { email: { contains: searchTerm, mode: "insensitive" } },
+                { username: { contains: searchTerm, mode: "insensitive" } },
+            ];
+        }
+
+        const [rows, totalRecords] = await Promise.all([
+            this.db.user.findMany({
+                where,
+                skip: (page - 1) * limit,
+                take: limit,
+                orderBy: this.userOrderBy(
+                    query.sortField,
+                    query.sortDirection
+                ),
+            }),
+            this.db.user.count({ where }),
+        ]);
+
+        return serializeBigInt({
+            users: rows,
+            total: totalRecords,
+            page,
+            limit,
+        });
+    }
+
+    private accountOrderBy(
+        sortField?: string,
+        sortDirection?: string
+    ):
+        | Record<string, "asc" | "desc">
+        | Record<string, Record<string, "asc" | "desc">> {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        if (
+            sortField === "id" ||
+            sortField === "name" ||
+            sortField === "status" ||
+            sortField === "company_number"
+        ) {
+            return { [sortField]: dir };
+        }
+        if (sortField === "country") {
+            return { Country: { name: dir } };
+        }
+        if (sortField === "state") {
+            return { State: { name: dir } };
+        }
+        return { id: "asc" };
+    }
+
+    private userOrderBy(
+        sortField?: string,
+        sortDirection?: string
+    ): Record<string, "asc" | "desc"> {
+        const dir = sortDirection === "desc" ? "desc" : "asc";
+        if (
+            sortField === "name" ||
+            sortField === "email" ||
+            sortField === "username" ||
+            sortField === "status" ||
+            sortField === "role" ||
+            sortField === "freeze"
+        ) {
+            return { [sortField]: dir };
+        }
+        return { name: "asc" };
     }
 
     private businessUnitListInclude() {
@@ -700,6 +885,220 @@ export class AccountAdminEntitiesService {
         }
         await this.db.accountBankAccounts.delete({ where: { id } });
         return { success: true };
+    }
+
+    /**
+     * Create a user with a generated password + password-setup (welcome) email.
+     * Parity with the pre-Nest UserService.createUser flow.
+     */
+    async createUser(user: JwtPayload, body: Record<string, unknown>) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const sessionAccountId =
+            this.accessScope.getEffectiveAccountId(userInfo);
+        const isAdmin = this.accessScope.isAdminAccount(userInfo.accountId);
+        const effectiveRole = userInfo.viewAsUserRole || userInfo.role;
+
+        const accountIdRaw = body.account_id;
+        const accountId =
+            typeof accountIdRaw === "number"
+                ? accountIdRaw
+                : parseInt(String(accountIdRaw || sessionAccountId), 10);
+        if (!Number.isFinite(accountId) || accountId <= 0) {
+            throw new BadRequestException({ error: "Customer id required." });
+        }
+        if (!isAdmin && accountId !== sessionAccountId) {
+            throw new ForbiddenException({ error: "Access denied" });
+        }
+
+        const hasManageUsers =
+            isAdmin ||
+            (await this.accessScope.hasPermission(
+                sessionAccountId,
+                effectiveRole,
+                "manage_users"
+            ));
+        if (!hasManageUsers) {
+            throw new ForbiddenException({
+                error: "Access denied: You do not have permission to manage users",
+            });
+        }
+
+        const email =
+            typeof body.email === "string" ? body.email.trim() : "";
+        if (!email) {
+            throw new BadRequestException({
+                error: "User email is required.",
+            });
+        }
+
+        const username =
+            typeof body.username === "string" && body.username.trim()
+                ? body.username.trim()
+                : email;
+        const existingUsername = await this.db.user.findFirst({
+            where: { username },
+            select: { id: true },
+        });
+        if (existingUsername) {
+            throw new BadRequestException({
+                error: "A user with this username already exists.",
+                errorCode: "USERNAME_EXISTS",
+            });
+        }
+
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: {
+                id: true,
+                has_collection: true,
+                has_credit_insurance: true,
+            },
+        });
+        if (!account) {
+            throw new BadRequestException({
+                error: "Account does not exist.",
+            });
+        }
+
+        const role =
+            typeof body.role === "string" ? body.role.trim() : "";
+        if (!role) {
+            throw new BadRequestException({ error: "Role is required." });
+        }
+        if (role === "archaser_admin" && accountId !== 10013) {
+            throw new BadRequestException({
+                error: "archaser_admin role is only allowed on the admin account",
+            });
+        }
+
+        const businessUnitId =
+            body.business_unit_id == null || body.business_unit_id === ""
+                ? null
+                : Number(body.business_unit_id);
+        if (businessUnitId != null) {
+            if (!Number.isFinite(businessUnitId)) {
+                throw new BadRequestException({
+                    error: "Invalid business_unit_id",
+                });
+            }
+            const bu = await this.db.businessUnit.findFirst({
+                where: { id: businessUnitId, account_id: accountId },
+                select: { id: true },
+            });
+            if (!bu) {
+                throw new BadRequestException({
+                    error: "Business unit must belong to the same account",
+                });
+            }
+        }
+
+        const firstName =
+            typeof body.first_name === "string" ? body.first_name : "";
+        const lastName =
+            typeof body.last_name === "string" ? body.last_name : "";
+        const generatedPassword = randomBytes(6).toString("base64url");
+        const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+        const resetToken = randomBytes(32).toString("hex");
+        const resetTokenExpiry = new Date(Date.now() + 3600000 * 24); // 24h
+
+        const language =
+            typeof body.language === "string" && body.language
+                ? body.language
+                : "English";
+        const status =
+            body.status === "Inactive" ? "Inactive" : "Active";
+        const timeZone =
+            typeof body.time_zone === "string" && body.time_zone
+                ? body.time_zone
+                : "Asia/Jerusalem";
+        const locale =
+            typeof body.locale === "string" && body.locale
+                ? body.locale
+                : "en-US";
+        const mobile =
+            typeof body.mobile === "string" ? body.mobile : null;
+
+        let created;
+        try {
+            created = await this.db.user.create({
+                data: {
+                    id: randomUUID(),
+                    account_id: accountId,
+                    email,
+                    username,
+                    mobile,
+                    first_name: firstName || null,
+                    last_name: lastName || null,
+                    name: `${firstName} ${lastName}`.trim() || email,
+                    role: role as never,
+                    language: language as never,
+                    status: status as never,
+                    password: hashedPassword,
+                    resetToken,
+                    resetTokenExpiry,
+                    time_zone: timeZone,
+                    locale,
+                    created_by: userInfo.userId,
+                    modified_by: userInfo.userId,
+                    business_unit_id: businessUnitId,
+                    sidebar_collapsed: false,
+                },
+            });
+        } catch (error: unknown) {
+            const prismaError = error as {
+                code?: string;
+                meta?: { target?: string[] };
+            };
+            if (prismaError?.code === "P2002") {
+                const target = prismaError.meta?.target;
+                if (target?.includes("username")) {
+                    throw new BadRequestException({
+                        error: "A user with this username already exists.",
+                        errorCode: "USERNAME_EXISTS",
+                    });
+                }
+            }
+            throw error;
+        }
+
+        const frontendBase =
+            process.env.NEST_AUTH_SUCCESS_REDIRECT ||
+            process.env.NEXT_PUBLIC_BASE_URL ||
+            process.env.NEXTAUTH_URL ||
+            "http://localhost:3000";
+        const origin = frontendBase
+            .replace(/\/login\/?$/, "")
+            .replace(/\/$/, "");
+        const resetPasswordUrl = `${origin}/reset-password/${resetToken}`;
+
+        try {
+            await this.systemEmail.sendWelcomeUserEmail(
+                email,
+                `${firstName} ${lastName}`.trim() || email,
+                resetPasswordUrl,
+                language === "Hebrew" || language === "he" ? "he" : "en",
+                Boolean(
+                    (account as { has_collection?: boolean }).has_collection
+                ),
+                Boolean(
+                    (account as { has_credit_insurance?: boolean })
+                        .has_credit_insurance
+                ),
+                { accountId, userId: created.id }
+            );
+        } catch (emailError) {
+            this.logger.error(
+                `Welcome password email failed for user ${created.id}`,
+                emailError instanceof Error
+                    ? emailError.stack
+                    : String(emailError)
+            );
+            // User is already created; do not fail the request.
+        }
+
+        const { password: _password, ...safeUser } = created;
+        void _password;
+        return serializeBigInt(safeUser);
     }
 
     async createBusinessUnit(user: JwtPayload, body: Record<string, unknown>) {

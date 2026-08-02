@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>ברוכים הבאים ל-ARchaser</title>
+        <!--[if mso]>
+            <noscript>
+                <xml>
+                    <o:OfficeDocumentSettings>
+                        <o:PixelsPerInch>96</o:PixelsPerInch>
+                    </o:OfficeDocumentSettings>
+                </xml>
+            </noscript>
+        <![endif]-->
+        <style>
+            /* Reset and base styles */
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family:
+                    "Segoe UI", Tahoma, Geneva, Verdana, sans-serif,
+                    "Arial Hebrew", "David Libre", "Noto Sans Hebrew";
+                background-color: #f8fafc;
+                color: #1a202c;
+                line-height: 1.6;
+                margin: 0;
+                padding: 0;
+                direction: rtl;
+                text-align: right;
+                unicode-bidi: embed;
+                -webkit-text-size-adjust: 100%;
+                -ms-text-size-adjust: 100%;
+            }
+
+            /* Email container */
+            .email-container {
+                max-width: 600px;
+                margin: 0 auto;
+                background-color: #ffffff;
+                border-radius: 12px;
+                overflow: hidden;
+                box-shadow:
+                    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+                    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            }
+
+            /* Header - Using solid color instead of gradient for better email client support */
+            .header {
+                background-color: #6b46c1;
+                color: #ffffff;
+                text-align: center;
+                padding: 40px 20px;
+                position: relative;
+            }
+
+            .logo {
+                font-size: 28px;
+                font-weight: 700;
+                margin-bottom: 8px;
+                color: #ffffff;
+            }
+
+            .header-title {
+                font-size: 24px;
+                font-weight: 600;
+                margin-bottom: 8px;
+                color: #ffffff;
+            }
+
+            .header-subtitle {
+                font-size: 16px;
+                color: #ffffff;
+                opacity: 0.9;
+            }
+
+            /* Content */
+            .content {
+                padding: 40px 30px;
+                text-align: right;
+                background-color: #ffffff;
+            }
+
+            .greeting {
+                font-size: 18px;
+                font-weight: 600;
+                margin-bottom: 16px;
+                color: #2d3748;
+                text-align: right;
+                direction: rtl;
+                unicode-bidi: embed;
+                word-wrap: break-word;
+                overflow-wrap: break-word;
+                white-space: normal;
+            }
+
+            .message {
+                font-size: 16px;
+                color: #4a5568;
+                margin-bottom: 24px;
+                line-height: 1.7;
+                text-align: right;
+                direction: rtl;
+                unicode-bidi: embed;
+                word-wrap: break-word;
+                overflow-wrap: break-word;
+                white-space: normal;
+            }
+
+            /* Button - Email-safe styling */
+            .button-container {
+                text-align: center;
+                margin: 32px 0;
+            }
+
+            .welcome-button {
+                display: inline-block;
+                background-color: #6b46c1;
+                color: #ffffff !important;
+                text-decoration: none;
+                padding: 16px 32px;
+                border-radius: 8px;
+                font-weight: 600;
+                font-size: 16px;
+                border: none;
+                cursor: pointer;
+                direction: rtl;
+            }
+
+            /* Features section */
+            .features {
+                background-color: #f7fafc;
+                border-radius: 8px;
+                padding: 24px;
+                margin: 24px 0;
+                text-align: right;
+            }
+
+            .features h3 {
+                color: #2d3748;
+                font-size: 18px;
+                font-weight: 600;
+                margin-bottom: 16px;
+                text-align: center;
+            }
+
+            .feature-list {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+            }
+
+            .feature-list li {
+                color: #4a5568;
+                font-size: 14px;
+                margin-bottom: 12px;
+                padding-right: 25px;
+                position: relative;
+                text-align: right;
+            }
+
+            /* Using a simple checkmark instead of pseudo-element */
+            .feature-checkmark {
+                color: #10b981;
+                font-weight: bold;
+                margin-left: 8px;
+            }
+
+            /* Footer */
+            .footer {
+                background-color: #f8fafc;
+                padding: 24px 30px;
+                text-align: center;
+                border-top: 1px solid #e2e8f0;
+            }
+
+            .footer-text {
+                color: #718096;
+                font-size: 14px;
+                margin-bottom: 8px;
+            }
+
+            .footer-link {
+                color: #6b46c1;
+                text-decoration: none;
+                font-weight: 500;
+            }
+
+            /* Responsive design */
+            @media (max-width: 600px) {
+                .email-container {
+                    margin: 0;
+                    border-radius: 0;
+                }
+
+                .header {
+                    padding: 30px 20px;
+                }
+
+                .content {
+                    padding: 30px 20px;
+                }
+
+                .footer {
+                    padding: 20px;
+                }
+
+                .logo {
+                    font-size: 24px;
+                }
+
+                .header-title {
+                    font-size: 20px;
+                }
+
+                .feature-list li {
+                    padding-right: 20px;
+                }
+            }
+
+            /* Outlook-specific fixes */
+            .ExternalClass {
+                width: 100%;
+            }
+
+            .ExternalClass,
+            .ExternalClass p,
+            .ExternalClass span,
+            .ExternalClass font,
+            .ExternalClass td,
+            .ExternalClass div {
+                line-height: 100%;
+            }
+
+            /* Force Outlook to provide a "view in browser" message */
+            #outlook a {
+                padding: 0;
+            }
+
+            /* Prevent WebKit and Windows mobile changing default text sizes */
+            body,
+            table,
+            td,
+            p,
+            a,
+            li,
+            blockquote {
+                -webkit-text-size-adjust: 100%;
+                -ms-text-size-adjust: 100%;
+            }
+
+            /* Better image handling */
+            img {
+                -ms-interpolation-mode: bicubic;
+            }
+
+            /* Remove spacing around Outlook 07, 10 tables */
+            table,
+            td {
+                mso-table-lspace: 0pt;
+                mso-table-rspace: 0pt;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <!-- Header -->
+            <div
+                class="header"
+                style="
+                    background-color: #6b46c1;
+                    color: #ffffff;
+                    text-align: center;
+                    padding: 40px 20px;
+                "
+            >
+                <div
+                    class="logo"
+                    style="
+                        font-size: 28px;
+                        font-weight: 700;
+                        margin-bottom: 8px;
+                        color: #ffffff;
+                    "
+                >
+                    ARchaser
+                </div>
+                <div
+                    class="header-title"
+                    style="
+                        font-size: 24px;
+                        font-weight: 600;
+                        margin-bottom: 8px;
+                        color: #ffffff;
+                    "
+                >
+                    ברוכים הבאים ל-<span dir="ltr" style="display: inline;">ARchaser</span>!
+                </div>
+                <div
+                    class="header-subtitle"
+                    style="font-size: 16px; color: #ffffff; opacity: 0.9"
+                >
+                    ${product_subtitle}
+                </div>
+            </div>
+
+            <!-- Content -->
+            <div
+                class="content"
+                style="
+                    padding: 40px 30px;
+                    text-align: right;
+                    background-color: #ffffff;
+                "
+            >
+                <div
+                    class="greeting"
+                    style="
+                        font-size: 18px;
+                        font-weight: 600;
+                        margin-bottom: 16px;
+                        color: #2d3748;
+                        text-align: right;
+                        direction: rtl;
+                        unicode-bidi: embed;
+                    "
+                >
+                    שלום <span dir="ltr" style="display: inline;">${user_name}</span>,
+                </div>
+
+                <div
+                    class="message"
+                    style="
+                        font-size: 16px;
+                        color: #4a5568;
+                        margin-bottom: 24px;
+                        line-height: 1.7;
+                        text-align: right;
+                        direction: rtl;
+                        unicode-bidi: embed;
+                    "
+                >
+                    ${welcome_intro}
+                </div>
+
+                <div
+                    class="button-container"
+                    style="text-align: center; margin: 32px 0"
+                >
+                    <a
+                        href="${reset_link}"
+                        class="welcome-button"
+                        style="
+                            display: inline-block;
+                            background-color: #6b46c1;
+                            color: #ffffff !important;
+                            text-decoration: none;
+                            padding: 16px 32px;
+                            border-radius: 8px;
+                            font-weight: 600;
+                            font-size: 16px;
+                            border: none;
+                            cursor: pointer;
+                            direction: rtl;
+                        "
+                    >
+                        הגדר את הסיסמה שלי
+                    </a>
+                </div>
+
+                <div
+                    class="features"
+                    style="
+                        background-color: #f7fafc;
+                        border-radius: 8px;
+                        padding: 24px;
+                        margin: 24px 0;
+                        text-align: right;
+                    "
+                >
+                    <h3
+                        style="
+                            color: #2d3748;
+                            font-size: 18px;
+                            font-weight: 600;
+                            margin-bottom: 16px;
+                            text-align: center;
+                        "
+                    >
+                        🚀 מה שאתה יכול לעשות עם ${product_title}:
+                    </h3>
+                    <ul
+                        class="feature-list"
+                        style="list-style: none; padding: 0; margin: 0"
+                    >
+                        <li
+                            style="
+                                color: #4a5568;
+                                font-size: 14px;
+                                margin-bottom: 12px;
+                                padding-right: 25px;
+                                position: relative;
+                                text-align: right;
+                            "
+                        >
+                            ${feature_1}
+                            <span
+                                class="feature-checkmark"
+                                style="
+                                    color: #10b981;
+                                    font-weight: bold;
+                                    margin-left: 8px;
+                                "
+                                >✓</span
+                            >
+                        </li>
+                        <li
+                            style="
+                                color: #4a5568;
+                                font-size: 14px;
+                                margin-bottom: 12px;
+                                padding-right: 25px;
+                                position: relative;
+                                text-align: right;
+                            "
+                        >
+                            ${feature_2}
+                            <span
+                                class="feature-checkmark"
+                                style="
+                                    color: #10b981;
+                                    font-weight: bold;
+                                    margin-left: 8px;
+                                "
+                                >✓</span
+                            >
+                        </li>
+                        <li
+                            style="
+                                color: #4a5568;
+                                font-size: 14px;
+                                margin-bottom: 12px;
+                                padding-right: 25px;
+                                position: relative;
+                                text-align: right;
+                            "
+                        >
+                            ${feature_3}
+                            <span
+                                class="feature-checkmark"
+                                style="
+                                    color: #10b981;
+                                    font-weight: bold;
+                                    margin-left: 8px;
+                                "
+                                >✓</span
+                            >
+                        </li>
+                        <li
+                            style="
+                                color: #4a5568;
+                                font-size: 14px;
+                                margin-bottom: 12px;
+                                padding-right: 25px;
+                                position: relative;
+                                text-align: right;
+                            "
+                        >
+                            ${feature_4}
+                            <span
+                                class="feature-checkmark"
+                                style="
+                                    color: #10b981;
+                                    font-weight: bold;
+                                    margin-left: 8px;
+                                "
+                                >✓</span
+                            >
+                        </li>
+                        <li
+                            style="
+                                color: #4a5568;
+                                font-size: 14px;
+                                margin-bottom: 12px;
+                                padding-right: 25px;
+                                position: relative;
+                                text-align: right;
+                            "
+                        >
+                            ${feature_5}
+                            <span
+                                class="feature-checkmark"
+                                style="
+                                    color: #10b981;
+                                    font-weight: bold;
+                                    margin-left: 8px;
+                                "
+                                >✓</span
+                            >
+                        </li>
+                    </ul>
+                </div>
+
+                <div
+                    class="message"
+                    style="
+                        font-size: 16px;
+                        color: #4a5568;
+                        margin-bottom: 24px;
+                        line-height: 1.7;
+                        text-align: right;
+                        direction: rtl;
+                        unicode-bidi: embed;
+                    "
+                >
+                    אם לא נרשמת ל-<span dir="ltr" style="display: inline;">ARchaser</span>, אנא התעלם מהאימייל הזה. צוות התמיכה שלנו כאן כדי לעזור לך להתחיל - אל תהסס ליצור קשר!
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div
+                class="footer"
+                style="
+                    background-color: #f8fafc;
+                    padding: 24px 30px;
+                    text-align: center;
+                    border-top: 1px solid #e2e8f0;
+                "
+            >
+                <div
+                    class="footer-text"
+                    style="color: #718096; font-size: 14px; margin-bottom: 8px"
+                >
+                    &copy; 2025 ARchaser. כל הזכויות שמורות.
+                </div>
+                <div
+                    class="footer-text"
+                    style="color: #718096; font-size: 14px; margin-bottom: 8px"
+                >
+                    <a
+                        href="https://archaser.vercel.app/"
+                        class="footer-link"
+                        style="
+                            color: #6b46c1;
+                            text-decoration: none;
+                            font-weight: 500;
+                        "
+                        >בקר באתר שלנו</a
+                    >
+                    |
+                    <a
+                        href="mailto:support@archaser.com"
+                        class="footer-link"
+                        style="
+                            color: #6b46c1;
+                            text-decoration: none;
+                            font-weight: 500;
+                        "
+                        >צור קשר עם התמיכה</a
+                    >
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

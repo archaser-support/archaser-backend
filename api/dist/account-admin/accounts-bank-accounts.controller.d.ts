@@ -6,11 +6,11 @@ export declare class AccountsBankAccountsController {
     list(user: JwtPayload, accountId: number, query: AccountAdminListQuery): Promise<{
         data: ({
             Country: {
-                name: string;
-                currency: string | null;
                 id: number;
+                name: string;
                 created_at: Date | null;
                 modified_at: Date;
+                currency: string | null;
                 iso3: string | null;
                 numeric_code: string | null;
                 iso2: string | null;
@@ -34,9 +34,10 @@ export declare class AccountsBankAccountsController {
                 wikiDataId: string | null;
             } | null;
             State: {
+                id: number;
                 type: string | null;
                 name: string;
-                id: number;
+                level: number | null;
                 created_at: Date | null;
                 modified_at: Date;
                 country_id: number;
@@ -48,13 +49,13 @@ export declare class AccountsBankAccountsController {
                 wikiDataId: string | null;
                 country_code: string;
                 fips_code: string | null;
-                level: number | null;
             } | null;
         } & {
-            account_id: number;
             id: number;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            primary: boolean;
             status: boolean;
             created_by: string | null;
             modified_by: string | null;
@@ -72,17 +73,16 @@ export declare class AccountsBankAccountsController {
             iban: string | null;
             account_number: string | null;
             comments: string | null;
-            primary: boolean;
         })[];
         total: number;
     }>;
     create(user: JwtPayload, accountId: number, body: Record<string, unknown>): Promise<{
         Country: {
-            name: string;
-            currency: string | null;
             id: number;
+            name: string;
             created_at: Date | null;
             modified_at: Date;
+            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -106,9 +106,10 @@ export declare class AccountsBankAccountsController {
             wikiDataId: string | null;
         } | null;
         State: {
+            id: number;
             type: string | null;
             name: string;
-            id: number;
+            level: number | null;
             created_at: Date | null;
             modified_at: Date;
             country_id: number;
@@ -120,13 +121,13 @@ export declare class AccountsBankAccountsController {
             wikiDataId: string | null;
             country_code: string;
             fips_code: string | null;
-            level: number | null;
         } | null;
     } & {
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
+        primary: boolean;
         status: boolean;
         created_by: string | null;
         modified_by: string | null;
@@ -144,15 +145,14 @@ export declare class AccountsBankAccountsController {
         iban: string | null;
         account_number: string | null;
         comments: string | null;
-        primary: boolean;
     }>;
     update(user: JwtPayload, accountId: number, id: number, body: Record<string, unknown>): Promise<{
         Country: {
-            name: string;
-            currency: string | null;
             id: number;
+            name: string;
             created_at: Date | null;
             modified_at: Date;
+            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -176,9 +176,10 @@ export declare class AccountsBankAccountsController {
             wikiDataId: string | null;
         } | null;
         State: {
+            id: number;
             type: string | null;
             name: string;
-            id: number;
+            level: number | null;
             created_at: Date | null;
             modified_at: Date;
             country_id: number;
@@ -190,13 +191,13 @@ export declare class AccountsBankAccountsController {
             wikiDataId: string | null;
             country_code: string;
             fips_code: string | null;
-            level: number | null;
         } | null;
     } & {
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
+        primary: boolean;
         status: boolean;
         created_by: string | null;
         modified_by: string | null;
@@ -214,7 +215,6 @@ export declare class AccountsBankAccountsController {
         iban: string | null;
         account_number: string | null;
         comments: string | null;
-        primary: boolean;
     }>;
     remove(user: JwtPayload, accountId: number, id: number): Promise<{
         success: boolean;

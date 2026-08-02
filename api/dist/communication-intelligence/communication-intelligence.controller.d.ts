@@ -32,9 +32,9 @@ export declare class CommunicationIntelligenceController {
             predicted_success_rate: number | null;
             id: number;
             status: import(".prisma/client").$Enums.delivery_status | null;
-            communication_channel: import(".prisma/client").$Enums.activity_type | null;
             delivered_at: Date | null;
             failed_at: Date | null;
+            communication_channel: import(".prisma/client").$Enums.activity_type | null;
             channel_selection_reason: string | null;
         }[];
         total: number;

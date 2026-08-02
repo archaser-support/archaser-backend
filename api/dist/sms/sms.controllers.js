@@ -93,8 +93,8 @@ let SmsVendorsController = class SmsVendorsController {
     constructor(sms) {
         this.sms = sms;
     }
-    async list(user) {
-        return this.sms.listVendors(user);
+    async list(user, query) {
+        return this.sms.listVendors(user, query);
     }
     async create(user, body) {
         return this.sms.createVendor(user, body);
@@ -114,8 +114,9 @@ __decorate([
     (0, common_1.Get)(),
     (0, swagger_1.ApiOperation)({ summary: "List SMS vendors" }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], SmsVendorsController.prototype, "list", null);
 __decorate([

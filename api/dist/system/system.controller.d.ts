@@ -152,13 +152,13 @@ export declare class SystemController {
     }>;
     controlCenter(user: JwtPayload, operation?: string): Promise<{
         agents: {
-            email: string;
-            role: import(".prisma/client").$Enums.user_role | null;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
             image: string | null;
             first_name: string | null;
             last_name: string | null;
+            role: import(".prisma/client").$Enums.user_role | null;
             business_unit_id: number | null;
         }[];
         agentCount: number;
@@ -184,13 +184,13 @@ export declare class SystemController {
     }>;
     controlCenterOp(user: JwtPayload, operation: string): Promise<{
         agents: {
-            email: string;
-            role: import(".prisma/client").$Enums.user_role | null;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
             image: string | null;
             first_name: string | null;
             last_name: string | null;
+            role: import(".prisma/client").$Enums.user_role | null;
             business_unit_id: number | null;
         }[];
         agentCount: number;
@@ -340,19 +340,19 @@ export declare class SystemController {
                 id: number;
                 business_unit_id: number | null;
                 BusinessUnit: {
-                    name: string;
                     id: number;
+                    name: string;
                 } | null;
                 country_id: number | null;
                 state_id: number | null;
                 Country: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 State: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 Company: {
@@ -369,12 +369,12 @@ export declare class SystemController {
                 owner_id: string | null;
             };
         } & {
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             next_activity_date: Date | null;
             priority: import(".prisma/client").$Enums.priority | null;
             customer_id: number;
@@ -429,19 +429,19 @@ export declare class SystemController {
                 id: number;
                 business_unit_id: number | null;
                 BusinessUnit: {
-                    name: string;
                     id: number;
+                    name: string;
                 } | null;
                 country_id: number | null;
                 state_id: number | null;
                 Country: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 State: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 Company: {
@@ -458,12 +458,12 @@ export declare class SystemController {
                 owner_id: string | null;
             };
         } & {
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             next_activity_date: Date | null;
             priority: import(".prisma/client").$Enums.priority | null;
             customer_id: number;
@@ -500,19 +500,19 @@ export declare class SystemController {
                 id: number;
                 business_unit_id: number | null;
                 BusinessUnit: {
-                    name: string;
                     id: number;
+                    name: string;
                 } | null;
                 country_id: number | null;
                 state_id: number | null;
                 Country: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 State: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 Company: {
@@ -529,12 +529,12 @@ export declare class SystemController {
                 owner_id: string | null;
             };
         } & {
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             next_activity_date: Date | null;
             priority: import(".prisma/client").$Enums.priority | null;
             customer_id: number;
@@ -586,12 +586,12 @@ export declare class SystemController {
                 oldest_invoice_overdue_date: Date | null;
             };
         } & {
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             next_activity_date: Date | null;
             priority: import(".prisma/client").$Enums.priority | null;
             customer_id: number;
@@ -797,10 +797,10 @@ export declare class SystemController {
         executionId: string;
         status: string;
         items: {
-            message: string;
             id: bigint;
-            level: import(".prisma/client").$Enums.log_level;
             timestamp: Date;
+            level: import(".prisma/client").$Enums.log_level;
+            message: string;
             details: import("@prisma/client/runtime/library").JsonValue;
             job_id: number | null;
             correlation_id: string | null;
@@ -808,16 +808,16 @@ export declare class SystemController {
     }>;
     listCompanies(user: JwtPayload): Promise<{
         items: {
-            name: string;
             id: number;
+            name: string;
         }[];
     }>;
     createCompany(user: JwtPayload, body: {
         name?: string;
         company_number?: string;
     }): Promise<{
-        name: string;
         id: number;
+        name: string;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -828,8 +828,8 @@ export declare class SystemController {
         id?: number;
         name?: string;
     }): Promise<{
-        name: string;
         id: number;
+        name: string;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -839,8 +839,8 @@ export declare class SystemController {
     updateCompanyById(user: JwtPayload, id: string, body: {
         name?: string;
     }): Promise<{
-        name: string;
         id: number;
+        name: string;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;

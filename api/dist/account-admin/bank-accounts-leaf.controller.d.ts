@@ -6,10 +6,11 @@ export declare class BankAccountsLeafController {
     private readonly accessScope;
     constructor(db: DatabaseService, accessScope: AccessScopeService);
     list(user: JwtPayload, accountIdRaw?: string, include?: string): Promise<{
-        account_id: number;
         id: number;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
+        primary: boolean;
         status: boolean;
         created_by: string | null;
         modified_by: string | null;
@@ -27,7 +28,6 @@ export declare class BankAccountsLeafController {
         iban: string | null;
         account_number: string | null;
         comments: string | null;
-        primary: boolean;
     }[] | {
         error: string;
     }>;

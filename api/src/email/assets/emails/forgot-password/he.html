@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>איפוס סיסמה - ARchaser</title>
+        <style>
+            /* Reset and base styles */
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family:
+                    "Segoe UI", Tahoma, Geneva, Verdana, sans-serif,
+                    "Arial Hebrew", "David Libre", "Noto Sans Hebrew";
+                background-color: #f8fafc;
+                color: #1a202c;
+                line-height: 1.6;
+                margin: 0;
+                padding: 0;
+                direction: rtl;
+                text-align: right;
+                unicode-bidi: embed;
+            }
+
+            /* Email container */
+            .email-container {
+                max-width: 600px;
+                margin: 0 auto;
+                background-color: #ffffff;
+                border-radius: 12px;
+                overflow: hidden;
+                box-shadow:
+                    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+                    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            }
+
+            /* Header */
+            .header {
+                background: linear-gradient(135deg, #6b46c1 0%, #8b5cf6 100%);
+                color: white;
+                text-align: center;
+                padding: 40px 20px;
+                position: relative;
+            }
+
+            .header::before {
+                content: "";
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: radial-gradient(
+                    circle at 30% 20%,
+                    rgba(255, 255, 255, 0.1) 0%,
+                    transparent 50%
+                );
+            }
+
+            .logo {
+                font-size: 28px;
+                font-weight: 700;
+                margin-bottom: 8px;
+                position: relative;
+                z-index: 1;
+            }
+
+            .header-title {
+                font-size: 24px;
+                font-weight: 600;
+                margin-bottom: 8px;
+                position: relative;
+                z-index: 1;
+            }
+
+            .header-subtitle {
+                font-size: 16px;
+                opacity: 0.9;
+                position: relative;
+                z-index: 1;
+            }
+
+            /* Content */
+            .content {
+                padding: 40px 30px;
+                text-align: right;
+            }
+
+            .greeting {
+                font-size: 18px;
+                font-weight: 600;
+                margin-bottom: 16px;
+                color: #2d3748;
+                text-align: right;
+            }
+
+            .message {
+                font-size: 16px;
+                color: #4a5568;
+                margin-bottom: 24px;
+                line-height: 1.7;
+                text-align: right;
+            }
+
+            /* Button */
+            .button-container {
+                text-align: center;
+                margin: 32px 0;
+            }
+
+            .reset-button {
+                display: inline-block;
+                background: linear-gradient(135deg, #6b46c1 0%, #8b5cf6 100%);
+                color: white !important;
+                text-decoration: none;
+                padding: 16px 32px;
+                border-radius: 8px;
+                font-weight: 600;
+                font-size: 16px;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 12px rgba(107, 70, 193, 0.4);
+                direction: rtl;
+            }
+
+            .reset-button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 8px 25px rgba(107, 70, 193, 0.6);
+            }
+
+            /* Security notice */
+            .security-notice {
+                background-color: #f7fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                padding: 20px;
+                margin: 24px 0;
+                text-align: right;
+            }
+
+            .security-notice h3 {
+                color: #2d3748;
+                font-size: 16px;
+                font-weight: 600;
+                margin-bottom: 8px;
+                text-align: right;
+            }
+
+            .security-notice p {
+                color: #4a5568;
+                font-size: 14px;
+                margin: 0;
+                text-align: right;
+            }
+
+            /* Footer */
+            .footer {
+                background-color: #f8fafc;
+                padding: 24px 30px;
+                text-align: center;
+                border-top: 1px solid #e2e8f0;
+            }
+
+            .footer-text {
+                color: #718096;
+                font-size: 14px;
+                margin-bottom: 8px;
+            }
+
+            .footer-link {
+                color: #6b46c1;
+                text-decoration: none;
+                font-weight: 500;
+            }
+
+            .footer-link:hover {
+                text-decoration: underline;
+            }
+
+            /* Responsive design */
+            @media (max-width: 600px) {
+                .email-container {
+                    margin: 0;
+                    border-radius: 0;
+                }
+
+                .header {
+                    padding: 30px 20px;
+                }
+
+                .content {
+                    padding: 30px 20px;
+                }
+
+                .footer {
+                    padding: 20px;
+                }
+
+                .logo {
+                    font-size: 24px;
+                }
+
+                .header-title {
+                    font-size: 20px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <!-- Header -->
+            <div class="header">
+                <div class="logo">ARchaser</div>
+                <div class="header-title">איפוס סיסמה</div>
+                <div class="header-subtitle">בקשת איפוס סיסמה שלך</div>
+            </div>
+
+            <!-- Content -->
+            <div class="content">
+                <div class="greeting">שלום ${first_name},</div>
+
+                <div class="message">
+                    קיבלנו בקשה לאיפוס הסיסמה של חשבון ה-ARchaser שלך. הקישור
+                    מיועד לחשבון עם שם משתמש <strong>${username}</strong>.
+                    ייתכן ששם המשתמש שונה מכתובת המייל שלך. אם אתה לא ביקשת זאת, אנא
+                    התעלם מהאימייל הזה.
+                </div>
+
+                <div class="button-container">
+                    <a href="${reset_link}" class="reset-button">
+                        איפוס סיסמה
+                    </a>
+                </div>
+
+                <div class="security-notice">
+                    <h3>🔒 הודעה אבטחה</h3>
+                    <p>
+                        הקישור הזה תקף למשך שעה אחת בלבד. אם הקישור פג תוקף,
+                        תוכל לבקש קישור חדש מהדף הראשי.
+                    </p>
+                </div>
+
+                <div class="message">
+                    אם אתה נתקל בבעיות, אל תהסס ליצור קשר עם צוות התמיכה שלנו.
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="footer">
+                <div class="footer-text">
+                    &copy; 2025 ARchaser. כל הזכויות שמורות.
+                </div>
+                <div class="footer-text">
+                    <a href="https://archaser.vercel.app/" class="footer-link"
+                        >בקר באתר שלנו</a
+                    >
+                    |
+                    <a href="mailto:support@archaser.com" class="footer-link"
+                        >צור קשר עם התמיכה</a
+                    >
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

@@ -10,6 +10,7 @@ exports.AccountAdminEntitiesModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const database_module_1 = require("../database/database.module");
+const email_module_1 = require("../email/email.module");
 const account_admin_entities_service_1 = require("./account-admin-entities.service");
 const accounts_bank_accounts_controller_1 = require("./accounts-bank-accounts.controller");
 const accounts_business_units_controller_1 = require("./accounts-business-units.controller");
@@ -31,7 +32,7 @@ let AccountAdminEntitiesModule = class AccountAdminEntitiesModule {
 exports.AccountAdminEntitiesModule = AccountAdminEntitiesModule;
 exports.AccountAdminEntitiesModule = AccountAdminEntitiesModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule],
+        imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule, email_module_1.EmailModule],
         controllers,
         providers: [account_admin_entities_service_1.AccountAdminEntitiesService],
         exports: [account_admin_entities_service_1.AccountAdminEntitiesService],

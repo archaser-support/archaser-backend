@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { DatabaseService } from "../database/database.service";
+import { SystemEmailService } from "../email/system-email.service";
 import { LoginDto } from "./dto/login.dto";
 import { AccountBySubdomainResponseDto, LoginResponseDto, MeResponseDto, ScopeProbeResponseDto } from "./dto/auth-response.dto";
 export interface JwtPayload {
@@ -24,7 +25,8 @@ export declare class AuthService {
     private readonly database;
     private readonly jwtService;
     private readonly configService;
-    constructor(database: DatabaseService, jwtService: JwtService, configService: ConfigService);
+    private readonly systemEmail;
+    constructor(database: DatabaseService, jwtService: JwtService, configService: ConfigService, systemEmail: SystemEmailService);
     login(credentials: LoginDto): Promise<LoginResponseDto>;
     getProfile(user: JwtPayload): Promise<MeResponseDto>;
     requestPasswordReset(email: string, language?: string): Promise<{
@@ -34,6 +36,10 @@ export declare class AuthService {
         message: string;
     }>;
     private validatePasswordComplexity;
+    sendPasswordSetupEmail(email: string, resetLink: string, options?: {
+        language?: string;
+        kind?: "reset" | "welcome";
+    }): Promise<void>;
     private sendResetPasswordEmail;
     probeAccountScope(user: JwtPayload, accountId: number): ScopeProbeResponseDto;
     findAccountBySubdomain(subdomain: string): Promise<AccountBySubdomainResponseDto>;

@@ -43,15 +43,15 @@ export declare class CustomersService {
         category_distribution: never[];
     } | {
         customers: {
-            type: import(".prisma/client").$Enums.client_type;
-            email: string | null;
-            account_id: number;
-            language: import(".prisma/client").$Enums.language;
             id: number;
+            type: import(".prisma/client").$Enums.client_type;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            email: string | null;
             created_by: string | null;
             modified_by: string | null;
+            language: import(".prisma/client").$Enums.language;
             business_unit_id: number | null;
             address_line1: string | null;
             city: string | null;
@@ -101,15 +101,15 @@ export declare class CustomersService {
     }>;
     list(user: JwtPayload, query: CustomersListQuery): Promise<{
         customers: {
-            type: import(".prisma/client").$Enums.client_type;
-            email: string | null;
-            account_id: number;
-            language: import(".prisma/client").$Enums.language;
             id: number;
+            type: import(".prisma/client").$Enums.client_type;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            email: string | null;
             created_by: string | null;
             modified_by: string | null;
+            language: import(".prisma/client").$Enums.language;
             business_unit_id: number | null;
             address_line1: string | null;
             city: string | null;
@@ -173,14 +173,14 @@ export declare class CustomersService {
     getById(user: JwtPayload, id: number): Promise<{
         customerPolicies: ({
             InsurancePolicy: {
-                account_id: number;
-                currency: string | null;
                 id: number;
+                account_id: number;
                 created_at: Date;
                 modified_at: Date;
                 status: import(".prisma/client").$Enums.record_status;
                 created_by: string | null;
                 modified_by: string | null;
+                currency: string | null;
                 policy_number: string;
                 start_date: Date;
                 end_date: Date;
@@ -208,9 +208,9 @@ export declare class CustomersService {
                 auto_activate_on_term_start: boolean;
             } | null;
             User_CustomerPolicy_modified_byToUser: {
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
@@ -259,14 +259,14 @@ export declare class CustomersService {
         })[];
         activeCustomerPolicy: ({
             InsurancePolicy: {
-                account_id: number;
-                currency: string | null;
                 id: number;
+                account_id: number;
                 created_at: Date;
                 modified_at: Date;
                 status: import(".prisma/client").$Enums.record_status;
                 created_by: string | null;
                 modified_by: string | null;
+                currency: string | null;
                 policy_number: string;
                 start_date: Date;
                 end_date: Date;
@@ -294,9 +294,9 @@ export declare class CustomersService {
                 auto_activate_on_term_start: boolean;
             } | null;
             User_CustomerPolicy_modified_byToUser: {
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
@@ -347,11 +347,11 @@ export declare class CustomersService {
         total_ar_secondary: number | null;
         credit_insurance_secondary_currency: string | null;
         Country: {
-            name: string;
-            currency: string | null;
             id: number;
+            name: string;
             created_at: Date | null;
             modified_at: Date;
+            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -375,9 +375,10 @@ export declare class CustomersService {
             wikiDataId: string | null;
         } | null;
         State: {
+            id: number;
             type: string | null;
             name: string;
-            id: number;
+            level: number | null;
             created_at: Date | null;
             modified_at: Date;
             country_id: number;
@@ -389,11 +390,10 @@ export declare class CustomersService {
             wikiDataId: string | null;
             country_code: string;
             fips_code: string | null;
-            level: number | null;
         } | null;
         Company: {
-            name: string;
             id: number;
+            name: string;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
@@ -404,11 +404,11 @@ export declare class CustomersService {
             id: number;
             created_at: Date;
             modified_at: Date;
+            created_by: string | null;
+            modified_by: string | null;
             first_name: string | null;
             last_name: string | null;
             mobile: string | null;
-            created_by: string | null;
-            modified_by: string | null;
             full_name: string | null;
             date_of_birth: Date | null;
             identification_number: string | null;
@@ -418,12 +418,12 @@ export declare class CustomersService {
             max_promise_to_pay_allowed_per_cycle: number | null;
         };
         CustomerCollectionPeriod: {
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             next_activity_date: Date | null;
             priority: import(".prisma/client").$Enums.priority | null;
             customer_id: number;
@@ -456,21 +456,21 @@ export declare class CustomersService {
             lawyer_assigned: boolean;
         }[];
         Owner: {
-            username: string;
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
+            username: string;
         } | null;
         ParentCustomer: {
-            type: import(".prisma/client").$Enums.client_type;
-            email: string | null;
-            account_id: number;
-            language: import(".prisma/client").$Enums.language;
             id: number;
+            type: import(".prisma/client").$Enums.client_type;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            email: string | null;
             created_by: string | null;
             modified_by: string | null;
+            language: import(".prisma/client").$Enums.language;
             business_unit_id: number | null;
             address_line1: string | null;
             city: string | null;
@@ -514,15 +514,15 @@ export declare class CustomersService {
             sequence_container_id: number | null;
             parent_customer_id: number | null;
         } | null;
-        type: import(".prisma/client").$Enums.client_type;
-        email: string | null;
-        account_id: number;
-        language: import(".prisma/client").$Enums.language;
         id: number;
+        type: import(".prisma/client").$Enums.client_type;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
+        email: string | null;
         created_by: string | null;
         modified_by: string | null;
+        language: import(".prisma/client").$Enums.language;
         business_unit_id: number | null;
         address_line1: string | null;
         city: string | null;
@@ -568,11 +568,11 @@ export declare class CustomersService {
     }>;
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         Country: {
-            name: string;
-            currency: string | null;
             id: number;
+            name: string;
             created_at: Date | null;
             modified_at: Date;
+            currency: string | null;
             iso3: string | null;
             numeric_code: string | null;
             iso2: string | null;
@@ -596,9 +596,10 @@ export declare class CustomersService {
             wikiDataId: string | null;
         } | null;
         State: {
+            id: number;
             type: string | null;
             name: string;
-            id: number;
+            level: number | null;
             created_at: Date | null;
             modified_at: Date;
             country_id: number;
@@ -610,24 +611,23 @@ export declare class CustomersService {
             wikiDataId: string | null;
             country_code: string;
             fips_code: string | null;
-            level: number | null;
         } | null;
         Owner: {
-            username: string;
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
+            username: string;
         } | null;
     } & {
-        type: import(".prisma/client").$Enums.client_type;
-        email: string | null;
-        account_id: number;
-        language: import(".prisma/client").$Enums.language;
         id: number;
+        type: import(".prisma/client").$Enums.client_type;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
+        email: string | null;
         created_by: string | null;
         modified_by: string | null;
+        language: import(".prisma/client").$Enums.language;
         business_unit_id: number | null;
         address_line1: string | null;
         city: string | null;
@@ -674,17 +674,18 @@ export declare class CustomersService {
     private assertCustomerInAccount;
     listActivities(user: JwtPayload, id: number, query: CustomerActivityQuery): Promise<{
         activities: {
-            type: import(".prisma/client").$Enums.activity_type;
-            title: string | null;
-            email: string | null;
-            account_id: number;
             id: bigint;
+            type: import(".prisma/client").$Enums.activity_type;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            email: string | null;
+            contact_id: number | null;
             status: import(".prisma/client").$Enums.activity_status;
-            mobile: string | null;
             created_by: string | null;
             modified_by: string | null;
+            mobile: string | null;
+            title: string | null;
             content: string;
             customer_id: number;
             collection_period_id: number | null;
@@ -693,7 +694,6 @@ export declare class CustomersService {
             actual_delivery_time: Date | null;
             status_reason: string | null;
             last_sent_time: Date | null;
-            contact_id: number | null;
             activity_sequence_id: number | null;
             activity_template: number | null;
             is_last_step: boolean;
@@ -708,9 +708,9 @@ export declare class CustomersService {
     listDisputes(user: JwtPayload, id: number): Promise<{
         disputes: ({
             DisputeReason: {
-                account_id: number | null;
-                name: string;
                 id: number;
+                name: string;
+                account_id: number | null;
                 created_at: Date;
                 modified_at: Date;
                 status: import(".prisma/client").$Enums.record_status;
@@ -761,14 +761,14 @@ export declare class CustomersService {
     listPolicies(user: JwtPayload, id: number): Promise<{
         policies: ({
             InsurancePolicy: {
-                account_id: number;
-                currency: string | null;
                 id: number;
+                account_id: number;
                 created_at: Date;
                 modified_at: Date;
                 status: import(".prisma/client").$Enums.record_status;
                 created_by: string | null;
                 modified_by: string | null;
+                currency: string | null;
                 policy_number: string;
                 start_date: Date;
                 end_date: Date;
@@ -844,12 +844,12 @@ export declare class CustomersService {
         data: {
             policy_number: string;
             insurer_name: string | null;
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             customer_id: number;
             insurance_policy_id: number;
             start_date: Date;
@@ -866,12 +866,12 @@ export declare class CustomersService {
         limit: number;
     }>;
     createTopUp(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
-        currency: string | null;
         id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         customer_id: number;
         insurance_policy_id: number;
         start_date: Date;
@@ -909,17 +909,18 @@ export declare class CustomersService {
     logCallActivity(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         ok: boolean;
         activity: {
-            type: import(".prisma/client").$Enums.activity_type;
-            title: string | null;
-            email: string | null;
-            account_id: number;
             id: bigint;
+            type: import(".prisma/client").$Enums.activity_type;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            email: string | null;
+            contact_id: number | null;
             status: import(".prisma/client").$Enums.activity_status;
-            mobile: string | null;
             created_by: string | null;
             modified_by: string | null;
+            mobile: string | null;
+            title: string | null;
             content: string;
             customer_id: number;
             collection_period_id: number | null;
@@ -928,7 +929,6 @@ export declare class CustomersService {
             actual_delivery_time: Date | null;
             status_reason: string | null;
             last_sent_time: Date | null;
-            contact_id: number | null;
             activity_sequence_id: number | null;
             activity_template: number | null;
             is_last_step: boolean;
@@ -944,17 +944,18 @@ export declare class CustomersService {
     sendEmailActivity(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         ok: boolean;
         activity: {
-            type: import(".prisma/client").$Enums.activity_type;
-            title: string | null;
-            email: string | null;
-            account_id: number;
             id: bigint;
+            type: import(".prisma/client").$Enums.activity_type;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            email: string | null;
+            contact_id: number | null;
             status: import(".prisma/client").$Enums.activity_status;
-            mobile: string | null;
             created_by: string | null;
             modified_by: string | null;
+            mobile: string | null;
+            title: string | null;
             content: string;
             customer_id: number;
             collection_period_id: number | null;
@@ -963,7 +964,6 @@ export declare class CustomersService {
             actual_delivery_time: Date | null;
             status_reason: string | null;
             last_sent_time: Date | null;
-            contact_id: number | null;
             activity_sequence_id: number | null;
             activity_template: number | null;
             is_last_step: boolean;
@@ -1014,17 +1014,18 @@ export declare class CustomersService {
         }[];
     }>;
     addComment(user: JwtPayload, customerId: number, comment: string): Promise<{
-        type: import(".prisma/client").$Enums.activity_type;
-        title: string | null;
-        email: string | null;
-        account_id: number;
         id: bigint;
+        type: import(".prisma/client").$Enums.activity_type;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
+        email: string | null;
+        contact_id: number | null;
         status: import(".prisma/client").$Enums.activity_status;
-        mobile: string | null;
         created_by: string | null;
         modified_by: string | null;
+        mobile: string | null;
+        title: string | null;
         content: string;
         customer_id: number;
         collection_period_id: number | null;
@@ -1033,7 +1034,6 @@ export declare class CustomersService {
         actual_delivery_time: Date | null;
         status_reason: string | null;
         last_sent_time: Date | null;
-        contact_id: number | null;
         activity_sequence_id: number | null;
         activity_template: number | null;
         is_last_step: boolean;

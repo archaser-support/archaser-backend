@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { JwtModule } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
 import { DatabaseModule } from "../database/database.module";
+import { EmailModule } from "../email/email.module";
 import { AccessScopeService } from "./access-scope.service";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
@@ -15,6 +16,7 @@ import { SoftDualAuthGuard } from "./soft-dual-auth.guard";
 @Module({
     imports: [
         DatabaseModule,
+        EmailModule,
         PassportModule.register({ defaultStrategy: "jwt" }),
         JwtModule.registerAsync({
             imports: [ConfigModule],
@@ -50,6 +52,7 @@ import { SoftDualAuthGuard } from "./soft-dual-auth.guard";
         JwtModule,
         DualAuthGuard,
         SoftDualAuthGuard,
+        EmailModule,
     ],
 })
 export class AuthModule {}

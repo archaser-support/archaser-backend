@@ -175,13 +175,13 @@ export declare class SystemService {
     }>;
     getControlCenter(user: JwtPayload, operation?: string | null): Promise<{
         agents: {
-            email: string;
-            role: import(".prisma/client").$Enums.user_role | null;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
             image: string | null;
             first_name: string | null;
             last_name: string | null;
+            role: import(".prisma/client").$Enums.user_role | null;
             business_unit_id: number | null;
         }[];
         agentCount: number;
@@ -327,19 +327,19 @@ export declare class SystemService {
                 id: number;
                 business_unit_id: number | null;
                 BusinessUnit: {
-                    name: string;
                     id: number;
+                    name: string;
                 } | null;
                 country_id: number | null;
                 state_id: number | null;
                 Country: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 State: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 Company: {
@@ -356,12 +356,12 @@ export declare class SystemService {
                 owner_id: string | null;
             };
         } & {
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             next_activity_date: Date | null;
             priority: import(".prisma/client").$Enums.priority | null;
             customer_id: number;
@@ -404,19 +404,19 @@ export declare class SystemService {
                 id: number;
                 business_unit_id: number | null;
                 BusinessUnit: {
-                    name: string;
                     id: number;
+                    name: string;
                 } | null;
                 country_id: number | null;
                 state_id: number | null;
                 Country: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 State: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 Company: {
@@ -433,12 +433,12 @@ export declare class SystemService {
                 owner_id: string | null;
             };
         } & {
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             next_activity_date: Date | null;
             priority: import(".prisma/client").$Enums.priority | null;
             customer_id: number;
@@ -475,19 +475,19 @@ export declare class SystemService {
                 id: number;
                 business_unit_id: number | null;
                 BusinessUnit: {
-                    name: string;
                     id: number;
+                    name: string;
                 } | null;
                 country_id: number | null;
                 state_id: number | null;
                 Country: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 State: {
-                    name: string;
                     id: number;
+                    name: string;
                     iso2: string | null;
                 } | null;
                 Company: {
@@ -504,12 +504,12 @@ export declare class SystemService {
                 owner_id: string | null;
             };
         } & {
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             next_activity_date: Date | null;
             priority: import(".prisma/client").$Enums.priority | null;
             customer_id: number;
@@ -573,12 +573,12 @@ export declare class SystemService {
                 oldest_invoice_overdue_date: Date | null;
             };
         } & {
-            currency: string | null;
             id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
+            currency: string | null;
             next_activity_date: Date | null;
             priority: import(".prisma/client").$Enums.priority | null;
             customer_id: number;
@@ -669,10 +669,10 @@ export declare class SystemService {
         executionId: string;
         status: string;
         items: {
-            message: string;
             id: bigint;
-            level: import(".prisma/client").$Enums.log_level;
             timestamp: Date;
+            level: import(".prisma/client").$Enums.log_level;
+            message: string;
             details: Prisma.JsonValue;
             job_id: number | null;
             correlation_id: string | null;
@@ -795,16 +795,16 @@ export declare class SystemService {
     }>;
     listCompanies(_user: JwtPayload): Promise<{
         items: {
-            name: string;
             id: number;
+            name: string;
         }[];
     }>;
     createCompany(user: JwtPayload, body: {
         name?: string;
         company_number?: string;
     }): Promise<{
-        name: string;
         id: number;
+        name: string;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
@@ -815,8 +815,8 @@ export declare class SystemService {
         id?: number;
         name?: string;
     }): Promise<{
-        name: string;
         id: number;
+        name: string;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;

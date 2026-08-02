@@ -26,8 +26,8 @@ export declare class PlatformLeavesController {
         type: "stuck_activities";
         count: number;
         details: {
-            type: import(".prisma/client").$Enums.activity_type;
             id: bigint;
+            type: import(".prisma/client").$Enums.activity_type;
             status: import(".prisma/client").$Enums.activity_status;
             customer_id: number;
             schedule_time: Date;

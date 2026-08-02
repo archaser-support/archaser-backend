@@ -9,15 +9,15 @@ export declare class SequenceContainersController {
                 ActivitiesSequence: number;
             };
         } & {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
-            is_default: boolean;
             active: boolean;
+            is_default: boolean;
             category: import(".prisma/client").$Enums.category;
             master_template: boolean;
             is_deleted: boolean;
@@ -29,15 +29,15 @@ export declare class SequenceContainersController {
                 ActivitiesSequence: number;
             };
         } & {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
-            is_default: boolean;
             active: boolean;
+            is_default: boolean;
             category: import(".prisma/client").$Enums.category;
             master_template: boolean;
             is_deleted: boolean;
@@ -57,15 +57,15 @@ export declare class SequenceContainersController {
                 ActivitiesSequence: number;
             };
         } & {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
-            is_default: boolean;
             active: boolean;
+            is_default: boolean;
             category: import(".prisma/client").$Enums.category;
             master_template: boolean;
             is_deleted: boolean;
@@ -77,15 +77,15 @@ export declare class SequenceContainersController {
                 ActivitiesSequence: number;
             };
         } & {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
-            is_default: boolean;
             active: boolean;
+            is_default: boolean;
             category: import(".prisma/client").$Enums.category;
             master_template: boolean;
             is_deleted: boolean;
@@ -105,15 +105,15 @@ export declare class SequenceContainersController {
                 ActivitiesSequence: number;
             };
         } & {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             created_by: string | null;
             modified_by: string | null;
-            is_default: boolean;
             active: boolean;
+            is_default: boolean;
             category: import(".prisma/client").$Enums.category;
             master_template: boolean;
             is_deleted: boolean;

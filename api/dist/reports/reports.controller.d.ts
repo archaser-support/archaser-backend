@@ -9,28 +9,29 @@ export declare class ReportsController {
     list(user: JwtPayload, query: Record<string, string | undefined>): Promise<{
         reports: ({
             User_Report_created_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
             User_Report_modified_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
         } & {
-            description: string | null;
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            context: string | null;
+            description: string | null;
             created_by: string | null;
             modified_by: string | null;
             is_default: boolean;
@@ -38,7 +39,6 @@ export declare class ReportsController {
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
-            context: string | null;
         } & {
             created_at_formatted: string | null;
             modified_at_formatted: string | null;
@@ -50,28 +50,29 @@ export declare class ReportsController {
     create(user: JwtPayload, body: Record<string, unknown>): Promise<{
         report: {
             User_Report_created_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
             User_Report_modified_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
         } & {
-            description: string | null;
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            context: string | null;
+            description: string | null;
             created_by: string | null;
             modified_by: string | null;
             is_default: boolean;
@@ -79,7 +80,6 @@ export declare class ReportsController {
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
-            context: string | null;
         } & {
             created_at_formatted: string | null;
             modified_at_formatted: string | null;
@@ -92,28 +92,29 @@ export declare class ReportsController {
     getUserDefault(user: JwtPayload, context: string): Promise<{
         report: ({
             User_Report_created_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
             User_Report_modified_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
         } & {
-            description: string | null;
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            context: string | null;
+            description: string | null;
             created_by: string | null;
             modified_by: string | null;
             is_default: boolean;
@@ -121,7 +122,6 @@ export declare class ReportsController {
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
-            context: string | null;
         } & {
             created_at_formatted: string | null;
             modified_at_formatted: string | null;
@@ -150,28 +150,29 @@ export declare class ReportsByIdController {
     byId(user: JwtPayload, id: number): Promise<{
         report: {
             User_Report_created_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
             User_Report_modified_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
         } & {
-            description: string | null;
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            context: string | null;
+            description: string | null;
             created_by: string | null;
             modified_by: string | null;
             is_default: boolean;
@@ -179,7 +180,6 @@ export declare class ReportsByIdController {
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
-            context: string | null;
         } & {
             created_at_formatted: string | null;
             modified_at_formatted: string | null;
@@ -188,28 +188,29 @@ export declare class ReportsByIdController {
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         report: {
             User_Report_created_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
             User_Report_modified_byToUser: {
-                username: string;
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
+                username: string;
                 first_name: string | null;
                 last_name: string | null;
             } | null;
         } & {
-            description: string | null;
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
+            context: string | null;
+            description: string | null;
             created_by: string | null;
             modified_by: string | null;
             is_default: boolean;
@@ -217,7 +218,6 @@ export declare class ReportsByIdController {
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
-            context: string | null;
         } & {
             created_at_formatted: string | null;
             modified_at_formatted: string | null;
@@ -242,20 +242,20 @@ export declare class ReportsByIdController {
             id: number;
             created_at: Date;
             created_by: string | null;
+            permission: string;
             report_id: number;
             shared_with_user_id: string | null;
             shared_with_role: import(".prisma/client").$Enums.user_role | null;
-            permission: string;
         }[];
     }>;
     share(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
         id: number;
         created_at: Date;
         created_by: string | null;
+        permission: string;
         report_id: number;
         shared_with_user_id: string | null;
         shared_with_role: import(".prisma/client").$Enums.user_role | null;
-        permission: string;
     }>;
     listSchedules(user: JwtPayload, id: number): Promise<{
         schedules: {

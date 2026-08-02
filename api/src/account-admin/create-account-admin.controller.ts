@@ -62,6 +62,9 @@ export function createAccountAdminController(
             if (entityType === "business-units") {
                 return this.service.createBusinessUnit(user, body);
             }
+            if (entityType === "users") {
+                return this.service.createUser(user, body);
+            }
             return { error: `Create not supported for ${entityType}` };
         }
 

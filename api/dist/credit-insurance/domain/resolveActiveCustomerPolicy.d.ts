@@ -42,9 +42,9 @@ export declare function getActiveCustomerPolicyRow(customerId: number, dbClient?
     uninsured_amount2: number | null;
     uninsured_currency2: string | null;
     User_CustomerPolicy_modified_byToUser: {
-        email: string;
-        name: string | null;
         id: string;
+        name: string | null;
+        email: string;
         first_name: string | null;
         last_name: string | null;
     } | null;
@@ -97,9 +97,9 @@ export declare function listCustomerPolicyHistory(customerId: number): Promise<{
     uninsured_amount2: number | null;
     uninsured_currency2: string | null;
     User_CustomerPolicy_modified_byToUser: {
-        email: string;
-        name: string | null;
         id: string;
+        name: string | null;
+        email: string;
         first_name: string | null;
         last_name: string | null;
     } | null;

@@ -6,9 +6,9 @@ export declare class OperationsDomainController {
     list(operationType: string, user: JwtPayload, query: OperationsListQuery): Promise<{
         disputes: ({
             DisputeReason: {
-                account_id: number | null;
-                name: string;
                 id: number;
+                name: string;
+                account_id: number | null;
                 created_at: Date;
                 modified_at: Date;
                 status: import(".prisma/client").$Enums.record_status;
@@ -47,9 +47,9 @@ export declare class OperationsDomainController {
         limit: number;
     } | {
         disputeReasons: {
-            account_id: number | null;
-            name: string;
             id: number;
+            name: string;
+            account_id: number | null;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
@@ -137,9 +137,9 @@ export declare class OperationsDomainController {
         totalCustomers: number;
     }>;
     byId(operationType: string, id: string, user: JwtPayload): Promise<{
-        account_id: number | null;
-        name: string;
         id: number;
+        name: string;
+        account_id: number | null;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.record_status;
@@ -172,9 +172,9 @@ export declare class OperationsDomainController {
         totalCustomers: number;
     } | ({
         DisputeReason: {
-            account_id: number | null;
-            name: string;
             id: number;
+            name: string;
+            account_id: number | null;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
@@ -234,9 +234,9 @@ export declare class OperationsDomainController {
         contact_mobile: string | null;
         closed_at: Date | null;
     } | {
-        account_id: number | null;
-        name: string;
         id: number;
+        name: string;
+        account_id: number | null;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.record_status;

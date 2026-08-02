@@ -93,8 +93,11 @@ export class SmsVendorsController {
 
     @Get()
     @ApiOperation({ summary: "List SMS vendors" })
-    async list(@CurrentUser() user: JwtPayload) {
-        return this.sms.listVendors(user);
+    async list(
+        @CurrentUser() user: JwtPayload,
+        @Query() query: Record<string, string | undefined>
+    ) {
+        return this.sms.listVendors(user, query);
     }
 
     @Post()

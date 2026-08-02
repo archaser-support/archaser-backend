@@ -81,7 +81,11 @@ let RolesService = class RolesService {
                     eligibleRoles.add(row.role);
                 }
             }
-            rolesToProcess = baseRoles.filter((role) => eligibleRoles.has(role));
+            const filteredByProduct = baseRoles.filter((role) => eligibleRoles.has(role));
+            rolesToProcess =
+                filteredByProduct.length > 0
+                    ? filteredByProduct
+                    : [...baseRoles];
         }
         const rolesWithCounts = await Promise.all(rolesToProcess.map(async (role) => {
             const permissions = await this.permissions.getRolePermissions(accountId, role);

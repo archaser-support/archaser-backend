@@ -8,12 +8,12 @@ export declare class CollectionPeriodController {
             account_id: number;
         };
     } & {
-        currency: string | null;
         id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         next_activity_date: Date | null;
         priority: import(".prisma/client").$Enums.priority | null;
         customer_id: number;
@@ -46,12 +46,12 @@ export declare class CollectionPeriodController {
         lawyer_assigned: boolean;
     }>;
     update(user: JwtPayload, id: number, body: Record<string, unknown>): Promise<{
-        currency: string | null;
         id: number;
         created_at: Date;
         modified_at: Date;
         created_by: string | null;
         modified_by: string | null;
+        currency: string | null;
         next_activity_date: Date | null;
         priority: import(".prisma/client").$Enums.priority | null;
         customer_id: number;

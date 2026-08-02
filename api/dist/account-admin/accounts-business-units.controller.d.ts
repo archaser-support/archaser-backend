@@ -5,9 +5,9 @@ export declare class AccountsBusinessUnitsController {
     constructor(service: AccountAdminEntitiesService);
     list(user: JwtPayload, accountId: number, query: AccountAdminListQuery): Promise<({
         Parent: {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;
@@ -18,19 +18,19 @@ export declare class AccountsBusinessUnitsController {
             is_primary: boolean;
         } | null;
         User_BusinessUnit_created_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
         User_BusinessUnit_modified_byToUser: {
-            email: string;
-            name: string | null;
             id: string;
+            name: string | null;
+            email: string;
         } | null;
     } & {
-        account_id: number;
-        name: string;
         id: number;
+        name: string;
+        account_id: number;
         created_at: Date;
         modified_at: Date;
         status: import(".prisma/client").$Enums.record_status;
@@ -42,9 +42,9 @@ export declare class AccountsBusinessUnitsController {
     })[] | {
         data: ({
             Parent: {
-                account_id: number;
-                name: string;
                 id: number;
+                name: string;
+                account_id: number;
                 created_at: Date;
                 modified_at: Date;
                 status: import(".prisma/client").$Enums.record_status;
@@ -55,19 +55,19 @@ export declare class AccountsBusinessUnitsController {
                 is_primary: boolean;
             } | null;
             User_BusinessUnit_created_byToUser: {
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
             } | null;
             User_BusinessUnit_modified_byToUser: {
-                email: string;
-                name: string | null;
                 id: string;
+                name: string | null;
+                email: string;
             } | null;
         } & {
-            account_id: number;
-            name: string;
             id: number;
+            name: string;
+            account_id: number;
             created_at: Date;
             modified_at: Date;
             status: import(".prisma/client").$Enums.record_status;

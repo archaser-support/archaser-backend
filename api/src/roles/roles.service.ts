@@ -101,9 +101,17 @@ export class RolesService {
                     eligibleRoles.add(row.role);
                 }
             }
-            rolesToProcess = baseRoles.filter((role) =>
+            const filteredByProduct = baseRoles.filter((role) =>
                 eligibleRoles.has(role)
             );
+            // Credit-only (or otherwise mismatched) accounts can end up with an
+            // empty set when master RolePermission rows are collection-flagged
+            // only. Fall back to the full base role list so user creation still
+            // has selectable roles.
+            rolesToProcess =
+                filteredByProduct.length > 0
+                    ? filteredByProduct
+                    : [...baseRoles];
         }
 
         const rolesWithCounts = await Promise.all(
