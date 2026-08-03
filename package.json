@@ -9,7 +9,6 @@
     "sms",
     "connectors",
     "reports",
-    "e2e",
     "packages/database",
     "packages/openapi-client",
     "packages/sms-send",
