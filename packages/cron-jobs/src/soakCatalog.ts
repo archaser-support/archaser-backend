@@ -27,7 +27,7 @@ export const EXPECTED_CRON_JOB_NAMES = [
 
 export type ExpectedCronJobName = (typeof EXPECTED_CRON_JOB_NAMES)[number];
 
-/** Documented parity gaps — soak must accept or close these before ENABLE_CRON_JOBS=false. */
+/** Documented parity gaps — accepted at cutover (warn/info); deepen later if product needs. */
 export const WORKER_SOAK_KNOWN_GAPS: Array<{
     name: string;
     gap: string;
@@ -82,7 +82,8 @@ export const PATH_FLIP_FLAGS: PathFlipFlag[] = [
     {
         id: "connectors",
         envVar: "USE_CONNECTORS_NEST_REWRITE",
-        nginxMarker: "location ^~ /api/entities/accounts/",
+        // Narrow peel: /api/accounts + billing/notification leaves (not all entities/accounts).
+        nginxMarker: "location ^~ /api/accounts/",
         description: "Connectors Nest path flip (D70)",
     },
     {

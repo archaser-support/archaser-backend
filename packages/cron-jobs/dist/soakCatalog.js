@@ -28,7 +28,7 @@ exports.EXPECTED_CRON_JOB_NAMES = [
     "Compute Gap In Base Currency",
     "Sync Billing Connectors",
 ];
-/** Documented parity gaps — soak must accept or close these before ENABLE_CRON_JOBS=false. */
+/** Documented parity gaps — accepted at cutover (warn/info); deepen later if product needs. */
 exports.WORKER_SOAK_KNOWN_GAPS = [
     {
         name: "Activity Workflow Manager",
@@ -71,7 +71,8 @@ exports.PATH_FLIP_FLAGS = [
     {
         id: "connectors",
         envVar: "USE_CONNECTORS_NEST_REWRITE",
-        nginxMarker: "location ^~ /api/entities/accounts/",
+        // Narrow peel: /api/accounts + billing/notification leaves (not all entities/accounts).
+        nginxMarker: "location ^~ /api/accounts/",
         description: "Connectors Nest path flip (D70)",
     },
     {

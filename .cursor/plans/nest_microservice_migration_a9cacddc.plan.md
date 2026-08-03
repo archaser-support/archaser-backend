@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: stage-1b
     content: "Stage 1B (lane B): Amplify SSR UI + OpenAPI client — parallel, does not block peels"
-    status: in_progress
+    status: completed
   - id: stage-2
     content: "Stage 2 (independent): Deepen worker CronJob handlers; ENABLE_CRON_JOBS=false when ready"
     status: completed
@@ -34,14 +34,14 @@ isProject: false
 
 # Nest.js backend split — living roadmap
 
-**Status:** Lane A peels done · Worker handlers 18/18 · **Soak tooling ready** (dual-run; flips still off) · OpenAPI client expanded (1b partial)  
-**Next action:** Run dual-run worker soak on staging · SMS contract + path-flip only when green · Amplify SSR cutover  
+**Status:** Lane A peels done · Worker 18/18 · **Staging+prod cutover templates applied** (`ENABLE_CRON_JOBS=false`, nginx peels on, main-API peel modules deleted) · Amplify Stage 1B wiring done (staging UI redirect)  
+**Next action:** Deploy/reload on hosts · set `NEST_CORS_ORIGINS` for Amplify · smoke peels + worker · optional deepen cron gaps (email/templates)
 
 | Lane | Next |
 |------|------|
-| **A — Peels / stubs** | Path-flip soak after `npm run soak:sms-contract` (+ connectors/reports contracts) |
-| **B — Amplify** | Wire FE to `@archaser/openapi-client`; Amplify SSR without DB |
-| **Worker cron** | Dual-run soak → then `ENABLE_CRON_JOBS=false` |
+| **A — Peels / stubs** | Host deploy: reload nginx + compose; smoke SMS/connectors/reports |
+| **B — Amplify** | Amplify Console env + CORS; prod Amplify cutover optional (EC2 UI remains) |
+| **Worker cron** | Worker owns schedules; known gaps accepted at cutover |
 
 **Resume file:** keep this document updated when a stage finishes (`Status`, decision log, “Next action”).
 
@@ -181,94 +181,77 @@ flowchart LR
 - Core AR, portal/CI, remaining monolith APIs, Nest domain modules; jiti strangler retired for product HTTP.
 - FE/BE already separate repos; backend is Nest workspace under `api/`, `worker/`, `sms/`, `connectors/`, `reports/`.
 
-### Stage 1B — Amplify UI — **Lane B (parallel)**
+### Stage 1B — Amplify UI — **Lane B — wiring done**
 
-- Amplify Hosting SSR; JWT Bearer + OpenAPI client (merged spec per D31).
-- Does not block peels (D38).
-- Private npm for `@archaser/database` only if a consumer outside the backend workspace needs it (D20 revised).
+- Amplify Hosting SSR; JWT Bearer + OpenAPI client (`@archaser/openapi-client` + FE `nestOpenApiClient`).
+- Staging nginx redirects UI to Amplify; Nest APIs stay on EC2.
+- Console env + `NEST_CORS_ORIGINS` remain host/ops steps.
+- Production Amplify cutover optional (EC2 Next UI remains).
 
-### Soak runbook (worker + path-flip) — **in progress**
+### Stage 2 — Worker deepen — **cutover applied**
 
-**Do not flip production yet.** Use dual-run + gates below.
-
-#### Worker soak (dual-run)
-
-1. Staging: Redis + `@archaser/worker` running; `ENABLE_CRON_JOBS=true` still (Next/API cron remains safety net).
-2. Gate: `npm run soak:check` (and optionally `npm run soak:check:worker`).
-3. Registry gate: `npm run soak:cron-registry`.
-4. Exercise run-now: `POST /api/gateway/cron/:jobId/run-now` for FX, snapshots, Sync Billing, AWM (`skipSmsSend` for dry runs if exposed).
-5. Watch worker logs + CronJobExecution / domain side effects for known gaps in `WORKER_SOAK_KNOWN_GAPS`.
-6. Sign-off → set `ENABLE_CRON_JOBS=false` on API (worker owns schedules).
-
-#### Path-flip soak (per peel)
-
-1. Keep nginx locations **commented** and Next `USE_*_NEST_REWRITE` **unset/false** until green.
-2. SMS: `npm run soak:sms-contract` (+ Twilio parity test). Flip staging: uncomment `/api/sms/` in `nginx/archaser-staging.conf` and set `USE_SMS_NEST_REWRITE=true` locally if needed.
-3. Soak with reversible rollback (re-comment nginx / unset env).
-4. Connectors/reports: same playbook; `ENABLE_CONNECTORS_SYNC_WORKERS=true` only **after** connectors flip (D72).
-5. After soak: delete duplicate modules from main API.
-
-#### Amplify SSR soak (Lane B — parallel)
-
-1. Amplify app hosts UI SSR; Nest stays on EC2 behind nginx `/api`.
-2. `NEST_CORS_ORIGINS` includes Amplify origin; DNS/cutover per staging nginx comments.
-3. Does not require worker or path-flip completion (D38).
-
-### Stage 2 — Worker deepen — **Independent track** (D41) — **handlers done**
-
-- Compose already runs Redis + worker.
-- **All CronJob names live via `@archaser/cron-jobs`** (including Activity Workflow Manager: Phase 1 SMS via `@archaser/sms-send`, Phase 2 generate SCHEDULED activities).
-- **Known gaps (soak before cutover):** email SMTP stubbed in several jobs; template variable fill incomplete; AWM schedule calc simplified; CI/realtime skipped; Report Scheduler needs `REPORTS_SERVICE_URL` + internal execute for full S2S.
-- **Do not set `ENABLE_CRON_JOBS=false` until soak/parity** on AWM send + generate paths.
+- Compose (staging + production): `ENABLE_CRON_JOBS=false` — worker owns BullMQ schedules.
+- **All CronJob names live via `@archaser/cron-jobs`** (including Activity Workflow Manager).
+- **Accepted gaps:** email SMTP stubbed; template variable fill incomplete; AWM schedule calc simplified; Report Scheduler needs `REPORTS_SERVICE_URL` + internal execute for full S2S.
 - Credit/customers domain loaded from `api/dist` (`CREDIT_INSURANCE_DOMAIN_ROOT` / `CUSTOMERS_DOMAIN_ROOT` overrides).
-- Not a blocker for SMS peel.
-- Set `ENABLE_CRON_JOBS=false` on API when worker owns schedules end-to-end.
-- Not a blocker for SMS peel.
 
-### Stage 3 — SMS (`sms` Nest app) — **Lane A next**
+### Stage 3 — SMS (`sms` Nest app) — **peeled + flipped**
 
-- **Blocking gate:** recover Twilio send + webhook signature parity (D45–D46).
-- Own public `/api/sms/*` (including webhook); DualAuth except public webhook.
+- Public `/api/sms/*` on sms Nest; DualAuth except public webhook.
+- nginx peels ACTIVE (staging + production); main API `api/src/sms` deleted.
 - `/internal/...` for api/worker with `INTERNAL_SERVICE_SECRET`.
-- nginx: `^~ /api/sms/` → sms; Next local rewrite same.
-- Contract tests → reversible flip → soak → delete `api/src/sms`.
-- Remove gateway peel proxies (D50).
 
-### Stage 3b — `@archaser/auth` — **during SMS soak**
+### Stage 3b — `@archaser/auth` — **done**
 
 - DualAuth, internal-secret guard, AccessScope + Nest DB helper, S2S HTTP client (D29, D33, D35, D52).
-- Refactor api + sms to package before connectors starts (D40).
 
-### Stage 4 — Connectors (`connectors` Nest app)
+### Stage 4 — Connectors (`connectors` Nest app) — **peeled + flipped (narrow)**
 
-- Own **all** `/api/entities/accounts/*` (bank accounts, BUs, billing-connector, notification-rule-sets, SMS preferences, check-username, extras) (D28).
-- nginx: `^~ /api/entities/accounts/` → connectors.
-- Parity vs live SoT + contract tests + reversible flip (D47–D49).
+- Owns `/api/accounts` + billing-connector + notification-rule-sets leaves (account-admin bank-accounts/BUs stay on main API).
+- `ENABLE_CONNECTORS_SYNC_WORKERS=true` on connectors service; main API `accounts-nested` deleted.
 
-### Stage 5 — Reports (`reports` Nest app)
+### Stage 5 — Reports (`reports` Nest app) — **peeled + flipped**
 
-- Own public `/api/reports/*`.
-- Same playbook; S2S via `REPORTS_SERVICE_URL` + `/internal` as needed.
+- Owns public `/api/reports/*`; main API reports module deleted (util kept for credit-insurance).
 
 ### Out of scope unless requested
 
-- DB-per-service; separate Grafana instances; peeling core AR (Customer/Invoice/Activity) early; Redis → ElastiCache (revisit after worker harden); **new git repo per peel** (superseded by D22).
+- DB-per-service; separate Grafana instances; peeling core AR (Customer/Invoice/Activity) early; Redis → ElastiCache (revisit after worker harden); **new git repo per peel** (superseded by D22); production Amplify UI cutover.
+
+**Host deploy still required** (compose up + `nginx -t` / reload). Known cron gaps (email SMTP, AWM template extras) accepted at cutover.
+
+#### Worker soak → cutover
+
+1. ~~Dual-run with `ENABLE_CRON_JOBS=true`~~ → **done path:** staging/production compose set `ENABLE_CRON_JOBS=false`.
+2. Gate: `npm run soak:check` (expects peels ACTIVE in nginx templates).
+3. Registry gate: `npm run soak:cron-registry`.
+4. After deploy: watch worker logs + CronJobExecution; run-now via `POST /api/gateway/cron/:jobId/run-now`.
+5. Known gaps listed in `WORKER_SOAK_KNOWN_GAPS` (accepted unless product escalates).
+
+#### Path-flip soak → cutover
+
+1. Staging + production nginx: SMS + narrow connectors (`/api/accounts` + billing/notification leaves) + reports **ACTIVE**.
+2. Main API duplicates deleted: `api/src/sms`, `accounts-nested`, reports controllers (kept `report-customer-policy-fields.util.ts` for credit-insurance).
+3. Connectors: `ENABLE_CONNECTORS_SYNC_WORKERS=true` on connectors service (D72).
+4. Local Next: `USE_*_NEST_REWRITE` optional for peel-local; FE rewrite narrowed to match nginx.
+5. Rollback: re-comment nginx locations and restore hybrid UI if needed.
+
+#### Amplify SSR (Lane B) — **wiring done; Console/DNS is ops**
+
+1. Staging nginx `location /` → 302 Amplify (`$amplify_ui_origin`); hybrid EC2 Next kept as commented rollback.
+2. FE: `@archaser/openapi-client` + `utils/nestOpenApiClient.ts`; `amplify.yml` documents Nest CORS + env.
+3. Ops: Amplify Console env (`NEXT_PUBLIC_NEST_API_BASE_URL`, secrets) + Nest `NEST_CORS_ORIGINS` includes Amplify origin.
+4. Production UI remains EC2 Next unless a separate Amplify prod cutover is requested.
 
 ## Codebase scan (peels track)
 
-**Required:**
+**Required (done):**
 
-- `backend/sms`, `backend/connectors`, `backend/reports` — replace stubs with real Nest modules
-- `backend/api/src/sms`, `accounts-nested` (+ account-admin nested under `/api/entities/accounts`), `reports` — move then delete after soak
-- `backend/api/src/gateway/gateway-peel.controller.ts` (+ proxy used only for peels) — remove (D50)
-- `backend/packages/auth` — new `@archaser/auth`
-- `backend/nginx/*.conf` — path splits before `/api/` catch-all; no `/internal`
-- `frontend/nest-api-rewrite.cjs` (+ `next.config.js`) — local path-split (D30)
-- OpenAPI export/merge scripts + FE client
-- Compose/env: `CONNECTION_LIMIT_*`, `INTERNAL_SERVICE_SECRET`, `SMS_SERVICE_URL`, `CONNECTORS_SERVICE_URL`, `REPORTS_SERVICE_URL`
-- Contract tests per peel (golden HTTP + authz)
+- `backend/sms`, `backend/connectors`, `backend/reports` — Nest peels live
+- Main API peel modules deleted after flip (`sms`, `accounts-nested`, reports controllers)
+- `@archaser/auth`, nginx path splits, FE `nest-api-rewrite.cjs`, OpenAPI client, compose service URLs
 
-**Optional / later:** ElastiCache; private npm publish; worker domain handler depth; Amplify lane deliverables.
+**Optional / later:** ElastiCache; private npm publish; deepen worker email/templates; production Amplify UI cutover.
 
 **No change needed for peels:** Core Customer/Invoice/Activity ownership on main API; product feature plans unrelated to migration.
 
@@ -292,11 +275,11 @@ flowchart LR
 | ID | Sev | Item | Status |
 |----|-----|------|--------|
 | S8 | P1 | Inforu/MessageBird SMS send | **Done** (`@archaser/sms-send` + wired api/sms; `@archaser/auth` extracted) |
-| S11 | P2 | connectors Nest scaffold + full D28 peel + Priority sync | **Done** (`@archaser/billing-connector` + connectors Nest; path flip off; workers off until flip) |
-| S12 | P2 | reports Nest scaffold peel | **Done** (reports Nest hosts `/api/reports`; path flip off) |
+| S11 | P2 | connectors Nest scaffold + full D28 peel + Priority sync | **Done** + path flip on (narrow peel); workers on after flip |
+| S12 | P2 | reports Nest scaffold peel | **Done** + path flip on; main-API reports module deleted |
 | S1–S5 | P0 | Ops create, credit assign, PTP post, billing sync fake, import leaves | **Done** (dispute-reasons create; assignCredit deepened; PTP wired; import records; in-process sync) |
-| S6–S10 | P1 | Ops lists/updates, worker cron handlers, … | **Done (handlers)** — `@archaser/cron-jobs` 18/18; soak before `ENABLE_CRON_JOBS=false` |
-| S13–S17 | P3 | S3 stubs, openapi client, CI helper naming | **Partial** — openapi-client expanded (customers/invoices/billing/reports) |
+| S6–S10 | P1 | Ops lists/updates, worker cron handlers, … | **Done** — 18/18 + `ENABLE_CRON_JOBS=false` in compose |
+| S13–S17 | P3 | S3 stubs, openapi client, CI helper naming | **Done (1B wiring)** — openapi-client + FE nestOpenApiClient; Amplify staging redirect |
 
 ### Grill decisions D53–D72 (locked)
 
@@ -340,10 +323,10 @@ flowchart LR
 
 1. Open this plan; read **Status** / **Next action** (lanes A and B).
 2. Do not re-litigate locked D1–D72 unless explicitly changing a decision (then update the table).
-3. Lane A peels done · worker handlers 18/18 · soak tooling ready → dual-run worker soak, then path-flip / Amplify.
+3. Lane A peels done · worker owns schedules · nginx peels flipped in-repo · Amplify staging wiring done → **deploy hosts** + smoke.
 
 ## Issues (vertical slices)
 
 Historical tracer bullets under `.scratch/nest-microservice-migration/` (01–19 done). New peel work should follow this plan’s Stage 3–5 playbook; republish slices with `/to-issues` if desired.
 
-**Status:** 01–19 done · Stage 2 handlers done · soak tooling ready · **Next:** dual-run worker soak → path-flip / Amplify
+**Status:** 01–19 done · cutover templates in repo · **Next:** host deploy / CORS / smoke

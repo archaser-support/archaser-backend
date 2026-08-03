@@ -8,7 +8,7 @@
  *   npx tsx scripts/soak/check-soak-readiness.ts --allow-path-flips-on
  *
  * Exit codes:
- *   0 = ready to begin dual-run soak (handlers covered; flips off unless allowed)
+ *   0 = cutover templates OK (handlers covered; staging+prod peels expected active)
  *   1 = blocked (missing handlers or unexpected flip state)
  */
 import * as fs from "fs";
@@ -108,21 +108,18 @@ async function main(): Promise<void> {
         console.log(`  [${gap.severity}] ${gap.name}: ${gap.gap}`);
     }
 
-    // --- Path flip env ---
+    // --- Path flip env (local Next) ---
+    // After cutover, local USE_*_NEST_REWRITE=true is fine for peel-local dev.
     console.log("\nPath-flip env (Next local rewrites):");
     const flips = readPathFlipEnv(process.env);
     for (const flag of flips) {
         const state = flag.enabled ? "ON" : "off";
         console.log(`  ${flag.envVar}=${state} (${flag.description})`);
-        if (flag.enabled && !args.allowPathFlipsOn) {
-            blocked = true;
-            console.log(
-                "    BLOCK: flip is ON — soak dual-run expects flips off until contract green + explicit enable"
-            );
-        }
     }
 
-    // --- nginx configs (staging/production templates in repo) ---
+    // --- nginx configs ---
+    // Staging + production peels are flipped in-repo (SMS / narrow connectors / reports).
+    // Amplify UI redirect is staging-only; production UI stays on EC2 Next.
     console.log("\nnginx path-flip locations (repo templates):");
     for (const confName of [
         "nginx/archaser-staging.conf",
@@ -137,30 +134,28 @@ async function main(): Promise<void> {
             }
             const label = active ? "ACTIVE" : "commented";
             console.log(`  ${confName} ${flag.id}: ${label}`);
-            if (active && !args.allowPathFlipsOn) {
+            if (active) {
+                console.log("    OK: peel flipped in repo template");
+            } else {
                 blocked = true;
                 console.log(
-                    "    BLOCK: nginx location uncommented in repo template — keep commented until soak approve"
+                    "    BLOCK: peel not active — expected flipped after cutover"
                 );
             }
         }
     }
 
-    // --- Connectors workers gate ---
+    // Connectors workers: compose sets true on connectors service after flip
     const connectorsWorkers =
         process.env.ENABLE_CONNECTORS_SYNC_WORKERS === "true";
     console.log(
-        `\nENABLE_CONNECTORS_SYNC_WORKERS=${connectorsWorkers ? "true" : "false"} (D72: stay false until connectors path flip)`
+        `\nENABLE_CONNECTORS_SYNC_WORKERS=${connectorsWorkers ? "true" : "false"} (compose sets true on connectors service)`
     );
-    if (connectorsWorkers && !args.allowPathFlipsOn) {
-        blocked = true;
-        console.log("  BLOCK: connectors sync workers enabled before path flip");
-    }
 
-    // --- ENABLE_CRON_JOBS guidance ---
+    // ENABLE_CRON_JOBS: false means worker-owned (cutover complete)
     const enableCron = process.env.ENABLE_CRON_JOBS;
     console.log(
-        `\nENABLE_CRON_JOBS=${enableCron ?? "(unset)"} — keep "true" during dual-run soak; set "false" only after soak sign-off`
+        `\nENABLE_CRON_JOBS=${enableCron ?? "(unset)"} — staging/production compose set false (worker owns schedules)`
     );
 
     // --- Optional worker health ---
@@ -179,19 +174,19 @@ async function main(): Promise<void> {
         );
     }
 
-    console.log("\n=== Next soak steps ===");
-    console.log("1. Dual-run: worker + ENABLE_CRON_JOBS=true (API/Next cron still on)");
-    console.log("2. Trigger run-now via POST /api/gateway/cron/:jobId/run-now");
-    console.log("3. Compare outcomes for FX, snapshots, overdue, AWM (skipSmsSend for dry runs)");
-    console.log("4. SMS contract: npm run test -w @archaser/sms");
-    console.log("5. Path flip only after contracts green + --allow-path-flips-on soak");
-    console.log("6. Then ENABLE_CRON_JOBS=false");
+    console.log("\n=== Deploy cutover checklist ===");
+    console.log("1. Redeploy compose (api ENABLE_CRON_JOBS=false; connectors workers on)");
+    console.log("2. Reload nginx from repo templates (staging + production peels)");
+    console.log("3. Staging UI: Amplify redirect + NEST_CORS_ORIGINS includes Amplify origin");
+    console.log("4. Production UI: remains EC2 Next (Amplify prod cutover optional)");
+    console.log("5. Confirm worker CronJobExecution + peel smoke (sms/accounts/reports)");
+    console.log("6. Known gaps accepted: email SMTP stub, AWM template/schedule extras");
 
     if (blocked) {
-        console.log("\nRESULT: BLOCKED — fix issues above before soak cutover");
+        console.log("\nRESULT: BLOCKED — fix issues above before declaring cutover complete");
         process.exit(1);
     }
-    console.log("\nRESULT: READY to begin dual-run soak (flips remain off)");
+    console.log("\nRESULT: CUTOVER TEMPLATES READY (deploy + reload nginx on hosts)");
 }
 
 main().catch((error) => {

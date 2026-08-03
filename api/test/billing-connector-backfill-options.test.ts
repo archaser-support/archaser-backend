@@ -5,7 +5,7 @@ import {
     resolveBackfillStartDateChange,
     resolveIncludeOlderOpenInvoicesChange,
     resolveSkipReportingBreachOnBackfillChange,
-} from "../src/accounts-nested/billing-connector-backfill-options";
+} from "../../connectors/src/accounts/billing-connector-backfill-options";
 
 describe("Nest billing-connector backfill options parity", () => {
     it("formats and normalizes YYYY-MM-DD start dates", () => {

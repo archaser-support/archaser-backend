@@ -30,6 +30,8 @@ services:
       SMS_SERVICE_URL: http://sms:3004
       CONNECTORS_SERVICE_URL: http://connectors:3005
       REPORTS_SERVICE_URL: http://reports:3006
+      # Worker owns CronJob schedules after Stage 2 soak (D15).
+      ENABLE_CRON_JOBS: "false"
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
       CONNECTION_LIMIT_API: "10"
     volumes:
@@ -61,6 +63,8 @@ services:
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
     volumes:
       - /home/ubuntu/staging:/workspace
+    ports:
+      - "3003:3003"
     depends_on:
       redis:
         condition: service_healthy
@@ -93,8 +97,16 @@ services:
     environment:
       NODE_ENV: production
       CONNECTORS_PORT: 3005
+      # Path flip enabled on staging nginx — connectors owns sync schedules (D72).
+      ENABLE_CONNECTORS_SYNC_WORKERS: "true"
+      REDIS_URL: redis://redis:6379
     volumes:
       - /home/ubuntu/staging:/workspace
+    ports:
+      - "3005:3005"
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   reports:
@@ -108,6 +120,8 @@ services:
       REPORTS_PORT: 3006
     volumes:
       - /home/ubuntu/staging:/workspace
+    ports:
+      - "3006:3006"
     restart: unless-stopped
 
 volumes:

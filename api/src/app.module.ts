@@ -1,7 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { AccountAdminEntitiesModule } from "./account-admin/account-admin-entities.module";
-import { AccountsNestedModule } from "./accounts-nested/accounts-nested.module";
 import { ActivitiesModule } from "./activities/activities.module";
 import { AdminModule } from "./admin/admin.module";
 import { AgentsModule } from "./agents/agents.module";
@@ -27,11 +26,9 @@ import { PortalModule } from "./portal/portal.module";
 import { QueueModule } from "./queue/queue.module";
 import { RealtimeModule } from "./realtime/realtime.module";
 import { ReferenceDataModule } from "./reference-data/reference-data.module";
-import { ReportsModule } from "./reports/reports.module";
 import { RolesModule } from "./roles/roles.module";
 import { SearchModule } from "./search/search.module";
 import { SettingsModule } from "./settings/settings.module";
-import { SmsModule } from "./sms/sms.module";
 import { SystemModule } from "./system/system.module";
 import { UploadModule } from "./upload/upload.module";
 import { UserPreferencesModule } from "./user-preferences/user-preferences.module";
@@ -54,7 +51,7 @@ import { UserPreferencesModule } from "./user-preferences/user-preferences.modul
         InvoicesModule,
         ContactsCollectionPeriodModule,
         AccountAdminEntitiesModule,
-        AccountsNestedModule,
+        // Peeled: sms → @archaser/sms; accounts-nested → @archaser/connectors; reports → @archaser/reports
         PermissionsModule,
         RolesModule,
         SearchModule,
@@ -66,7 +63,6 @@ import { UserPreferencesModule } from "./user-preferences/user-preferences.modul
         UploadModule,
         SettingsModule,
         UserPreferencesModule,
-        SmsModule,
         AdminModule,
         EmailModule,
         CommunicationIntelligenceModule,
@@ -75,7 +71,6 @@ import { UserPreferencesModule } from "./user-preferences/user-preferences.modul
         ImportModule,
         CreditInsuranceModule,
         PortalModule,
-        ReportsModule,
         SystemModule,
     ],
 })
