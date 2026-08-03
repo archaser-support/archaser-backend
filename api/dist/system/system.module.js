@@ -10,6 +10,7 @@ exports.SystemModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const database_module_1 = require("../database/database.module");
+const queue_module_1 = require("../queue/queue.module");
 const system_controller_1 = require("./system.controller");
 const system_service_1 = require("./system.service");
 let SystemModule = class SystemModule {
@@ -17,8 +18,12 @@ let SystemModule = class SystemModule {
 exports.SystemModule = SystemModule;
 exports.SystemModule = SystemModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule],
-        controllers: [system_controller_1.SystemController, system_controller_1.SystemCacheInvalidationController],
+        imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule, queue_module_1.QueueModule],
+        controllers: [
+            system_controller_1.SystemController,
+            system_controller_1.SystemCronLambdaController,
+            system_controller_1.SystemCacheInvalidationController,
+        ],
         providers: [system_service_1.SystemService],
         exports: [system_service_1.SystemService],
     })

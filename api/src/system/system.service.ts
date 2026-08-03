@@ -9,6 +9,7 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+import { CronQueueService } from "../queue/cron-queue.service";
 import {
     buildActiveCustomersChart,
     buildAgingRangeRows,
@@ -70,7 +71,8 @@ export type SystemListQuery = Record<string, string | undefined>;
 export class SystemService {
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
+        private readonly accessScope: AccessScopeService,
+        private readonly cronQueue: CronQueueService
     ) {}
 
     private async scope(user: JwtPayload) {
@@ -1955,6 +1957,39 @@ export class SystemService {
             message: "Promise-to-pay acknowledged",
             body,
         });
+    }
+
+
+    /**
+     * AWS Lambda / external scheduler entry (GET|POST /api/system/cron).
+     * Auth is CronSecretGuard (`x-cron-secret`). Matches monolith ENABLE_CRON_JOBS gate.
+     * When enabled, nudges the BullMQ worker to resync repeatable schedules.
+     */
+    async runCronFromLambda() {
+        if (process.env.ENABLE_CRON_JOBS !== "true") {
+            return {
+                success: true,
+                message: "Cron jobs are disabled",
+                result: null,
+            };
+        }
+        try {
+            const sync = await this.cronQueue.enqueueSyncSchedules({
+                reason: "lambda-cron-tick",
+            });
+            return {
+                success: true,
+                message: "Cron jobs executed successfully",
+                result: { sync },
+            };
+        } catch (error: unknown) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            return {
+                success: false,
+                error: `Failed to execute cron jobs: ${message}`,
+            };
+        }
     }
 
     async getCronJobs(_user: JwtPayload) {

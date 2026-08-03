@@ -12,10 +12,11 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SystemCacheInvalidationController = exports.SystemController = void 0;
+exports.SystemCacheInvalidationController = exports.SystemCronLambdaController = exports.SystemController = void 0;
 const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
+const cron_secret_guard_1 = require("../auth/cron-secret.guard");
 const dual_auth_guard_1 = require("../auth/dual-auth.guard");
 const system_service_1 = require("./system.service");
 let SystemController = class SystemController {
@@ -96,12 +97,6 @@ let SystemController = class SystemController {
             id: parseInt(id, 10),
             name: body.name,
         });
-    }
-    async cronAlias(user) {
-        return this.system.getCronJobs(user);
-    }
-    async cronAliasPost(user, body) {
-        return this.system.postCronJobs(user, body);
     }
     async sharedStats(user, operation) {
         return this.system.getSharedStats(user, operation);
@@ -323,23 +318,6 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], SystemController.prototype, "updateCompanyById", null);
 __decorate([
-    (0, common_1.Get)("cron"),
-    (0, swagger_1.ApiOperation)({ summary: "Cron jobs alias (Nest-native)" }),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
-    __metadata("design:returntype", Promise)
-], SystemController.prototype, "cronAlias", null);
-__decorate([
-    (0, common_1.Post)("cron"),
-    (0, swagger_1.ApiOperation)({ summary: "Cron trigger alias (Nest stub ack)" }),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Body)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, Object]),
-    __metadata("design:returntype", Promise)
-], SystemController.prototype, "cronAliasPost", null);
-__decorate([
     (0, common_1.Get)("shared-stats/:operation"),
     (0, swagger_1.ApiOperation)({ summary: "Shared stats by operation (Nest-native)" }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
@@ -355,6 +333,44 @@ exports.SystemController = SystemController = __decorate([
     (0, common_1.Controller)("api/system"),
     __metadata("design:paramtypes", [system_service_1.SystemService])
 ], SystemController);
+let SystemCronLambdaController = class SystemCronLambdaController {
+    constructor(system) {
+        this.system = system;
+    }
+    async cronGet() {
+        return this.system.runCronFromLambda();
+    }
+    async cronPost() {
+        return this.system.runCronFromLambda();
+    }
+};
+exports.SystemCronLambdaController = SystemCronLambdaController;
+__decorate([
+    (0, common_1.Get)("cron"),
+    (0, swagger_1.ApiOperation)({
+        summary: "Lambda cron trigger — requires x-cron-secret (no DualAuth JWT)",
+    }),
+    (0, swagger_1.ApiUnauthorizedResponse)({ description: "Missing or invalid x-cron-secret" }),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], SystemCronLambdaController.prototype, "cronGet", null);
+__decorate([
+    (0, common_1.Post)("cron"),
+    (0, swagger_1.ApiOperation)({
+        summary: "Lambda cron trigger (POST) — requires x-cron-secret (no DualAuth JWT)",
+    }),
+    (0, swagger_1.ApiUnauthorizedResponse)({ description: "Missing or invalid x-cron-secret" }),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], SystemCronLambdaController.prototype, "cronPost", null);
+exports.SystemCronLambdaController = SystemCronLambdaController = __decorate([
+    (0, swagger_1.ApiTags)("system"),
+    (0, common_1.UseGuards)(cron_secret_guard_1.CronSecretGuard),
+    (0, common_1.Controller)("api/system"),
+    __metadata("design:paramtypes", [system_service_1.SystemService])
+], SystemCronLambdaController);
 let SystemCacheInvalidationController = class SystemCacheInvalidationController {
     constructor(system) {
         this.system = system;

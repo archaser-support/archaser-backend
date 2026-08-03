@@ -17,6 +17,7 @@ const access_scope_service_1 = require("./access-scope.service");
 const auth_controller_1 = require("./auth.controller");
 const auth_service_1 = require("./auth.service");
 const azure_ad_strategy_1 = require("./azure-ad.strategy");
+const cron_secret_guard_1 = require("./cron-secret.guard");
 const dual_auth_guard_1 = require("./dual-auth.guard");
 const google_strategy_1 = require("./google.strategy");
 const jwt_strategy_1 = require("./jwt.strategy");
@@ -55,6 +56,7 @@ exports.AuthModule = AuthModule = __decorate([
             azure_ad_strategy_1.AzureAdStrategy,
             dual_auth_guard_1.DualAuthGuard,
             soft_dual_auth_guard_1.SoftDualAuthGuard,
+            cron_secret_guard_1.CronSecretGuard,
         ],
         exports: [
             auth_service_1.AuthService,
@@ -62,6 +64,7 @@ exports.AuthModule = AuthModule = __decorate([
             jwt_1.JwtModule,
             dual_auth_guard_1.DualAuthGuard,
             soft_dual_auth_guard_1.SoftDualAuthGuard,
+            cron_secret_guard_1.CronSecretGuard,
             email_module_1.EmailModule,
         ],
     })

@@ -8,6 +8,7 @@ import { AccessScopeService } from "./access-scope.service";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { AzureAdStrategy } from "./azure-ad.strategy";
+import { CronSecretGuard } from "./cron-secret.guard";
 import { DualAuthGuard } from "./dual-auth.guard";
 import { GoogleStrategy } from "./google.strategy";
 import { JwtStrategy } from "./jwt.strategy";
@@ -45,6 +46,7 @@ import { SoftDualAuthGuard } from "./soft-dual-auth.guard";
         AzureAdStrategy,
         DualAuthGuard,
         SoftDualAuthGuard,
+        CronSecretGuard,
     ],
     exports: [
         AuthService,
@@ -52,6 +54,7 @@ import { SoftDualAuthGuard } from "./soft-dual-auth.guard";
         JwtModule,
         DualAuthGuard,
         SoftDualAuthGuard,
+        CronSecretGuard,
         EmailModule,
     ],
 })

@@ -14,6 +14,7 @@ const common_1 = require("@nestjs/common");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
+const cron_queue_service_1 = require("../queue/cron-queue.service");
 const financial_dashboard_builder_1 = require("./financial-dashboard.builder");
 const COLLECTION_ROLES = [
     "Collection_Agent",
@@ -46,9 +47,10 @@ const UNPAID_INVOICE_STATUSES = [
     "Viewed",
 ];
 let SystemService = class SystemService {
-    constructor(db, accessScope) {
+    constructor(db, accessScope, cronQueue) {
         this.db = db;
         this.accessScope = accessScope;
+        this.cronQueue = cronQueue;
     }
     async scope(user) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
@@ -1538,6 +1540,32 @@ let SystemService = class SystemService {
             body,
         });
     }
+    async runCronFromLambda() {
+        if (process.env.ENABLE_CRON_JOBS !== "true") {
+            return {
+                success: true,
+                message: "Cron jobs are disabled",
+                result: null,
+            };
+        }
+        try {
+            const sync = await this.cronQueue.enqueueSyncSchedules({
+                reason: "lambda-cron-tick",
+            });
+            return {
+                success: true,
+                message: "Cron jobs executed successfully",
+                result: { sync },
+            };
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+                success: false,
+                error: `Failed to execute cron jobs: ${message}`,
+            };
+        }
+    }
     async getCronJobs(_user) {
         try {
             const jobs = await this.db.cronJob.findMany({
@@ -2066,6 +2094,7 @@ exports.SystemService = SystemService;
 exports.SystemService = SystemService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
-        access_scope_service_1.AccessScopeService])
+        access_scope_service_1.AccessScopeService,
+        cron_queue_service_1.CronQueueService])
 ], SystemService);
 //# sourceMappingURL=system.service.js.map

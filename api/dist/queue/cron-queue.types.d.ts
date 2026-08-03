@@ -5,5 +5,5 @@ export type CronRunNowJobData = {
     accountId?: number | null;
 };
 export type CronSyncSchedulesJobData = {
-    reason: "startup" | "config-change" | "manual";
+    reason: "startup" | "config-change" | "manual" | "lambda-cron-tick";
 };

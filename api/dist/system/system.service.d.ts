@@ -2,12 +2,14 @@ import { Prisma } from "@prisma/client";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { DatabaseService } from "../database/database.service";
+import { CronQueueService } from "../queue/cron-queue.service";
 import { type EntityAmount } from "./financial-dashboard.builder";
 export type SystemListQuery = Record<string, string | undefined>;
 export declare class SystemService {
     private readonly db;
     private readonly accessScope;
-    constructor(db: DatabaseService, accessScope: AccessScopeService);
+    private readonly cronQueue;
+    constructor(db: DatabaseService, accessScope: AccessScopeService, cronQueue: CronQueueService);
     private scope;
     private startOfUtcDay;
     private endOfUtcDay;
@@ -621,6 +623,28 @@ export declare class SystemService {
         success: boolean;
         message: string;
         body: Record<string, unknown>;
+    }>;
+    runCronFromLambda(): Promise<{
+        success: boolean;
+        message: string;
+        result: null;
+        error?: undefined;
+    } | {
+        success: boolean;
+        message: string;
+        result: {
+            sync: {
+                queued: boolean;
+                jobId?: string;
+                reason?: string;
+            };
+        };
+        error?: undefined;
+    } | {
+        success: boolean;
+        error: string;
+        message?: undefined;
+        result?: undefined;
     }>;
     getCronJobs(_user: JwtPayload): Promise<{
         cronJobs: {
