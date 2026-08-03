@@ -1,2 +1,0 @@
-export declare const NEST_DOMAIN_ENTITY_TYPES: readonly ["customers", "invoices", "contacts", "customer-collection-period", "accounts", "users", "business-units", "bank-accounts", "customer-banks", "business-unit-banks", "insurance-policies", "insurance-policy-countries", "insurance-policy-named-policies"];
-export declare const OPERATION_TYPES: readonly ["disputes", "dispute-reasons", "promise-to-pay", "legal-cases", "notifications", "sms", "email"];

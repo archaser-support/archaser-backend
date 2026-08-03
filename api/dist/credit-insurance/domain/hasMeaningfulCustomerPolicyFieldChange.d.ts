@@ -1,5 +1,0 @@
-export declare const CUSTOMER_POLICY_VERSIONING_ALLOWLIST: readonly ["insurance_policy_id", "customer_number_policy", "limit_type", "approved_limit", "approved_limit_currency", "approved_limit_expiration_date", "zero_limit_date", "max_payment_term", "max_allowed_mep", "reporting_days", "mep_cutoff_day_of_month", "mep_substitute_day_of_month", "reporting_cutoff_day_of_month", "reporting_substitute_day_of_month", "payment_term_cutoff_day_of_month", "payment_term_substitute_day_of_month", "excluded_from_policy", "policy_exclusion_reason", "credit_score", "credit_score_input_date", "active_customer_since"];
-export type CustomerPolicyVersioningField = (typeof CUSTOMER_POLICY_VERSIONING_ALLOWLIST)[number];
-export type CustomerPolicyVersioningSnapshot = Partial<Record<CustomerPolicyVersioningField, unknown>>;
-export declare function hasMeaningfulCustomerPolicyFieldChange(before: CustomerPolicyVersioningSnapshot, after: CustomerPolicyVersioningSnapshot, allowlist?: readonly CustomerPolicyVersioningField[]): boolean;
-export declare function pickCustomerPolicyVersioningSnapshot(source: CustomerPolicyVersioningSnapshot): CustomerPolicyVersioningSnapshot;

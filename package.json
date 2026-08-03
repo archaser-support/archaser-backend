@@ -20,8 +20,8 @@
     "node": ">=20.0.0",
     "npm": ">=9.0.0"
   },
-    "scripts": {
-        "postinstall": "prisma generate --schema=./prisma/schema.prisma && node ./scripts/sync-prisma-client.js",
+  "scripts": {
+    "postinstall": "prisma generate --schema=./prisma/schema.prisma && node ./scripts/sync-prisma-client.js",
     "dev:api": "npm run start:dev -w @archaser/api",
     "start:api": "npm run start:prod -w @archaser/api",
     "build:api": "npm run build -w @archaser/database && npm run build -w @archaser/api",
@@ -40,18 +40,18 @@
     "migrate:activity-keys:dry": "npx tsx scripts/database/run-migration.ts --dry-run",
     "fix:currency-corruption": "npx tsx scripts/database/fix-currency-corruption.ts",
     "fix:currency-corruption:dry-run": "npx tsx scripts/database/fix-currency-corruption.ts --dry-run",
-    "backfill:invoice-capacity-gap-amounts": "npx tsx scripts/backfill-invoice-capacity-gap-amounts.ts",
-    "backfill:invoice-capacity-gap-amounts:dry": "npx tsx scripts/backfill-invoice-capacity-gap-amounts.ts --dry-run",
-    "datafix:customer-policy-capacity-gap:dry": "npx tsx scripts/datafixes/repair-customer-policy-capacity-gap-amounts.ts --dry-run",
-    "datafix:customer-policy-capacity-gap": "npx tsx scripts/datafixes/repair-customer-policy-capacity-gap-amounts.ts --fix",
-    "credit-reporting-sample-data:dry-run": "npx tsx scripts/testing/generate-credit-reporting-sample-data.ts --dry-run --days 30",
-    "credit-reporting-sample-data:smoke": "npx tsx scripts/testing/generate-credit-reporting-sample-data.ts --confirm --days 7",
-    "credit-reporting-sample-data:verify": "npx tsx scripts/testing/generate-credit-reporting-sample-data.ts --verify",
+    "backfill:invoice-capacity-gap-amounts": "npx tsx scripts/_quarantine/backfill-invoice-capacity-gap-amounts.ts",
+    "backfill:invoice-capacity-gap-amounts:dry": "npx tsx scripts/_quarantine/backfill-invoice-capacity-gap-amounts.ts --dry-run",
+    "datafix:customer-policy-capacity-gap:dry": "npx tsx scripts/_quarantine/datafixes/repair-customer-policy-capacity-gap-amounts.ts --dry-run",
+    "datafix:customer-policy-capacity-gap": "npx tsx scripts/_quarantine/datafixes/repair-customer-policy-capacity-gap-amounts.ts --fix",
+    "credit-reporting-sample-data:dry-run": "npx tsx scripts/_quarantine/testing/generate-credit-reporting-sample-data.ts --dry-run --days 30",
+    "credit-reporting-sample-data:smoke": "npx tsx scripts/_quarantine/testing/generate-credit-reporting-sample-data.ts --confirm --days 7",
+    "credit-reporting-sample-data:verify": "npx tsx scripts/_quarantine/testing/generate-credit-reporting-sample-data.ts --verify",
     "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js",
-    "debug:logs": "npx tsx scripts/debug/analyze-console-logs.ts",
-    "debug:logs:analyze": "npx tsx scripts/debug/analyze-console-logs.ts analyze",
-    "debug:logs:clear": "npx tsx scripts/debug/analyze-console-logs.ts clear",
-    "debug:logs:tail": "npx tsx scripts/debug/analyze-console-logs.ts tail"
+    "debug:logs": "npx tsx scripts/_quarantine/debug/analyze-console-logs.ts",
+    "debug:logs:analyze": "npx tsx scripts/_quarantine/debug/analyze-console-logs.ts analyze",
+    "debug:logs:clear": "npx tsx scripts/_quarantine/debug/analyze-console-logs.ts clear",
+    "debug:logs:tail": "npx tsx scripts/_quarantine/debug/analyze-console-logs.ts tail"
   },
   "devDependencies": {
     "dotenv": "^16.4.5",

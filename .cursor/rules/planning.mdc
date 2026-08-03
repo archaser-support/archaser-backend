@@ -80,3 +80,9 @@ When you create or finalize an implementation plan (including via `CreatePlan`):
 5. Commit the copied plan with the feature work (or when the user explicitly asks to commit documentation).
 
 This is the project-standard exception to “do not create .md files without approval.”
+
+### Plan ownership (split repos)
+
+- **Backend** `.cursor/plans/` is the source of truth for implementation plans and PRDs.
+- **Frontend** only adds UI/i18n/design-only plans whose filenames are **not** already present under backend `.cursor/plans/`.
+
