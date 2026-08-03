@@ -4,7 +4,7 @@
  */
 export declare const EXPECTED_CRON_JOB_NAMES: readonly ["Activity Workflow Manager", "Process Due Notifications", "Over Due Invoice", "Process Overdue Invoices", "Compute Customer Overdue Metrics", "Process Notification Rules", "Move Collection To Next Category", "Process Automated Collection Periods", "Fix Closed Collection Data", "Close Zero Outstanding Debt Invoices", "Inforu SMS Status Check", "Report Scheduler", "Credit Dashboard Daily Snapshot", "Fetch Currency Rates", "Customer Policy Trend Daily Snapshot", "Insurance Policy Trend Daily Snapshot", "Compute Gap In Base Currency", "Sync Billing Connectors"];
 export type ExpectedCronJobName = (typeof EXPECTED_CRON_JOB_NAMES)[number];
-/** Documented parity gaps — soak must accept or close these before ENABLE_CRON_JOBS=false. */
+/** Documented parity gaps — accepted at cutover (warn/info); deepen later if product needs. */
 export declare const WORKER_SOAK_KNOWN_GAPS: Array<{
     name: string;
     gap: string;
