@@ -1,1 +1,0 @@
-{"version":3,"file":"serialize-bigint.js","sourceRoot":"","sources":["../../src/common/serialize-bigint.ts"],"names":[],"mappings":";;AACA,0CAMC;AAND,SAAgB,eAAe,CAAI,KAAQ;IACvC,OAAO,IAAI,CAAC,KAAK,CACb,IAAI,CAAC,SAAS,CAAC,KAAK,EAAE,CAAC,IAAI,EAAE,CAAC,EAAE,EAAE,CAC9B,OAAO,CAAC,KAAK,QAAQ,CAAC,CAAC,CAAC,CAAC,CAAC,QAAQ,EAAE,CAAC,CAAC,CAAC,CAAC,CAC3C,CACC,CAAC;AACX,CAAC"}
