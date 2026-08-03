@@ -63,17 +63,24 @@ let RolesService = class RolesService {
                 : true;
             const hasCreditInsurance = Boolean(account
                 ?.has_credit_insurance);
+            const isCreditOnly = hasCreditInsurance && !hasCollection;
             const masterRolePermissions = await this.db.rolePermission.findMany({
-                where: { account_id: 10013 },
+                where: {
+                    account_id: 10013,
+                    role: { not: "archaser_admin" },
+                },
                 select: {
                     role: true,
                     is_collection: true,
                     is_credit_insurance: true,
                 },
-                distinct: ["role"],
             });
             const eligibleRoles = new Set();
             for (const row of masterRolePermissions) {
+                if (isCreditOnly) {
+                    eligibleRoles.add(row.role);
+                    continue;
+                }
                 const collectionEnabled = row.is_collection !== false;
                 const creditEnabled = row.is_credit_insurance === true;
                 if ((hasCollection && collectionEnabled) ||
@@ -81,11 +88,7 @@ let RolesService = class RolesService {
                     eligibleRoles.add(row.role);
                 }
             }
-            const filteredByProduct = baseRoles.filter((role) => eligibleRoles.has(role));
-            rolesToProcess =
-                filteredByProduct.length > 0
-                    ? filteredByProduct
-                    : [...baseRoles];
+            rolesToProcess = baseRoles.filter((role) => eligibleRoles.has(role));
         }
         const rolesWithCounts = await Promise.all(rolesToProcess.map(async (role) => {
             const permissions = await this.permissions.getRolePermissions(accountId, role);
