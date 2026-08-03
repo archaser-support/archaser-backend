@@ -217,11 +217,15 @@ export class InvoicesService {
         body: {
             creditInvoiceId?: number;
             targetInvoiceId?: number;
+            creditAmount?: number;
         }
     ) {
         const creditInvoiceId = Number(body.creditInvoiceId);
         const targetInvoiceId = Number(body.targetInvoiceId);
-        if (!Number.isFinite(creditInvoiceId) || !Number.isFinite(targetInvoiceId)) {
+        if (
+            !Number.isFinite(creditInvoiceId) ||
+            !Number.isFinite(targetInvoiceId)
+        ) {
             throw new BadRequestException({
                 error: "creditInvoiceId and targetInvoiceId are required",
             });
@@ -239,10 +243,83 @@ export class InvoicesService {
         if (!credit || !target) {
             throw new NotFoundException({ error: "Invoice not found" });
         }
-        const updated = await this.db.invoice.update({
-            where: { id: creditInvoiceId },
-            data: { credit_for_invoice_id: targetInvoiceId },
+
+        const creditAmount =
+            body.creditAmount != null && Number.isFinite(Number(body.creditAmount))
+                ? Math.abs(Number(body.creditAmount))
+                : Math.abs(
+                      Number(
+                          credit.customer_net_amount ??
+                              credit.net_amount ??
+                              credit.customer_amount ??
+                              credit.amount ??
+                              0
+                      )
+                  );
+
+        const currentCustomerNetAmount = Number(target.customer_net_amount ?? 0);
+        const currentTotalPaid = Number(target.total_paid ?? 0);
+        const currentCustomerTotalPaid = Number(
+            target.customer_total_paid ?? 0
+        );
+        const newCustomerNetAmount = Math.max(
+            0,
+            currentCustomerNetAmount - creditAmount
+        );
+
+        const originalAmount = Number(target.amount ?? 0);
+        const originalCustomerAmount = Number(target.customer_amount ?? 0);
+        let newNetAmount = 0;
+        if (originalCustomerAmount > 0) {
+            newNetAmount = newCustomerNetAmount;
+        } else if (originalAmount > 0 && currentCustomerNetAmount > 0) {
+            const ratio =
+                originalAmount / (Number(target.net_amount) || originalAmount);
+            newNetAmount = newCustomerNetAmount * ratio;
+        } else if (currentCustomerNetAmount > 0) {
+            const reductionRatio =
+                newCustomerNetAmount / currentCustomerNetAmount;
+            newNetAmount = Number(target.net_amount ?? 0) * reductionRatio;
+        } else {
+            newNetAmount = Math.max(0, Number(target.net_amount ?? 0) - creditAmount);
+        }
+
+        const newOutstandingDebt = newNetAmount - currentTotalPaid;
+        const newCustomerOutstandingDebt = Math.max(
+            0,
+            newCustomerNetAmount - currentCustomerTotalPaid
+        );
+
+        const { creditInvoice, targetInvoice } = await this.db.$transaction(
+            async (tx) => {
+                const creditInvoice = await tx.invoice.update({
+                    where: { id: creditInvoiceId },
+                    data: {
+                        credit_for_invoice_id: targetInvoiceId,
+                        credit_for_invoice_number: target.invoice_number || null,
+                    },
+                });
+                const targetInvoice = await tx.invoice.update({
+                    where: { id: targetInvoiceId },
+                    data: {
+                        net_amount: newNetAmount,
+                        customer_net_amount: newCustomerNetAmount,
+                        outstanding_debt: newOutstandingDebt,
+                        customer_outstanding_debt: newCustomerOutstandingDebt,
+                    },
+                });
+                return { creditInvoice, targetInvoice };
+            }
+        );
+
+        return serializeBigInt({
+            success: true,
+            creditInvoice,
+            targetInvoice,
+            creditAmount,
+            affectedCustomerIds: [credit.customer_id, target.customer_id].filter(
+                (id): id is number => id != null
+            ),
         });
-        return serializeBigInt(updated);
     }
 }

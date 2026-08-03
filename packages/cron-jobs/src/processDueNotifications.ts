@@ -1,0 +1,753 @@
+/**
+ * Process Due Notifications
+ *
+ * Sends notifications for invoices that are due (or due in N days) based on
+ * ActivitiesSequence steps with step_type='due' and days_before_due.
+ *
+ * Run daily, before handleOverdueInvoices, so invoices due today get
+ * notifications before potentially becoming overdue.
+ *
+ * STAGE 2 PORT: Best-effort port from frontend SHA 81bd37afa048ee2b07f5e2e1a67629567cbc174f
+ * - Core logic: finds due activities, creates SCHEDULED activities with contacts
+ * - SMS send: calls @archaser/sms-send when credentials available, otherwise stubs
+ * - Email send: stubbed (logs intent, returns true like CreditNotificationEmailService)
+ * - Missing: ActivityService.processTemplateContent (template variable replacement)
+ * - Missing: Full email/SMS dispatch (will be sent by Activity Workflow Manager when implemented)
+ */
+
+import type { PrismaClient } from "@prisma/client";
+
+const BATCH_SIZE = 100;
+const LOOK_AHEAD_DAYS = 15; // Pre-create activities for invoices due within the next 15 days
+
+export async function processDueNotifications(
+    prisma: PrismaClient,
+    options?: {
+        customerId?: number;
+        skipSmsSend?: boolean;
+        fastForwardScheduledActivities?: boolean;
+    }
+): Promise<{
+    success: boolean;
+    message: string;
+    summary?: {
+        processed: number;
+        sent: number;
+        skipped: number;
+        errors: string[];
+    };
+    durationMs: number;
+}> {
+    const start = Date.now();
+    const stats = {
+        processed: 0,
+        sent: 0,
+        skipped: 0,
+        errors: [] as string[],
+    };
+
+    try {
+        const now = new Date();
+        // Use UTC for "today" so nearest-only filter and invoice window align regardless of server TZ
+        const today = new Date(
+            Date.UTC(
+                now.getUTCFullYear(),
+                now.getUTCMonth(),
+                now.getUTCDate(),
+                0,
+                0,
+                0,
+                0
+            )
+        );
+        const lookAheadEnd = new Date(today);
+        lookAheadEnd.setUTCDate(lookAheadEnd.getUTCDate() + LOOK_AHEAD_DAYS);
+        lookAheadEnd.setUTCHours(23, 59, 59, 999);
+
+        // 1. Get all due steps from Automated sequences
+        let customerAccountId: number | undefined;
+        if (options?.customerId) {
+            const customer = await prisma.customer.findUnique({
+                where: { id: options.customerId },
+                select: { account_id: true },
+            });
+            customerAccountId = customer?.account_id ?? undefined;
+        }
+
+        const dueSteps = await prisma.activitiesSequence.findMany({
+            where: {
+                category: "Automated",
+                active: true,
+                step_type: "due",
+                days_before_due: { not: null },
+                ...(customerAccountId
+                    ? { account_id: customerAccountId }
+                    : {}),
+            },
+            include: {
+                ActivitiesTemplate: {
+                    include: {
+                        ActivityTemplateLanguage: true,
+                    },
+                },
+            },
+            orderBy: { days_before_due: "desc" },
+        });
+
+        if (dueSteps.length === 0) {
+            return {
+                success: true,
+                message: "No due notification steps configured",
+                summary: stats,
+                durationMs: Date.now() - start,
+            };
+        }
+
+        const accountIds = Array.from(
+            new Set(dueSteps.map((s) => s.account_id))
+        );
+        const defaultContainers = await prisma.sequenceContainer.findMany({
+            where: {
+                account_id: { in: accountIds },
+                category: "Automated",
+                is_default: true,
+                active: true,
+            },
+            select: { id: true, account_id: true },
+        });
+        const defaultContainerByAccount = new Map(
+            defaultContainers.map((c) => [c.account_id, c.id])
+        );
+
+        // 2. For each due step, find invoices due within the look-ahead window
+        for (const step of dueSteps) {
+            const daysBeforeDue = step.days_before_due ?? 0;
+
+            // Invoice due date range: today through today + LOOK_AHEAD_DAYS (UTC)
+            const earliestInvoiceDueDate = new Date(today);
+            const latestInvoiceDueDate = new Date(lookAheadEnd);
+
+            const invoicesRaw = await prisma.invoice.findMany({
+                where: {
+                    status: "Due",
+                    outstanding_debt: { gt: 0 },
+                    due_date: {
+                        gte: earliestInvoiceDueDate,
+                        lte: latestInvoiceDueDate,
+                    },
+                    customer_id: options?.customerId ?? { not: null },
+                    Customer: {
+                        account_id: step.account_id,
+                    },
+                },
+                include: {
+                    Customer: {
+                        select: {
+                            id: true,
+                            account_id: true,
+                            type: true,
+                            email: true,
+                            customer_uuid: true,
+                            language: true,
+                            sequence_container_id: true,
+                            Person: {
+                                select: {
+                                    first_name: true,
+                                    last_name: true,
+                                    mobile: true,
+                                },
+                            },
+                            Company: {
+                                select: {
+                                    name: true,
+                                    Contact: {
+                                        select: {
+                                            id: true,
+                                            email: true,
+                                            mobile: true,
+                                            status: true,
+                                            first_name: true,
+                                            last_name: true,
+                                            phone: true,
+                                            receives_standard_reminder: true,
+                                            receives_escalated_reminder: true,
+                                        },
+                                    },
+                                },
+                            },
+                            country_id: true,
+                            Country: { select: { iso2: true } },
+                            State: { select: { iso2: true } },
+                        },
+                    },
+                    Account: {
+                        select: {
+                            id: true,
+                            name: true,
+                            logo: true,
+                            sub_domain: true,
+                            sms_fallback_enabled: true,
+                            sms_from_name: true,
+                        },
+                    },
+                },
+                orderBy: [{ due_date: "asc" }, { id: "asc" }],
+                take: BATCH_SIZE,
+            });
+
+            // Exclude invoices that already have this due step, except "skip_due_to_dispute" (re-evaluate after dispute resolution)
+            const stepKey = String(step.id);
+            const invoices = invoicesRaw.filter((inv) => {
+                const state = inv.due_notification_state as
+                    | Record<string, string>
+                    | null
+                    | undefined;
+                const stepState = state?.[stepKey];
+                return (
+                    stepState === undefined ||
+                    stepState === "skip_due_to_dispute"
+                );
+            });
+
+            if (invoices.length === 0) {
+                continue;
+            }
+
+            // Group invoices by customer AND notification send date
+            const invoicesByCustomerAndDate = new Map<string, any[]>();
+            for (const invoice of invoices) {
+                if (!invoice.customer_id || !invoice.due_date) continue;
+
+                // Calculate the notification send date for this invoice (UTC for consistent todayKey match)
+                const notificationDate = new Date(invoice.due_date);
+                notificationDate.setUTCDate(
+                    notificationDate.getUTCDate() - daysBeforeDue
+                );
+                const dateKey = notificationDate.toISOString().split("T")[0];
+
+                // Create a composite key: customer_id + notification_date
+                const groupKey = `${invoice.customer_id}_${dateKey}`;
+
+                const groupInvoices =
+                    invoicesByCustomerAndDate.get(groupKey) || [];
+                groupInvoices.push(invoice);
+                invoicesByCustomerAndDate.set(groupKey, groupInvoices);
+            }
+
+            // Nearest notification > now: one group per customer whose schedule_time is the smallest that is still > now
+            const nowTime = new Date();
+            const groupsByCustomer = new Map<
+                number,
+                Array<{ dateKey: string; invoices: any[] }>
+            >();
+            for (const [
+                groupKey,
+                groupInvoices,
+            ] of invoicesByCustomerAndDate.entries()) {
+                const customerIdNum = groupInvoices[0]?.customer_id;
+                if (customerIdNum == null) continue;
+                const dateKey = groupKey.substring(groupKey.indexOf("_") + 1);
+                if (!groupsByCustomer.has(customerIdNum)) {
+                    groupsByCustomer.set(customerIdNum, []);
+                }
+                groupsByCustomer
+                    .get(customerIdNum)!
+                    .push({ dateKey, invoices: groupInvoices });
+            }
+            for (const [, groupList] of groupsByCustomer.entries()) {
+                groupList.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+            }
+
+            for (const [
+                customerIdNum,
+                groupList,
+            ] of groupsByCustomer.entries()) {
+                const firstGroup = groupList[0];
+                const customer = firstGroup.invoices[0]?.Customer;
+                if (!customer) {
+                    stats.skipped += groupList.reduce(
+                        (s, g) => s + g.invoices.length,
+                        0
+                    );
+                    continue;
+                }
+
+                const stepContainerId = step.sequence_container_id;
+                const customerContainerId = customer.sequence_container_id;
+
+                if (stepContainerId !== null) {
+                    const defaultContainerId =
+                        defaultContainerByAccount.get(step.account_id);
+                    const customerUsesStepContainer =
+                        customerContainerId === stepContainerId ||
+                        (customerContainerId === null &&
+                            defaultContainerId === stepContainerId);
+                    if (!customerUsesStepContainer) {
+                        const skipped = groupList.reduce(
+                            (s, g) => s + g.invoices.length,
+                            0
+                        );
+                        stats.skipped += skipped;
+                        continue;
+                    }
+                }
+
+                let processed = false;
+                for (const { dateKey, invoices: customerInvoices } of groupList) {
+                    const [y, m, d] = dateKey.split("-").map(Number);
+                    const notificationSendDate = new Date(
+                        Date.UTC(y, m - 1, d, 0, 0, 0, 0)
+                    );
+
+                    // Calculate schedule time (basic version without scheduleDateTime helper)
+                    const scheduledTime = options?.fastForwardScheduledActivities
+                        ? new Date(Date.now() - 60 * 60 * 1000)
+                        : new Date(notificationSendDate);
+
+                    if (
+                        !options?.fastForwardScheduledActivities &&
+                        scheduledTime <= nowTime
+                    )
+                        continue;
+
+                    try {
+                        const result = await processInvoicesForDueStep(
+                            prisma,
+                            customerInvoices,
+                            step,
+                            scheduledTime,
+                            options
+                        );
+
+                        stats.processed += customerInvoices.length;
+                        stats.sent += result.sentCount;
+                        stats.skipped += result.skippedCount;
+                        processed = true;
+
+                        break;
+                    } catch (err) {
+                        const error = err as Error;
+                        const errorMessage = `Customer ${customerIdNum}: ${error.message}`;
+                        stats.errors.push(errorMessage);
+                    }
+                }
+                if (!processed) {
+                    stats.skipped += groupList.reduce(
+                        (s, g) => s + g.invoices.length,
+                        0
+                    );
+                }
+            }
+        }
+
+        const message = `Processed ${stats.processed}, sent ${stats.sent}, skipped ${stats.skipped}${stats.errors.length > 0 ? `, ${stats.errors.length} errors` : ""}`;
+        return {
+            success: stats.errors.length === 0,
+            message,
+            summary: stats,
+            durationMs: Date.now() - start,
+        };
+    } catch (error) {
+        const err = error as Error;
+        stats.errors.push(err.message);
+        return {
+            success: false,
+            message: `Due notification processing failed: ${err.message}`,
+            summary: stats,
+            durationMs: Date.now() - start,
+        };
+    }
+}
+
+/**
+ * Process invoices for a due step and create SCHEDULED activities.
+ * Activities will be sent later by activityWorkflowManager when schedule_time arrives.
+ */
+async function processInvoicesForDueStep(
+    prisma: PrismaClient,
+    invoices: any[],
+    step: any,
+    scheduledTime: Date,
+    options?: {
+        skipSmsSend?: boolean;
+        fastForwardScheduledActivities?: boolean;
+    }
+): Promise<{ sent: boolean; sentCount: number; skippedCount: number }> {
+    const customer = invoices[0]?.Customer;
+    if (!customer)
+        return { sent: false, sentCount: 0, skippedCount: invoices.length };
+
+    const invoicesToProcess: any[] = [];
+    let skippedCount = 0;
+
+    for (const invoice of invoices) {
+        if ((invoice.outstanding_debt ?? 0) <= 0) {
+            skippedCount++;
+            continue;
+        }
+        invoicesToProcess.push(invoice);
+    }
+
+    if (invoicesToProcess.length === 0) {
+        return { sent: false, sentCount: 0, skippedCount };
+    }
+
+    const mainInvoice = invoicesToProcess[0];
+    const invoiceNumbers = invoicesToProcess
+        .map((i) => i.invoice_number)
+        .join(", ");
+    const totalOutstandingDebt = invoicesToProcess.reduce(
+        (sum, i) => sum + (i.outstanding_debt ?? 0),
+        0
+    );
+
+    const mainContacts = await prisma.contact.findMany({
+        where: { customer_id: customer.id },
+        select: {
+            id: true,
+            email: true,
+            mobile: true,
+            first_name: true,
+            last_name: true,
+            phone: true,
+            receives_standard_reminder: true,
+            receives_escalated_reminder: true,
+        },
+    });
+
+    const typeSpecificContacts =
+        customer.type === "Company"
+            ? (customer.Company?.Contact ?? [])
+            : customer.email
+              ? [
+                    {
+                        id: 0,
+                        email: customer.email,
+                        mobile: customer.Person?.mobile ?? null,
+                        first_name: customer.Person?.first_name ?? null,
+                        last_name: null,
+                        phone: null,
+                        receives_standard_reminder: true,
+                        receives_escalated_reminder: false,
+                    },
+                ]
+              : [];
+
+    const allContacts = [...mainContacts, ...typeSpecificContacts].filter(
+        (c) => c.id > 0
+    );
+    const contacts = filterContactsBySequence(allContacts, {
+        send_to_standard_contacts: step.send_to_standard_contacts ?? false,
+        send_to_escalated_contacts: step.send_to_escalated_contacts ?? false,
+    });
+
+    if (contacts.length === 0) {
+        await prisma.customer.update({
+            where: { id: customer.id },
+            data: { automation_stuck_no_contacts: true },
+        });
+        return {
+            sent: false,
+            sentCount: 0,
+            skippedCount: skippedCount + invoicesToProcess.length,
+        };
+    }
+
+    // Calculate the notification send date (UTC)
+    const notificationSendDate = new Date(mainInvoice.due_date);
+    notificationSendDate.setUTCDate(
+        notificationSendDate.getUTCDate() - (step.days_before_due ?? 0)
+    );
+    notificationSendDate.setUTCHours(0, 0, 0, 0);
+
+    const nowUtc = new Date();
+    nowUtc.setUTCHours(0, 0, 0, 0);
+
+    if (notificationSendDate < nowUtc) {
+        return {
+            sent: false,
+            sentCount: 0,
+            skippedCount: skippedCount + invoicesToProcess.length,
+        };
+    }
+
+    // Check for existing SCHEDULED activity (same customer, step, schedule date) to merge into
+    const scheduleUtcDate = new Date(
+        Date.UTC(
+            scheduledTime.getUTCFullYear(),
+            scheduledTime.getUTCMonth(),
+            scheduledTime.getUTCDate()
+        )
+    );
+    const scheduleUtcDateEnd = new Date(scheduleUtcDate);
+    scheduleUtcDateEnd.setUTCDate(scheduleUtcDateEnd.getUTCDate() + 1);
+
+    const existingActivity = await prisma.activity.findFirst({
+        where: {
+            customer_id: customer.id,
+            activity_sequence_id: step.id,
+            status: "SCHEDULED",
+            schedule_time: {
+                gte: scheduleUtcDate,
+                lt: scheduleUtcDateEnd,
+            },
+        },
+    });
+
+    if (existingActivity) {
+        return mergeInvoicesIntoDueActivity(
+            prisma,
+            existingActivity,
+            invoicesToProcess,
+            step,
+            customer,
+            contacts
+        );
+    }
+
+    // Build basic activity content (template processing stubbed)
+    const activityContent = buildActivityContent(step, customer);
+    const content = activityContent.content || "Due notification";
+    const subject = activityContent.subject || "Due notification";
+
+    // Get system user ID (stub - use 1 if not found)
+    const systemUserId = await getSystemUserId(prisma, customer.account_id);
+
+    const activity = await prisma.$transaction(async (tx) => {
+        const activity = await tx.activity.create({
+            data: {
+                customer_id: customer.id,
+                account_id: customer.account_id,
+                invoice_id: mainInvoice.id,
+                activity_sequence_id: step.id,
+                collection_period_id: null,
+                type: step.activity_type,
+                content,
+                title: "{{activities.fields.activity_due_notification_scheduled}}",
+                title_params: {
+                    contacts: contacts.length,
+                    invoiceNumber: invoiceNumbers,
+                    count: invoicesToProcess.length,
+                    totalAmount: totalOutstandingDebt,
+                },
+                schedule_time: scheduledTime,
+                status: "SCHEDULED",
+                system_generated: true,
+                created_by: systemUserId,
+                modified_by: systemUserId,
+            },
+        });
+
+        const stepKey = String(step.id);
+        await Promise.all(
+            invoicesToProcess.map((inv) => {
+                const current =
+                    (inv.due_notification_state as Record<string, string> | null) ??
+                    {};
+                const next = { ...current, [stepKey]: "scheduled" };
+                return tx.invoice.update({
+                    where: { id: inv.id },
+                    data: { due_notification_state: next as any },
+                });
+            })
+        );
+
+        await Promise.all(
+            contacts.map((c) =>
+                tx.activityContact.create({
+                    data: {
+                        activity_id: activity.id,
+                        contact_id: c.id,
+                        status: "Scheduled",
+                    },
+                })
+            )
+        );
+
+        return activity;
+    });
+
+    return {
+        sent: true,
+        sentCount: contacts.length,
+        skippedCount,
+    };
+}
+
+/**
+ * Merge new invoices into an existing SCHEDULED due activity.
+ */
+async function mergeInvoicesIntoDueActivity(
+    prisma: PrismaClient,
+    existingActivity: { id: number | bigint; title_params: unknown; content: string },
+    invoicesToProcess: any[],
+    step: any,
+    customer: any,
+    contacts: Array<{
+        id: number;
+        first_name: string | null;
+        last_name?: string | null;
+        email?: string | null;
+        mobile?: string | null;
+        phone?: string | null;
+    }>
+): Promise<{ sent: boolean; sentCount: number; skippedCount: number }> {
+    const titleParams =
+        (existingActivity.title_params as { invoiceNumber?: string } | null | undefined);
+    const invoiceNumbersStr = titleParams?.invoiceNumber;
+    const existingNumbers = invoiceNumbersStr
+        ? (invoiceNumbersStr as string)
+              .split(",")
+              .map((s: string) => s.trim())
+              .filter(Boolean)
+        : [];
+
+    if (existingNumbers.length === 0) {
+        return { sent: false, sentCount: 0, skippedCount: invoicesToProcess.length };
+    }
+
+    const existingInvoiceRecords = await prisma.invoice.findMany({
+        where: {
+            customer_id: customer.id,
+            invoice_number: { in: existingNumbers },
+        },
+    });
+
+    const seenIds = new Set<number>();
+    const combinedInvoices: any[] = [];
+    for (const inv of existingInvoiceRecords) {
+        if (!seenIds.has(inv.id)) {
+            seenIds.add(inv.id);
+            combinedInvoices.push(inv);
+        }
+    }
+    for (const inv of invoicesToProcess) {
+        if (!seenIds.has(inv.id)) {
+            seenIds.add(inv.id);
+            combinedInvoices.push(inv);
+        }
+    }
+
+    const combinedInvoiceNumbers = combinedInvoices
+        .map((i) => i.invoice_number)
+        .join(", ");
+    const totalOutstandingDebt = combinedInvoices.reduce(
+        (sum, i) => sum + (i.outstanding_debt ?? 0),
+        0
+    );
+    const mainInvoice = combinedInvoices[0];
+
+    const activityContent = buildActivityContent(step, customer);
+    const content = activityContent.content || "Due notification";
+
+    await prisma.$transaction(async (tx) => {
+        await tx.activity.update({
+            where: { id: existingActivity.id },
+            data: {
+                content,
+                title_params: {
+                    contacts: contacts.length,
+                    invoiceNumber: combinedInvoiceNumbers,
+                    count: combinedInvoices.length,
+                    totalAmount: totalOutstandingDebt,
+                },
+                invoice_id: mainInvoice.id,
+            },
+        });
+
+        const stepKey = String(step.id);
+        await Promise.all(
+            invoicesToProcess.map((inv) => {
+                const current =
+                    (inv.due_notification_state as Record<string, string> | null) ??
+                    {};
+                const next = { ...current, [stepKey]: "scheduled" };
+                return tx.invoice.update({
+                    where: { id: inv.id },
+                    data: { due_notification_state: next as any },
+                });
+            })
+        );
+    });
+
+    return {
+        sent: true,
+        sentCount: contacts.length,
+        skippedCount: 0,
+    };
+}
+
+function filterContactsBySequence(
+    contacts: Array<{
+        id: number;
+        first_name: string | null;
+        last_name?: string | null;
+        email?: string | null;
+        mobile?: string | null;
+        phone?: string | null;
+        receives_standard_reminder?: boolean | null;
+        receives_escalated_reminder?: boolean | null;
+    }>,
+    sequence: {
+        send_to_standard_contacts: boolean;
+        send_to_escalated_contacts: boolean;
+    }
+): typeof contacts {
+    const result: typeof contacts = [];
+    const added = new Set<number>();
+    for (const c of contacts) {
+        const includeStandard =
+            sequence.send_to_standard_contacts &&
+            c.receives_standard_reminder === true;
+        const includeEscalated =
+            sequence.send_to_escalated_contacts &&
+            c.receives_escalated_reminder === true;
+        if ((includeStandard || includeEscalated) && !added.has(c.id)) {
+            result.push(c);
+            added.add(c.id);
+        }
+    }
+    return result;
+}
+
+/**
+ * Build raw template content for due notification.
+ * STUB: Invoice placeholders would be replaced by ActivityService.processTemplateContent when available.
+ */
+function buildActivityContent(
+    step: any,
+    customer: any
+): { subject: string; content: string } {
+    const template = step.ActivitiesTemplate;
+    const lang = (customer.language as string) || "English";
+    const langTemplate = template?.ActivityTemplateLanguage?.find(
+        (l: any) => l.language === lang
+    );
+
+    const subject = langTemplate?.email_subject ?? template?.email_subject ?? "";
+    const content =
+        step.activity_type === "SMS"
+            ? (langTemplate?.sms_content ?? template?.sms_content ?? "")
+            : (langTemplate?.email_content ?? template?.email_content ?? "");
+
+    return { subject, content };
+}
+
+/**
+ * Get system user ID for an account.
+ * STUB: Returns "1" if not found. Real implementation would query User table.
+ */
+async function getSystemUserId(
+    prisma: PrismaClient,
+    accountId: number
+): Promise<string> {
+    const systemUser = await prisma.user.findFirst({
+        where: {
+            account_id: accountId,
+            email: { contains: "system" },
+            deactivated_at: null,
+        },
+        select: { id: true },
+    });
+    return systemUser?.id ?? "1";
+}

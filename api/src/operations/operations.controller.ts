@@ -111,14 +111,12 @@ export class OperationsDomainController {
 
     @Post(":operationType")
     @ApiParam({ name: "operationType", enum: OPERATION_TYPES })
-    @ApiOperation({ summary: "Operations create (Nest-native stub)" })
+    @ApiOperation({ summary: "Operations create (Nest-native)" })
     async create(
         @Param("operationType") operationType: string,
         @CurrentUser() user: JwtPayload,
         @Body() body: Record<string, unknown>
     ) {
-        void user;
-        void body;
-        return { ok: true, operationType };
+        return this.operations.create(operationType, user, body);
     }
 }

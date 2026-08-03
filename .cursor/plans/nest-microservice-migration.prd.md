@@ -1,6 +1,6 @@
 ---
 name: nest-microservice-migration
-overview: Split Archaser into a Nest.js backend (modular monolith then microservices on EC2) and a Next.js UI on Amplify, with JWT auth, OpenAPI contracts, BullMQ workers, and a separate e2e repo.
+overview: Split Archaser into Nest microservices in a backend monorepo (api, worker, sms, connectors, reports) with nginx/Next path splits, shared @archaser/auth, JWT/DualAuth, merged OpenAPI, BullMQ worker, and Amplify UI on a parallel track.
 source: grill-me session (.cursor/plans/nest_microservice_migration_a9cacddc.plan.md)
 clickup_task_url: null
 isProject: false
@@ -18,18 +18,18 @@ Operators and developers need a path to replace the Next.js backend with Nest.js
 
 Migrate in stages, strangling the current monolith first, then peeling services:
 
-1. **Nest modular monolith first** — Build a Nest API that eventually owns all HTTP backend behavior and auth. Keep Next as UI only once the cutover is done.
-2. **EC2 before Amplify** — Run Nest beside Next on EC2 and move API routes gradually. Only after Nest owns APIs and auth, move the UI to Amplify SSR (still no database or business logic in Next).
-3. **JWT Bearer auth** — Nest issues and validates tokens; the Amplify UI calls Nest with `Authorization: Bearer`.
-4. **Shared Postgres for a long time** — Separate Nest processes/repos share one database via a private `@archaser/database` Prisma package.
-5. **Main API as gateway** — The browser talks to one Nest host; that API forwards to peeled services (SMS, connectors, reports) later.
-6. **Worker first peel** — After the monolith is stable, extract cron/background jobs to `archaser-worker` using Redis (Docker on EC2) + BullMQ. The worker owns recurring schedules; the API owns config and “run now.”
-7. **Later peels** — SMS, then Billing connectors, then Reports execution — each as its own git repo and Nest app.
-8. **Three initial repos after extract** — `archaser-web`, `archaser-api`, `archaser-e2e`; OpenAPI from Nest with codegen in web.
-9. **One Grafana** — Per-service dashboards/folders, not separate Grafana instances.
-10. **Bootstrap in current repo** — Scaffold Nest, JWT, OpenAPI, and the database package path inside the existing repo; extract repositories only when Stage 1A is stable.
+1. **Nest modular monolith first** — Done: Nest API owns HTTP backend behavior. Next is UI (+ auth bridge as needed).
+2. **EC2 before Amplify (historical)** — Nest on EC2 first. Amplify UI now runs as a **parallel track** and does not block peels.
+3. **JWT / DualAuth** — Nest validates tokens; Amplify/cross-origin prefers Bearer. Shared `@archaser/auth` across Nest apps.
+4. **Shared Postgres for a long time** — Nest processes share one database via `@archaser/database`.
+5. **Path-split public routes** — Browser keeps relative `/api/...`; nginx/Next send `/api/sms`, `/api/entities/accounts`, `/api/reports` to their Nest apps. Service-to-service uses private `/internal/...` + shared secret (not a browser gateway proxy).
+6. **Worker track** — Redis + BullMQ worker in the backend workspace; deepen handlers independently of SMS peel.
+7. **Peels in backend monorepo** — SMS → connectors (all `/api/entities/accounts/*`) → reports; each is its own Nest app in the same repo, run in parallel.
+8. **Repos** — Separate FE and BE git repos; Nest services are npm workspaces under backend (not one git repo per peel).
+9. **One Grafana** — Per-service dashboards/folders.
+10. **Contracts** — Per-app OpenAPI merged for the web client; golden HTTP contract tests gate each path flip.
 
-Living roadmap (stages, decision log, resume pointer): `.cursor/plans/nest_microservice_migration_a9cacddc.plan.md`.
+Living roadmap (stages, decision log D1–D52, resume pointer): `.cursor/plans/nest_microservice_migration_a9cacddc.plan.md`.
 
 ## User Stories
 
@@ -125,28 +125,28 @@ Living roadmap (stages, decision log, resume pointer): `.cursor/plans/nest_micro
 
 ## Implementation Decisions
 
-- **Migration shape (D1):** Replace the Next.js backend with one Nest modular monolith first; peel microservices only after that API is stable.
-- **Auth (D2, D3):** Nest owns login and session tokens. Clients send JWT via `Authorization: Bearer`. NextAuth leaves the UI app after cutover. Credentials first in Stage 0; Google and Azure AD SSO parity is required before Stage 1A auth is “done.”
-- **Cutover (D4, D21):** Strangler inside the current repository: Nest on EC2 beside Next; move API surface gradually; keep UI on EC2 until Nest owns APIs + auth; then Amplify. Repository extract happens after Stage 1A is stable, not on day one.
-- **Amplify (D10):** Next.js SSR on Amplify Hosting for UI/routing needs; no Prisma, no domain services, no business cron in the web app.
-- **Data (D5, D20):** Shared Postgres for a long time. Schema and migrations live in private npm package `@archaser/database`; all Nest services depend on it.
-- **Gateway (D14):** Browser uses one Nest API base URL. Main API proxies/forwards to peeled services. Peeled services are not primary browser origins.
-- **Contracts (D18):** Nest publishes OpenAPI; web generates a typed client. Web must not import Prisma or Nest internals.
-- **Repos (D16, D17, D19):** Separate frontend and backend git repositories. Initial extract: `archaser-web`, `archaser-api`, `archaser-e2e`. Each later microservice peel becomes a new git repo (worker, SMS, connectors, reports).
-- **Worker / queue (D6, D11, D12, D13, D15):** First peel is the cron/worker. Coordination via Redis + Bull/BullMQ. Redis runs in Docker on the app EC2 for Stage 2. Worker owns repeatable schedules (synced from CronJob configuration). API updates config and enqueues “run now.” Disable in-process cron on the API after cutover.
-- **Peel order (D9):** After worker: SMS → Billing connectors → Reports execution. Core AR (Customer, Invoice, Activity, Collection period) stays in the main API for this roadmap.
-- **Observability (D7):** One Grafana instance; dashboards/folders per service (`api`, `worker`, …). Each Nest app exposes metrics for Prometheus.
-- **Realtime:** Notification / control-center streams stay on the main API gateway until a later explicit peel.
-- **Stages:** Stage 0 foundation → Stage 1A Nest strangler on EC2 → Stage 1B Amplify + repo extract → Stage 2 worker → Stages 3–5 SMS, connectors, reports.
+- **Migration shape (D1, D22):** Nest modular monolith first (done); peel microservices as Nest apps **inside the backend repo**, run in parallel (not new git repos per peel — D19 superseded).
+- **Auth (D2, D3, D29, D33, D35, D52):** Nest DualAuth (Bearer JWT + session cookie bridge as needed). Shared `@archaser/auth` (DualAuth, internal-secret guard, AccessScope, S2S HTTP client). Extract package during SMS soak before connectors (D40); SMS may copy auth first (D39).
+- **Cutover (D4, D21):** Strangler done; FE/BE already split. Amplify and peels are **parallel tracks** (D38).
+- **Amplify (D10, D38):** Next.js SSR on Amplify; no Prisma/business logic in Next; does not block peels.
+- **Data (D5, D20, D42):** Shared Postgres. `@archaser/database` workspace package (private npm only if publishing outside backend). Pool defaults: api 10, worker 5, peels 3–5 each.
+- **Routing (D24–D28, D30, D44, D50):** nginx/Next **path-split** public routes to each Nest app; UI keeps relative `/api/...`. `/api/sms/*` → sms; `/api/entities/accounts/*` → connectors (all nested accounts); `/api/reports/*` → reports. `/internal/...` never on nginx. Remove browser `GatewayPeelController` proxies.
+- **Contracts (D18, D31):** Per-app OpenAPI + CI merge → one FE client.
+- **Repos (D16, D17, D22):** Separate FE and BE git repos; all Nest services live in the backend npm workspace.
+- **Worker / queue (D6, D11–D15, D41):** Redis + BullMQ; worker deepen is an **independent** track (does not block SMS).
+- **Peel order (D9, D23):** SMS → connectors → reports, with real ownership now. Peel playbook: SoT spike → implement → contract tests → reversible flip → soak → delete from main API (D36–D37, D45–D49).
+- **SMS bar (D45–D46, D48):** No SMS path flip until live Twilio send + webhook signatures match live production behavior; recover from prod/git/`server` when Nest is stub.
+- **S2S (D32–D34, D43):** api/worker call peels via `*_SERVICE_URL` + `INTERNAL_SERVICE_SECRET` on `/internal/...`.
+- **Observability (D7):** One Grafana; per-service metrics folders.
 - **Resume artifact:** Update `.cursor/plans/nest_microservice_migration_a9cacddc.plan.md` Status / Next action when a stage completes.
 
 ## Testing Decisions
 
-- **Primary seam (preferred single seam):** Test through the **Nest HTTP API as published in OpenAPI** — the same contract the web client and e2e will use (auth, Account-scoped CRUD, admin job controls, gateway-facing SMS/connector/report operations). Prefer this over testing Nest module internals, Redis keys, or Prisma calls directly.
-- **What makes a good test:** Assert external behavior only (status codes, response shapes, auth rejection, job “run now” accepted and eventually visible as success/failure via API or admin status). Do not assert private class structure, BullMQ queue names, or Grafana dashboard JSON unless the stage explicitly delivers those as operator contracts.
-- **Stage 0–1A:** Adapt existing Vitest unit/integration coverage to Nest; add OpenAPI contract checks for migrated routes. Prior art: current `tests/unit` and `tests/integration` against API handlers and services; GitHub Actions unit-tests workflow.
-- **Stage 1B:** Move cross-system Playwright journeys to `archaser-e2e` hitting staging Amplify + Nest. Prior art: current `tests/e2e` and `e2e-tests` workflow (Postgres service, build, browser matrix) — re-home against deployed URLs instead of in-app webServer where possible.
-- **Stage 2+:** Worker repo owns job consumer tests at the “enqueue → observable outcome” level; API owns gateway integration tests; e2e keeps a thin smoke for schedule/run-now. Do not require e2e to inspect Redis.
+- **Primary seam:** Nest HTTP as published in OpenAPI (merged across services) — status codes, response shapes, auth rejection.
+- **Peel parity gate (D49):** Golden HTTP contract tests vs live main-API (or live) responses + authz cases; path flip only when green. Operational soak with reversible proxy before deleting main-API modules (D36–D37).
+- **Stage 0–1A:** Done — Nest unit/HTTP coverage under `api/test`.
+- **Stage 1B / Amplify lane:** Playwright in e2e against staging Amplify + Nest URLs.
+- **Worker track:** Job consumer tests at enqueue → observable outcome; do not require e2e to inspect Redis.
 - **Deploy guarantee:** Production Amplify and Nest deploy pipelines must not ship e2e/unit test trees or Playwright browsers.
 
 ## Out of Scope
@@ -154,18 +154,19 @@ Living roadmap (stages, decision log, resume pointer): `.cursor/plans/nest_micro
 - Database-per-service or immediate distributed transactions across core AR entities.
 - Separate Grafana installation per microservice.
 - Peeling core Customer / Invoice / Activity / Collection period into their own services in this PRD.
-- Moving Redis to ElastiCache (informational follow-up after Stage 2).
-- Rewriting product UX unrelated to auth, API base URL, and removal of server imports from the UI.
+- New git repo per peeled Nest service (backend monorepo workspace instead — D22).
+- Moving Redis to ElastiCache (informational follow-up after worker harden).
+- Rewriting product UX unrelated to auth and removal of server imports from the UI.
 - Creating ClickUp tasks or `.scratch/` issue slices (use `/to-issues` separately).
-- Big-bang cutover of Amplify UI before Nest owns the full API on EC2.
+- Blocking peels on Amplify (they run in parallel — D38).
 
 ## Further Notes
 
-- Companion living plan with decision log D1–D21 and stage checklist: `.cursor/plans/nest_microservice_migration_a9cacddc.plan.md`.
-- Blocking discovery gates before declaring stages complete: Nest SSO parity with current NextAuth Google/Azure behavior; Amplify SSR + i18n/middleware without server DB access; Postgres connection budget for multi-process Nest; private npm registry for `@archaser/database`.
-- Informational gate: Docker Redis durability/backup may be unacceptable long-term for production jobs — revisit ElastiCache after Stage 2.
-- Domain vocabulary for this work: Account (tenant), Customer, Invoice, Payment, Contact, Collection period, Activity, Dispute, Credit insurance, Billing connector, Reports, SMS, CronJob / worker automation.
-- No ADRs existed in-repo at PRD authoring time; promote durable decisions from the living plan into `docs/adr/` after stages ship if the team wants lasting records.
+- Companion living plan with decision log D1–D52: `.cursor/plans/nest_microservice_migration_a9cacddc.plan.md`.
+- Blocking gates: Twilio recovery spike before SMS flip; per-peel live SoT; Postgres connection budget for all Nest pools; Amplify SSR without server DB (lane B).
+- Informational: Docker Redis durability; private npm only if publishing `@archaser/database` outside the backend workspace.
+- Domain vocabulary: Account (tenant), Customer, Invoice, Payment, Contact, Collection period, Activity, Dispute, Credit insurance, Billing connector, Reports, SMS, CronJob / worker automation.
+- Promote durable decisions into `docs/adr/` after stages ship if the team wants lasting records.
 
 ## Issues (vertical slices)
 
@@ -195,4 +196,4 @@ Tracer-bullet breakdown published as local markdown under `.scratch/nest-microse
 | 18 | Nest domain: System, reports, catch-all leftovers | `issues/18-nest-domain-system-reports-catchall.md` | — | 6, 9, 12, 32, 37, 43, 45 |
 | 19 | Retire jiti strangler for product HTTP | `issues/19-retire-jiti-strangler.md` | 11–18 | 34, 35, 40, 41 |
 
-**Status:** slices 01–10 done · Phase B **11–19 done** (Nest domain modules + esbuild bundles; jiti retired) · **Next:** staging proxy / Amplify gates / private npm (slices 06+)
+**Status:** slices 01–19 done · **Next:** Lane A — SMS Twilio spike + peel playbook; Lane B — Amplify (parallel). See living plan D22–D52.

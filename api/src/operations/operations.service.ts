@@ -83,6 +83,19 @@ export class OperationsService {
         return { ok: true };
     }
 
+    async create(
+        operationType: string,
+        user: JwtPayload,
+        body: Record<string, unknown>
+    ) {
+        if (operationType === "dispute-reasons") {
+            return this.createDisputeReason(user, body);
+        }
+        throw new BadRequestException({
+            error: `Create not supported for operation type ${operationType}`,
+        });
+    }
+
     private parseId(raw: string): number {
         const id = parseInt(raw, 10);
         if (Number.isNaN(id)) {
@@ -623,5 +636,56 @@ export class OperationsService {
             data: data as never,
         });
         return serializeBigInt(updated);
+    }
+
+    private async createDisputeReason(
+        user: JwtPayload,
+        body: Record<string, unknown>
+    ) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const name = String(body.name || "").trim();
+        if (!name) {
+            throw new BadRequestException({ error: "name is required" });
+        }
+
+        const languageTemplates = Array.isArray(body.languageTemplates)
+            ? (body.languageTemplates as Array<Record<string, unknown>>)
+            : Array.isArray(body.language_templates)
+              ? (body.language_templates as Array<Record<string, unknown>>)
+              : [];
+
+        const reason = await this.db.$transaction(async (tx) => {
+            const created = await tx.disputeReason.create({
+                data: {
+                    account_id: accountId,
+                    name,
+                    master_template: false,
+                    status: (body.status as never) || "Active",
+                    editable: body.editable !== false,
+                    created_by: userInfo.userId,
+                    modified_by: userInfo.userId,
+                },
+            });
+            if (languageTemplates.length > 0) {
+                await tx.disputeReasonLanguage.createMany({
+                    data: languageTemplates
+                        .filter((t) => t.language && t.name)
+                        .map((t) => ({
+                            dispute_reason_id: created.id,
+                            language: String(t.language),
+                            name: String(t.name),
+                            created_by: userInfo.userId,
+                            modified_by: userInfo.userId,
+                        })),
+                });
+            }
+            return tx.disputeReason.findUnique({
+                where: { id: created.id },
+                include: { DisputeReasonLanguage: true },
+            });
+        });
+
+        return serializeBigInt(reason);
     }
 }

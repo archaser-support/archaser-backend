@@ -24,10 +24,14 @@ services:
       NEST_PORT: 3010
       PORT: 3010
       SERVICE_NAME: archaser-api-staging
-      # In-compose hostname (overrides host .env 127.0.0.1)
       REDIS_URL: redis://redis:6379
       BULLMQ_ENABLED: "true"
       BULLMQ_QUEUE: archaser-cron
+      SMS_SERVICE_URL: http://sms:3004
+      CONNECTORS_SERVICE_URL: http://connectors:3005
+      REPORTS_SERVICE_URL: http://reports:3006
+      ENABLE_CONNECTORS_SYNC_WORKERS: "false"
+      CONNECTION_LIMIT_API: "10"
     volumes:
       - /home/ubuntu/staging:/workspace
     ports:
@@ -35,6 +39,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      sms:
+        condition: service_started
     restart: unless-stopped
 
   worker:
@@ -49,11 +55,17 @@ services:
       REDIS_URL: redis://redis:6379
       BULLMQ_QUEUE: archaser-cron
       CONNECTION_LIMIT_WORKER: 5
+      SMS_SERVICE_URL: http://sms:3004
+      CONNECTORS_SERVICE_URL: http://connectors:3005
+      REPORTS_SERVICE_URL: http://reports:3006
+      ENABLE_CONNECTORS_SYNC_WORKERS: "false"
     volumes:
       - /home/ubuntu/staging:/workspace
     depends_on:
       redis:
         condition: service_healthy
+      sms:
+        condition: service_started
     restart: unless-stopped
 
   sms:
@@ -65,8 +77,11 @@ services:
     environment:
       NODE_ENV: production
       SMS_PORT: 3004
+      CONNECTION_LIMIT_SMS: 5
     volumes:
       - /home/ubuntu/staging:/workspace
+    ports:
+      - "3004:3004"
     restart: unless-stopped
 
   connectors:

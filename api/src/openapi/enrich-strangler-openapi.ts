@@ -184,21 +184,6 @@ export function enrichStranglerOpenApi(
 
     mergePath(
         document,
-        "/api/gateway/sms/send",
-        methods("Gateway → SMS send", "gateway-peel")
-    );
-    mergePath(
-        document,
-        "/api/gateway/connectors/{accountId}/sync",
-        methods("Gateway → connectors sync", "gateway-peel")
-    );
-    mergePath(
-        document,
-        "/api/gateway/reports/{id}/execute",
-        methods("Gateway → reports execute", "gateway-peel")
-    );
-    mergePath(
-        document,
         "/api/gateway/cron/sync-schedules",
         methods("Enqueue CronJob schedule sync", "cron-queue")
     );

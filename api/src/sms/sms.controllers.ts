@@ -8,6 +8,7 @@ import {
     Post,
     Put,
     Query,
+    Req,
     UseGuards,
 } from "@nestjs/common";
 import {
@@ -16,6 +17,7 @@ import {
     ApiTags,
     ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
+import type { Request } from "express";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { DualAuthGuard } from "../auth/dual-auth.guard";
 import { JwtPayload } from "../auth/auth.service";
@@ -75,7 +77,7 @@ export class SmsController {
     }
 
     @Post("test")
-    @ApiOperation({ summary: "Send a test SMS (Nest-native stub)" })
+    @ApiOperation({ summary: "Send a test SMS via Twilio (live)" })
     async test(
         @CurrentUser() user: JwtPayload,
         @Body() body: Record<string, unknown>
@@ -192,7 +194,7 @@ export class SmsCountryVendorsController {
     }
 }
 
-/** Public Twilio delivery webhook — no DualAuth (legacy SoftDualAuth public). */
+/** Public Twilio delivery webhook — signature validated in service. */
 @ApiTags("sms-webhook")
 @Controller("api/sms/webhook")
 export class SmsWebhookController {
@@ -200,7 +202,10 @@ export class SmsWebhookController {
 
     @Post("twilio")
     @ApiOperation({ summary: "Twilio SMS delivery webhook (public)" })
-    async twilio(@Body() body: Record<string, unknown>) {
-        return this.sms.handleTwilioWebhook(body);
+    async twilio(
+        @Body() body: Record<string, unknown>,
+        @Req() req: Request
+    ) {
+        return this.sms.handleTwilioWebhook(body, req);
     }
 }

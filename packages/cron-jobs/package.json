@@ -1,0 +1,30 @@
+{
+  "name": "@archaser/cron-jobs",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Worker CronJob domain handlers (currency, credit snapshots/gap, billing sync dispatch)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "jest --config jest.config.js --passWithNoTests"
+  },
+  "dependencies": {
+    "@archaser/billing-connector": "*",
+    "@archaser/sms-send": "*",
+    "@prisma/client": "^6.4.1"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.19.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "typescript": "^5.9.2"
+  }
+}
