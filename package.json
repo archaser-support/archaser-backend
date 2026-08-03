@@ -11,7 +11,11 @@
     "reports",
     "e2e",
     "packages/database",
-    "packages/openapi-client"
+    "packages/openapi-client",
+    "packages/sms-send",
+    "packages/auth",
+    "packages/billing-connector",
+    "packages/cron-jobs"
   ],
   "overrides": {
     "esbuild": "0.24.2"
@@ -26,11 +30,18 @@
     "start:api": "npm run start:prod -w @archaser/api",
     "build:api": "npm run build -w @archaser/database && npm run build -w @archaser/api",
     "build:database": "npm run build -w @archaser/database",
+    "build:sms-send": "npm run build -w @archaser/sms-send",
+    "build:auth": "npm run build -w @archaser/auth",
+    "test:sms-send": "npm run test -w @archaser/sms-send",
     "test:api": "npm run test -w @archaser/api",
     "dev:worker": "npm run start:dev -w @archaser/worker",
     "dev:sms": "npm run start:dev -w @archaser/sms",
     "dev:connectors": "npm run start:dev -w @archaser/connectors",
     "dev:reports": "npm run start:dev -w @archaser/reports",
+    "soak:check": "npx tsx ./scripts/soak/check-soak-readiness.ts",
+    "soak:check:worker": "npx tsx ./scripts/soak/check-soak-readiness.ts --worker-url http://127.0.0.1:3003",
+    "soak:sms-contract": "npm run test -w @archaser/sms",
+    "soak:cron-registry": "npm run test -w @archaser/cron-jobs",
     "openapi:export": "npm run build -w @archaser/api && npx tsx ./scripts/openapi/export-nest-openapi.ts",
     "deploy:docker:staging": "bash ./scripts/deployment/deploy-backend-docker.sh --env staging",
     "deploy:docker:production": "bash ./scripts/deployment/deploy-backend-docker.sh --env production",

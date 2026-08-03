@@ -2,8 +2,17 @@ import {
     BadRequestException,
     ForbiddenException,
     Injectable,
+    Logger,
     NotFoundException,
+    UnauthorizedException,
 } from "@nestjs/common";
+import {
+    SendViaVendorOptions,
+    TwilioClientFactory,
+    buildWebhookUrl,
+    sendViaVendor,
+    validateTwilioWebhookSignature,
+} from "@archaser/sms-send";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
@@ -13,10 +22,25 @@ const ADMIN_ACCOUNT_ID = 10013;
 
 @Injectable()
 export class SmsService {
+    private readonly logger = new Logger(SmsService.name);
+    private sendOptions: SendViaVendorOptions = {};
+
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService
     ) {}
+
+    setSendOptions(options: SendViaVendorOptions) {
+        this.sendOptions = options;
+    }
+
+    /** @deprecated Prefer setSendOptions */
+    setTwilioClientFactory(factory: TwilioClientFactory) {
+        this.sendOptions = {
+            ...this.sendOptions,
+            twilioClientFactory: factory,
+        };
+    }
 
     private assertAdmin(user: JwtPayload) {
         const isAdmin =
@@ -410,34 +434,185 @@ export class SmsService {
 
     async testSms(user: JwtPayload, body: Record<string, unknown>) {
         this.assertAdmin(user);
-        const mobileNumber = body.mobileNumber;
-        const content = body.content;
+        const mobileNumber = String(body.mobileNumber || "");
+        const content = String(body.content || "");
         if (!mobileNumber || !content) {
             throw new BadRequestException({
                 error: "Mobile number and content are required",
             });
         }
-        if (body.vendorId) {
-            const vendor = await this.db.sMSVendor.findFirst({
-                where: { id: Number(body.vendorId), is_active: true },
+
+        let vendor =
+            body.vendorId != null
+                ? await this.db.sMSVendor.findFirst({
+                      where: {
+                          id: Number(body.vendorId),
+                          is_active: true,
+                      },
+                  })
+                : null;
+
+        if (body.vendorId && !vendor) {
+            throw new BadRequestException({
+                error: "Vendor not found or inactive",
             });
-            if (!vendor) {
-                throw new BadRequestException({
-                    error: "Vendor not found or inactive",
-                });
-            }
         }
-        // Nest-native stub: validate inputs and return ack (no live Twilio send).
+
+        if (!vendor && body.countryId != null) {
+            const countryVendor = await this.db.countrySMSVendor.findFirst({
+                where: {
+                    country_id: Number(body.countryId),
+                    is_active: true,
+                    SMSVendor: { is_active: true },
+                },
+                include: { SMSVendor: true },
+                orderBy: [
+                    { is_default: "desc" },
+                    { SMSVendor: { priority: "asc" } },
+                ],
+            });
+            vendor = countryVendor?.SMSVendor ?? null;
+        }
+
+        if (!vendor) {
+            vendor = await this.db.sMSVendor.findFirst({
+                where: { is_active: true, provider: "twilio" },
+                orderBy: { priority: "asc" },
+            });
+        }
+
+        if (!vendor) {
+            throw new BadRequestException({
+                error: "No active SMS vendor available",
+            });
+        }
+
+        const countryMapping =
+            body.countryId != null
+                ? await this.db.countrySMSVendor.findFirst({
+                      where: {
+                          country_id: Number(body.countryId),
+                          vendor_id: vendor.id,
+                          is_active: true,
+                      },
+                  })
+                : null;
+
+        const costPerSms =
+            countryMapping?.cost_per_sms != null
+                ? Number(countryMapping.cost_per_sms)
+                : vendor.cost_per_sms != null
+                  ? Number(vendor.cost_per_sms)
+                  : null;
+
+        const result = await sendViaVendor(
+            {
+                id: vendor.id,
+                provider: vendor.provider,
+                api_key: vendor.api_key,
+                api_secret: vendor.api_secret,
+                account_sid: vendor.account_sid,
+                auth_token: vendor.auth_token,
+                webhook_url: vendor.webhook_url,
+                phone_number: countryMapping?.phone_number ?? null,
+                cost_per_sms: costPerSms,
+            },
+            mobileNumber,
+            String(body.from || countryMapping?.phone_number || "archaser"),
+            content,
+            this.sendOptions
+        );
+
+        if (!result.success) {
+            throw new BadRequestException({
+                error: result.error || "SMS send failed",
+                vendorId: vendor.id,
+            });
+        }
+
         return {
             success: true,
-            message: "SMS test accepted (Nest-native stub — not sent)",
+            message: `SMS sent via ${vendor.provider}`,
             mobileNumber,
-            vendorId: body.vendorId ?? null,
+            vendorId: vendor.id,
+            provider: vendor.provider,
             countryId: body.countryId ?? null,
+            messageId: result.messageId ?? null,
+            vendorMessageId: result.vendorMessageId ?? null,
+            cost: result.cost ?? null,
+            segments: result.segments ?? null,
         };
     }
 
-    async handleTwilioWebhook(body: Record<string, unknown>) {
+    /**
+     * Internal send used by api/worker (D32).
+     * Body: { to, body, from?, vendorId?, countryId?, accountId? }
+     */
+    async sendInternal(body: Record<string, unknown>) {
+        const to = String(body.to || body.mobileNumber || "");
+        const content = String(body.body || body.content || "");
+        if (!to || !content) {
+            throw new BadRequestException({
+                error: "to and body are required",
+            });
+        }
+        return this.testSms(
+            {
+                sub: "internal",
+                username: "internal",
+                account_id: 10013,
+                role: "archaser_admin",
+            },
+            {
+                mobileNumber: to,
+                content,
+                from: body.from,
+                vendorId: body.vendorId,
+                countryId: body.countryId,
+            }
+        );
+    }
+
+    async handleTwilioWebhook(
+        body: Record<string, unknown>,
+        req: {
+            headers: Record<string, string | string[] | undefined>;
+            originalUrl?: string;
+            url?: string;
+        }
+    ) {
+        const vendorAuthToken =
+            process.env.TWILIO_AUTH_TOKEN ||
+            (await this.resolveTwilioAuthTokenForWebhook(body));
+
+        if (!process.env.TWILIO_AUTH_TOKEN && !vendorAuthToken) {
+            this.logger.warn(
+                "TWILIO_AUTH_TOKEN / vendor auth_token missing — skipping webhook signature validation"
+            );
+        }
+
+        const signatureHeader = req.headers["x-twilio-signature"];
+        const signature = Array.isArray(signatureHeader)
+            ? signatureHeader[0]
+            : signatureHeader;
+
+        const bodyForSig: Record<string, string> = {};
+        for (const [k, v] of Object.entries(body)) {
+            if (v != null) bodyForSig[k] = String(v);
+        }
+
+        const valid = validateTwilioWebhookSignature({
+            authToken: vendorAuthToken,
+            signature,
+            url: buildWebhookUrl(req),
+            body: bodyForSig,
+        });
+        if (!valid) {
+            throw new UnauthorizedException({
+                error: "Invalid Twilio webhook signature",
+            });
+        }
+
         const messageSid = String(body.MessageSid || "");
         const messageStatus = String(body.MessageStatus || "");
         if (!messageSid) {
@@ -474,5 +649,19 @@ export class SmsService {
             });
         }
         return { success: true };
+    }
+
+    private async resolveTwilioAuthTokenForWebhook(
+        body: Record<string, unknown>
+    ): Promise<string | undefined> {
+        const accountSid = body.AccountSid
+            ? String(body.AccountSid)
+            : undefined;
+        if (!accountSid) return undefined;
+        const vendor = await this.db.sMSVendor.findFirst({
+            where: { account_sid: accountSid, is_active: true },
+            select: { auth_token: true },
+        });
+        return vendor?.auth_token || undefined;
     }
 }

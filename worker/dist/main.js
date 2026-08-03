@@ -24,6 +24,7 @@ const bullmq_1 = require("bullmq");
 const ioredis_1 = __importDefault(require("ioredis"));
 const prom_client_1 = require("prom-client");
 const database_1 = require("@archaser/database");
+const cron_jobs_1 = require("@archaser/cron-jobs");
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
 let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
     constructor(config) {
@@ -89,17 +90,22 @@ let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
                 name: true,
                 cron_expression: true,
                 active: true,
+                last_run_at: true,
             },
         });
         if (!job) {
             return { ok: false, reason: "CronJob not found", cronJobId };
         }
-        this.logger.log(`Executed CronJob ${job.id} (${job.name}) via ${source}`);
+        this.logger.log(`Executing CronJob ${job.id} (${job.name}) via ${source}`);
+        const result = await (0, cron_jobs_1.executeNamedCronJob)(this.prisma, job.name, {
+            lastRunAt: job.last_run_at,
+        });
         return {
-            ok: true,
+            ok: result.success,
             cronJobId: job.id,
             name: job.name,
             source,
+            ...result,
         };
     }
     async syncRepeatables(reason) {
@@ -186,7 +192,7 @@ WorkerModule = __decorate([
         imports: [
             config_1.ConfigModule.forRoot({
                 isGlobal: true,
-                envFilePath: [".env", "../../.env"],
+                envFilePath: [".env", "../.env"],
             }),
         ],
         controllers: [WorkerController],

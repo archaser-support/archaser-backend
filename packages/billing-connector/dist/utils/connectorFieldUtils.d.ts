@@ -1,0 +1,28 @@
+import type { ImportType } from "@prisma/client";
+export type ConnectorFieldTransform = "date" | "boolean" | "trim" | "currency_code";
+export interface MappingRule {
+    archaserField: string;
+    erpField: string;
+    transform?: ConnectorFieldTransform;
+}
+export declare function isConnectorFieldTransform(value: unknown): value is ConnectorFieldTransform;
+export declare function parseMappingRules(raw: unknown): MappingRule[];
+export declare function extractNestedValue(obj: Record<string, unknown>, path: string): unknown;
+export declare function applyConnectorTransform(value: unknown, transform?: ConnectorFieldTransform): unknown;
+export declare function mapErpRecord(erpRecord: Record<string, unknown>, rules: MappingRule[]): Record<string, unknown>;
+export declare function flattenObjectPaths(obj: Record<string, unknown>, prefix?: string, maxDepth?: number): {
+    paths: string[];
+    exampleValues: Record<string, unknown>;
+};
+export declare function discoverFieldPathsFromRecords(records: Record<string, unknown>[]): {
+    rawHeaders: string[];
+    exampleValues: Record<string, unknown>;
+};
+export declare function buildDefaultMappingRules(importType: ImportType): MappingRule[];
+export declare function autoMapConnectorRules(importType: ImportType, rawHeaders: string[], existingRules?: MappingRule[]): MappingRule[];
+export declare function validateMappedRow(importType: ImportType, row: Record<string, unknown>, rowIndex: number): string[];
+export declare function computeMappingCompleteness(importType: ImportType, rules: MappingRule[]): boolean;
+export declare function rulesToRecordMapping(rules: MappingRule[]): Record<string, {
+    erpField: string;
+    transform?: ConnectorFieldTransform;
+}>;

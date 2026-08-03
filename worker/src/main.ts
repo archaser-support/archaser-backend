@@ -19,6 +19,7 @@ import {
     PrismaClient,
 } from "@archaser/database";
 import type { Response } from "express";
+import { executeNamedCronJob } from "@archaser/cron-jobs";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
 
@@ -122,21 +123,26 @@ class WorkerRuntimeService implements OnModuleDestroy {
                 name: true,
                 cron_expression: true,
                 active: true,
+                last_run_at: true,
             },
         });
         if (!job) {
             return { ok: false, reason: "CronJob not found", cronJobId };
         }
 
-        // Domain handlers plug in here (collection automation, connectors, etc.)
         this.logger.log(
-            `Executed CronJob ${job.id} (${job.name}) via ${source}`
+            `Executing CronJob ${job.id} (${job.name}) via ${source}`
         );
+
+        const result = await executeNamedCronJob(this.prisma, job.name, {
+            lastRunAt: job.last_run_at,
+        });
         return {
-            ok: true,
+            ok: result.success,
             cronJobId: job.id,
             name: job.name,
             source,
+            ...result,
         };
     }
 

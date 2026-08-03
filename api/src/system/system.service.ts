@@ -9,6 +9,7 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+import { InvoicesService } from "../invoices/invoices.service";
 import { CronQueueService } from "../queue/cron-queue.service";
 import {
     buildActiveCustomersChart,
@@ -72,7 +73,8 @@ export class SystemService {
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService,
-        private readonly cronQueue: CronQueueService
+        private readonly cronQueue: CronQueueService,
+        private readonly invoices: InvoicesService
     ) {}
 
     private async scope(user: JwtPayload) {
@@ -1028,14 +1030,16 @@ export class SystemService {
         operation: string | null | undefined,
         body: Record<string, unknown>
     ) {
-        void user;
         const op = operation || (body.operation as string | undefined);
         if (op === "assign-credit") {
-            return {
-                success: true,
-                message: "Credit assignment acknowledged (Nest stub)",
-                affectedCustomerIds: [],
-            };
+            return this.invoices.assignCredit(user, {
+                creditInvoiceId: Number(body.creditInvoiceId),
+                targetInvoiceId: Number(body.targetInvoiceId),
+                creditAmount:
+                    body.creditAmount != null
+                        ? Number(body.creditAmount)
+                        : undefined,
+            });
         }
         throw new NotFoundException({
             error: "Control center POST endpoint not found",
@@ -1949,13 +1953,96 @@ export class SystemService {
     }
 
     async postPromiseToPay(
-        _user: JwtPayload,
+        user: JwtPayload,
         body: Record<string, unknown>
     ) {
+        const { accountId } = await this.scope(user);
+        const customerId = parseInt(String(body.customer_id ?? ""), 10);
+        if (!Number.isFinite(customerId)) {
+            throw new BadRequestException({ error: "customer_id is required" });
+        }
+
+        const raw = String(body.promise_to_pay_date ?? "").slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+            throw new BadRequestException({
+                error: "promise_to_pay_date must be YYYY-MM-DD",
+            });
+        }
+        const promiseDate = new Date(`${raw}T00:00:00.000Z`);
+        if (Number.isNaN(promiseDate.getTime())) {
+            throw new BadRequestException({
+                error: "promise_to_pay_date is not a valid date",
+            });
+        }
+
+        const customer = await this.db.customer.findFirst({
+            where: { id: customerId, account_id: accountId },
+            select: {
+                id: true,
+                account_id: true,
+                Account: {
+                    select: { max_promise_to_pay_allowed_per_cycle: true },
+                },
+            },
+        });
+        if (!customer) {
+            throw new NotFoundException({ error: "Customer not found" });
+        }
+
+        const collection = await this.db.customerCollectionPeriod.findFirst({
+            where: { customer_id: customer.id, period_end_date: null },
+            select: { id: true, promise_to_pay_count: true },
+            orderBy: { id: "desc" },
+        });
+        if (!collection) {
+            throw new BadRequestException({
+                error: "Customer has no open collection period",
+            });
+        }
+
+        const cap =
+            customer.Account?.max_promise_to_pay_allowed_per_cycle ?? 0;
+        if (cap > 0 && (collection.promise_to_pay_count ?? 0) >= cap) {
+            throw new BadRequestException({
+                error: "Promise to pay limit reached for this collection period",
+            });
+        }
+
+        const comment = String(body.comment ?? "");
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+
+        await this.db.$transaction(async (tx) => {
+            await tx.customerCollectionPeriod.update({
+                where: { id: collection.id },
+                data: {
+                    promise_to_pay_date: promiseDate,
+                    promise_to_pay_count: { increment: 1 },
+                } as never,
+            });
+            await tx.activity.create({
+                data: {
+                    customer_id: customer.id,
+                    account_id: customer.account_id,
+                    type: "Promise_to_pay",
+                    status: "COMPLETED",
+                    title: "{{activities.fields.activity_promise_to_pay}}",
+                    title_params: {
+                        userId: userInfo.userId,
+                        date: raw,
+                    },
+                    content: comment,
+                    collection_period_id: collection.id,
+                    created_by: userInfo.userId,
+                    modified_by: userInfo.userId,
+                } as never,
+            });
+        });
+
         return serializeBigInt({
             success: true,
-            message: "Promise-to-pay acknowledged",
-            body,
+            customer_id: customer.id,
+            promise_to_pay_date: promiseDate,
+            promise_to_pay_count: (collection.promise_to_pay_count ?? 0) + 1,
         });
     }
 

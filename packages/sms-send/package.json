@@ -1,0 +1,29 @@
+{
+  "name": "@archaser/sms-send",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared SMS vendor send helpers (Twilio, Inforu, MessageBird) + Twilio webhook signature",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "jest --config jest.config.js"
+  },
+  "dependencies": {
+    "messagebird": "^4.0.1",
+    "twilio": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.19.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "typescript": "^5.9.2"
+  }
+}

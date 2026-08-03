@@ -2,24 +2,40 @@
   "name": "@archaser/sms",
   "version": "0.0.1",
   "private": true,
-  "description": "Archaser SMS microservice scaffold (gateway proxies; not a browser origin)",
+  "description": "Archaser SMS Nest microservice (public /api/sms + private /internal)",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "start:dev": "ts-node src/main.ts"
+    "start:dev": "ts-node src/main.ts",
+    "test": "jest --config jest.config.js"
   },
   "dependencies": {
     "@archaser/database": "*",
     "@nestjs/common": "^11.1.3",
-    "@nestjs/core": "^11.1.3",
     "@nestjs/config": "^4.0.2",
+    "@nestjs/core": "^11.1.3",
+    "@nestjs/jwt": "^11.0.0",
     "@nestjs/platform-express": "^11.1.3",
+    "@nestjs/swagger": "^11.2.0",
+    "cookie-parser": "^1.4.7",
+    "next-auth": "^4.24.15",
     "prom-client": "^15.1.3",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "twilio": "^5.4.0",
+    "@archaser/sms-send": "*",
+    "@archaser/auth": "*"
   },
   "devDependencies": {
+    "@nestjs/testing": "^11.1.3",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.3",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.19.0",
+    "@types/supertest": "^6.0.3",
+    "jest": "^30.4.2",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.4.12",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
   }

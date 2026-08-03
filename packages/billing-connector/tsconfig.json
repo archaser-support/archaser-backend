@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "commonjs",
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*"],
+  "exclude": [
+    "src/services/BillingConnectorService.ts",
+    "src/services/BillingConnectorSyncService.ts",
+    "src/services/ConnectorFieldMappingService.ts",
+    "src/services/ConnectorSyncExecutionService.ts",
+    "src/services/syncBillingConnectors.ts",
+    "src/billing/staleSyncExecutionSweeper.ts",
+    "src/models/**"
+  ]
+}

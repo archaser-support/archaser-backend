@@ -7,6 +7,11 @@ import {
 } from "@nestjs/common";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
+import {
+    decryptCredentials,
+    runInProcessSync,
+    testBillingConnectorConnection,
+} from "@archaser/billing-connector";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import {
@@ -641,19 +646,72 @@ export class AccountsNestedService {
                 error: "Billing connector not configured",
             });
         }
-        void body;
         if (action === "test") {
-            await this.db.billingConnector.update({
-                where: { account_id: accountId },
-                data: {
-                    last_connection_test_at: new Date(),
-                    last_connection_error: null,
-                },
-            });
-            return { ok: true, success: true };
+            if (!connector) {
+                throw new NotFoundException({
+                    error: "Billing connector not configured",
+                });
+            }
+            try {
+                if (!connector.credentials_encrypted || !connector.base_url) {
+                    throw new Error("Missing base_url or credentials");
+                }
+                const credentials = decryptCredentials(
+                    connector.credentials_encrypted
+                );
+                const result = await testBillingConnectorConnection({
+                    provider: connector.provider,
+                    authType: connector.auth_type as
+                        | "API_KEY"
+                        | "BASIC"
+                        | "OAUTH2_CLIENT_CREDENTIALS",
+                    baseUrl: connector.base_url,
+                    credentials,
+                });
+                await this.db.billingConnector.update({
+                    where: { account_id: accountId },
+                    data: {
+                        last_connection_test_at: result.testedAt,
+                        last_connection_error: result.ok
+                            ? null
+                            : result.error || "Connection failed",
+                    },
+                });
+                if (!result.ok) {
+                    return {
+                        ok: false,
+                        success: false,
+                        error: result.error || "Connection failed",
+                    };
+                }
+                return { ok: true, success: true };
+            } catch (err) {
+                const message =
+                    err instanceof Error ? err.message : String(err);
+                await this.db.billingConnector.update({
+                    where: { account_id: accountId },
+                    data: {
+                        last_connection_test_at: new Date(),
+                        last_connection_error: message,
+                    },
+                });
+                return { ok: false, success: false, error: message };
+            }
         }
         if (action === "sync") {
-            return { ok: true, queued: true };
+            const result = await runInProcessSync({
+                prisma: this.db,
+                accountId,
+                trigger:
+                    typeof body?.trigger === "string"
+                        ? body.trigger
+                        : "manual",
+            });
+            return {
+                queued: false,
+                inProcess: true,
+                ...result,
+            };
         }
         if (action === "backfill-reset") {
             if (connector) {
