@@ -15,6 +15,7 @@ import {
     ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
 import { CurrentUser } from "../auth/current-user.decorator";
+import { CronSecretGuard } from "../auth/cron-secret.guard";
 import { DualAuthGuard } from "../auth/dual-auth.guard";
 import { JwtPayload } from "../auth/auth.service";
 import { SystemListQuery, SystemService } from "./system.service";
@@ -231,21 +232,6 @@ export class SystemController {
         });
     }
 
-    @Get("cron")
-    @ApiOperation({ summary: "Cron jobs alias (Nest-native)" })
-    async cronAlias(@CurrentUser() user: JwtPayload) {
-        return this.system.getCronJobs(user);
-    }
-
-    @Post("cron")
-    @ApiOperation({ summary: "Cron trigger alias (Nest stub ack)" })
-    async cronAliasPost(
-        @CurrentUser() user: JwtPayload,
-        @Body() body: Record<string, unknown>
-    ) {
-        return this.system.postCronJobs(user, body);
-    }
-
     @Get("shared-stats/:operation")
     @ApiOperation({ summary: "Shared stats by operation (Nest-native)" })
     async sharedStats(
@@ -253,6 +239,34 @@ export class SystemController {
         @Param("operation") operation: string
     ) {
         return this.system.getSharedStats(user, operation);
+    }
+}
+
+
+@ApiTags("system")
+@UseGuards(CronSecretGuard)
+@Controller("api/system")
+export class SystemCronLambdaController {
+    constructor(private readonly system: SystemService) {}
+
+    @Get("cron")
+    @ApiOperation({
+        summary:
+            "Lambda cron trigger — requires x-cron-secret (no DualAuth JWT)",
+    })
+    @ApiUnauthorizedResponse({ description: "Missing or invalid x-cron-secret" })
+    async cronGet() {
+        return this.system.runCronFromLambda();
+    }
+
+    @Post("cron")
+    @ApiOperation({
+        summary:
+            "Lambda cron trigger (POST) — requires x-cron-secret (no DualAuth JWT)",
+    })
+    @ApiUnauthorizedResponse({ description: "Missing or invalid x-cron-secret" })
+    async cronPost() {
+        return this.system.runCronFromLambda();
     }
 }
 

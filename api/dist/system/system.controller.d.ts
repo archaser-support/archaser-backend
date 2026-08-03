@@ -847,36 +847,6 @@ export declare class SystemController {
         modified_by: string | null;
         company_number: string | null;
     }>;
-    cronAlias(user: JwtPayload): Promise<{
-        cronJobs: {
-            id: number;
-            name: string;
-            active: boolean | null;
-            cronExpression: string;
-            lastRunAt: Date | null;
-            nextRunAt: Date | null;
-            timeoutPeriodSeconds: number;
-            sortOrder: number;
-            createdAt: Date;
-            modifiedAt: Date;
-        }[];
-    } | {
-        cronJobs: never[];
-        message: string;
-    }>;
-    cronAliasPost(user: JwtPayload, body: Record<string, unknown>): Promise<{
-        success: boolean;
-        message: string;
-        jobId: number;
-        timestamp: string;
-        body?: undefined;
-    } | {
-        success: boolean;
-        message: string;
-        timestamp: string;
-        body: Record<string, unknown>;
-        jobId?: undefined;
-    }>;
     sharedStats(user: JwtPayload, operation: string): Promise<{
         total_accounts: number;
         currency: string;
@@ -892,6 +862,54 @@ export declare class SystemController {
         currency: string;
         total_accounts?: undefined;
         total_overdue_amount?: undefined;
+    }>;
+}
+export declare class SystemCronLambdaController {
+    private readonly system;
+    constructor(system: SystemService);
+    cronGet(): Promise<{
+        success: boolean;
+        message: string;
+        result: null;
+        error?: undefined;
+    } | {
+        success: boolean;
+        message: string;
+        result: {
+            sync: {
+                queued: boolean;
+                jobId?: string;
+                reason?: string;
+            };
+        };
+        error?: undefined;
+    } | {
+        success: boolean;
+        error: string;
+        message?: undefined;
+        result?: undefined;
+    }>;
+    cronPost(): Promise<{
+        success: boolean;
+        message: string;
+        result: null;
+        error?: undefined;
+    } | {
+        success: boolean;
+        message: string;
+        result: {
+            sync: {
+                queued: boolean;
+                jobId?: string;
+                reason?: string;
+            };
+        };
+        error?: undefined;
+    } | {
+        success: boolean;
+        error: string;
+        message?: undefined;
+        result?: undefined;
     }>;
 }
 export declare class SystemCacheInvalidationController {
