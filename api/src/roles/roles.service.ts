@@ -78,20 +78,32 @@ export class RolesService {
                 (account as { has_credit_insurance?: boolean } | null)
                     ?.has_credit_insurance
             );
+            // Must match PermissionService.cloneRolePermissions: credit-only
+            // accounts inherit master roles even when rows are collection-tagged.
+            const isCreditOnly = hasCreditInsurance && !hasCollection;
 
+            // Do NOT use distinct:["role"] — Postgres returns one arbitrary
+            // row per role, so a collection-tagged row can hide a role that also
+            // has is_credit_insurance=true (local vs staging order can differ).
             const masterRolePermissions =
                 await this.db.rolePermission.findMany({
-                    where: { account_id: 10013 },
+                    where: {
+                        account_id: 10013,
+                        role: { not: "archaser_admin" },
+                    },
                     select: {
                         role: true,
                         is_collection: true,
                         is_credit_insurance: true,
                     },
-                    distinct: ["role"],
                 });
 
             const eligibleRoles = new Set<string>();
             for (const row of masterRolePermissions) {
+                if (isCreditOnly) {
+                    eligibleRoles.add(row.role);
+                    continue;
+                }
                 const collectionEnabled = row.is_collection !== false;
                 const creditEnabled = row.is_credit_insurance === true;
                 if (
@@ -101,17 +113,9 @@ export class RolesService {
                     eligibleRoles.add(row.role);
                 }
             }
-            const filteredByProduct = baseRoles.filter((role) =>
+            rolesToProcess = baseRoles.filter((role) =>
                 eligibleRoles.has(role)
             );
-            // Credit-only (or otherwise mismatched) accounts can end up with an
-            // empty set when master RolePermission rows are collection-flagged
-            // only. Fall back to the full base role list so user creation still
-            // has selectable roles.
-            rolesToProcess =
-                filteredByProduct.length > 0
-                    ? filteredByProduct
-                    : [...baseRoles];
         }
 
         const rolesWithCounts = await Promise.all(

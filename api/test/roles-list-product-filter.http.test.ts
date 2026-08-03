@@ -56,6 +56,22 @@ describe("Roles list — product flag filtering", () => {
         await app.close();
     });
 
+    beforeEach(() => {
+        jest.clearAllMocks();
+        databaseMock.user.findUnique.mockResolvedValue({
+            business_unit_id: null,
+            role: "archaser_admin",
+            account_id: 10013,
+        });
+        databaseMock.user.findFirst.mockResolvedValue({
+            id: "admin-1",
+            account_id: 10013,
+            role: "archaser_admin",
+            business_unit_id: null,
+        });
+        databaseMock.rolePermission.findUnique.mockResolvedValue(null);
+    });
+
     async function adminToken() {
         return jwtService.signAsync({
             sub: "admin-1",
@@ -67,16 +83,26 @@ describe("Roles list — product flag filtering", () => {
         });
     }
 
-    it("falls back to base roles for credit-only accounts when master roles are collection-only", async () => {
+    it("returns master roles for credit-only accounts even when master rows are collection-tagged", async () => {
         databaseMock.account.findUnique.mockResolvedValue({
             id: 10149,
             has_collection: false,
             has_credit_insurance: true,
         });
         // Master templates: collection-only flags (matches production data).
+        // Credit-only list must include these — no empty-set fallback to ALL_ROLES.
         databaseMock.rolePermission.findMany.mockImplementation(
-            async (args: { where?: { account_id?: number; role?: string } }) => {
-                if (args?.where?.account_id === 10013 && !args?.where?.role) {
+            async (args: {
+                where?: { account_id?: number; role?: unknown };
+                distinct?: string[];
+            }) => {
+                expect(args?.distinct).toBeUndefined();
+                // Master template query uses role: { not: "archaser_admin" }
+                if (
+                    args?.where?.account_id === 10013 &&
+                    typeof args?.where?.role === "object" &&
+                    args.where.role !== null
+                ) {
                     return [
                         {
                             role: "Collection_Agent",
@@ -90,7 +116,7 @@ describe("Roles list — product flag filtering", () => {
                         },
                     ];
                 }
-                // getRolePermissions lookups
+                // getRolePermissions lookups (role is a string)
                 return [{ permission_key: "manage_users" }];
             }
         );
@@ -101,16 +127,63 @@ describe("Roles list — product flag filtering", () => {
             .set("Authorization", `Bearer ${token}`)
             .expect(200);
 
-        expect(res.body.roles.length).toBeGreaterThan(0);
-        expect(res.body.roles.map((r: { role: string }) => r.role)).toEqual(
+        const roleNames = res.body.roles.map((r: { role: string }) => r.role);
+        expect(roleNames).toEqual(
             expect.arrayContaining([
                 "Collection_Agent",
                 "System_Administrator",
-                "Account_Manager",
             ])
         );
-        expect(
-            res.body.roles.map((r: { role: string }) => r.role)
-        ).not.toContain("archaser_admin");
+        expect(roleNames).not.toContain("Account_Manager");
+        expect(roleNames).not.toContain("archaser_admin");
+        expect(roleNames.length).toBe(2);
+    });
+
+    it("includes a role when any master permission row is credit-tagged (not only the first)", async () => {
+        databaseMock.account.findUnique.mockResolvedValue({
+            id: 10149,
+            has_collection: false,
+            has_credit_insurance: true,
+        });
+        // Same role: collection-tagged row first, credit-tagged later — distinct:["role"]
+        // would keep only the first and hide the role on non-credit-only paths;
+        // credit-only includes all rows regardless.
+        databaseMock.rolePermission.findMany.mockImplementation(
+            async (args: {
+                where?: { account_id?: number; role?: unknown };
+                distinct?: string[];
+            }) => {
+                expect(args?.distinct).toBeUndefined();
+                if (
+                    args?.where?.account_id === 10013 &&
+                    typeof args?.where?.role === "object" &&
+                    args.where.role !== null
+                ) {
+                    return [
+                        {
+                            role: "Account_Manager",
+                            is_collection: true,
+                            is_credit_insurance: false,
+                        },
+                        {
+                            role: "Account_Manager",
+                            is_collection: false,
+                            is_credit_insurance: true,
+                        },
+                    ];
+                }
+                return [{ permission_key: "view_customers" }];
+            }
+        );
+
+        const token = await adminToken();
+        const res = await request(app.getHttpServer())
+            .get("/api/roles?accountId=10149")
+            .set("Authorization", `Bearer ${token}`)
+            .expect(200);
+
+        const roleNames = res.body.roles.map((r: { role: string }) => r.role);
+        expect(roleNames).toContain("Account_Manager");
+        expect(roleNames).not.toContain("archaser_admin");
     });
 });
