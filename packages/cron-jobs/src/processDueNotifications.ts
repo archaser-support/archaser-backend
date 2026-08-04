@@ -4,18 +4,13 @@
  * Sends notifications for invoices that are due (or due in N days) based on
  * ActivitiesSequence steps with step_type='due' and days_before_due.
  *
- * Run daily, before handleOverdueInvoices, so invoices due today get
- * notifications before potentially becoming overdue.
- *
- * STAGE 2 PORT: Best-effort port from frontend SHA 81bd37afa048ee2b07f5e2e1a67629567cbc174f
- * - Core logic: finds due activities, creates SCHEDULED activities with contacts
- * - SMS send: calls @archaser/sms-send when credentials available, otherwise stubs
- * - Email send: stubbed (logs intent, returns true like CreditNotificationEmailService)
- * - Missing: ActivityService.processTemplateContent (template variable replacement)
- * - Missing: Full email/SMS dispatch (will be sent by Activity Workflow Manager when implemented)
+ * Creates SCHEDULED activities; channel send handled by Activity Workflow Manager.
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { scheduleDateTime } from "./scheduling/scheduleDateTime";
+import { getRawTemplateContent } from "./templates/processTemplateContent";
+import { getSystemUserId } from "./users/getSystemUserId";
 
 const BATCH_SIZE = 100;
 const LOOK_AHEAD_DAYS = 15; // Pre-create activities for invoices due within the next 15 days
@@ -299,10 +294,21 @@ export async function processDueNotifications(
                         Date.UTC(y, m - 1, d, 0, 0, 0, 0)
                     );
 
-                    // Calculate schedule time (basic version without scheduleDateTime helper)
-                    const scheduledTime = options?.fastForwardScheduledActivities
-                        ? new Date(Date.now() - 60 * 60 * 1000)
-                        : new Date(notificationSendDate);
+                    // Calculate schedule time with timezone/weekend parity
+                    let scheduledTime: Date;
+                    if (options?.fastForwardScheduledActivities) {
+                        scheduledTime = new Date(Date.now() - 60 * 60 * 1000);
+                    } else {
+                        const scheduleResult = await scheduleDateTime({
+                            baseDate: notificationSendDate,
+                            timeOfDay: step.time_of_day ?? "09:00",
+                            customerCountry: customer.Country?.iso2,
+                            customerState: customer.State?.iso2,
+                            preserveInputDate: true,
+                            daysToAdd: 0,
+                        });
+                        scheduledTime = scheduleResult.scheduledTime;
+                    }
 
                     if (
                         !options?.fastForwardScheduledActivities &&
@@ -505,13 +511,16 @@ async function processInvoicesForDueStep(
         );
     }
 
-    // Build basic activity content (template processing stubbed)
-    const activityContent = buildActivityContent(step, customer);
+    // Build raw template content (macro replacement at send time in AWM)
+    const activityContent = getRawTemplateContent(step, customer.language);
     const content = activityContent.content || "Due notification";
-    const subject = activityContent.subject || "Due notification";
 
-    // Get system user ID (stub - use 1 if not found)
     const systemUserId = await getSystemUserId(prisma, customer.account_id);
+    if (!systemUserId) {
+        throw new Error(
+            `No active user found for account ${customer.account_id}`
+        );
+    }
 
     const activity = await prisma.$transaction(async (tx) => {
         const activity = await tx.activity.create({
@@ -637,7 +646,7 @@ async function mergeInvoicesIntoDueActivity(
     );
     const mainInvoice = combinedInvoices[0];
 
-    const activityContent = buildActivityContent(step, customer);
+    const activityContent = getRawTemplateContent(step, customer.language);
     const content = activityContent.content || "Due notification";
 
     await prisma.$transaction(async (tx) => {
@@ -708,46 +717,4 @@ function filterContactsBySequence(
         }
     }
     return result;
-}
-
-/**
- * Build raw template content for due notification.
- * STUB: Invoice placeholders would be replaced by ActivityService.processTemplateContent when available.
- */
-function buildActivityContent(
-    step: any,
-    customer: any
-): { subject: string; content: string } {
-    const template = step.ActivitiesTemplate;
-    const lang = (customer.language as string) || "English";
-    const langTemplate = template?.ActivityTemplateLanguage?.find(
-        (l: any) => l.language === lang
-    );
-
-    const subject = langTemplate?.email_subject ?? template?.email_subject ?? "";
-    const content =
-        step.activity_type === "SMS"
-            ? (langTemplate?.sms_content ?? template?.sms_content ?? "")
-            : (langTemplate?.email_content ?? template?.email_content ?? "");
-
-    return { subject, content };
-}
-
-/**
- * Get system user ID for an account.
- * STUB: Returns "1" if not found. Real implementation would query User table.
- */
-async function getSystemUserId(
-    prisma: PrismaClient,
-    accountId: number
-): Promise<string> {
-    const systemUser = await prisma.user.findFirst({
-        where: {
-            account_id: accountId,
-            email: { contains: "system" },
-            deactivated_at: null,
-        },
-        select: { id: true },
-    });
-    return systemUser?.id ?? "1";
 }

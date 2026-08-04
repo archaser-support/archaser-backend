@@ -34,33 +34,13 @@ export const WORKER_SOAK_KNOWN_GAPS: Array<{
     severity: "info" | "warn" | "block";
 }> = [
     {
-        name: "Activity Workflow Manager",
-        gap: "Email send stubbed; template variable fill incomplete; schedule calc simplified; CI/realtime skipped",
-        severity: "warn",
-    },
-    {
         name: "Process Due Notifications",
-        gap: "Creates SCHEDULED activities; template fill incomplete; channel send deferred to AWM",
-        severity: "warn",
+        gap: "Creates SCHEDULED activities; channel send deferred to AWM",
+        severity: "info",
     },
     {
         name: "Process Automated Collection Periods",
-        gap: "State flags only; activity create/send deferred to AWM",
-        severity: "warn",
-    },
-    {
-        name: "Process Notification Rules",
-        gap: "In-app delivery live; SMTP email stubbed",
-        severity: "warn",
-    },
-    {
-        name: "Report Scheduler",
-        gap: "Full execute needs REPORTS_SERVICE_URL + INTERNAL_SERVICE_SECRET + reports /internal execute",
-        severity: "warn",
-    },
-    {
-        name: "Inforu SMS Status Check",
-        gap: "Slim delivery update; allowNextAutomatedActivity deferred",
+        gap: "Flag/transitions only (matches original); AWM creates/sends next activities",
         severity: "info",
     },
 ];
@@ -82,7 +62,6 @@ export const PATH_FLIP_FLAGS: PathFlipFlag[] = [
     {
         id: "connectors",
         envVar: "USE_CONNECTORS_NEST_REWRITE",
-        // Narrow peel: /api/accounts + billing/notification leaves (not all entities/accounts).
         nginxMarker: "location ^~ /api/accounts/",
         description: "Connectors Nest path flip (D70)",
     },

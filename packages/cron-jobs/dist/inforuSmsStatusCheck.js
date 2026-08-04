@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkInforuSmsStatus = checkInforuSmsStatus;
+const jobLog_1 = require("./logging/jobLog");
 /**
  * Check SMS delivery status for pending Inforu messages
  * Ported from frontend SHA 81bd37afa048ee2b07f5e2e1a67629567cbc174f
@@ -69,7 +70,9 @@ async function checkInforuSmsStatus(prisma) {
                 }
                 catch (error) {
                     summary.errors++;
-                    console.error(`[InforuSmsStatusCheck] Failed to process message ${message.id}:`, error);
+                    (0, jobLog_1.jobLog)("InforuSmsStatusCheck", "error", `Failed to process message ${message.id}`, {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
                 }
             }));
             // Delay between batches to avoid API rate limits
@@ -106,7 +109,7 @@ async function checkMessageStatus(prisma, message) {
     const vendor = message.SMSVendor;
     const messageIdToCheck = message.vendor_message_id || message.message_id;
     if (!messageIdToCheck) {
-        console.warn(`[InforuSmsStatusCheck] No message ID for ActivityContact ${message.id}`);
+        (0, jobLog_1.jobLog)("InforuSmsStatusCheck", "warn", `[InforuSmsStatusCheck] No message ID for ActivityContact ${message.id}`);
         return false;
     }
     // Get message status from Inforu API
@@ -119,7 +122,7 @@ async function checkMessageStatus(prisma, message) {
         await handleSMSDeliverySlim(prisma, message, status.status, status.error);
         return true;
     }
-    console.warn(`[InforuSmsStatusCheck] Cannot update - no message_id for ActivityContact ${message.id}`);
+    (0, jobLog_1.jobLog)("InforuSmsStatusCheck", "warn", `[InforuSmsStatusCheck] Cannot update - no message_id for ActivityContact ${message.id}`);
     return false;
 }
 /**
@@ -142,7 +145,7 @@ async function getInforuMessageStatus(vendor, messageId) {
             authHeader = `Basic ${encoded}`;
         }
         else {
-            console.error(`[InforuSmsStatusCheck] Missing credentials for vendor ${vendor.id}`);
+            (0, jobLog_1.jobLog)("InforuSmsStatusCheck", "error", `[InforuSmsStatusCheck] Missing credentials for vendor ${vendor.id}`);
             return null;
         }
         const response = await fetch(`https://capi.inforu.co.il/api/v2/SMS/GetMessageStatus?messageId=${messageId}`, {
@@ -171,7 +174,7 @@ async function getInforuMessageStatus(vendor, messageId) {
             error = responseData.StatusDescription || "Unknown error";
         }
         else {
-            console.warn(`[InforuSmsStatusCheck] Unknown StatusId ${responseData.StatusId} for message ${messageId}`);
+            (0, jobLog_1.jobLog)("InforuSmsStatusCheck", "warn", `[InforuSmsStatusCheck] Unknown StatusId ${responseData.StatusId} for message ${messageId}`);
             return null; // Skip unknown statuses
         }
         // Skip if status is still "sent" (no change)
@@ -181,7 +184,9 @@ async function getInforuMessageStatus(vendor, messageId) {
         return { status, error };
     }
     catch (error) {
-        console.error(`[InforuSmsStatusCheck] API error for message ${messageId}:`, error);
+        (0, jobLog_1.jobLog)("InforuSmsStatusCheck", "error", `API error for message ${messageId}`, {
+            error: error instanceof Error ? error.message : String(error),
+        });
         return null;
     }
 }
@@ -191,7 +196,6 @@ async function getInforuMessageStatus(vendor, messageId) {
  *
  * Omitted from historical implementation:
  * - LogService calls (skip all logging)
- * - BusinessService.allowNextAutomatedActivity (too complex, defer to Activity Workflow Manager)
  */
 async function handleSMSDeliverySlim(prisma, activityContact, statusStr, errorMsg) {
     try {
@@ -242,6 +246,15 @@ async function handleSMSDeliverySlim(prisma, activityContact, statusStr, errorMs
                 if (collectionPeriod &&
                     contactDeliveryStatus === "Delivered" &&
                     collectionPeriod.current_category === "Automated") {
+                    if (!activity.is_last_step) {
+                        await tx.customerCollectionPeriod.update({
+                            where: { id: collectionPeriod.id },
+                            data: {
+                                create_next_activity: true,
+                                modified_at: new Date(),
+                            },
+                        });
+                    }
                     // If this is the last automated step, set next_category=Agent
                     if (activity.is_last_step &&
                         !collectionPeriod.is_last_automated_step_delivered) {
@@ -260,12 +273,11 @@ async function handleSMSDeliverySlim(prisma, activityContact, statusStr, errorMs
                 }
             }
         });
-        // TODO: BusinessService.allowNextAutomatedActivity for mid-sequence steps
-        // This is deferred to Activity Workflow Manager cron job
-        // (requires complex business logic, not a simple Prisma update)
     }
     catch (error) {
-        console.error(`[InforuSmsStatusCheck] handleSMSDeliverySlim error for ActivityContact ${activityContact.id}:`, error);
+        (0, jobLog_1.jobLog)("InforuSmsStatusCheck", "error", `handleSMSDeliverySlim error for ActivityContact ${activityContact.id}`, {
+            error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
     }
 }

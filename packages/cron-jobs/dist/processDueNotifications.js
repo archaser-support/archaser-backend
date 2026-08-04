@@ -5,18 +5,13 @@
  * Sends notifications for invoices that are due (or due in N days) based on
  * ActivitiesSequence steps with step_type='due' and days_before_due.
  *
- * Run daily, before handleOverdueInvoices, so invoices due today get
- * notifications before potentially becoming overdue.
- *
- * STAGE 2 PORT: Best-effort port from frontend SHA 81bd37afa048ee2b07f5e2e1a67629567cbc174f
- * - Core logic: finds due activities, creates SCHEDULED activities with contacts
- * - SMS send: calls @archaser/sms-send when credentials available, otherwise stubs
- * - Email send: stubbed (logs intent, returns true like CreditNotificationEmailService)
- * - Missing: ActivityService.processTemplateContent (template variable replacement)
- * - Missing: Full email/SMS dispatch (will be sent by Activity Workflow Manager when implemented)
+ * Creates SCHEDULED activities; channel send handled by Activity Workflow Manager.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.processDueNotifications = processDueNotifications;
+const scheduleDateTime_1 = require("./scheduling/scheduleDateTime");
+const processTemplateContent_1 = require("./templates/processTemplateContent");
+const getSystemUserId_1 = require("./users/getSystemUserId");
 const BATCH_SIZE = 100;
 const LOOK_AHEAD_DAYS = 15; // Pre-create activities for invoices due within the next 15 days
 async function processDueNotifications(prisma, options) {
@@ -222,10 +217,22 @@ async function processDueNotifications(prisma, options) {
                 for (const { dateKey, invoices: customerInvoices } of groupList) {
                     const [y, m, d] = dateKey.split("-").map(Number);
                     const notificationSendDate = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
-                    // Calculate schedule time (basic version without scheduleDateTime helper)
-                    const scheduledTime = options?.fastForwardScheduledActivities
-                        ? new Date(Date.now() - 60 * 60 * 1000)
-                        : new Date(notificationSendDate);
+                    // Calculate schedule time with timezone/weekend parity
+                    let scheduledTime;
+                    if (options?.fastForwardScheduledActivities) {
+                        scheduledTime = new Date(Date.now() - 60 * 60 * 1000);
+                    }
+                    else {
+                        const scheduleResult = await (0, scheduleDateTime_1.scheduleDateTime)({
+                            baseDate: notificationSendDate,
+                            timeOfDay: step.time_of_day ?? "09:00",
+                            customerCountry: customer.Country?.iso2,
+                            customerState: customer.State?.iso2,
+                            preserveInputDate: true,
+                            daysToAdd: 0,
+                        });
+                        scheduledTime = scheduleResult.scheduledTime;
+                    }
                     if (!options?.fastForwardScheduledActivities &&
                         scheduledTime <= nowTime)
                         continue;
@@ -368,12 +375,13 @@ async function processInvoicesForDueStep(prisma, invoices, step, scheduledTime, 
     if (existingActivity) {
         return mergeInvoicesIntoDueActivity(prisma, existingActivity, invoicesToProcess, step, customer, contacts);
     }
-    // Build basic activity content (template processing stubbed)
-    const activityContent = buildActivityContent(step, customer);
+    // Build raw template content (macro replacement at send time in AWM)
+    const activityContent = (0, processTemplateContent_1.getRawTemplateContent)(step, customer.language);
     const content = activityContent.content || "Due notification";
-    const subject = activityContent.subject || "Due notification";
-    // Get system user ID (stub - use 1 if not found)
-    const systemUserId = await getSystemUserId(prisma, customer.account_id);
+    const systemUserId = await (0, getSystemUserId_1.getSystemUserId)(prisma, customer.account_id);
+    if (!systemUserId) {
+        throw new Error(`No active user found for account ${customer.account_id}`);
+    }
     const activity = await prisma.$transaction(async (tx) => {
         const activity = await tx.activity.create({
             data: {
@@ -463,7 +471,7 @@ async function mergeInvoicesIntoDueActivity(prisma, existingActivity, invoicesTo
         .join(", ");
     const totalOutstandingDebt = combinedInvoices.reduce((sum, i) => sum + (i.outstanding_debt ?? 0), 0);
     const mainInvoice = combinedInvoices[0];
-    const activityContent = buildActivityContent(step, customer);
+    const activityContent = (0, processTemplateContent_1.getRawTemplateContent)(step, customer.language);
     const content = activityContent.content || "Due notification";
     await prisma.$transaction(async (tx) => {
         await tx.activity.update({
@@ -510,33 +518,4 @@ function filterContactsBySequence(contacts, sequence) {
         }
     }
     return result;
-}
-/**
- * Build raw template content for due notification.
- * STUB: Invoice placeholders would be replaced by ActivityService.processTemplateContent when available.
- */
-function buildActivityContent(step, customer) {
-    const template = step.ActivitiesTemplate;
-    const lang = customer.language || "English";
-    const langTemplate = template?.ActivityTemplateLanguage?.find((l) => l.language === lang);
-    const subject = langTemplate?.email_subject ?? template?.email_subject ?? "";
-    const content = step.activity_type === "SMS"
-        ? (langTemplate?.sms_content ?? template?.sms_content ?? "")
-        : (langTemplate?.email_content ?? template?.email_content ?? "");
-    return { subject, content };
-}
-/**
- * Get system user ID for an account.
- * STUB: Returns "1" if not found. Real implementation would query User table.
- */
-async function getSystemUserId(prisma, accountId) {
-    const systemUser = await prisma.user.findFirst({
-        where: {
-            account_id: accountId,
-            email: { contains: "system" },
-            deactivated_at: null,
-        },
-        select: { id: true },
-    });
-    return systemUser?.id ?? "1";
 }

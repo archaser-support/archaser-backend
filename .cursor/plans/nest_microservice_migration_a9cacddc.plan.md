@@ -34,14 +34,15 @@ isProject: false
 
 # Nest.js backend split — living roadmap
 
-**Status:** Lane A peels done · Worker 18/18 · **Staging+prod cutover templates applied** (`ENABLE_CRON_JOBS=false`, nginx peels on, main-API peel modules deleted) · Amplify Stage 1B wiring done (staging UI redirect)  
-**Next action:** Deploy/reload on hosts · set `NEST_CORS_ORIGINS` for Amplify · smoke peels + worker · optional deepen cron gaps (email/templates)
+**Status:** Lane A peels done · Worker 18/18 · **Cron stub→parity deepen done** (SMTP email, templates, tracking, SMS-after-email, report attachments, moveCollection timeline/cache, pragmatic CI channel select) · Staging+prod cutover **templates** in git · Amplify Stage 1B wiring done · Shared tests repo at sibling `archaser-rest/tests`  
+**Next action:** Deploy/reload on hosts · set `NEST_CORS_ORIGINS` for Amplify · smoke peels + worker · env for worker email/Redis/reports S2S
 
 | Lane | Next |
 |------|------|
 | **A — Peels / stubs** | Host deploy: reload nginx + compose; smoke SMS/connectors/reports |
 | **B — Amplify** | Amplify Console env + CORS; prod Amplify cutover optional (EC2 UI remains) |
-| **Worker cron** | Worker owns schedules; known gaps accepted at cutover |
+| **Worker cron** | Templates cut over; deepen complete for product gap list; ops smoke + env |
+| **Tests** | Product repos point at `../tests/...`; push/sync `tests` remote as needed |
 
 **Resume file:** keep this document updated when a stage finishes (`Status`, decision log, “Next action”).
 
@@ -188,11 +189,13 @@ flowchart LR
 - Console env + `NEST_CORS_ORIGINS` remain host/ops steps.
 - Production Amplify cutover optional (EC2 Next UI remains).
 
-### Stage 2 — Worker deepen — **cutover applied**
+### Stage 2 — Worker deepen — **cutover templates + cron parity deepen done**
 
-- Compose (staging + production): `ENABLE_CRON_JOBS=false` — worker owns BullMQ schedules.
+- Compose (staging + production): `ENABLE_CRON_JOBS=false` — worker owns BullMQ schedules (host deploy still required).
 - **All CronJob names live via `@archaser/cron-jobs`** (including Activity Workflow Manager).
-- **Accepted gaps:** email SMTP stubbed; template variable fill incomplete; AWM schedule calc simplified; Report Scheduler needs `REPORTS_SERVICE_URL` + internal execute for full S2S.
+- **Parity deepen (done):** Nest SMTP (`EMAIL_SERVER_*`); `{macro}` / credit `{{var}}` templates; holiday-aware schedule; AWM open/click tracking; transient email deferral + SMS after permanent fail; pragmatic intelligent channel select (`selectPragmaticChannel`); Report Scheduler → `POST /internal/reports/:id/execute` + email CSV/Excel to `schedule_config.recipients`; moveCollection Internal timeline + `dashboardCache` invalidate + Redis control-center publish.
+- **Still intentional / later:** full historical ML CommunicationIntelligence (Nest uses pragmatic rules only); PDF export may fall back to CSV/Excel; `WORKER_SOAK_KNOWN_GAPS` info-only (Due Notifications / Automated Collection Periods defer send to AWM by design).
+- **Env for full behavior:** `EMAIL_SERVER_*`, `EMAIL_FROM`, `REDIS_URL`, `REPORTS_SERVICE_URL` + `INTERNAL_SERVICE_SECRET`, `NEXT_PUBLIC_BASE_URL` (tracking pixel host).
 - Credit/customers domain loaded from `api/dist` (`CREDIT_INSURANCE_DOMAIN_ROOT` / `CUSTOMERS_DOMAIN_ROOT` overrides).
 
 ### Stage 3 — SMS (`sms` Nest app) — **peeled + flipped**
@@ -218,7 +221,7 @@ flowchart LR
 
 - DB-per-service; separate Grafana instances; peeling core AR (Customer/Invoice/Activity) early; Redis → ElastiCache (revisit after worker harden); **new git repo per peel** (superseded by D22); production Amplify UI cutover.
 
-**Host deploy still required** (compose up + `nginx -t` / reload). Known cron gaps (email SMTP, AWM template extras) accepted at cutover.
+**Host deploy still required** (compose up + `nginx -t` / reload). Cron deepen is in-repo; host smoke + env remains the gate.
 
 #### Worker soak → cutover
 
@@ -226,7 +229,7 @@ flowchart LR
 2. Gate: `npm run soak:check` (expects peels ACTIVE in nginx templates).
 3. Registry gate: `npm run soak:cron-registry`.
 4. After deploy: watch worker logs + CronJobExecution; run-now via `POST /api/gateway/cron/:jobId/run-now`.
-5. Known gaps listed in `WORKER_SOAK_KNOWN_GAPS` (accepted unless product escalates).
+5. Known gaps listed in `WORKER_SOAK_KNOWN_GAPS` (info-only process boundaries; product stub gaps for email/CI/reports/moveCollection cleared).
 
 #### Path-flip soak → cutover
 
@@ -251,9 +254,15 @@ flowchart LR
 - Main API peel modules deleted after flip (`sms`, `accounts-nested`, reports controllers)
 - `@archaser/auth`, nginx path splits, FE `nest-api-rewrite.cjs`, OpenAPI client, compose service URLs
 
-**Optional / later:** ElastiCache; private npm publish; deepen worker email/templates; production Amplify UI cutover.
+**Optional / later:** ElastiCache; private npm publish; full ML CommunicationIntelligence (beyond pragmatic channel select); richer PDF report export; production Amplify UI cutover.
 
 **No change needed for peels:** Core Customer/Invoice/Activity ownership on main API; product feature plans unrelated to migration.
+
+### Tests repo (sibling)
+
+- Path: `archaser-rest/tests` → `https://github.com/archaser-support/tests.git`
+- Layout: `tests/frontend/`, `tests/backend/api|sms|packages|e2e/`
+- Product configs (Jest/Vitest/Playwright) point at `../tests/...`; old in-repo `frontend/test` and `backend/api/test` / `e2e` removed from product trees.
 
 ## Discovery gates (blocking / informational)
 
@@ -321,12 +330,13 @@ flowchart LR
 
 ## How to resume in a later session
 
-1. Open this plan; read **Status** / **Next action** (lanes A and B).
+1. Open this plan; read **Status** / **Next action** (lanes A/B/worker/tests).
 2. Do not re-litigate locked D1–D72 unless explicitly changing a decision (then update the table).
-3. Lane A peels done · worker owns schedules · nginx peels flipped in-repo · Amplify staging wiring done → **deploy hosts** + smoke.
+3. Lane A peels + cron deepen done in-repo · nginx peels flipped in templates · Amplify staging wiring done → **deploy hosts** + env (`NEST_CORS_ORIGINS`, worker `EMAIL_*` / `REDIS_URL` / reports S2S) + smoke.
+4. Cron package verify: `npm run build -w @archaser/cron-jobs` and `npm run test -w @archaser/cron-jobs` (tests live under sibling `tests/`).
 
 ## Issues (vertical slices)
 
 Historical tracer bullets under `.scratch/nest-microservice-migration/` (01–19 done). New peel work should follow this plan’s Stage 3–5 playbook; republish slices with `/to-issues` if desired.
 
-**Status:** 01–19 done · cutover templates in repo · **Next:** host deploy / CORS / smoke
+**Status:** 01–19 done · cutover templates in repo · cron parity deepen done · **Next:** host deploy / CORS / smoke
