@@ -5,32 +5,24 @@
  * Ported from frontend SHA 81bd37afa048ee2b07f5e2e1a67629567cbc174f
  * server/cron-jobs/activityWorkflowManager.ts
  *
- * BEST-EFFORT PORT: Core Prisma work + SMS send via @archaser/sms-send
+ * Phase 1: Send due SCHEDULED activities (SMS + Email via Nest SMTP env)
+ * Phase 2: Generate next automated activities with scheduleDateTime parity
  *
- * Phase 1: Send due SCHEDULED activities (SMS + Email stub)
- * - Query SCHEDULED activities due now (status=SCHEDULED, schedule_time <= now)
- * - Load pending ActivityContact rows for each activity
- * - SMS: resolve SMSVendor, call sendViaVendor with DB credentials
- * - Email: stub (mark as deferred/skipped, same pattern as notificationRules)
- * - Update ActivityContact + Activity status (SENT/DELIVERED/FAILED)
- * - Batch with concurrency limit 5
- *
- * Phase 2: Generate next automated activities
- * - Find open collection periods needing next activity (create_next_activity=true)
- * - Create SCHEDULED Activity + ActivityContact for next sequence step
- * - Update collection period (last_automated_step, create_next_activity=false)
- *
- * INTENTIONAL GAPS (documented as code comments):
- * - Full ActivityService.createAutomatedActivity (complex DI dependencies)
- * - ActivityService.processTemplateContent (template variable replacement)
- * - Email send (SMTP client unavailable; stub logs intent)
- * - CommunicationIntelligence / ControlCenterRealtime / LogService
- * - CustomerService.calculateNextAutomatedActivityTime (complex date calc)
- * - Intelligent channel selection / full CI logic
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activityWorkflowManager = activityWorkflowManager;
 const sms_send_1 = require("@archaser/sms-send");
+const selectPragmaticChannel_1 = require("./communication/selectPragmaticChannel");
+const activityEmailSendFailure_1 = require("./email/activityEmailSendFailure");
+const accountSender_1 = require("./email/accountSender");
+const emailErrorClassification_1 = require("./email/emailErrorClassification");
+const sendEmailWithRetry_1 = require("./email/sendEmailWithRetry");
+const emailTrackingUtils_1 = require("./email/emailTrackingUtils");
+const jobLog_1 = require("./logging/jobLog");
+const publishControlCenterUpdate_1 = require("./realtime/publishControlCenterUpdate");
+const calculateNextAutomatedActivityTime_1 = require("./scheduling/calculateNextAutomatedActivityTime");
+const processTemplateContent_1 = require("./templates/processTemplateContent");
+const getSystemUserId_1 = require("./users/getSystemUserId");
 const BATCH_SIZE = 50;
 const CONCURRENCY_LIMIT = 5;
 async function activityWorkflowManager(prisma, options) {
@@ -41,7 +33,9 @@ async function activityWorkflowManager(prisma, options) {
             activitiesProcessed: 0,
             smsSent: 0,
             smsFailed: 0,
-            emailStubbed: 0,
+            emailSent: 0,
+            emailFailed: 0,
+            emailDeferred: 0,
             errors: [],
         },
         phase2: {
@@ -50,20 +44,26 @@ async function activityWorkflowManager(prisma, options) {
             periodsUpdated: 0,
             errors: [],
         },
-        intentionalGaps: {
-            emailSend: "Email send stubbed (SMTP unavailable)",
-            templateProcessing: "Template variable replacement skipped",
-            fullActivityService: "ActivityService.createAutomatedActivity skipped",
-            communicationIntelligence: "CI/ControlCenter/LogService skipped",
-        },
+        intentionalGaps: {},
     };
     try {
         // ===== PHASE 1: Send due SCHEDULED activities =====
         await sendDueActivities(prisma, options, summary.phase1);
         // ===== PHASE 2: Generate next automated activities =====
         await generateNextActivities(prisma, options, summary.phase2);
+        const phase1DidWork = summary.phase1.activitiesProcessed > 0 ||
+            summary.phase1.smsSent > 0 ||
+            summary.phase1.emailSent > 0;
+        const phase2DidWork = summary.phase2.activitiesCreated > 0 ||
+            summary.phase2.periodsUpdated > 0;
+        if (phase1DidWork || phase2DidWork) {
+            await (0, publishControlCenterUpdate_1.publishControlCenterUpdate)(`activityWorkflowManager: processed ${summary.phase1.activitiesProcessed} activities, created ${summary.phase2.activitiesCreated} activities, updated ${summary.phase2.periodsUpdated} periods`, {
+                excludeFromNotifications: true,
+                source: "automated",
+            });
+        }
         const totalErrors = summary.phase1.errors.length + summary.phase2.errors.length;
-        const message = `Phase 1: ${summary.phase1.activitiesProcessed} activities processed (SMS: ${summary.phase1.smsSent} sent, ${summary.phase1.smsFailed} failed; Email: ${summary.phase1.emailStubbed} stubbed). Phase 2: ${summary.phase2.activitiesCreated} activities created, ${summary.phase2.periodsUpdated} periods updated${totalErrors > 0 ? `, ${totalErrors} errors` : ""}`;
+        const message = `Phase 1: ${summary.phase1.activitiesProcessed} activities processed (SMS: ${summary.phase1.smsSent} sent, ${summary.phase1.smsFailed} failed; Email: ${summary.phase1.emailSent} sent, ${summary.phase1.emailFailed} failed, ${summary.phase1.emailDeferred} deferred). Phase 2: ${summary.phase2.activitiesCreated} activities created, ${summary.phase2.periodsUpdated} periods updated${totalErrors > 0 ? `, ${totalErrors} errors` : ""}`;
         return {
             success: totalErrors === 0,
             message,
@@ -114,6 +114,7 @@ async function sendDueActivities(prisma, options, stats) {
                     type: true,
                     email: true,
                     language: true,
+                    customer_uuid: true,
                     Person: {
                         select: {
                             mobile: true,
@@ -138,8 +139,11 @@ async function sendDueActivities(prisma, options, stats) {
                 select: {
                     id: true,
                     name: true,
+                    logo: true,
+                    sub_domain: true,
                     sms_from_name: true,
                     sms_fallback_enabled: true,
+                    intelligent_channel_selection_enabled: true,
                 },
             },
             ActivitiesSequence: {
@@ -147,6 +151,19 @@ async function sendDueActivities(prisma, options, stats) {
                     id: true,
                     step: true,
                     category: true,
+                    activity_template_id: true,
+                    ActivitiesTemplate: {
+                        include: {
+                            ActivityTemplateLanguage: true,
+                        },
+                    },
+                },
+            },
+            Invoice: {
+                select: {
+                    invoice_number: true,
+                    due_date: true,
+                    outstanding_debt: true,
                 },
             },
             ActivityContact: {
@@ -154,6 +171,8 @@ async function sendDueActivities(prisma, options, stats) {
                     id: true,
                     contact_id: true,
                     status: true,
+                    retry_count: true,
+                    communication_channel: true,
                     Contact: {
                         select: {
                             id: true,
@@ -205,11 +224,42 @@ async function processActivity(prisma, activity, options, stats) {
         });
         return;
     }
-    // SMS: resolve vendor and send
+    const channelPick = (0, selectPragmaticChannel_1.selectPragmaticChannel)({
+        intelligentSelectionEnabled: activity.Account?.intelligent_channel_selection_enabled,
+        activityType: activity.type,
+        contacts: pendingContacts.map((ac) => ({
+            email: ac.Contact?.email,
+            mobile: ac.Contact?.mobile,
+            communication_channel: ac.communication_channel,
+        })),
+    });
+    if (channelPick.changed) {
+        (0, jobLog_1.jobLog)("activityWorkflowManager", "info", "channel selection", {
+            activityId: activity.id,
+            from: activity.type,
+            to: channelPick.selectedChannel,
+            reason: channelPick.reason,
+        });
+        activity.type = channelPick.selectedChannel;
+        await prisma.activity.update({
+            where: { id: activity.id },
+            data: {
+                type: channelPick.selectedChannel,
+                modified_at: new Date(),
+            },
+        });
+        await Promise.all(pendingContacts.map((ac) => prisma.activityContact.update({
+            where: { id: ac.id },
+            data: {
+                communication_channel: channelPick.selectedChannel,
+                channel_selection_reason: channelPick.reason,
+                modified_at: new Date(),
+            },
+        })));
+    }
     if (activity.type === "SMS") {
         await processSmsActivity(prisma, activity, pendingContacts, options, stats);
     }
-    // Email: stub (log intent, mark as sent)
     else if (activity.type === "Email") {
         await processEmailActivity(prisma, activity, pendingContacts, stats);
     }
@@ -353,30 +403,260 @@ async function processSmsActivity(prisma, activity, pendingContacts, options, st
     });
 }
 /**
- * Process Email activity: stub (SMTP unavailable)
- * Pattern: same as processNotificationRules email stub
+ * Process Email activity: template processing + SMTP send with tracking and SMS fallback
  */
 async function processEmailActivity(prisma, activity, pendingContacts, stats) {
-    // STUB: Mark email activity as SENT without actually sending
-    // Real email send would require Nest system email service
-    await prisma.$transaction(async (tx) => {
-        await tx.activity.update({
-            where: { id: activity.id },
+    const account = activity.Account;
+    const customer = activity.Customer;
+    const sender = await (0, accountSender_1.resolveAccountEmailSender)(prisma, account.id);
+    const countryId = customer.Country?.id ?? null;
+    const trackingBaseUrl = process.env.NEXT_PUBLIC_BASE_URL ||
+        process.env.NEXT_PUBLIC_NEST_API_BASE_URL;
+    const templateBundle = activity.ActivitiesSequence
+        ? (0, processTemplateContent_1.getRawTemplateContent)({
+            activity_type: "Email",
+            ActivitiesTemplate: activity.ActivitiesSequence.ActivitiesTemplate,
+        }, customer.language)
+        : { subject: "", content: "" };
+    let emailSuccessCount = 0;
+    let activitySuccessCount = 0;
+    let failedCount = 0;
+    for (const activityContact of pendingContacts) {
+        const contact = activityContact.Contact;
+        if (!contact?.email) {
+            failedCount++;
+            await prisma.activityContact.update({
+                where: { id: activityContact.id },
+                data: {
+                    status: "Failed",
+                    failure_reason: "No email address",
+                    failed_at: new Date(),
+                    modified_at: new Date(),
+                },
+            });
+            continue;
+        }
+        const accountForTemplate = {
+            id: account.id,
+            name: account.name,
+            logo: account.logo,
+            sub_domain: account.sub_domain,
+        };
+        const customerForTemplate = {
+            type: customer.type,
+            customer_uuid: customer.customer_uuid,
+            language: customer.language,
+            Person: customer.Person,
+            Company: customer.Company,
+        };
+        const rawSubject = templateBundle.subject ||
+            activity.title ||
+            "Collection Notice";
+        const rawContent = activity.system_generated && templateBundle.content
+            ? templateBundle.content
+            : activity.content || templateBundle.content || "";
+        const emailSubject = (0, processTemplateContent_1.processTemplateContent)({
+            content: rawSubject,
+            account: accountForTemplate,
+            customer: customerForTemplate,
+            contact: { ...contact, id: contact.id },
+            invoice: activity.Invoice ?? undefined,
+        });
+        const emailContent = (0, processTemplateContent_1.processTemplateContent)({
+            content: rawContent,
+            account: accountForTemplate,
+            customer: customerForTemplate,
+            contact: { ...contact, id: contact.id },
+            invoice: activity.Invoice ?? undefined,
+        });
+        if (!emailContent.trim()) {
+            failedCount++;
+            await prisma.activityContact.update({
+                where: { id: activityContact.id },
+                data: {
+                    status: "Failed",
+                    failure_reason: "Empty email content",
+                    failed_at: new Date(),
+                    modified_at: new Date(),
+                },
+            });
+            continue;
+        }
+        const trackingMessageId = `${activity.id}-${activityContact.id}-${Date.now()}`;
+        const trackedEmailContent = (0, emailTrackingUtils_1.addEmailTracking)(emailContent, trackingMessageId, trackingBaseUrl);
+        try {
+            const emailResult = await (0, sendEmailWithRetry_1.sendEmailWithRetry)({
+                toEmail: contact.email,
+                subject: emailSubject,
+                html: trackedEmailContent,
+                fromName: sender.fromName,
+                replyToEmail: sender.replyToEmail || undefined,
+                messageId: trackingMessageId,
+            });
+            if (emailResult.skipped) {
+                failedCount++;
+                await prisma.activityContact.update({
+                    where: { id: activityContact.id },
+                    data: {
+                        status: "Failed",
+                        failure_reason: "SMTP not configured",
+                        failed_at: new Date(),
+                        modified_at: new Date(),
+                    },
+                });
+                continue;
+            }
+            await prisma.activityContact.update({
+                where: { id: activityContact.id },
+                data: {
+                    status: "Sent",
+                    message_id: trackingMessageId,
+                    ses_message_id: emailResult.messageId,
+                    communication_channel: activityContact.communication_channel || "Email",
+                    modified_at: new Date(),
+                },
+            });
+            emailSuccessCount++;
+            activitySuccessCount++;
+        }
+        catch (err) {
+            const failureResult = await (0, activityEmailSendFailure_1.handleActivityEmailSendFailure)(prisma, activityContact.id, err, activityContact.retry_count ?? 0);
+            if (failureResult.action === "deferred") {
+                stats.emailDeferred += 1;
+                continue;
+            }
+            const smsFallbackSent = await attemptEmailToSmsFallback(prisma, {
+                activity,
+                activityContact,
+                contact,
+                account,
+                customer,
+                countryId,
+                accountForTemplate,
+                customerForTemplate,
+            }, stats);
+            if (smsFallbackSent) {
+                activitySuccessCount++;
+                stats.smsSent += 1;
+            }
+            else {
+                failedCount++;
+            }
+        }
+    }
+    stats.emailSent += emailSuccessCount;
+    stats.emailFailed += failedCount;
+    const finalStatus = failedCount === 0
+        ? "SENT"
+        : activitySuccessCount === 0
+            ? "FAILED"
+            : "SENT";
+    await prisma.activity.update({
+        where: { id: activity.id },
+        data: {
+            status: finalStatus,
+            modified_at: new Date(),
+            ...(activitySuccessCount > 0 ? { last_sent_time: new Date() } : {}),
+        },
+    });
+}
+async function attemptEmailToSmsFallback(prisma, ctx, stats) {
+    const { activity, activityContact, contact, account, customer, countryId, accountForTemplate, customerForTemplate, } = ctx;
+    if (!contact?.mobile ||
+        account.sms_fallback_enabled === false ||
+        !countryId) {
+        return false;
+    }
+    const vendor = await resolveSmsVendor(prisma, account.id, countryId);
+    if (!vendor) {
+        await prisma.activityContact.update({
+            where: { id: activityContact.id },
             data: {
-                status: "SENT",
+                failure_reason: (0, emailErrorClassification_1.getEmailErrorSummary)(new Error("Email failed; no SMS vendor for fallback")),
                 modified_at: new Date(),
             },
         });
-        await Promise.all(pendingContacts.map((ac) => tx.activityContact.update({
-            where: { id: ac.id },
+        return false;
+    }
+    let smsRawContent = activity.content || "Reminder";
+    if (activity.system_generated && activity.ActivitiesSequence) {
+        const smsTemplate = (0, processTemplateContent_1.getRawTemplateContent)({
+            ...activity.ActivitiesSequence,
+            activity_type: "SMS",
+        }, customer.language);
+        if (smsTemplate.content) {
+            smsRawContent = smsTemplate.content;
+        }
+    }
+    const smsBody = (0, processTemplateContent_1.processTemplateContent)({
+        content: smsRawContent,
+        account: accountForTemplate,
+        customer: {
+            ...customerForTemplate,
+            Company: customerForTemplate.Company
+                ? { name: customerForTemplate.Company.name || "" }
+                : null,
+        },
+        contact: { ...contact, id: contact.id },
+        invoice: activity.Invoice ?? undefined,
+    });
+    const smsFromName = account.sms_from_name || "ARchaser";
+    const vendorCreds = {
+        id: vendor.id,
+        provider: vendor.provider,
+        api_key: vendor.api_key,
+        api_secret: vendor.api_secret,
+        account_sid: vendor.account_sid,
+        auth_token: vendor.auth_token,
+        webhook_url: vendor.webhook_url,
+        phone_number: null,
+        cost_per_sms: vendor.cost_per_sms
+            ? parseFloat(vendor.cost_per_sms.toString())
+            : null,
+    };
+    try {
+        const result = await (0, sms_send_1.sendViaVendor)(vendorCreds, contact.mobile, smsFromName, smsBody);
+        if (result.success) {
+            await prisma.activityContact.update({
+                where: { id: activityContact.id },
+                data: {
+                    status: "Sent",
+                    message_id: result.messageId || null,
+                    vendor_message_id: result.vendorMessageId || null,
+                    sms_vendor_id: vendor.id,
+                    communication_channel: "SMS",
+                    channel_selection_reason: "{{activity.channel_fallback_email_to_sms}}",
+                    modified_at: new Date(),
+                },
+            });
+            return true;
+        }
+        await prisma.activityContact.update({
+            where: { id: activityContact.id },
             data: {
-                status: "Sent",
-                communication_channel: "Email",
+                failure_reason: result.error ||
+                    "Email failed and SMS fallback failed",
                 modified_at: new Date(),
             },
-        })));
-    });
-    stats.emailStubbed += pendingContacts.length;
+        });
+        if (stats) {
+            stats.smsFailed += 1;
+        }
+        return false;
+    }
+    catch (error) {
+        await prisma.activityContact.update({
+            where: { id: activityContact.id },
+            data: {
+                failure_reason: (0, emailErrorClassification_1.getEmailErrorSummary)(error),
+                modified_at: new Date(),
+            },
+        });
+        if (stats) {
+            stats.smsFailed += 1;
+        }
+        return false;
+    }
 }
 /**
  * Resolve SMS vendor for account/country using AccountSMSProviderPreferences
@@ -620,15 +900,29 @@ async function processCollectionPeriodForNextActivity(prisma, period, sequencesB
         });
         return;
     }
-    // Build activity content (stub - no template processing)
-    const activityContent = buildActivityContent(nextSequence, customer);
+    // Build activity content (raw template — per-contact processing at send time)
+    const activityContent = (0, processTemplateContent_1.getRawTemplateContent)(nextSequence, customer.language);
     const content = activityContent.content || "Automated activity";
-    const subject = activityContent.subject || "Automated activity";
-    // Calculate schedule time (basic - no CustomerService.calculateNextAutomatedActivityTime)
-    // STUB: Schedule immediately or with minimal delay
-    const scheduleTime = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
-    // Get system user ID
-    const systemUserId = await getSystemUserId(prisma, customer.account_id);
+    const customerDetailsMap = new Map([
+        [
+            customer.id,
+            {
+                account_id: customer.account_id,
+                last_automated_step: currentStep,
+                period_start_date: period.period_start_date ?? new Date(),
+                previous_category: period.previous_category,
+            },
+        ],
+    ]);
+    const calculatedTimes = await (0, calculateNextAutomatedActivityTime_1.calculateNextAutomatedActivityTime)(prisma, customerDetailsMap);
+    const scheduleResult = calculatedTimes.get(customer.id);
+    const scheduleTime = scheduleResult?.schedule_time ?? new Date(Date.now() + 60 * 60 * 1000);
+    const scheduleCalculation = scheduleResult?.schedule_calculation ?? null;
+    const systemUserId = await (0, getSystemUserId_1.getSystemUserId)(prisma, customer.account_id);
+    if (!systemUserId) {
+        stats.errors.push(`Period ${period.id}: No active user found for account ${customer.account_id}`);
+        return;
+    }
     // Create activity + contacts in transaction
     await prisma.$transaction(async (tx) => {
         const activity = await tx.activity.create({
@@ -645,6 +939,7 @@ async function processCollectionPeriodForNextActivity(prisma, period, sequencesB
                     contacts: contacts.length,
                 },
                 schedule_time: scheduleTime,
+                schedule_calculation: scheduleCalculation,
                 status: "SCHEDULED",
                 system_generated: true,
                 created_by: systemUserId,
@@ -688,32 +983,4 @@ function filterContactsBySequence(contacts, sequence) {
         }
     }
     return result;
-}
-/**
- * Build activity content (stub - no template processing)
- * STUB: Raw template content without variable replacement
- */
-function buildActivityContent(sequence, customer) {
-    const template = sequence.ActivitiesTemplate;
-    const lang = customer.language || "English";
-    const langTemplate = template?.ActivityTemplateLanguage?.find((l) => l.language === lang);
-    const subject = langTemplate?.email_subject ?? template?.email_subject ?? "";
-    const content = sequence.activity_type === "SMS"
-        ? (langTemplate?.sms_content ?? template?.sms_content ?? "")
-        : (langTemplate?.email_content ?? template?.email_content ?? "");
-    return { subject, content };
-}
-/**
- * Get system user ID for an account
- */
-async function getSystemUserId(prisma, accountId) {
-    const systemUser = await prisma.user.findFirst({
-        where: {
-            account_id: accountId,
-            email: { contains: "system" },
-            deactivated_at: null,
-        },
-        select: { id: true },
-    });
-    return systemUser?.id ?? "1";
 }

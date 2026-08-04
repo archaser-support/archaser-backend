@@ -10,6 +10,7 @@ exports.ReportsModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const database_module_1 = require("../database/database.module");
+const internal_reports_controller_1 = require("../internal/internal-reports.controller");
 const report_execution_service_1 = require("./report-execution.service");
 const reports_controller_1 = require("./reports.controller");
 const reports_service_1 = require("./reports.service");
@@ -19,7 +20,11 @@ exports.ReportsModule = ReportsModule;
 exports.ReportsModule = ReportsModule = __decorate([
     (0, common_1.Module)({
         imports: [auth_module_1.AuthModule, database_module_1.DatabaseModule],
-        controllers: [reports_controller_1.ReportsController, reports_controller_1.ReportsByIdController],
+        controllers: [
+            reports_controller_1.ReportsController,
+            reports_controller_1.ReportsByIdController,
+            internal_reports_controller_1.InternalReportsController,
+        ],
         providers: [reports_service_1.ReportsService, report_execution_service_1.ReportExecutionService],
         exports: [reports_service_1.ReportsService, report_execution_service_1.ReportExecutionService],
     })

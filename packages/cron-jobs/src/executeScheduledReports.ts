@@ -1,9 +1,14 @@
 import type { PrismaClient } from "@prisma/client";
 
+import { resolveAccountEmailSender } from "./email/accountSender";
+import { sendSmtpHtmlEmail } from "./email/sendSmtpHtmlEmail";
+
 type ScheduleConfig = {
     cron?: string;
     intervalHours?: number;
     intervalDays?: number;
+    recipients?: string[];
+    format?: "csv" | "excel" | "pdf";
 };
 
 function computeNextRunAt(
@@ -37,14 +42,27 @@ function computeNextRunAt(
         next.setUTCDate(next.getUTCDate() + Number(config.intervalDays));
         return next;
     }
-    // Default: push 24h so a broken config does not hot-loop
     next.setUTCDate(next.getUTCDate() + 1);
     return next;
 }
 
+function parseScheduleConfig(raw: unknown): ScheduleConfig | null {
+    if (!raw || typeof raw !== "object") {
+        return null;
+    }
+    return raw as ScheduleConfig;
+}
+
+type ExportResponse = {
+    format: string;
+    filename: string;
+    contentBase64: string;
+    contentType: string;
+};
+
 /**
  * Due report schedules: execute via reports Nest S2S when REPORTS_SERVICE_URL
- * is set; otherwise mark run timestamps only (email delivery remains deferred).
+ * is set; email CSV/Excel attachment to schedule_config.recipients when configured.
  */
 export async function executeScheduledReports(
     prisma: PrismaClient
@@ -55,6 +73,7 @@ export async function executeScheduledReports(
         due: number;
         executed: number;
         failed: number;
+        emailed: number;
         mode: "s2s" | "timestamp_only";
     };
     durationMs: number;
@@ -72,6 +91,9 @@ export async function executeScheduledReports(
             schedule_type: true,
             schedule_config: true,
             next_run_at: true,
+            Report: {
+                select: { account_id: true, name: true },
+            },
         },
         take: 50,
     });
@@ -83,11 +105,23 @@ export async function executeScheduledReports(
 
     let executed = 0;
     let failed = 0;
+    let emailed = 0;
 
     for (const schedule of due) {
         try {
+            const config = parseScheduleConfig(schedule.schedule_config);
+            const recipients = Array.isArray(config?.recipients)
+                ? config!.recipients.filter(
+                      (r): r is string =>
+                          typeof r === "string" && r.trim().length > 0
+                  )
+                : [];
+            const format = config?.format || "csv";
+
+            let exportPayload: ExportResponse | null = null;
+
             if (mode === "s2s") {
-                const res = await fetch(
+                const executeRes = await fetch(
                     `${reportsBase}/internal/reports/${schedule.report_id}/execute`,
                     {
                         method: "POST",
@@ -101,18 +135,81 @@ export async function executeScheduledReports(
                         }),
                     }
                 );
-                if (!res.ok) {
+                if (!executeRes.ok) {
+                    const accountId = schedule.Report?.account_id;
+                    const accountSuffix =
+                        accountId != null ? ` (account ${accountId})` : "";
                     throw new Error(
-                        `Reports execute HTTP ${res.status} for report ${schedule.report_id}`
+                        `Reports execute HTTP ${executeRes.status} for report ${schedule.report_id}${accountSuffix}`
                     );
+                }
+
+                if (recipients.length > 0) {
+                    const executeJson = (await executeRes.json()) as {
+                        data?: Record<string, unknown>[];
+                    };
+
+                    const exportRes = await fetch(
+                        `${reportsBase}/internal/reports/${schedule.report_id}/export`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "x-internal-service-secret": internalSecret!,
+                            },
+                            body: JSON.stringify({
+                                format,
+                                executeResult: executeJson,
+                            }),
+                        }
+                    );
+
+                    if (!exportRes.ok) {
+                        throw new Error(
+                            `Reports export HTTP ${exportRes.status} for report ${schedule.report_id}`
+                        );
+                    }
+
+                    exportPayload = (await exportRes.json()) as ExportResponse;
                 }
             }
 
-            const config =
-                schedule.schedule_config &&
-                typeof schedule.schedule_config === "object"
-                    ? (schedule.schedule_config as ScheduleConfig)
-                    : null;
+            if (
+                recipients.length > 0 &&
+                exportPayload &&
+                schedule.Report?.account_id
+            ) {
+                const sender = await resolveAccountEmailSender(
+                    prisma,
+                    schedule.Report.account_id
+                );
+                const attachmentBuffer = Buffer.from(
+                    exportPayload.contentBase64,
+                    "base64"
+                );
+                const reportName = schedule.Report.name || "Report";
+
+                for (const recipient of recipients) {
+                    const result = await sendSmtpHtmlEmail({
+                        toEmail: recipient,
+                        subject: `Scheduled report: ${reportName}`,
+                        html: `<p>Your scheduled report <strong>${reportName}</strong> is attached.</p>`,
+                        fromName: sender.fromName,
+                        replyToEmail: sender.replyToEmail || undefined,
+                        attachments: [
+                            {
+                                filename: exportPayload.filename,
+                                content: attachmentBuffer,
+                                contentType: exportPayload.contentType,
+                            },
+                        ],
+                    });
+                    if (!result.skipped) {
+                        emailed += 1;
+                    }
+                }
+            }
+
             await prisma.reportSchedule.update({
                 where: { id: schedule.id },
                 data: {
@@ -132,8 +229,8 @@ export async function executeScheduledReports(
 
     return {
         success: failed === 0,
-        message: `Report scheduler: ${executed}/${due.length} executed (${mode})`,
-        summary: { due: due.length, executed, failed, mode },
+        message: `Report scheduler: ${executed}/${due.length} executed (${mode}, ${emailed} emails)`,
+        summary: { due: due.length, executed, failed, emailed, mode },
         durationMs: Date.now() - start,
     };
 }
