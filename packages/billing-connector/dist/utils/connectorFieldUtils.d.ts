@@ -4,7 +4,13 @@ export interface MappingRule {
     archaserField: string;
     erpField: string;
     transform?: ConnectorFieldTransform;
+    defaultValue?: string;
 }
+export declare function getImportEntityFieldCatalog(importType: ImportType): {
+    fields: string[];
+    requiredFields: string[];
+    highlightedFields: string[];
+} | null;
 export declare function isConnectorFieldTransform(value: unknown): value is ConnectorFieldTransform;
 export declare function parseMappingRules(raw: unknown): MappingRule[];
 export declare function extractNestedValue(obj: Record<string, unknown>, path: string): unknown;

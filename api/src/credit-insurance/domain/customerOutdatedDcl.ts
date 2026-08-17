@@ -103,11 +103,14 @@ export function computeOutdatedDclAtEvaluation(args: {
             evalStart,
             -args.dclCustomerSinceMonths
         );
+        // If the gap is less than dclCustomerSinceMonths, outdated_dcl = True.
+        // This means the customer is newer than the threshold date
+        // (activeCustomerSince >= oldestAllowedCustomerSince).
         isActiveCustomerSinceTooOld =
             differenceInCalendarDays(
-                oldestAllowedCustomerSince,
-                args.activeCustomerSince
-            ) > 0;
+                args.activeCustomerSince,
+                oldestAllowedCustomerSince
+            ) >= 0;
     }
 
     return isBelowMinScore || isScoreValidityExpired || isActiveCustomerSinceTooOld;
