@@ -1,10 +1,12 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { AccountAdminEntitiesModule } from "./account-admin/account-admin-entities.module";
+import { AccountsSmsModule } from "./accounts/accounts-sms.module";
 import { ActivitiesModule } from "./activities/activities.module";
 import { AdminModule } from "./admin/admin.module";
 import { AgentsModule } from "./agents/agents.module";
 import { AuthModule } from "./auth/auth.module";
+import { BillingConnectorModule } from "./billing-connector/billing-connector.module";
 import { BusinessUnitsModule } from "./business-units/business-units.module";
 import { CommunicationIntelligenceModule } from "./communication-intelligence/communication-intelligence.module";
 import { ContactsCollectionPeriodModule } from "./contacts/contacts-collection-period.module";
@@ -29,6 +31,7 @@ import { ReferenceDataModule } from "./reference-data/reference-data.module";
 import { RolesModule } from "./roles/roles.module";
 import { SearchModule } from "./search/search.module";
 import { SettingsModule } from "./settings/settings.module";
+import { SmsAdminModule } from "./sms/sms-admin.module";
 import { SystemModule } from "./system/system.module";
 import { UploadModule } from "./upload/upload.module";
 import { UserPreferencesModule } from "./user-preferences/user-preferences.module";
@@ -51,6 +54,7 @@ import { UserPreferencesModule } from "./user-preferences/user-preferences.modul
         InvoicesModule,
         ContactsCollectionPeriodModule,
         AccountAdminEntitiesModule,
+        AccountsSmsModule,
         // Peeled: sms → @archaser/sms; accounts-nested → @archaser/connectors; reports → @archaser/reports
         PermissionsModule,
         RolesModule,
@@ -60,6 +64,7 @@ import { UserPreferencesModule } from "./user-preferences/user-preferences.modul
         AgentsModule,
         ErrorsModule,
         LogsModule,
+        SmsAdminModule,
         UploadModule,
         SettingsModule,
         UserPreferencesModule,
@@ -69,6 +74,7 @@ import { UserPreferencesModule } from "./user-preferences/user-preferences.modul
         ReferenceDataModule,
         PlatformLeavesModule,
         ImportModule,
+        BillingConnectorModule,
         CreditInsuranceModule,
         PortalModule,
         SystemModule,

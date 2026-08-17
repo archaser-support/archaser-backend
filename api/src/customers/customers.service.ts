@@ -11,6 +11,7 @@ import {
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
+import { enqueueAsOfRewrite } from "../credit-insurance/domain/asOfRewriteQueue";
 import { resolveCustomerHeaderOpenArAmounts } from "../credit-insurance/domain/openReceivableByCustomerCurrency";
 import { DatabaseService } from "../database/database.service";
 
@@ -957,6 +958,12 @@ export class CustomersService {
                 modified_by: effectiveUserId,
             } as never,
         });
+        await enqueueAsOfRewrite({
+            accountId,
+            customerIds: [id],
+            fromDate: startDate,
+            toDate: new Date(),
+        });
 
         return serializeBigInt(topUp);
     }
@@ -967,7 +974,7 @@ export class CustomersService {
      */
     async cancelTopUp(user: JwtPayload, id: number, topUpId: number) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
-        const { effectiveUserId } = await this.assertCustomerInAccount(
+        const { accountId, effectiveUserId } = await this.assertCustomerInAccount(
             userInfo,
             id
         );
@@ -989,6 +996,12 @@ export class CustomersService {
                 cancelled_at: new Date(),
                 modified_by: effectiveUserId,
             } as never,
+        });
+        await enqueueAsOfRewrite({
+            accountId,
+            customerIds: [id],
+            fromDate: cancelled.start_date,
+            toDate: new Date(),
         });
 
         return serializeBigInt(cancelled);

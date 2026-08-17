@@ -190,11 +190,20 @@ async function fetchPriorityJson(
 export async function fetchPriorityEntitySamples(
     config: PriorityConnectionConfig,
     importType: PriorityEntityImportType,
-    top = 10
+    top = 10,
+    options?: { entitySet?: string | null; filter?: string | null }
 ): Promise<PriorityFetchResult> {
     const serviceRoot = normalizeServiceRoot(config.baseUrl);
-    const collectionUrl = buildEntityCollectionUrl(serviceRoot, importType);
-    const url = `${collectionUrl}?$top=${top}`;
+    const collectionUrl = buildEntityCollectionUrl(
+        serviceRoot,
+        importType,
+        options?.entitySet
+    );
+    const params = new URLSearchParams({ $top: String(top) });
+    if (options?.filter?.trim()) {
+        params.set("$filter", options.filter.trim());
+    }
+    const url = `${collectionUrl}?${params.toString()}`;
     const result = await fetchPriorityJson(config, url);
 
     if (!result.ok) {
@@ -227,7 +236,8 @@ export async function fetchPriorityEntitySamples(
 export async function discoverPriorityFields(
     config: PriorityConnectionConfig,
     importType: PriorityEntityImportType,
-    top = 5
+    top = 5,
+    options?: { entitySet?: string | null }
 ): Promise<
     | {
           ok: true;
@@ -240,7 +250,8 @@ export async function discoverPriorityFields(
     const fetchResult = await fetchPriorityEntitySamples(
         config,
         importType,
-        top
+        top,
+        options
     );
     if (!fetchResult.ok) {
         return {
@@ -257,4 +268,57 @@ export async function discoverPriorityFields(
         exampleValues: discovered.exampleValues,
         sampleCount: fetchResult.records.length,
     };
+}
+
+/**
+ * Parse EntitySet names from Priority OData $metadata (XML).
+ */
+export async function fetchPriorityEntitySetCatalog(
+    config: PriorityConnectionConfig
+): Promise<
+    | { ok: true; names: string[]; statusCode?: number }
+    | { ok: false; error: string; statusCode?: number }
+> {
+    const serviceRoot = normalizeServiceRoot(config.baseUrl);
+    const url = `${serviceRoot}/$metadata`;
+    try {
+        const authorization = buildAuthorizationHeader(
+            config.authType,
+            config.credentials
+        );
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                Accept: "application/xml",
+                Authorization: authorization,
+            },
+        });
+        const text = await response.text();
+        if (!response.ok) {
+            return {
+                ok: false,
+                statusCode: response.status,
+                error: text.slice(0, 400) || `HTTP ${response.status}`,
+            };
+        }
+        const names = Array.from(
+            new Set(
+                Array.from(text.matchAll(/EntitySet Name="([^"]+)"/g)).map(
+                    (match) => match[1]
+                )
+            )
+        )
+            .filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+            .sort((a, b) => a.localeCompare(b));
+
+        return { ok: true, statusCode: response.status, names };
+    } catch (error) {
+        return {
+            ok: false,
+            error:
+                error instanceof Error
+                    ? error.message
+                    : "Failed to fetch Priority metadata",
+        };
+    }
 }

@@ -33,6 +33,7 @@ const HEADER_SCALAR_FIELDS = [
     "reporting_days",
     "cost_calculation_method",
     "cost_percent",
+    "registration_fee_percent",
     "status",
     "active_customer_count",
     "total_approved_limit",
@@ -49,6 +50,7 @@ export type InsurancePolicyTrendPoint = {
     maxTotalCover: number | null;
     costCalculationMethod: string | null;
     costPercent: number | null;
+    registrationFeePercent: number | null;
     activeCustomerCount: number;
     totalApprovedLimit: number | null;
     totalOpenAr: number;
@@ -306,6 +308,7 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                 reporting_days,
                 cost_calculation_method,
                 cost_percent,
+                registration_fee_percent,
                 status,
                 active_customer_count,
                 total_approved_limit,
@@ -336,6 +339,7 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                 ${policy.reporting_days},
                 ${policy.cost_calculation_method}::"cost_calculation_method",
                 ${policy.cost_percent},
+                ${policy.registration_fee_percent},
                 ${policy.status}::"record_status",
                 ${rollups.activeCustomerCount},
                 ${rollups.totalApprovedLimit},
@@ -366,6 +370,7 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                 reporting_days = EXCLUDED.reporting_days,
                 cost_calculation_method = EXCLUDED.cost_calculation_method,
                 cost_percent = EXCLUDED.cost_percent,
+                registration_fee_percent = EXCLUDED.registration_fee_percent,
                 status = EXCLUDED.status,
                 active_customer_count = EXCLUDED.active_customer_count,
                 total_approved_limit = EXCLUDED.total_approved_limit,
@@ -514,6 +519,7 @@ function mapHeaderRow(row: {
     max_total_cover: Prisma.Decimal | null;
     cost_calculation_method: string | null;
     cost_percent: Prisma.Decimal | null;
+    registration_fee_percent: Prisma.Decimal | null;
     active_customer_count: number;
     total_approved_limit: Prisma.Decimal | null;
     total_open_ar: number;
@@ -528,6 +534,7 @@ function mapHeaderRow(row: {
         maxTotalCover: decimalToNumber(row.max_total_cover),
         costCalculationMethod: row.cost_calculation_method,
         costPercent: decimalToNumber(row.cost_percent),
+        registrationFeePercent: decimalToNumber(row.registration_fee_percent),
         activeCustomerCount: Number(row.active_customer_count ?? 0),
         totalApprovedLimit: decimalToNumber(row.total_approved_limit),
         totalOpenAr: Number(row.total_open_ar ?? 0),
@@ -567,6 +574,7 @@ export async function getInsurancePolicyTrend(
             max_total_cover,
             cost_calculation_method::text AS cost_calculation_method,
             cost_percent,
+            registration_fee_percent,
             active_customer_count,
             total_approved_limit,
             total_open_ar,

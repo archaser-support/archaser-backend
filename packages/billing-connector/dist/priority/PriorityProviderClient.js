@@ -81,10 +81,13 @@ class PriorityProviderClient {
         const skip = options.cursor ? Number.parseInt(options.cursor, 10) : 0;
         const safeSkip = Number.isFinite(skip) && skip >= 0 ? skip : 0;
         const serviceRoot = normalizeServiceRoot(this.config.baseUrl);
-        const collectionUrl = (0, priorityApiContract_1.buildEntityCollectionUrl)(serviceRoot, entity);
+        const collectionUrl = (0, priorityApiContract_1.buildEntityCollectionUrl)(serviceRoot, entity, options.entitySet);
         const params = { $top: String(pageSize) };
         if (safeSkip > 0) {
             params.$skip = String(safeSkip);
+        }
+        if (options.filter && options.filter.trim()) {
+            params.$filter = options.filter.trim();
         }
         if (options.since) {
             Object.assign(params, (0, priorityApiContract_1.buildIncrementalQueryParams)({

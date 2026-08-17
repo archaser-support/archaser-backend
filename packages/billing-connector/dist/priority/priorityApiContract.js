@@ -120,11 +120,17 @@ exports.PRIORITY_ENTITY_ENDPOINTS = {
             "EMAIL",
             "PHONE",
             "COUNTRYNAME",
+            "COUNTRYCODE",
             "STATE",
+            "STATECODE",
+            "STATEA",
             "ADDRESS",
+            "ADDRESS2",
             "ZIP",
             "WTAXNUM",
             "UDATE",
+            "IDG_COMPANYNAME",
+            "MCUSTNAME",
         ],
         notes: "CUSTNAME is the documented customer number (Customer Number). Maps 1:1 to Archaser customer_number.",
     },
@@ -199,9 +205,12 @@ exports.PRIORITY_ENTITY_ENDPOINTS = {
 function getPriorityEntityEndpoint(importType) {
     return exports.PRIORITY_ENTITY_ENDPOINTS[importType];
 }
-function buildEntityCollectionUrl(serviceRoot, importType) {
+function buildEntityCollectionUrl(serviceRoot, importType, entitySetOverride) {
     const base = serviceRoot.replace(/\/$/, "");
-    return `${base}/${exports.PRIORITY_ENTITY_ENDPOINTS[importType].path}`;
+    const path = entitySetOverride && entitySetOverride.trim()
+        ? entitySetOverride.trim()
+        : exports.PRIORITY_ENTITY_ENDPOINTS[importType].path;
+    return `${base}/${path}`;
 }
 /**
  * Credit notes ship as negative CINVOICES rows (D4), not a fifth import entity.

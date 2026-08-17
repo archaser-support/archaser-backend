@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.encryptCredentials = encryptCredentials;
+exports.parseStoredConnectorCredentials = parseStoredConnectorCredentials;
 exports.decryptCredentials = decryptCredentials;
 exports.isBillingConnectorEncryptionConfigured = isBillingConnectorEncryptionConfigured;
 const crypto_1 = __importDefault(require("crypto"));
@@ -36,6 +37,38 @@ function encryptCredentials(credentials) {
     ]);
     const authTag = cipher.getAuthTag();
     return Buffer.concat([iv, authTag, encrypted]).toString("base64");
+}
+/**
+ * Reads credentials from DB whether stored as AES-GCM (Nest API) or legacy
+ * plain JSON (connectors peel used JSON.stringify before encryption existed).
+ */
+function parseStoredConnectorCredentials(stored) {
+    const trimmed = stored.trim();
+    if (!trimmed) {
+        throw new Error("Stored credentials are empty");
+    }
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed &&
+                typeof parsed === "object" &&
+                !Array.isArray(parsed)) {
+                return parsed;
+            }
+        }
+        catch {
+            // fall through to decrypt
+        }
+    }
+    try {
+        return decryptCredentials(trimmed);
+    }
+    catch (decryptErr) {
+        const message = decryptErr instanceof Error ? decryptErr.message : String(decryptErr);
+        throw new Error(message.includes("BILLING_CONNECTOR_ENCRYPTION_KEY")
+            ? "Billing connector credentials are encrypted but BILLING_CONNECTOR_ENCRYPTION_KEY is not configured"
+            : `Unable to read stored connector credentials: ${message}`);
+    }
 }
 function decryptCredentials(encryptedBlob) {
     const key = resolveEncryptionKey();

@@ -12,6 +12,7 @@ export interface EntityImportBatchResult {
     failed: number;
     skipped: number;
     affectedCustomerIds: number[];
+    entityIds: number[];
     errors: string[];
 }
 
@@ -65,6 +66,7 @@ export async function importMappedEntityBatch(
         failed: 0,
         skipped: 0,
         affectedCustomerIds: [],
+        entityIds: [],
         errors: [],
     };
     const rows =
@@ -255,22 +257,23 @@ export async function importMappedEntityBatch(
                         : null,
                     modified_by: userId || null,
                 };
-                if (existing) {
-                    await prisma.invoice.update({
+                const invoice = existing
+                    ? await prisma.invoice.update({
                         where: { id: existing.id },
                         data: data as never,
-                    });
-                } else {
-                    await prisma.invoice.create({
+                        select: { id: true },
+                    })
+                    : await prisma.invoice.create({
                         data: {
                             ...data,
                             created_by: userId || null,
                             status: "Open",
                         } as never,
+                        select: { id: true },
                     });
-                }
                 result.success += 1;
                 result.affectedCustomerIds.push(customer.id);
+                result.entityIds.push(invoice.id);
             } catch (error) {
                 result.failed += 1;
                 result.errors.push(
@@ -327,7 +330,7 @@ export async function importMappedEntityBatch(
                     continue;
                 }
             }
-            await prisma.invoicePayment.create({
+            const payment = await prisma.invoicePayment.create({
                 data: {
                     account_id: accountId,
                     customer_id: customer.id,
@@ -342,9 +345,11 @@ export async function importMappedEntityBatch(
                     created_by: userId || null,
                     modified_by: userId || null,
                 } as never,
+                select: { id: true },
             });
             result.success += 1;
             result.affectedCustomerIds.push(customer.id);
+            result.entityIds.push(payment.id);
         } catch (error) {
             result.failed += 1;
             result.errors.push(

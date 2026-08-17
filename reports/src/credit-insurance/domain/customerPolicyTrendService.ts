@@ -96,6 +96,7 @@ export type CustomerPolicyCustomerTrendPoint = {
     usageAmount: number;
     approvedLimit: number | null;
     usagePct: number | null;
+    registrationFeePercent: number | null;
 } & CustomerPolicyDailyCostChangeFields;
 
 export type CustomerPolicyCustomerTrendLatestPoint =
@@ -115,6 +116,7 @@ export type CustomerPolicyTrendRowForPoint = {
     total_daily_cost?: Prisma.Decimal | null;
     cost_calculation_method?: cost_calculation_method | null;
     cost_percent?: Prisma.Decimal | null;
+    registration_fee_percent?: Prisma.Decimal | null;
 };
 
 export type CustomerPolicyCustomerTrendResponse = {
@@ -615,6 +617,7 @@ export function mapCustomerPolicyTrendRowToPoint(
             approved_limit: row.approved_limit,
             effective_approved_limit: row.effective_approved_limit,
         }),
+        registrationFeePercent: decimalToNumber(row.registration_fee_percent),
         ...mapDailyCostFieldsFromTrendRow(row),
     };
 }
@@ -641,7 +644,8 @@ export async function getCustomerDailyCostFromTrend(
             t.top_up_cost_currency,
             t.total_daily_cost,
             t.cost_calculation_method,
-            t.cost_percent
+            t.cost_percent,
+            t.registration_fee_percent
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${accountId}
           AND t.customer_id = ${customerId}
@@ -852,6 +856,8 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             credit_score_input_date: true,
             active_customer_since: true,
             outdated_dcl: true,
+            cost_percent: true,
+            registration_fee_percent: true,
             capacity_gap_amount: true,
             capacity_gap_amount1: true,
             capacity_gap_currency1: true,
@@ -1135,6 +1141,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
                     total_daily_cost,
                     cost_calculation_method,
                     cost_percent,
+                    registration_fee_percent,
                     financial_currency,
                     total_receivables,
                     health_index,
@@ -1184,6 +1191,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
                     ${totalDailyCost},
                     ${costSnapshot.costCalculationMethod}::"cost_calculation_method",
                     ${snapshottedCostPercent},
+                    ${cp.registration_fee_percent},
                     ${financialPayload.financialCurrency},
                     ${financialPayload.totalReceivables},
                     ${financialPayload.healthIndex},
@@ -1232,6 +1240,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
                     total_daily_cost = EXCLUDED.total_daily_cost,
                     cost_calculation_method = EXCLUDED.cost_calculation_method,
                     cost_percent = EXCLUDED.cost_percent,
+                    registration_fee_percent = EXCLUDED.registration_fee_percent,
                     financial_currency = EXCLUDED.financial_currency,
                     total_receivables = EXCLUDED.total_receivables,
                     health_index = EXCLUDED.health_index,
@@ -1451,7 +1460,8 @@ export async function getCustomerPolicyTrendForCustomer(
             t.top_up_cost_currency,
             t.total_daily_cost,
             t.cost_calculation_method,
-            t.cost_percent
+            t.cost_percent,
+            t.registration_fee_percent
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${accountId}
           AND t.customer_id = ${customerId}

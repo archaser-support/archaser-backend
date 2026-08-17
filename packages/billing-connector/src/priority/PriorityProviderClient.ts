@@ -120,11 +120,18 @@ export class PriorityProviderClient implements BillingProviderClient {
         const safeSkip = Number.isFinite(skip) && skip >= 0 ? skip : 0;
 
         const serviceRoot = normalizeServiceRoot(this.config.baseUrl);
-        const collectionUrl = buildEntityCollectionUrl(serviceRoot, entity);
+        const collectionUrl = buildEntityCollectionUrl(
+            serviceRoot,
+            entity,
+            options.entitySet
+        );
 
         const params: Record<string, string> = { $top: String(pageSize) };
         if (safeSkip > 0) {
             params.$skip = String(safeSkip);
+        }
+        if (options.filter && options.filter.trim()) {
+            params.$filter = options.filter.trim();
         }
 
         if (options.since) {

@@ -8,7 +8,7 @@ import {
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/jwt-payload";
 import {
-    decryptCredentials,
+    parseStoredConnectorCredentials,
     runInProcessSync,
     testBillingConnectorConnection,
 } from "@archaser/billing-connector";
@@ -656,7 +656,7 @@ export class AccountsNestedService {
                 if (!connector.credentials_encrypted || !connector.base_url) {
                     throw new Error("Missing base_url or credentials");
                 }
-                const credentials = decryptCredentials(
+                const credentials = parseStoredConnectorCredentials(
                     connector.credentials_encrypted
                 );
                 const result = await testBillingConnectorConnection({
