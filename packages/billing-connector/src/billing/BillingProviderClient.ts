@@ -24,6 +24,8 @@ export interface PullOptions {
     cursor?: string | null;
     pageSize?: number;
     overlapMinutes?: number;
+    entitySet?: string | null;
+    filter?: string | null;
 }
 
 export interface BillingProviderClient {

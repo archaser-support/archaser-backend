@@ -43,6 +43,7 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
         failed: 0,
         skipped: 0,
         affectedCustomerIds: [],
+        entityIds: [],
         errors: [],
     };
     const rows = mappingJson == null
@@ -224,23 +225,23 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
                         : null,
                     modified_by: userId || null,
                 };
-                if (existing) {
-                    await prisma.invoice.update({
+                const invoice = existing
+                    ? await prisma.invoice.update({
                         where: { id: existing.id },
                         data: data,
-                    });
-                }
-                else {
-                    await prisma.invoice.create({
+                        select: { id: true },
+                    })
+                    : await prisma.invoice.create({
                         data: {
                             ...data,
                             created_by: userId || null,
                             status: "Open",
                         },
+                        select: { id: true },
                     });
-                }
                 result.success += 1;
                 result.affectedCustomerIds.push(customer.id);
+                result.entityIds.push(invoice.id);
             }
             catch (error) {
                 result.failed += 1;
@@ -292,7 +293,7 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
                     continue;
                 }
             }
-            await prisma.invoicePayment.create({
+            const payment = await prisma.invoicePayment.create({
                 data: {
                     account_id: accountId,
                     customer_id: customer.id,
@@ -306,9 +307,11 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
                     created_by: userId || null,
                     modified_by: userId || null,
                 },
+                select: { id: true },
             });
             result.success += 1;
             result.affectedCustomerIds.push(customer.id);
+            result.entityIds.push(payment.id);
         }
         catch (error) {
             result.failed += 1;

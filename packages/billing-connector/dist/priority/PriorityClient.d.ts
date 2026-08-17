@@ -22,12 +22,29 @@ export interface PriorityFetchResult {
  * Works against Priority sandbox or the local mock server.
  */
 export declare function testPriorityConnection(config: PriorityConnectionConfig): Promise<PriorityTestConnectionResult>;
-export declare function fetchPriorityEntitySamples(config: PriorityConnectionConfig, importType: PriorityEntityImportType, top?: number): Promise<PriorityFetchResult>;
-export declare function discoverPriorityFields(config: PriorityConnectionConfig, importType: PriorityEntityImportType, top?: number): Promise<{
+export declare function fetchPriorityEntitySamples(config: PriorityConnectionConfig, importType: PriorityEntityImportType, top?: number, options?: {
+    entitySet?: string | null;
+    filter?: string | null;
+}): Promise<PriorityFetchResult>;
+export declare function discoverPriorityFields(config: PriorityConnectionConfig, importType: PriorityEntityImportType, top?: number, options?: {
+    entitySet?: string | null;
+}): Promise<{
     ok: true;
     rawHeaders: string[];
     exampleValues: Record<string, unknown>;
     sampleCount: number;
+} | {
+    ok: false;
+    error: string;
+    statusCode?: number;
+}>;
+/**
+ * Parse EntitySet names from Priority OData $metadata (XML).
+ */
+export declare function fetchPriorityEntitySetCatalog(config: PriorityConnectionConfig): Promise<{
+    ok: true;
+    names: string[];
+    statusCode?: number;
 } | {
     ok: false;
     error: string;

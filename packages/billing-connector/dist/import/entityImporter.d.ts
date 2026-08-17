@@ -5,6 +5,7 @@ export interface EntityImportBatchResult {
     failed: number;
     skipped: number;
     affectedCustomerIds: number[];
+    entityIds: number[];
     errors: string[];
 }
 export declare function extractMaxUpdatedAt(records: Record<string, unknown>[]): Date | null;

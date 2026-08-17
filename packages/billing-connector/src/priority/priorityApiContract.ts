@@ -279,11 +279,17 @@ export const PRIORITY_ENTITY_ENDPOINTS: Record<
             "EMAIL",
             "PHONE",
             "COUNTRYNAME",
+            "COUNTRYCODE",
             "STATE",
+            "STATECODE",
+            "STATEA",
             "ADDRESS",
+            "ADDRESS2",
             "ZIP",
             "WTAXNUM",
             "UDATE",
+            "IDG_COMPANYNAME",
+            "MCUSTNAME",
         ],
         notes:
             "CUSTNAME is the documented customer number (Customer Number). Maps 1:1 to Archaser customer_number.",
@@ -368,10 +374,15 @@ export function getPriorityEntityEndpoint(
 
 export function buildEntityCollectionUrl(
     serviceRoot: string,
-    importType: PriorityEntityImportType
+    importType: PriorityEntityImportType,
+    entitySetOverride?: string | null
 ): string {
     const base = serviceRoot.replace(/\/$/, "");
-    return `${base}/${PRIORITY_ENTITY_ENDPOINTS[importType].path}`;
+    const path =
+        entitySetOverride && entitySetOverride.trim()
+            ? entitySetOverride.trim()
+            : PRIORITY_ENTITY_ENDPOINTS[importType].path;
+    return `${base}/${path}`;
 }
 
 // ---------------------------------------------------------------------------

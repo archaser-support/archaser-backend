@@ -8,6 +8,8 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+import { enqueueAsOfRewrite } from "./domain/asOfRewriteQueue";
+import { parseRegistrationFeePercent } from "./domain/registrationFeePercent";
 
 export const INSURANCE_ENTITY_TYPES = [
     "insurance-policies",
@@ -153,6 +155,7 @@ export class InsuranceEntitiesService {
         body: Record<string, unknown>
     ) {
         await this.getById(entityType, user, id);
+        const accountId = await this.accountId(user);
 
         const data: Record<string, unknown> = { ...body };
         delete data.id;
@@ -161,6 +164,53 @@ export class InsuranceEntitiesService {
         delete data.created_at;
         delete data.created_by;
         delete data.InsurancePolicy;
+
+        if (entityType === "insurance-policies") {
+            const policy = await this.db.insurancePolicy.findFirst({
+                where: { id: Number(id), account_id: accountId },
+                select: { policy_kind: true, start_date: true },
+            });
+            if (!policy) {
+                throw new NotFoundException({ error: "insurance-policies not found" });
+            }
+            data.registration_fee_percent = parseRegistrationFeePercent(
+                data.registration_fee_percent,
+                policy.policy_kind
+            );
+            const userInfo = await this.accessScope.resolveUserInfo(user);
+            const updated = await this.db.$transaction(async (tx) => {
+                const policyUpdate = await tx.insurancePolicy.update({
+                    where: { id: Number(id) },
+                    data: {
+                        ...data,
+                        modified_by: userInfo.userId,
+                    } as never,
+                });
+                await tx.customerPolicy.updateMany({
+                    where: {
+                        insurance_policy_id: Number(id),
+                        is_active: true,
+                        Customer: { account_id: accountId },
+                    },
+                    data: {
+                        cost_percent: policyUpdate.cost_percent,
+                        registration_fee_percent:
+                            policyUpdate.registration_fee_percent,
+                        modified_by: userInfo.userId,
+                    },
+                });
+                return policyUpdate;
+            });
+            await enqueueAsOfRewrite({
+                accountId,
+                fromDate:
+                    updated.start_date < policy.start_date
+                        ? updated.start_date
+                        : policy.start_date,
+                toDate: new Date(),
+            });
+            return serializeBigInt(updated);
+        }
 
         const delegate = this.delegate(entityType);
         const updated = await delegate.update({ where: { id }, data });
@@ -173,9 +223,29 @@ export class InsuranceEntitiesService {
         body: Record<string, unknown>
     ) {
         if (entityType === "insurance-policies") {
-            throw new BadRequestException({
-                error: "Use dedicated policy create flow",
+            const accountId = await this.accountId(user);
+            const userInfo = await this.accessScope.resolveUserInfo(user);
+            const policyKind =
+                body.policy_kind === "TopUp" ? "TopUp" : "Primary";
+            const created = await this.db.insurancePolicy.create({
+                data: {
+                    ...body,
+                    account_id: accountId,
+                    policy_kind: policyKind,
+                    registration_fee_percent: parseRegistrationFeePercent(
+                        body.registration_fee_percent,
+                        policyKind
+                    ),
+                    created_by: userInfo.userId,
+                    modified_by: userInfo.userId,
+                } as never,
             });
+            await enqueueAsOfRewrite({
+                accountId,
+                fromDate: created.start_date,
+                toDate: new Date(),
+            });
+            return serializeBigInt(created);
         }
 
         const accountId = await this.accountId(user);
@@ -406,6 +476,8 @@ export class InsuranceEntitiesService {
             approved_limit: named?.customer_max_limit ?? null,
             approved_limit_expiration_date:
                 named?.limit_expiration_date ?? null,
+            cost_percent: policy.cost_percent ?? null,
+            registration_fee_percent: policy.registration_fee_percent ?? null,
             credit_score: null,
             customer_number_policy: named?.customer_number ?? null,
         });
@@ -436,7 +508,11 @@ export class InsuranceEntitiesService {
             }),
             this.db.insurancePolicy.findFirst({
                 where: { id: newPolicyId, account_id: accountId },
-                select: { id: true },
+                select: {
+                    id: true,
+                    cost_percent: true,
+                    registration_fee_percent: true,
+                },
             }),
         ]);
         if (!oldP || !newP) {
@@ -449,6 +525,8 @@ export class InsuranceEntitiesService {
             },
             data: {
                 insurance_policy_id: newPolicyId,
+                cost_percent: newP.cost_percent,
+                registration_fee_percent: newP.registration_fee_percent,
                 modified_by: userInfo.userId,
             },
         });

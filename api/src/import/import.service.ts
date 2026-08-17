@@ -5,6 +5,8 @@ import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { importMappedEntityBatch } from "@archaser/billing-connector";
 import { DatabaseService } from "../database/database.service";
+import { enqueueRewriteForImport } from "../credit-insurance/domain/asOfRewriteQueue";
+import { ImportPolicyService } from "./import-policy.service";
 
 const IMPORT_TYPE_MAP: Record<string, string> = {
     payment: "Payment",
@@ -26,7 +28,8 @@ const LEAF_BODY_KEYS: Record<string, string> = {
 export class ImportService {
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
+        private readonly accessScope: AccessScopeService,
+        private readonly importPolicy: ImportPolicyService
     ) {}
 
     /**
@@ -56,7 +59,7 @@ export class ImportService {
 
         const job = await this.db.importJob.findFirst({
             where: { id: jobId, account_id: accountId },
-            select: { id: true, import_type: true, status: true },
+            select: { id: true, import_type: true, status: true, metadata: true },
         });
         if (!job) {
             throw new NotFoundException({ error: "Import job not found" });
@@ -75,6 +78,7 @@ export class ImportService {
         const globalStartIndex = Number(body.globalStartIndex ?? 0);
         const results: Array<Record<string, unknown>> = [];
         const affectedCustomerIds = new Set<number>();
+        const importedEntityIds = new Set<number>();
         let successCount = 0;
         let failCount = 0;
         let skipCount = 0;
@@ -82,6 +86,77 @@ export class ImportService {
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i] || {};
             const rowIndex = globalStartIndex + i;
+            if (leaf === "policy") {
+                const policyResult = await this.importPolicy.importPolicyRow(row, {
+                    accountId,
+                    userId: this.accessScope.getEffectiveUserId(userInfo),
+                    businessUnitId: userInfo.businessUnitId ?? null,
+                    role: userInfo.viewAsUserRole || userInfo.role,
+                });
+                if (policyResult.success) {
+                    successCount += 1;
+                    try {
+                        await this.db.importRecord.create({
+                            data: {
+                                id: `${jobId}-${rowIndex}-${Date.now()}-${i}`,
+                                import_job_id: jobId,
+                                row_index: rowIndex,
+                                status: "Success",
+                                original_data: row as never,
+                                processed_data: row as never,
+                                result_message: policyResult.action,
+                                created_by: userInfo.userId,
+                                modified_by: userInfo.userId,
+                            } as never,
+                        });
+                    } catch {
+                        // Import rows must continue when audit record persistence fails.
+                    }
+                    results.push({
+                        index: rowIndex,
+                        batchIndex,
+                        success: true,
+                        skipped: false,
+                        message: policyResult.action,
+                        action: policyResult.action,
+                        customerId: policyResult.customerId,
+                    });
+                } else {
+                    failCount += 1;
+                    const error = `${policyResult.errorCode}:${policyResult.message}`;
+                    try {
+                        await this.db.importRecord.create({
+                            data: {
+                                id: `${jobId}-${rowIndex}-${Date.now()}-${i}`,
+                                import_job_id: jobId,
+                                row_index: rowIndex,
+                                status: "Failed",
+                                original_data: row as never,
+                                processed_data: row as never,
+                                result_message: policyResult.message,
+                                processing_errors: {
+                                    code: policyResult.errorCode,
+                                    message: policyResult.message,
+                                } as never,
+                                created_by: userInfo.userId,
+                                modified_by: userInfo.userId,
+                            } as never,
+                        });
+                    } catch {
+                        // Import rows must continue when audit record persistence fails.
+                    }
+                    results.push({
+                        index: rowIndex,
+                        batchIndex,
+                        success: false,
+                        skipped: false,
+                        error,
+                        errorCode: policyResult.errorCode,
+                        message: policyResult.message,
+                    });
+                }
+                continue;
+            }
             const entityImport = await importMappedEntityBatch(
                 this.db,
                 importType as "Customer" | "Contact" | "Invoice" | "Payment",
@@ -92,6 +167,9 @@ export class ImportService {
             );
             for (const id of entityImport.affectedCustomerIds) {
                 affectedCustomerIds.add(id);
+            }
+            for (const id of entityImport.entityIds) {
+                importedEntityIds.add(id);
             }
             const success = entityImport.success > 0;
             const skipped = entityImport.skipped > 0 && entityImport.success === 0;
@@ -135,6 +213,14 @@ export class ImportService {
                 status: "InProgress",
                 successful_records: { increment: successCount },
                 failed_records: { increment: failCount },
+                metadata: {
+                    ...asObject(job.metadata),
+                    asOfRewriteCustomerIds: [...affectedCustomerIds],
+                    asOfRewriteEntityIds: [
+                        ...readNumberArray(job.metadata, "asOfRewriteEntityIds"),
+                        ...importedEntityIds,
+                    ],
+                } as never,
                 modified_at: new Date(),
             } as never,
         });
@@ -183,7 +269,7 @@ export class ImportService {
         const jobId = String(body.jobId || body.id || "");
         const existing = await this.db.importJob.findFirst({
             where: { id: jobId, account_id: accountId },
-            select: { id: true },
+            select: { id: true, import_type: true, metadata: true },
         });
         if (!existing) {
             throw new NotFoundException({ error: "Import job not found" });
@@ -202,6 +288,23 @@ export class ImportService {
                     : {}),
             },
         });
+        if (
+            existing.import_type === "Invoice" ||
+            existing.import_type === "Payment"
+        ) {
+            await enqueueRewriteForImport({
+                accountId,
+                importType: existing.import_type,
+                entityIds: readNumberArray(
+                    existing.metadata,
+                    "asOfRewriteEntityIds"
+                ),
+                customerIds: readNumberArray(
+                    existing.metadata,
+                    "asOfRewriteCustomerIds"
+                ),
+            });
+        }
 
         return serializeBigInt(job);
     }
@@ -220,4 +323,17 @@ export class ImportService {
 
         return serializeBigInt(job);
     }
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+    return value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+}
+
+function readNumberArray(value: unknown, key: string): number[] {
+    const candidate = asObject(value)[key];
+    return Array.isArray(candidate)
+        ? candidate.filter((item): item is number => Number.isFinite(item))
+        : [];
 }

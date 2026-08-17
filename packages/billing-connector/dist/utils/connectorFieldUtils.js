@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getImportEntityFieldCatalog = getImportEntityFieldCatalog;
 exports.isConnectorFieldTransform = isConnectorFieldTransform;
 exports.parseMappingRules = parseMappingRules;
 exports.extractNestedValue = extractNestedValue;
@@ -16,20 +17,81 @@ exports.rulesToRecordMapping = rulesToRecordMapping;
 function getImportEntityFieldCatalog(importType) {
     const catalogs = {
         Customer: {
-            fields: ["customer_number", "name", "crn", "owner_email", "address_line1", "postal_code"],
-            requiredFields: ["customer_number", "name"],
+            fields: [
+                "name",
+                "customer_number",
+                "crn",
+                "country_iso2",
+                "state_iso2",
+                "city",
+                "address_line1",
+                "address_line2",
+                "postal_code",
+                "owner_email",
+                "business_unit",
+                "parent_customer_number",
+            ],
+            requiredFields: ["customer_number"],
+            highlightedFields: ["customer_number"],
         },
         Contact: {
-            fields: ["erp_contact_id", "customer_number", "first_name", "last_name", "email", "phone", "mobile", "role"],
+            fields: [
+                "erp_contact_id",
+                "customer_number",
+                "first_name",
+                "last_name",
+                "email",
+                "phone",
+                "mobile",
+                "role",
+                "company_wide_address",
+                "receives_standard_reminder",
+                "receives_escalated_reminder",
+            ],
             requiredFields: ["erp_contact_id", "customer_number"],
+            highlightedFields: ["erp_contact_id", "customer_number"],
         },
         Invoice: {
-            fields: ["customer_number", "invoice_number", "invoice_date", "due_date", "base_amount", "invoice_amount", "currency", "credit_for_invoice_number"],
-            requiredFields: ["customer_number", "invoice_number", "invoice_date"],
+            fields: [
+                "customer_number",
+                "invoice_number",
+                "invoice_date",
+                "due_date",
+                "base_amount",
+                "invoice_amount",
+                "customer_total_paid",
+                "currency",
+                "credit_for_invoice_number",
+            ],
+            requiredFields: [
+                "customer_number",
+                "invoice_number",
+                "invoice_date",
+                "base_amount",
+                "invoice_amount",
+            ],
+            highlightedFields: ["invoice_number", "customer_number", "invoice_date"],
         },
         Payment: {
-            fields: ["reference", "customer_number", "invoice_number", "payment_date", "amount", "customer_amount", "customer_currency", "payment_method"],
-            requiredFields: ["reference", "customer_number", "payment_date", "amount"],
+            fields: [
+                "reference",
+                "customer_number",
+                "invoice_number",
+                "payment_date",
+                "amount",
+                "customer_amount",
+                "customer_currency",
+                "payment_method",
+            ],
+            requiredFields: [
+                "reference",
+                "customer_number",
+                "invoice_number",
+                "payment_date",
+                "customer_amount",
+                "customer_currency",
+            ],
+            highlightedFields: ["reference", "customer_number", "invoice_number"],
         },
     };
     return catalogs[importType] ?? null;
@@ -50,11 +112,17 @@ function isPriorityEntityImportType(importType) {
 const PRIORITY_DEFAULT_ERP_FIELDS = {
     Customer: {
         customer_number: "CUSTNAME",
-        name: "CDES",
+        name: "CUSTDES",
         crn: "WTAXNUM",
         owner_email: "EMAIL",
         address_line1: "ADDRESS",
+        address_line2: "ADDRESS2",
+        city: "STATEA",
+        state_iso2: "STATECODE",
         postal_code: "ZIP",
+        country_iso2: "COUNTRYCODE",
+        business_unit: "IDG_COMPANYNAME",
+        parent_customer_number: "MCUSTNAME",
     },
     Contact: {
         erp_contact_id: "KLINE",
@@ -130,12 +198,19 @@ function parseMappingRules(raw) {
             ? rule.archaserField.trim()
             : "";
         const erpField = typeof rule.erpField === "string" ? rule.erpField.trim() : "";
-        if (!archaserField || !erpField) {
+        const defaultValue = typeof rule.defaultValue === "string"
+            ? rule.defaultValue
+            : undefined;
+        const hasDefault = defaultValue !== undefined && defaultValue.trim() !== "";
+        if (!archaserField || (!erpField && !hasDefault)) {
             continue;
         }
         const parsed = { archaserField, erpField };
         if (isConnectorFieldTransform(rule.transform)) {
             parsed.transform = rule.transform;
+        }
+        if (hasDefault) {
+            parsed.defaultValue = defaultValue;
         }
         rules.push(parsed);
     }
@@ -359,7 +434,9 @@ function computeMappingCompleteness(importType, rules) {
         return false;
     }
     const mappedFields = new Set(rules
-        .filter((rule) => rule.erpField.trim())
+        .filter((rule) => rule.erpField.trim() ||
+        (rule.defaultValue !== undefined &&
+            rule.defaultValue.trim() !== ""))
         .map((rule) => rule.archaserField));
     return catalog.requiredFields.every((field) => mappedFields.has(field));
 }

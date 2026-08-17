@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { DatabaseModule } from "../database/database.module";
+import { AsOfBackfillController } from "./as-of-backfill.controller";
 import { createInsuranceEntityController } from "./create-insurance-entity.controller";
 import { CreditDashboardAccessService } from "./credit-dashboard-access.service";
 import { CreditInsuranceDomainController } from "./credit-insurance.controller";
@@ -20,6 +21,7 @@ const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
     imports: [AuthModule, DatabaseModule],
     controllers: [
         CreditInsuranceDomainController,
+        AsOfBackfillController,
         InsurancePoliciesActionsController,
         ...insuranceEntityControllers,
     ],

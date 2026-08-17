@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.testPriorityConnection = testPriorityConnection;
 exports.fetchPriorityEntitySamples = fetchPriorityEntitySamples;
 exports.discoverPriorityFields = discoverPriorityFields;
+exports.fetchPriorityEntitySetCatalog = fetchPriorityEntitySetCatalog;
 const priorityApiContract_1 = require("./priorityApiContract");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 function buildAuthorizationHeader(authType, credentials) {
@@ -123,10 +124,14 @@ async function fetchPriorityJson(config, url) {
         return { ok: false, error: message };
     }
 }
-async function fetchPriorityEntitySamples(config, importType, top = 10) {
+async function fetchPriorityEntitySamples(config, importType, top = 10, options) {
     const serviceRoot = normalizeServiceRoot(config.baseUrl);
-    const collectionUrl = (0, priorityApiContract_1.buildEntityCollectionUrl)(serviceRoot, importType);
-    const url = `${collectionUrl}?$top=${top}`;
+    const collectionUrl = (0, priorityApiContract_1.buildEntityCollectionUrl)(serviceRoot, importType, options?.entitySet);
+    const params = new URLSearchParams({ $top: String(top) });
+    if (options?.filter?.trim()) {
+        params.set("$filter", options.filter.trim());
+    }
+    const url = `${collectionUrl}?${params.toString()}`;
     const result = await fetchPriorityJson(config, url);
     if (!result.ok) {
         return {
@@ -148,8 +153,8 @@ async function fetchPriorityEntitySamples(config, importType, top = 10) {
     const records = payload.value.filter((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item));
     return { ok: true, statusCode: result.statusCode, records };
 }
-async function discoverPriorityFields(config, importType, top = 5) {
-    const fetchResult = await fetchPriorityEntitySamples(config, importType, top);
+async function discoverPriorityFields(config, importType, top = 5, options) {
+    const fetchResult = await fetchPriorityEntitySamples(config, importType, top, options);
     if (!fetchResult.ok) {
         return {
             ok: false,
@@ -164,4 +169,41 @@ async function discoverPriorityFields(config, importType, top = 5) {
         exampleValues: discovered.exampleValues,
         sampleCount: fetchResult.records.length,
     };
+}
+/**
+ * Parse EntitySet names from Priority OData $metadata (XML).
+ */
+async function fetchPriorityEntitySetCatalog(config) {
+    const serviceRoot = normalizeServiceRoot(config.baseUrl);
+    const url = `${serviceRoot}/$metadata`;
+    try {
+        const authorization = buildAuthorizationHeader(config.authType, config.credentials);
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                Accept: "application/xml",
+                Authorization: authorization,
+            },
+        });
+        const text = await response.text();
+        if (!response.ok) {
+            return {
+                ok: false,
+                statusCode: response.status,
+                error: text.slice(0, 400) || `HTTP ${response.status}`,
+            };
+        }
+        const names = Array.from(new Set(Array.from(text.matchAll(/EntitySet Name="([^"]+)"/g)).map((match) => match[1])))
+            .filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+            .sort((a, b) => a.localeCompare(b));
+        return { ok: true, statusCode: response.status, names };
+    }
+    catch (error) {
+        return {
+            ok: false,
+            error: error instanceof Error
+                ? error.message
+                : "Failed to fetch Priority metadata",
+        };
+    }
 }

@@ -138,7 +138,7 @@ export interface PriorityEntityEndpointContract {
 }
 export declare const PRIORITY_ENTITY_ENDPOINTS: Record<PriorityEntityImportType, PriorityEntityEndpointContract>;
 export declare function getPriorityEntityEndpoint(importType: PriorityEntityImportType): PriorityEntityEndpointContract;
-export declare function buildEntityCollectionUrl(serviceRoot: string, importType: PriorityEntityImportType): string;
+export declare function buildEntityCollectionUrl(serviceRoot: string, importType: PriorityEntityImportType, entitySetOverride?: string | null): string;
 export interface PriorityCreditNoteContract {
     strategy: "negative_invoice";
     entitySet: "CINVOICES";
