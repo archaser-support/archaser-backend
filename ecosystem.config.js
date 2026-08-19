@@ -8,8 +8,8 @@ module.exports = {
         {
             name: "archaser-api",
             cwd: "/home/ubuntu/api",
-            script: "npm",
-            args: "run start:prod",
+            script: "node",
+            args: "dist/main.js",
             env: {
                 NODE_ENV: "production",
                 NEST_PORT: 3010,
