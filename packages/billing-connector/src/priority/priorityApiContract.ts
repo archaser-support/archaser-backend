@@ -257,6 +257,8 @@ export interface PriorityEntityEndpointContract {
     pagination: PriorityPaginationContract;
     /** Representative OData fields for default field-discovery UI. */
     discoveryFields: readonly string[];
+    /** Stable $orderby for deterministic $skip pagination. Uses ERP primary key. */
+    defaultOrderBy: string;
     notes?: string;
 }
 
@@ -291,6 +293,7 @@ export const PRIORITY_ENTITY_ENDPOINTS: Record<
             "IDG_COMPANYNAME",
             "MCUSTNAME",
         ],
+        defaultOrderBy: "CUSTNAME",
         notes:
             "CUSTNAME is the documented customer number (Customer Number). Maps 1:1 to Archaser customer_number.",
     },
@@ -314,6 +317,7 @@ export const PRIORITY_ENTITY_ENDPOINTS: Record<
             "POSITIONDES",
             "UDATE",
         ],
+        defaultOrderBy: "KLINE",
         notes:
             "KLINE is the internal line key; confirm via metadata. CUSTNAME links to customer_number. Composite environments may require `${CUSTNAME}|${NAME}` — confirm during pilot.",
     },
@@ -338,6 +342,7 @@ export const PRIORITY_ENTITY_ENDPOINTS: Record<
             "CREDITFOR",
             "UDATE",
         ],
+        defaultOrderBy: "IVNUM",
         notes:
             "Composite OData key (IVNUM, IVTYPE). Credit notes: DEBIT='C' with negative TOTPRICE; CREDITFOR links to original IVNUM (see credit note section).",
     },
@@ -361,8 +366,9 @@ export const PRIORITY_ENTITY_ENDPOINTS: Record<
             "PAYDES",
             "UDATE",
         ],
+        defaultOrderBy: "PAYNUM",
         notes:
-            "TOTARPAY = Total AR Payment receipts. Confirm entity set name per deployment (some sites expose RECEIPT or FNCPAYMENTS). PAYNUM → Archaser reference; immutable skip-if-exists (D3).",
+            "TOTARPAY = Total AR Payment receipts. Confirm entity set name per deployment (some sites expose RECEIPT or FNCPAYMENTS / TINVOICES). PAYNUM → Archaser reference; immutable skip-if-exists (D3). Related-payment pulls for dated backfill filter on IVNUM + CUSTNAME (see PRIORITY_DATED_BACKFILL_FILTERS).",
     },
 };
 
@@ -392,11 +398,12 @@ export function buildEntityCollectionUrl(
 export interface PriorityCreditNoteContract {
     strategy: "negative_invoice";
     entitySet: "CINVOICES";
+    subformSet?: "CINVOICESCONT_SUBFORM";
     debitField: "DEBIT";
     debitValueCredit: "C";
     debitValueInvoice: "D";
     amountField: "TOTPRICE";
-    creditForField: "CREDITFOR";
+    creditForField: "PIVNUM" | "CREDITFOR";
     archaserCreditForField: "credit_for_invoice_number";
     separateCreditNoteEntity: false;
     pilotAction: "confirm_CREDITFOR_field_name_via_metadata";
@@ -404,16 +411,18 @@ export interface PriorityCreditNoteContract {
 
 /**
  * Credit notes ship as negative CINVOICES rows (D4), not a fifth import entity.
- * Map DEBIT='C' + negative TOTPRICE + CREDITFOR → credit_for_invoice_number.
+ * In Priority ERP (iDigil), credit notes reference target invoices via sub-screen
+ * CINVOICESCONT (CINVOICESCONT_SUBFORM in OData), field PIVNUM -> credit_for_invoice_number.
  */
 export const PRIORITY_CREDIT_NOTE_HANDLING: PriorityCreditNoteContract = {
     strategy: "negative_invoice",
     entitySet: "CINVOICES",
+    subformSet: "CINVOICESCONT_SUBFORM",
     debitField: "DEBIT",
     debitValueCredit: "C",
     debitValueInvoice: "D",
     amountField: "TOTPRICE",
-    creditForField: "CREDITFOR",
+    creditForField: "PIVNUM",
     archaserCreditForField: "credit_for_invoice_number",
     separateCreditNoteEntity: false,
     pilotAction: "confirm_CREDITFOR_field_name_via_metadata",

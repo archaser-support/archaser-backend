@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PriorityProviderClient = void 0;
 const BillingProviderClient_1 = require("../billing/BillingProviderClient");
 const priorityApiContract_1 = require("./priorityApiContract");
+const connectorPaymentSynthetics_1 = require("../payment/connectorPaymentSynthetics");
 const PriorityClient_1 = require("./PriorityClient");
 function normalizeServiceRoot(baseUrl) {
     return baseUrl.replace(/\/+$/, "");
@@ -83,9 +84,20 @@ class PriorityProviderClient {
         const serviceRoot = normalizeServiceRoot(this.config.baseUrl);
         const collectionUrl = (0, priorityApiContract_1.buildEntityCollectionUrl)(serviceRoot, entity, options.entitySet);
         const params = { $top: String(pageSize) };
+        if (entity === "Invoice" && priorityApiContract_1.PRIORITY_CREDIT_NOTE_HANDLING.subformSet) {
+            params.$expand = priorityApiContract_1.PRIORITY_CREDIT_NOTE_HANDLING.subformSet;
+        }
         if (safeSkip > 0) {
             params.$skip = String(safeSkip);
         }
+        const endpoint = (0, priorityApiContract_1.getPriorityEntityEndpoint)(entity);
+        const entitySetOverride = options.entitySet?.trim();
+        const orderBy = entitySetOverride &&
+            (entitySetOverride.includes("ARFNCITEMS") ||
+                entitySetOverride.includes("FNCITEMS"))
+            ? "FNCNUM"
+            : endpoint.defaultOrderBy;
+        params.$orderby = orderBy;
         if (options.filter && options.filter.trim()) {
             params.$filter = options.filter.trim();
         }
@@ -102,7 +114,10 @@ class PriorityProviderClient {
         if (!Array.isArray(value)) {
             throw new Error("Unexpected Priority response shape (missing value array)");
         }
-        const records = value.filter((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+        const rawRecords = value.filter((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+        const records = entity === "Payment"
+            ? (0, connectorPaymentSynthetics_1.applyPaymentSyntheticsToRecords)(rawRecords)
+            : rawRecords;
         const hasMore = records.length === pageSize;
         const nextCursor = hasMore ? String(safeSkip + records.length) : null;
         return {
