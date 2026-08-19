@@ -6,6 +6,7 @@ exports.discoverPriorityFields = discoverPriorityFields;
 exports.fetchPriorityEntitySetCatalog = fetchPriorityEntitySetCatalog;
 const priorityApiContract_1 = require("./priorityApiContract");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
+const connectorPaymentSynthetics_1 = require("../payment/connectorPaymentSynthetics");
 function buildAuthorizationHeader(authType, credentials) {
     if (authType === "API_KEY") {
         const { token } = credentials;
@@ -150,7 +151,10 @@ async function fetchPriorityEntitySamples(config, importType, top = 10, options)
             records: [],
         };
     }
-    const records = payload.value.filter((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+    const rawRecords = payload.value.filter((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+    const records = importType === "Payment"
+        ? (0, connectorPaymentSynthetics_1.applyPaymentSyntheticsToRecords)(rawRecords)
+        : rawRecords;
     return { ok: true, statusCode: result.statusCode, records };
 }
 async function discoverPriorityFields(config, importType, top = 5, options) {

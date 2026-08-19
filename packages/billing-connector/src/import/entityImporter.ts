@@ -4,6 +4,12 @@ import {
     parseMappingRules,
     type MappingRule,
 } from "../utils/connectorFieldUtils";
+import { applyMaturedDeferredPayments } from "./applyMaturedDeferredPayments";
+import { importPayments } from "./importPaymentService";
+import { normalizeInvoiceImportInput } from "./normalizeInvoiceImportInput";
+import { toPaymentInput } from "./normalizePaymentInput";
+import { sortInvoicesForImport } from "./sortInvoicesForImport";
+import { linkOrphanedCreditNotes } from "../invoice/linkOrphanedCreditNotes";
 
 export type ImportEntityType = "Customer" | "Contact" | "Invoice" | "Payment";
 
@@ -49,9 +55,182 @@ function mapRows(
     return records.map((record) => mapErpRecord(record, rules));
 }
 
+async function getInvoiceNumbersWithPayments(
+    prisma: PrismaClient,
+    accountId: number,
+    invoiceNumbers: string[]
+): Promise<Set<string>> {
+    if (invoiceNumbers.length === 0) return new Set();
+
+    const rows = await prisma.invoicePayment.findMany({
+        where: {
+            account_id: accountId,
+            invoice_number: { in: invoiceNumbers },
+        },
+        select: { invoice_number: true },
+    });
+
+    return new Set(
+        rows
+            .map((r: { invoice_number: string | null }) => r.invoice_number)
+            .filter((n): n is string => Boolean(n))
+    );
+}
+
+async function importInvoiceBatch(
+    prisma: PrismaClient,
+    rows: Record<string, unknown>[],
+    accountId: number,
+    userId?: string
+): Promise<EntityImportBatchResult> {
+    const result: EntityImportBatchResult = {
+        success: 0,
+        failed: 0,
+        skipped: 0,
+        affectedCustomerIds: [],
+        entityIds: [],
+        errors: [],
+    };
+
+    const normalized = rows.map((row) =>
+        normalizeInvoiceImportInput(row, accountId)
+    );
+    const sorted = sortInvoicesForImport(
+        normalized.map((inv) => ({
+            ...inv,
+            customer_number: inv.customer_number,
+            invoice_number: inv.invoice_number,
+            invoice_date: inv.invoice_date,
+        }))
+    );
+
+    const invoiceNumbersWithPayments = await getInvoiceNumbersWithPayments(
+        prisma,
+        accountId,
+        sorted.map((i) => i.invoice_number).filter(Boolean)
+    );
+
+    for (const invoice of sorted) {
+        try {
+            const invoiceNumber = str(invoice.invoice_number);
+            const customerNumber = str(invoice.customer_number);
+            if (!invoiceNumber || !customerNumber) {
+                result.skipped += 1;
+                continue;
+            }
+
+            const customer = await prisma.customer.findFirst({
+                where: {
+                    account_id: accountId,
+                    customer_number: customerNumber,
+                },
+                select: { id: true },
+            });
+            if (!customer) {
+                throw new Error(
+                    `Customer not found for invoice: ${customerNumber}`
+                );
+            }
+
+            const amount = invoice.amount ?? 0;
+            const customerAmount = invoice.customer_amount ?? amount;
+            const currency = str(invoice.customer_currency) || "USD";
+            const paymentsWin = invoiceNumbersWithPayments.has(invoiceNumber);
+            const totalPaid = paymentsWin ? 0 : (invoice.total_paid ?? 0);
+            const customerTotalPaid = paymentsWin
+                ? 0
+                : (invoice.customer_total_paid ?? 0);
+            const netAmount = customerAmount;
+            const customerNetAmount = customerAmount;
+            const outstanding = netAmount - totalPaid;
+            const customerOutstanding = customerNetAmount - customerTotalPaid;
+
+            const existing = await prisma.invoice.findFirst({
+                where: {
+                    account_id: accountId,
+                    invoice_number: invoiceNumber,
+                },
+                select: { id: true },
+            });
+
+            const data = {
+                invoice_number: invoiceNumber,
+                account_id: accountId,
+                customer_id: customer.id,
+                amount,
+                customer_amount: customerAmount,
+                net_amount: netAmount,
+                customer_net_amount: customerNetAmount,
+                currency,
+                customer_currency: currency,
+                total_paid: totalPaid,
+                customer_total_paid: customerTotalPaid,
+                outstanding_debt: outstanding,
+                customer_outstanding_debt: customerOutstanding,
+                credit_for_invoice_number:
+                    invoice.credit_for_invoice_number ?? null,
+                priority_erp_debit: invoice.priority_erp_debit ?? null,
+                invoice_date: invoice.invoice_date
+                    ? new Date(invoice.invoice_date)
+                    : new Date(),
+                due_date: invoice.due_date
+                    ? new Date(invoice.due_date)
+                    : null,
+                modified_by: userId || null,
+            };
+
+            const saved = existing
+                ? await prisma.invoice.update({
+                      where: { id: existing.id },
+                      data: data as never,
+                      select: { id: true },
+                  })
+                : await prisma.invoice.create({
+                      data: {
+                          ...data,
+                          created_by: userId || null,
+                          status: (invoice.status as never) ?? "Open",
+                      } as never,
+                      select: { id: true },
+                  });
+
+            result.success += 1;
+            result.affectedCustomerIds.push(customer.id);
+            result.entityIds.push(saved.id);
+        } catch (error) {
+            result.failed += 1;
+            result.errors.push(
+                error instanceof Error ? error.message : String(error)
+            );
+        }
+    }
+
+    const invoiceNumbers = sorted.flatMap((i) =>
+        [i.invoice_number, i.credit_for_invoice_number].filter(
+            (n): n is string => Boolean(n)
+        )
+    );
+    if (invoiceNumbers.length > 0) {
+        try {
+            await linkOrphanedCreditNotes(prisma, {
+                accountId,
+                targetInvoiceNumbers: invoiceNumbers,
+            });
+        } catch (error) {
+            console.error("Failed to link orphaned credit notes:", error);
+        }
+        try {
+            await applyMaturedDeferredPayments(prisma, accountId, new Date());
+        } catch (error) {
+            console.error("Failed to apply matured deferred payments:", error);
+        }
+    }
+
+    return result;
+}
+
 /**
- * Prisma-native entity upsert for connector sync (Priority deepen).
- * Does not depend on monolith Import* service graph.
+ * Prisma-native entity upsert for connector sync and manual import.
  */
 export async function importMappedEntityBatch(
     prisma: PrismaClient,
@@ -70,9 +249,7 @@ export async function importMappedEntityBatch(
         errors: [],
     };
     const rows =
-        mappingJson == null
-            ? records
-            : mapRows(records, mappingJson);
+        mappingJson == null ? records : mapRows(records, mappingJson);
     if (rows.length === 0) return result;
 
     if (importType === "Customer") {
@@ -209,154 +386,42 @@ export async function importMappedEntityBatch(
     }
 
     if (importType === "Invoice") {
-        for (const row of rows) {
-            try {
-                const invoiceNumber = str(row.invoice_number);
-                const customerNumber = str(row.customer_number);
-                if (!invoiceNumber || !customerNumber) {
-                    result.skipped += 1;
-                    continue;
-                }
-                const customer = await prisma.customer.findFirst({
-                    where: {
-                        account_id: accountId,
-                        customer_number: customerNumber,
-                    },
-                    select: { id: true },
-                });
-                if (!customer) {
-                    throw new Error(
-                        `Customer not found for invoice: ${customerNumber}`
-                    );
-                }
-                const amount = num(row.amount) ?? num(row.customer_amount) ?? 0;
-                const existing = await prisma.invoice.findFirst({
-                    where: {
-                        account_id: accountId,
-                        invoice_number: invoiceNumber,
-                    },
-                    select: { id: true },
-                });
-                const data = {
-                    invoice_number: invoiceNumber,
-                    account_id: accountId,
-                    customer_id: customer.id,
-                    amount,
-                    customer_amount: num(row.customer_amount) ?? amount,
-                    net_amount: num(row.net_amount) ?? amount,
-                    customer_net_amount:
-                        num(row.customer_net_amount) ??
-                        num(row.customer_amount) ??
-                        amount,
-                    currency: str(row.currency || row.customer_currency) || "USD",
-                    invoice_date: row.invoice_date
-                        ? new Date(String(row.invoice_date))
-                        : new Date(),
-                    due_date: row.due_date
-                        ? new Date(String(row.due_date))
-                        : null,
-                    modified_by: userId || null,
-                };
-                const invoice = existing
-                    ? await prisma.invoice.update({
-                        where: { id: existing.id },
-                        data: data as never,
-                        select: { id: true },
-                    })
-                    : await prisma.invoice.create({
-                        data: {
-                            ...data,
-                            created_by: userId || null,
-                            status: "Open",
-                        } as never,
-                        select: { id: true },
-                    });
-                result.success += 1;
-                result.affectedCustomerIds.push(customer.id);
-                result.entityIds.push(invoice.id);
-            } catch (error) {
-                result.failed += 1;
-                result.errors.push(
-                    error instanceof Error ? error.message : String(error)
-                );
-            }
-        }
-        return result;
+        return importInvoiceBatch(prisma, rows, accountId, userId);
     }
 
-    // Payment
-    for (const row of rows) {
-        try {
-            const invoiceNumber = str(row.invoice_number);
-            const customerNumber = str(row.customer_number);
-            const paymentDate = str(row.payment_date);
-            const customerAmount =
-                num(row.customer_amount) ?? num(row.amount) ?? null;
-            if (!invoiceNumber || !customerNumber || !paymentDate || customerAmount == null) {
-                result.skipped += 1;
-                continue;
+    const payments = rows.map((row) => toPaymentInput(row, accountId));
+    const paymentResults = await importPayments(
+        prisma,
+        payments,
+        accountId,
+        userId
+    );
+
+    for (const paymentResult of paymentResults) {
+        if (paymentResult.skipped) {
+            result.skipped += 1;
+            if (paymentResult.invoicePaymentId != null) {
+                result.entityIds.push(paymentResult.invoicePaymentId);
             }
-            const customer = await prisma.customer.findFirst({
-                where: {
-                    account_id: accountId,
-                    customer_number: customerNumber,
-                },
-                select: { id: true },
-            });
-            if (!customer) {
-                throw new Error(
-                    `Customer not found for payment: ${customerNumber}`
-                );
+            if (paymentResult.customerId != null) {
+                result.affectedCustomerIds.push(paymentResult.customerId);
             }
-            const invoice = await prisma.invoice.findFirst({
-                where: {
-                    account_id: accountId,
-                    invoice_number: invoiceNumber,
-                },
-                select: { id: true },
-            });
-            const reference = str(row.reference) || null;
-            if (reference) {
-                const dup = await prisma.invoicePayment.findFirst({
-                    where: {
-                        account_id: accountId,
-                        reference,
-                        customer_id: customer.id,
-                    },
-                    select: { id: true },
-                });
-                if (dup) {
-                    result.skipped += 1;
-                    continue;
-                }
-            }
-            const payment = await prisma.invoicePayment.create({
-                data: {
-                    account_id: accountId,
-                    customer_id: customer.id,
-                    invoice_id: invoice?.id ?? 0,
-                    payment_date: new Date(paymentDate),
-                    amount: num(row.amount) ?? customerAmount,
-                    customer_amount: customerAmount,
-                    customer_currency:
-                        str(row.customer_currency || row.currency) || "USD",
-                    payment_method: str(row.payment_method) || null,
-                    reference,
-                    created_by: userId || null,
-                    modified_by: userId || null,
-                } as never,
-                select: { id: true },
-            });
+        } else if (paymentResult.success) {
             result.success += 1;
-            result.affectedCustomerIds.push(customer.id);
-            result.entityIds.push(payment.id);
-        } catch (error) {
+            if (paymentResult.invoicePaymentId != null) {
+                result.entityIds.push(paymentResult.invoicePaymentId);
+            }
+            if (paymentResult.customerId != null) {
+                result.affectedCustomerIds.push(paymentResult.customerId);
+            }
+        } else {
             result.failed += 1;
-            result.errors.push(
-                error instanceof Error ? error.message : String(error)
-            );
+            if (paymentResult.message) {
+                result.errors.push(paymentResult.message);
+            }
         }
     }
+
     return result;
 }
 

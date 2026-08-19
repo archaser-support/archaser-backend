@@ -67,6 +67,7 @@ export function getImportEntityFieldCatalog(importType: ImportType): {
                 "customer_total_paid",
                 "currency",
                 "credit_for_invoice_number",
+                "priority_erp_debit",
             ],
             requiredFields: [
                 "customer_number",
@@ -153,11 +154,12 @@ const PRIORITY_DEFAULT_ERP_FIELDS: Partial<
         invoice_amount: "TOTPRICE",
         currency: "CODE",
         credit_for_invoice_number: "CREDITFOR",
+        priority_erp_debit: "DEBIT",
     },
     Payment: {
-        reference: "PAYNUM",
+        reference: "IVNUM",
         customer_number: "CUSTNAME",
-        invoice_number: "IVNUM",
+        invoice_number: "FNCIREF1",
         payment_date: "PAYDATE",
         amount: "PAYMENT",
         customer_amount: "PAYMENT",
@@ -241,6 +243,14 @@ export function parseMappingRules(raw: unknown): MappingRule[] {
     return rules;
 }
 
+export function isEmptyMappedValue(value: unknown): boolean {
+    return (
+        value === null ||
+        value === undefined ||
+        (typeof value === "string" && value.trim() === "")
+    );
+}
+
 export function extractNestedValue(
     obj: Record<string, unknown>,
     path: string
@@ -251,10 +261,71 @@ export function extractNestedValue(
         if (current === null || current === undefined) {
             return undefined;
         }
-        if (typeof current !== "object") {
+        if (Array.isArray(current)) {
+            current = current[0];
+        }
+        if (
+            current === null ||
+            current === undefined ||
+            typeof current !== "object"
+        ) {
             return undefined;
         }
-        current = (current as Record<string, unknown>)[part];
+        const record = current as Record<string, unknown>;
+
+        let val = record[part];
+        if (val !== undefined && val !== null && val !== "") {
+            current = val;
+            continue;
+        }
+
+        const lowerPart = part.toLowerCase();
+        const foundKey = Object.keys(record).find(
+            (k) => k.toLowerCase() === lowerPart
+        );
+        if (
+            foundKey &&
+            record[foundKey] !== undefined &&
+            record[foundKey] !== null &&
+            record[foundKey] !== ""
+        ) {
+            current = record[foundKey];
+            continue;
+        }
+
+        if (part === "FNCIREF1" || part === "PAY_INVOICE_NUMBER") {
+            val =
+                record.FNCIREF1 ??
+                record.PAY_INVOICE_NUMBER ??
+                record.IVNUM ??
+                record.PAY_REFERENCE;
+        } else if (part === "PAYNUM" || part === "PAY_REFERENCE") {
+            val =
+                record.PAY_REFERENCE ??
+                record.PAYNUM ??
+                record.FNCNUM ??
+                record.FNCIREF1 ??
+                record.IVNUM;
+        } else if (part === "PAYDATE" || part === "PAY_DATE") {
+            val =
+                record.PAY_DATE ??
+                record.PAYDATE ??
+                record.FNCDATE ??
+                record.BALDATE;
+        } else if (part === "PAYMENT" || part === "PAY_AMOUNT") {
+            val =
+                record.PAY_AMOUNT ??
+                record.PAYMENT ??
+                record.CREDIT1 ??
+                record.DEBIT1 ??
+                record.CREDIT ??
+                record.DEBIT;
+        }
+
+        current = val;
+    }
+    if (Array.isArray(current)) {
+        current = current[0];
     }
     return current;
 }
@@ -305,12 +376,109 @@ export function mapErpRecord(
     rules: MappingRule[]
 ): Record<string, unknown> {
     const result: Record<string, unknown> = {};
+    Object.defineProperty(result, "_rawRecord", {
+        value: erpRecord,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+    });
     for (const rule of rules) {
-        const raw = extractNestedValue(erpRecord, rule.erpField);
-        result[rule.archaserField] = applyConnectorTransform(
-            raw,
-            rule.transform
-        );
+        let value: unknown;
+        if (rule.erpField.trim()) {
+            const raw = extractNestedValue(erpRecord, rule.erpField);
+            value = applyConnectorTransform(raw, rule.transform);
+        } else {
+            value = undefined;
+        }
+
+        if (rule.archaserField === "invoice_number") {
+            const rawFnci =
+                extractNestedValue(erpRecord, "FNCIREF1") ??
+                extractNestedValue(erpRecord, "PAY_INVOICE_NUMBER");
+            if (typeof rawFnci === "string" && rawFnci.trim()) {
+                value = rawFnci.trim();
+            }
+        }
+
+        if (rule.archaserField === "reference") {
+            const syntheticRef =
+                extractNestedValue(erpRecord, "PAY_REFERENCE") ??
+                erpRecord.PAY_REFERENCE;
+            if (
+                syntheticRef !== null &&
+                syntheticRef !== undefined &&
+                String(syntheticRef).trim() !== ""
+            ) {
+                value = String(syntheticRef).trim();
+            }
+        }
+
+        if (
+            rule.archaserField === "reference" &&
+            isEmptyMappedValue(value)
+        ) {
+            const rawRef =
+                extractNestedValue(erpRecord, "IVNUM") ??
+                extractNestedValue(erpRecord, "PAY_REFERENCE") ??
+                extractNestedValue(erpRecord, "PAYNUM") ??
+                extractNestedValue(erpRecord, "FNCNUM") ??
+                extractNestedValue(erpRecord, "TRANSNUM") ??
+                extractNestedValue(erpRecord, "DOCNUM") ??
+                extractNestedValue(erpRecord, "FNCIREF1");
+            if (
+                rawRef !== null &&
+                rawRef !== undefined &&
+                String(rawRef).trim() !== ""
+            ) {
+                const kline = extractNestedValue(erpRecord, "KLINE");
+                const fnci = extractNestedValue(erpRecord, "FNCIREF1");
+                const strRef = String(rawRef).trim();
+                if (
+                    kline !== null &&
+                    kline !== undefined &&
+                    String(kline).trim() !== "" &&
+                    !strRef.includes("|")
+                ) {
+                    value = `${strRef}|${String(kline).trim()}`;
+                } else if (
+                    fnci !== null &&
+                    fnci !== undefined &&
+                    String(fnci).trim() !== "" &&
+                    !strRef.includes("|") &&
+                    strRef !== String(fnci).trim()
+                ) {
+                    value = `${strRef}|${String(fnci).trim()}`;
+                } else {
+                    value = strRef;
+                }
+            }
+        }
+
+        if (
+            rule.archaserField === "credit_for_invoice_number" &&
+            isEmptyMappedValue(value)
+        ) {
+            const rawCreditFor =
+                extractNestedValue(erpRecord, "CREDITFOR") ??
+                extractNestedValue(erpRecord, "PIVNUM") ??
+                extractNestedValue(erpRecord, "CINVOICESCONT_SUBFORM.PIVNUM");
+            if (typeof rawCreditFor === "string" && rawCreditFor.trim()) {
+                value = rawCreditFor.trim();
+            }
+        }
+
+        if (
+            isEmptyMappedValue(value) &&
+            rule.defaultValue !== undefined &&
+            rule.defaultValue.trim() !== ""
+        ) {
+            value = applyConnectorTransform(
+                rule.defaultValue,
+                rule.transform
+            );
+        }
+
+        result[rule.archaserField] = value;
     }
     return result;
 }

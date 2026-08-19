@@ -13,6 +13,7 @@ export declare function getImportEntityFieldCatalog(importType: ImportType): {
 } | null;
 export declare function isConnectorFieldTransform(value: unknown): value is ConnectorFieldTransform;
 export declare function parseMappingRules(raw: unknown): MappingRule[];
+export declare function isEmptyMappedValue(value: unknown): boolean;
 export declare function extractNestedValue(obj: Record<string, unknown>, path: string): unknown;
 export declare function applyConnectorTransform(value: unknown, transform?: ConnectorFieldTransform): unknown;
 export declare function mapErpRecord(erpRecord: Record<string, unknown>, rules: MappingRule[]): Record<string, unknown>;
