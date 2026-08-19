@@ -9,6 +9,7 @@ import {
 } from "./priorityApiContract";
 import type { PriorityEntityImportType } from "./samplePayloads";
 import { discoverFieldPathsFromRecords } from "../utils/connectorFieldUtils";
+import { applyPaymentSyntheticsToRecords } from "../payment/connectorPaymentSynthetics";
 
 export interface PriorityConnectionConfig {
     baseUrl: string;
@@ -225,10 +226,14 @@ export async function fetchPriorityEntitySamples(
         };
     }
 
-    const records = payload.value.filter(
+    const rawRecords = payload.value.filter(
         (item): item is Record<string, unknown> =>
             Boolean(item) && typeof item === "object" && !Array.isArray(item)
     );
+    const records =
+        importType === "Payment"
+            ? applyPaymentSyntheticsToRecords(rawRecords)
+            : rawRecords;
 
     return { ok: true, statusCode: result.statusCode, records };
 }

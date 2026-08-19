@@ -134,6 +134,8 @@ export interface PriorityEntityEndpointContract {
     pagination: PriorityPaginationContract;
     /** Representative OData fields for default field-discovery UI. */
     discoveryFields: readonly string[];
+    /** Stable $orderby for deterministic $skip pagination. Uses ERP primary key. */
+    defaultOrderBy: string;
     notes?: string;
 }
 export declare const PRIORITY_ENTITY_ENDPOINTS: Record<PriorityEntityImportType, PriorityEntityEndpointContract>;
@@ -142,18 +144,20 @@ export declare function buildEntityCollectionUrl(serviceRoot: string, importType
 export interface PriorityCreditNoteContract {
     strategy: "negative_invoice";
     entitySet: "CINVOICES";
+    subformSet?: "CINVOICESCONT_SUBFORM";
     debitField: "DEBIT";
     debitValueCredit: "C";
     debitValueInvoice: "D";
     amountField: "TOTPRICE";
-    creditForField: "CREDITFOR";
+    creditForField: "PIVNUM" | "CREDITFOR";
     archaserCreditForField: "credit_for_invoice_number";
     separateCreditNoteEntity: false;
     pilotAction: "confirm_CREDITFOR_field_name_via_metadata";
 }
 /**
  * Credit notes ship as negative CINVOICES rows (D4), not a fifth import entity.
- * Map DEBIT='C' + negative TOTPRICE + CREDITFOR → credit_for_invoice_number.
+ * In Priority ERP (iDigil), credit notes reference target invoices via sub-screen
+ * CINVOICESCONT (CINVOICESCONT_SUBFORM in OData), field PIVNUM -> credit_for_invoice_number.
  */
 export declare const PRIORITY_CREDIT_NOTE_HANDLING: PriorityCreditNoteContract;
 export interface PriorityTimezoneContract {

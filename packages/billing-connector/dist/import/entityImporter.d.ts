@@ -10,8 +10,7 @@ export interface EntityImportBatchResult {
 }
 export declare function extractMaxUpdatedAt(records: Record<string, unknown>[]): Date | null;
 /**
- * Prisma-native entity upsert for connector sync (Priority deepen).
- * Does not depend on monolith Import* service graph.
+ * Prisma-native entity upsert for connector sync and manual import.
  */
 export declare function importMappedEntityBatch(prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string): Promise<EntityImportBatchResult>;
 export declare function updateAccountLastSyncDate(prisma: PrismaClient, accountId: number, syncedAt?: Date): Promise<void>;

@@ -202,3 +202,23 @@ export {
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "./import/entityImporter";
+
+export {
+    applyPaymentSynthetics,
+    applyPaymentSyntheticsToRecords,
+    buildPaymentReference,
+    collectPaymentReferenceAliases,
+    PAYMENT_SYNTHETIC_FIELDS,
+} from "./payment/connectorPaymentSynthetics";
+
+export {
+    linkDeferredPaymentAndRecalc,
+    recalculateInvoiceFromLinkedPayments,
+    INVOICE_PAID_TOLERANCE,
+    IDIGITAL_HELAM_PAYMENT_METHOD,
+} from "./invoice/linkDeferredPaymentAndRecalc";
+
+export { linkOrphanedCreditNotes } from "./invoice/linkOrphanedCreditNotes";
+export { normalizeInvoiceImportInput } from "./import/normalizeInvoiceImportInput";
+export { importPayments } from "./import/importPaymentService";
+export { applyMaturedDeferredPayments } from "./import/applyMaturedDeferredPayments";

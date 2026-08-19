@@ -8,9 +8,11 @@ const INVOICE_STATUS = {
     PAID: "Paid",
 } as const;
 
+const INVOICE_PAID_TOLERANCE = 0.2;
+
 /**
- * Close Due/Overdue invoices with zero customer outstanding debt, then
- * recalculate customer rollups and refresh credit-insurance fields.
+ * Close Due/Overdue invoices with zero (or tolerance) customer outstanding debt,
+ * then recalculate customer rollups and refresh credit-insurance fields.
  */
 export async function closeZeroOutstandingDebtInvoices(
     prisma: PrismaClient
@@ -25,9 +27,41 @@ export async function closeZeroOutstandingDebtInvoices(
 }> {
     const start = Date.now();
 
+    const openInvoices = await prisma.invoice.findMany({
+        where: {
+            status: { in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE] },
+        },
+        select: {
+            id: true,
+            net_amount: true,
+            total_paid: true,
+            customer_net_amount: true,
+            customer_total_paid: true,
+            amount: true,
+            customer_amount: true,
+            customer_id: true,
+        },
+    });
+
+    for (const inv of openInvoices) {
+        const customerNet =
+            inv.customer_net_amount ?? inv.customer_amount ?? 0;
+        const customerPaid = inv.customer_total_paid ?? 0;
+        const net = inv.net_amount ?? inv.amount ?? 0;
+        const paid = inv.total_paid ?? 0;
+
+        await prisma.invoice.update({
+            where: { id: inv.id },
+            data: {
+                customer_outstanding_debt: customerNet - customerPaid,
+                outstanding_debt: net - paid,
+            },
+        });
+    }
+
     const invoices = await prisma.invoice.findMany({
         where: {
-            customer_outstanding_debt: 0,
+            customer_outstanding_debt: { lte: INVOICE_PAID_TOLERANCE },
             status: {
                 in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE],
             },
@@ -52,6 +86,7 @@ export async function closeZeroOutstandingDebtInvoices(
         data: {
             status: INVOICE_STATUS.PAID,
             zero_limit_alert: false,
+            reporting_breach: false,
         },
     });
 

@@ -8,11 +8,14 @@ import {
     type SourceField,
 } from "../billing/BillingProviderClient";
 import {
+    PRIORITY_CREDIT_NOTE_HANDLING,
     PRIORITY_RATE_LIMITS,
     buildEntityCollectionUrl,
     buildIncrementalQueryParams,
+    getPriorityEntityEndpoint,
     isPriorityEntityImportType,
 } from "./priorityApiContract";
+import { applyPaymentSyntheticsToRecords } from "../payment/connectorPaymentSynthetics";
 import {
     discoverPriorityFields,
     testPriorityConnection,
@@ -127,9 +130,23 @@ export class PriorityProviderClient implements BillingProviderClient {
         );
 
         const params: Record<string, string> = { $top: String(pageSize) };
+        if (entity === "Invoice" && PRIORITY_CREDIT_NOTE_HANDLING.subformSet) {
+            params.$expand = PRIORITY_CREDIT_NOTE_HANDLING.subformSet;
+        }
         if (safeSkip > 0) {
             params.$skip = String(safeSkip);
         }
+
+        const endpoint = getPriorityEntityEndpoint(entity);
+        const entitySetOverride = options.entitySet?.trim();
+        const orderBy =
+            entitySetOverride &&
+            (entitySetOverride.includes("ARFNCITEMS") ||
+                entitySetOverride.includes("FNCITEMS"))
+                ? "FNCNUM"
+                : endpoint.defaultOrderBy;
+        params.$orderby = orderBy;
+
         if (options.filter && options.filter.trim()) {
             params.$filter = options.filter.trim();
         }
@@ -153,10 +170,14 @@ export class PriorityProviderClient implements BillingProviderClient {
             throw new Error("Unexpected Priority response shape (missing value array)");
         }
 
-        const records = value.filter(
+        const rawRecords = value.filter(
             (item): item is Record<string, unknown> =>
                 Boolean(item) && typeof item === "object" && !Array.isArray(item)
         );
+        const records =
+            entity === "Payment"
+                ? applyPaymentSyntheticsToRecords(rawRecords)
+                : rawRecords;
 
         const hasMore = records.length === pageSize;
         const nextCursor = hasMore ? String(safeSkip + records.length) : null;

@@ -132,6 +132,7 @@ exports.PRIORITY_ENTITY_ENDPOINTS = {
             "IDG_COMPANYNAME",
             "MCUSTNAME",
         ],
+        defaultOrderBy: "CUSTNAME",
         notes: "CUSTNAME is the documented customer number (Customer Number). Maps 1:1 to Archaser customer_number.",
     },
     Contact: {
@@ -154,6 +155,7 @@ exports.PRIORITY_ENTITY_ENDPOINTS = {
             "POSITIONDES",
             "UDATE",
         ],
+        defaultOrderBy: "KLINE",
         notes: "KLINE is the internal line key; confirm via metadata. CUSTNAME links to customer_number. Composite environments may require `${CUSTNAME}|${NAME}` — confirm during pilot.",
     },
     Invoice: {
@@ -177,6 +179,7 @@ exports.PRIORITY_ENTITY_ENDPOINTS = {
             "CREDITFOR",
             "UDATE",
         ],
+        defaultOrderBy: "IVNUM",
         notes: "Composite OData key (IVNUM, IVTYPE). Credit notes: DEBIT='C' with negative TOTPRICE; CREDITFOR links to original IVNUM (see credit note section).",
     },
     Payment: {
@@ -199,7 +202,8 @@ exports.PRIORITY_ENTITY_ENDPOINTS = {
             "PAYDES",
             "UDATE",
         ],
-        notes: "TOTARPAY = Total AR Payment receipts. Confirm entity set name per deployment (some sites expose RECEIPT or FNCPAYMENTS). PAYNUM → Archaser reference; immutable skip-if-exists (D3).",
+        defaultOrderBy: "PAYNUM",
+        notes: "TOTARPAY = Total AR Payment receipts. Confirm entity set name per deployment (some sites expose RECEIPT or FNCPAYMENTS / TINVOICES). PAYNUM → Archaser reference; immutable skip-if-exists (D3). Related-payment pulls for dated backfill filter on IVNUM + CUSTNAME (see PRIORITY_DATED_BACKFILL_FILTERS).",
     },
 };
 function getPriorityEntityEndpoint(importType) {
@@ -214,16 +218,18 @@ function buildEntityCollectionUrl(serviceRoot, importType, entitySetOverride) {
 }
 /**
  * Credit notes ship as negative CINVOICES rows (D4), not a fifth import entity.
- * Map DEBIT='C' + negative TOTPRICE + CREDITFOR → credit_for_invoice_number.
+ * In Priority ERP (iDigil), credit notes reference target invoices via sub-screen
+ * CINVOICESCONT (CINVOICESCONT_SUBFORM in OData), field PIVNUM -> credit_for_invoice_number.
  */
 exports.PRIORITY_CREDIT_NOTE_HANDLING = {
     strategy: "negative_invoice",
     entitySet: "CINVOICES",
+    subformSet: "CINVOICESCONT_SUBFORM",
     debitField: "DEBIT",
     debitValueCredit: "C",
     debitValueInvoice: "D",
     amountField: "TOTPRICE",
-    creditForField: "CREDITFOR",
+    creditForField: "PIVNUM",
     archaserCreditForField: "credit_for_invoice_number",
     separateCreditNoteEntity: false,
     pilotAction: "confirm_CREDITFOR_field_name_via_metadata",
