@@ -1,9 +1,24 @@
 import type { PrismaClient } from "@prisma/client";
+import type { BillingProviderClient } from "../billing/BillingProviderClient";
+import type { BillingAccountExtension, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
+import { type ImportBatchFn } from "./stagedExtensionSync";
 export interface RunInProcessSyncOptions {
     prisma: PrismaClient;
     accountId: number;
     trigger?: string;
     userId?: string;
+    /** Preview / dry-run: pull+map+plugin without entity DB writes. */
+    dryRun?: boolean;
+    /** Override window plan (multi-window backfills / tests). */
+    windows?: ExtensionSyncWindow[];
+    /** Injected provider (skips live Priority client construction). */
+    provider?: BillingProviderClient;
+    /** Skip live ERP connection test (used with injected provider). */
+    skipConnectionTest?: boolean;
+    /** Override registry lookup (tests). */
+    resolveExtension?: (key: string) => BillingAccountExtension | undefined;
+    /** Override importer (tests / dry-run verification). */
+    importBatch?: ImportBatchFn;
 }
 export interface RunInProcessSyncResult {
     ok: boolean;
@@ -22,9 +37,22 @@ export interface RunInProcessSyncResult {
     };
     message: string;
     error?: string;
+    /** Present on staged extension preview / sync when a key is set. */
+    extension_key?: string | null;
+    dry_run?: boolean;
+    /** Post-plugin mapped batch (especially useful for preview). */
+    preview_batch?: ExtensionMappedBatch;
+    window_outcomes?: Array<{
+        start: Date | null;
+        end: Date | null;
+        ok: boolean;
+        error?: string;
+        imported: number;
+    }>;
 }
 /**
  * In-process Priority sync for main API / worker (D71).
- * Pulls mapped entities, maps ERP fields, upserts into Postgres.
+ * Accounts with extension_key use staged windowed plugin path;
+ * accounts without a key keep entity-by-entity pull/map/import.
  */
 export declare function runInProcessSync(options: RunInProcessSyncOptions): Promise<RunInProcessSyncResult>;

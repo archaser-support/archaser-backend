@@ -8,6 +8,24 @@ export {
 } from "./utils/billingConnectorCrypto";
 
 // ==============================
+// Account extensions (registry)
+// ==============================
+export {
+    SAMPLE_NOOP_EXTENSION_KEY,
+    listRegisteredExtensionKeys,
+    getRegisteredExtension,
+    isRegisteredExtensionKey,
+    resolveExtensionAttachmentInput,
+    type BillingAccountExtension,
+    type ExtensionAttachmentUpsertInput,
+    type ExtensionAttachmentUpsertPatch,
+    type ExtensionEntityType,
+    type ExtensionMappedBatch,
+    type ExtensionSyncWindow,
+    type ExtensionTransformContext,
+} from "./extensions";
+
+// ==============================
 // Provider validation (D68)
 // ==============================
 export { assertPriorityProvider } from "./provider";
@@ -116,6 +134,15 @@ export {
     type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
 } from "./sync/runInProcessSync";
+
+export {
+    runStagedExtensionSync,
+    planDefaultSyncWindows,
+    STAGED_ENTITY_ORDER,
+    type RunStagedExtensionSyncOptions,
+    type RunStagedExtensionSyncResult,
+    type StagedWindowOutcome,
+} from "./sync/stagedExtensionSync";
 
 export {
     syncDueBillingConnectors,

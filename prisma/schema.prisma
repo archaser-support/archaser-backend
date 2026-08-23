@@ -70,6 +70,8 @@ model Account {
   sso_providers                         String?                         @db.VarChar(100)
   has_collection                        Boolean                         @default(true)
   has_credit_insurance                  Boolean                         @default(false)
+  /// When false, File Import is hidden from nav, Import page, and role matrix (UI-only).
+  has_file_import                       Boolean                         @default(true)
   enable_customer_checkpoints           Boolean                         @default(false)
   /// AR coverage percentage threshold to include a customer in limit warnings (e.g. 95).
   credit_limit_warning_threshold_pct    Int?                            @db.SmallInt
@@ -2651,6 +2653,10 @@ model BillingConnector {
   include_older_open_invoices   Boolean                @default(true)
   /// When true, backfill invoice writes do not stamp reporting_breach (incremental/cron unchanged).
   skip_reporting_breach_on_backfill Boolean             @default(false)
+  /// Optional account-extension plugin key (registry). Null/empty = standard sync path.
+  extension_key                 String?                @db.VarChar(100)
+  /// Plugin-owned settings JSON for the attached extension.
+  extension_config              Json?
   last_connection_test_at       DateTime?              @db.Timestamptz(6)
   last_connection_error         String?                @db.VarChar(500)
   created_at                    DateTime               @default(now()) @db.Timestamptz(6)

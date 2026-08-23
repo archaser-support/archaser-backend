@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateAccountLastSyncDate = exports.extractMaxUpdatedAt = exports.importMappedEntityBatch = exports.syncDueBillingConnectors = exports.runInProcessSync = exports.ConnectorFeature = exports.PriorityProviderClient = exports.SAMPLE_PAYLOADS_BY_IMPORT_TYPE = exports.PAYMENT_SAMPLES = exports.INVOICE_SAMPLES = exports.CONTACT_SAMPLES = exports.CUSTOMER_SAMPLES = exports.isPriorityEntityImportType = exports.buildIncrementalQueryParams = exports.buildEntityCollectionUrl = exports.getPriorityEntityEndpoint = exports.PRIORITY_ENTITY_ENDPOINTS = exports.priorityApiContract = exports.isConnectorFieldTransform = exports.rulesToRecordMapping = exports.computeMappingCompleteness = exports.validateMappedRow = exports.autoMapConnectorRules = exports.buildDefaultMappingRules = exports.discoverFieldPathsFromRecords = exports.flattenObjectPaths = exports.mapErpRecord = exports.applyConnectorTransform = exports.extractNestedValue = exports.parseMappingRules = exports.describeSchedule = exports.cronToPreset = exports.presetToCron = exports.computeNextScheduledSyncAt = exports.hasCronFiredBetween = exports.isConnectorDue = exports.testPriorityConnection = exports.assertPriorityProvider = exports.isBillingConnectorEncryptionConfigured = exports.decryptCredentials = exports.encryptCredentials = void 0;
+exports.updateAccountLastSyncDate = exports.extractMaxUpdatedAt = exports.importMappedEntityBatch = exports.syncDueBillingConnectors = exports.STAGED_ENTITY_ORDER = exports.planDefaultSyncWindows = exports.runStagedExtensionSync = exports.runInProcessSync = exports.ConnectorFeature = exports.PriorityProviderClient = exports.SAMPLE_PAYLOADS_BY_IMPORT_TYPE = exports.PAYMENT_SAMPLES = exports.INVOICE_SAMPLES = exports.CONTACT_SAMPLES = exports.CUSTOMER_SAMPLES = exports.isPriorityEntityImportType = exports.buildIncrementalQueryParams = exports.buildEntityCollectionUrl = exports.getPriorityEntityEndpoint = exports.PRIORITY_ENTITY_ENDPOINTS = exports.priorityApiContract = exports.isConnectorFieldTransform = exports.rulesToRecordMapping = exports.computeMappingCompleteness = exports.validateMappedRow = exports.autoMapConnectorRules = exports.buildDefaultMappingRules = exports.discoverFieldPathsFromRecords = exports.flattenObjectPaths = exports.mapErpRecord = exports.applyConnectorTransform = exports.extractNestedValue = exports.parseMappingRules = exports.describeSchedule = exports.cronToPreset = exports.presetToCron = exports.computeNextScheduledSyncAt = exports.hasCronFiredBetween = exports.isConnectorDue = exports.testPriorityConnection = exports.assertPriorityProvider = exports.resolveExtensionAttachmentInput = exports.isRegisteredExtensionKey = exports.getRegisteredExtension = exports.listRegisteredExtensionKeys = exports.SAMPLE_NOOP_EXTENSION_KEY = exports.isBillingConnectorEncryptionConfigured = exports.decryptCredentials = exports.encryptCredentials = void 0;
 exports.testBillingConnectorConnection = testBillingConnectorConnection;
 // ==============================
 // Crypto
@@ -42,6 +42,15 @@ var billingConnectorCrypto_1 = require("./utils/billingConnectorCrypto");
 Object.defineProperty(exports, "encryptCredentials", { enumerable: true, get: function () { return billingConnectorCrypto_1.encryptCredentials; } });
 Object.defineProperty(exports, "decryptCredentials", { enumerable: true, get: function () { return billingConnectorCrypto_1.decryptCredentials; } });
 Object.defineProperty(exports, "isBillingConnectorEncryptionConfigured", { enumerable: true, get: function () { return billingConnectorCrypto_1.isBillingConnectorEncryptionConfigured; } });
+// ==============================
+// Account extensions (registry)
+// ==============================
+var extensions_1 = require("./extensions");
+Object.defineProperty(exports, "SAMPLE_NOOP_EXTENSION_KEY", { enumerable: true, get: function () { return extensions_1.SAMPLE_NOOP_EXTENSION_KEY; } });
+Object.defineProperty(exports, "listRegisteredExtensionKeys", { enumerable: true, get: function () { return extensions_1.listRegisteredExtensionKeys; } });
+Object.defineProperty(exports, "getRegisteredExtension", { enumerable: true, get: function () { return extensions_1.getRegisteredExtension; } });
+Object.defineProperty(exports, "isRegisteredExtensionKey", { enumerable: true, get: function () { return extensions_1.isRegisteredExtensionKey; } });
+Object.defineProperty(exports, "resolveExtensionAttachmentInput", { enumerable: true, get: function () { return extensions_1.resolveExtensionAttachmentInput; } });
 // ==============================
 // Provider validation (D68)
 // ==============================
@@ -110,6 +119,10 @@ Object.defineProperty(exports, "ConnectorFeature", { enumerable: true, get: func
 // ==============================
 var runInProcessSync_1 = require("./sync/runInProcessSync");
 Object.defineProperty(exports, "runInProcessSync", { enumerable: true, get: function () { return runInProcessSync_1.runInProcessSync; } });
+var stagedExtensionSync_1 = require("./sync/stagedExtensionSync");
+Object.defineProperty(exports, "runStagedExtensionSync", { enumerable: true, get: function () { return stagedExtensionSync_1.runStagedExtensionSync; } });
+Object.defineProperty(exports, "planDefaultSyncWindows", { enumerable: true, get: function () { return stagedExtensionSync_1.planDefaultSyncWindows; } });
+Object.defineProperty(exports, "STAGED_ENTITY_ORDER", { enumerable: true, get: function () { return stagedExtensionSync_1.STAGED_ENTITY_ORDER; } });
 var syncDueBillingConnectors_1 = require("./services/syncDueBillingConnectors");
 Object.defineProperty(exports, "syncDueBillingConnectors", { enumerable: true, get: function () { return syncDueBillingConnectors_1.syncDueBillingConnectors; } });
 var entityImporter_1 = require("./import/entityImporter");

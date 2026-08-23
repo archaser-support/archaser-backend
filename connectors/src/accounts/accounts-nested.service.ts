@@ -9,6 +9,7 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/jwt-payload";
 import {
     decryptCredentials,
+    resolveExtensionAttachmentInput,
     runInProcessSync,
     testBillingConnectorConnection,
 } from "@archaser/billing-connector";
@@ -419,6 +420,8 @@ export class AccountsNestedService {
         backfill_start_date?: Date | null;
         include_older_open_invoices?: boolean;
         skip_reporting_breach_on_backfill?: boolean;
+        extension_key?: string | null;
+        extension_config?: unknown;
         last_connection_test_at: Date | null;
         last_connection_error: string | null;
         created_at: Date;
@@ -448,6 +451,15 @@ export class AccountsNestedService {
             backfill_options_locked: areBackfillOptionsLocked(
                 connector.backfill_started_at
             ),
+            extension_key: connector.extension_key ?? null,
+            extension_config:
+                connector.extension_config &&
+                typeof connector.extension_config === "object" &&
+                !Array.isArray(connector.extension_config)
+                    ? (connector.extension_config as Record<string, unknown>)
+                    : connector.extension_key
+                      ? {}
+                      : null,
             last_connection_test_at:
                 connector.last_connection_test_at?.toISOString() ?? null,
             last_connection_error: connector.last_connection_error,
@@ -600,6 +612,42 @@ export class AccountsNestedService {
             data.skip_reporting_breach_on_backfill = skipBreachChange.value;
         }
 
+        let extensionPatch;
+        try {
+            extensionPatch = resolveExtensionAttachmentInput({
+                extension_key:
+                    body.extension_key === undefined
+                        ? undefined
+                        : (body.extension_key as string | null),
+                extension_config:
+                    body.extension_config === undefined
+                        ? undefined
+                        : body.extension_config,
+                existingKey: existing?.extension_key ?? null,
+            });
+        } catch (error: unknown) {
+            const err = error as { code?: string; message?: string };
+            if (
+                err?.code === "UNKNOWN_EXTENSION_KEY" ||
+                err?.code === "INVALID_EXTENSION_CONFIG" ||
+                err?.code === "EXTENSION_KEY_REQUIRED"
+            ) {
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid extension attachment",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (extensionPatch) {
+            if (extensionPatch.extension_key !== undefined) {
+                data.extension_key = extensionPatch.extension_key;
+            }
+            if (extensionPatch.extension_config !== undefined) {
+                data.extension_config = extensionPatch.extension_config;
+            }
+        }
+
         const connector = existing
             ? await this.db.billingConnector.update({
                   where: { account_id: accountId },
@@ -699,17 +747,27 @@ export class AccountsNestedService {
             }
         }
         if (action === "sync") {
+            const mode =
+                typeof body?.mode === "string" ? body.mode : undefined;
+            const dryRun = mode === "preview";
+            const trigger =
+                typeof body?.trigger === "string"
+                    ? body.trigger
+                    : dryRun
+                      ? "preview"
+                      : mode === "backfill"
+                        ? "backfill"
+                        : "manual";
             const result = await runInProcessSync({
                 prisma: this.db,
                 accountId,
-                trigger:
-                    typeof body?.trigger === "string"
-                        ? body.trigger
-                        : "manual",
+                trigger,
+                dryRun,
             });
             return {
                 queued: false,
                 inProcess: true,
+                result,
                 ...result,
             };
         }
