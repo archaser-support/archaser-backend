@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE "Account"
+ADD COLUMN IF NOT EXISTS "has_file_import" BOOLEAN NOT NULL DEFAULT true;
+
+COMMIT;
