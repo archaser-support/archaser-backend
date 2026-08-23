@@ -1,4 +1,5 @@
 export { encryptCredentials, decryptCredentials, isBillingConnectorEncryptionConfigured, } from "./utils/billingConnectorCrypto";
+export { SAMPLE_NOOP_EXTENSION_KEY, listRegisteredExtensionKeys, getRegisteredExtension, isRegisteredExtensionKey, resolveExtensionAttachmentInput, type BillingAccountExtension, type ExtensionAttachmentUpsertInput, type ExtensionAttachmentUpsertPatch, type ExtensionEntityType, type ExtensionMappedBatch, type ExtensionSyncWindow, type ExtensionTransformContext, } from "./extensions";
 export { assertPriorityProvider } from "./provider";
 export { testPriorityConnection } from "./priority/PriorityClient";
 export type { PriorityConnectionConfig, PriorityTestConnectionResult, } from "./priority/PriorityClient";
@@ -20,5 +21,6 @@ export { CUSTOMER_SAMPLES, CONTACT_SAMPLES, INVOICE_SAMPLES, PAYMENT_SAMPLES, SA
 export { PriorityProviderClient } from "./priority/PriorityProviderClient";
 export { ConnectorFeature, type BillingProviderClient, type SourceField, type PullPage, type PullOptions, } from "./billing/BillingProviderClient";
 export { runInProcessSync, type RunInProcessSyncOptions, type RunInProcessSyncResult, } from "./sync/runInProcessSync";
+export { runStagedExtensionSync, planDefaultSyncWindows, STAGED_ENTITY_ORDER, type RunStagedExtensionSyncOptions, type RunStagedExtensionSyncResult, type StagedWindowOutcome, } from "./sync/stagedExtensionSync";
 export { syncDueBillingConnectors, type SyncDueBillingConnectorsResult, } from "./services/syncDueBillingConnectors";
 export { importMappedEntityBatch, extractMaxUpdatedAt, updateAccountLastSyncDate, type EntityImportBatchResult, type ImportEntityType, } from "./import/entityImporter";
