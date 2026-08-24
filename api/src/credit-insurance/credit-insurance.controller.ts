@@ -21,6 +21,10 @@ const CREDIT_INSURANCE_KEYS = [
     "insurance-policy-trend",
     "mark-reported",
     "mark-reported-bulk",
+    "asof-backfill-status",
+    "asof-backfill-start",
+    "asof-backfill-pause",
+    "asof-backfill-retry",
 ];
 
 @ApiTags("credit-insurance")

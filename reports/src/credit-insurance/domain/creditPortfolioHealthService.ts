@@ -192,6 +192,8 @@ export type PortfolioUtilizationSection = {
     distributionCustomerCount: number;
     /** Daily portfolio / DCL / Named utilization for the Utilization chart. */
     daily: PortfolioUtilizationDailyPoint[];
+    /** Snapshot day used for top customers and distribution; null when none. */
+    asOfDate: string | null;
 };
 
 export type PortfolioCostDailyPoint = {
@@ -315,6 +317,20 @@ function utcDayPlusOne(ymd: string): string {
     const d = new Date(`${ymd}T12:00:00.000Z`);
     d.setUTCDate(d.getUTCDate() + 1);
     return d.toISOString().slice(0, 10);
+}
+
+/** Latest snapshot YYYY-MM-DD on or before `rangeToYmd`, or null. */
+export function latestSnapshotYmdOnOrBefore(
+    snapshotYmds: string[],
+    rangeToYmd: string
+): string | null {
+    let latest: string | null = null;
+    for (const ymd of snapshotYmds) {
+        if (ymd <= rangeToYmd && (latest == null || ymd > latest)) {
+            latest = ymd;
+        }
+    }
+    return latest;
 }
 
 export function isInsurerDeclinedReason(reason: unknown): boolean {
@@ -1115,6 +1131,7 @@ export function emptyUtilizationSection(): PortfolioUtilizationSection {
         })),
         distributionCustomerCount: 0,
         daily: [],
+        asOfDate: null,
     };
 }
 
@@ -1125,6 +1142,7 @@ export function buildUtilizationSection(input: {
     distributionCustomers: Array<{ utilizationPct: number }>;
     periodActiveTopUpCount: number;
     periodCustomersWithTopUp: number;
+    asOfDate?: string | null;
 }): PortfolioUtilizationSection {
     const period = computeUtilizationPeriodMetrics(input.daily);
     const footprints = computeDclVsNamedFootprints(input.daily);
@@ -1163,6 +1181,7 @@ export function buildUtilizationSection(input: {
         daily: [...input.daily].sort((a, b) =>
             a.snapshotDate.localeCompare(b.snapshotDate)
         ),
+        asOfDate: input.asOfDate ?? null,
     };
 }
 
@@ -2407,13 +2426,6 @@ export async function getCreditPortfolioHealth(
         includeNoPolicyExposure: query.includeNoPolicyExposure,
     };
 
-    const asOfScope = {
-        asOfDateUtc: parsed.toDateUtc,
-        policyId: query.policyId,
-        scopedCustomerIds,
-        includeNoPolicyExposure: query.includeNoPolicyExposure,
-    };
-
     const [
         accountCurrency,
         cptRows,
@@ -2422,8 +2434,6 @@ export async function getCreditPortfolioHealth(
         breachRows,
         utilizationRows,
         rangeCostInputs,
-        topCustomers,
-        distributionCustomers,
         withoutPolicyByDate,
         periodTopUps,
     ] = await Promise.all([
@@ -2434,8 +2444,6 @@ export async function getCreditPortfolioHealth(
         fetchCptApprovedBreachReasonDayAggregates(accountId, cptScope),
         fetchCptUtilizationDayAggregates(accountId, cptScope),
         fetchPortfolioRangeCostInputs(accountId, cptScope),
-        fetchCptTopUtilizationCustomers(accountId, asOfScope),
-        fetchCptUtilizationDistribution(accountId, asOfScope),
         query.includeNoPolicyExposure
             ? fetchWithoutPolicyByDate(accountId, {
                   fromDateUtc: parsed.fromDateUtc,
@@ -2455,6 +2463,27 @@ export async function getCreditPortfolioHealth(
             scopedCustomerIds,
         }),
     ]);
+
+    const snapshotYmds = cptRows.map((row) =>
+        normalizeDateString(row.snapshot_date)
+    );
+    const asOfDate = latestSnapshotYmdOnOrBefore(snapshotYmds, parsed.to);
+    const asOfScope = {
+        asOfDateUtc:
+            asOfDate != null
+                ? startOfUtcDayFromYmd(asOfDate)
+                : parsed.toDateUtc,
+        policyId: query.policyId,
+        scopedCustomerIds,
+        includeNoPolicyExposure: query.includeNoPolicyExposure,
+    };
+    const [topCustomers, distributionCustomers] =
+        asOfDate != null
+            ? await Promise.all([
+                  fetchCptTopUtilizationCustomers(accountId, asOfScope),
+                  fetchCptUtilizationDistribution(accountId, asOfScope),
+              ])
+            : [[], []];
 
     const withoutPolicyAmountByDate = new Map<string, number>();
     withoutPolicyByDate.forEach((value, date) => {
@@ -2506,6 +2535,7 @@ export async function getCreditPortfolioHealth(
             distributionCustomers,
             periodActiveTopUpCount: periodTopUps.periodActiveTopUpCount,
             periodCustomersWithTopUp: periodTopUps.periodCustomersWithTopUp,
+            asOfDate,
         }),
         costs: buildCostsSection({
             periodCost: rangeCost.periodCost,
