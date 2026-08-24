@@ -15,7 +15,7 @@ services:
       retries: 5
 
   api:
-    image: node:20-alpine
+    image: node:20-bookworm-slim
     working_dir: /workspace
     command: sh -lc "npm run start:api"
     env_file:
@@ -47,7 +47,7 @@ services:
     restart: unless-stopped
 
   worker:
-    image: node:20-alpine
+    image: node:20-bookworm-slim
     working_dir: /workspace
     command: sh -lc "npm run start -w @archaser/worker"
     env_file:
@@ -74,7 +74,7 @@ services:
     restart: unless-stopped
 
   sms:
-    image: node:20-alpine
+    image: node:20-bookworm-slim
     working_dir: /workspace
     command: sh -lc "npm run start -w @archaser/sms"
     env_file:
@@ -90,7 +90,7 @@ services:
     restart: unless-stopped
 
   connectors:
-    image: node:20-alpine
+    image: node:20-bookworm-slim
     working_dir: /workspace
     command: sh -lc "npm run start -w @archaser/connectors"
     env_file:
@@ -111,7 +111,7 @@ services:
     restart: unless-stopped
 
   reports:
-    image: node:20-alpine
+    image: node:20-bookworm-slim
     working_dir: /workspace
     command: sh -lc "npm run start -w @archaser/reports"
     env_file:
