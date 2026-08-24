@@ -66,6 +66,30 @@ const UNPAID_INVOICE_STATUSES = [
     "Viewed",
 ] as const;
 
+const DUE_CHART_TYPES = [
+    "total-due",
+    "due-today",
+    "due-this-week",
+    "due-this-month",
+    "due-next-month",
+] as const;
+
+const COLLECTED_MTD_CHART_TYPES = [
+    "collected-mtd",
+    "collected-vs-promise",
+] as const;
+
+/** Future due-date buckets matching MATURITY_DAYS_RANGE_MAP on the web side. */
+const MATURITY_BUCKETS = [
+    { daysRange: "0-7 days", min: 0, max: 7 },
+    { daysRange: "8-30 days", min: 8, max: 30 },
+    { daysRange: "31-60 days", min: 31, max: 60 },
+    { daysRange: "61-90 days", min: 61, max: 90 },
+    { daysRange: "91-180 days", min: 91, max: 180 },
+    { daysRange: "181-365 days", min: 181, max: 365 },
+    { daysRange: "365 days+", min: 366, max: 9999 },
+] as const;
+
 export type SystemListQuery = Record<string, string | undefined>;
 
 @Injectable()
@@ -846,27 +870,188 @@ export class SystemService {
         );
     }
 
+    private resolveMaturityBucket(daysRange?: string | null) {
+        if (!daysRange) {
+            return null;
+        }
+        const normalized = daysRange.replace(/\+(?!$)/g, " ").trim();
+        return (
+            MATURITY_BUCKETS.find((b) => b.daysRange === normalized) ??
+            MATURITY_BUCKETS.find(
+                (b) =>
+                    b.daysRange.replace(/ /g, "") ===
+                    normalized.replace(/ /g, "")
+            ) ??
+            null
+        );
+    }
+
+    private parseYearMonth(
+        period?: string | null
+    ): { year: number; monthIndex: number } | null {
+        if (!period || !/^\d{4}-\d{2}/.test(period)) {
+            return null;
+        }
+        const [yearStr, monthStr] = period.split("-");
+        const year = parseInt(yearStr, 10);
+        const monthIndex = parseInt(monthStr, 10) - 1;
+        if (!Number.isFinite(year) || !Number.isFinite(monthIndex)) {
+            return null;
+        }
+        return { year, monthIndex };
+    }
+
+    private utcMonthRange(
+        year: number,
+        monthIndex: number
+    ): { start: Date; end: Date } {
+        const start = this.startOfUtcDay(
+            new Date(Date.UTC(year, monthIndex, 1))
+        );
+        const end = this.endOfUtcDay(
+            new Date(Date.UTC(year, monthIndex + 1, 0))
+        );
+        return { start, end };
+    }
+
+    private dueDateFilterForChart(
+        type: string,
+        today: Date,
+        daysRange?: string | null
+    ): Record<string, Date> | null {
+        if (type === "due-today") {
+            return { gte: today, lte: this.endOfUtcDay(today) };
+        }
+        if (type === "due-this-week") {
+            const weekStart = this.addDays(today, -today.getUTCDay());
+            const lastInclusive = this.addDays(weekStart, 6);
+            return { gte: today, lte: this.endOfUtcDay(lastInclusive) };
+        }
+        if (type === "due-this-month") {
+            const end = this.endOfUtcDay(
+                new Date(
+                    Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0)
+                )
+            );
+            return { gte: today, lte: end };
+        }
+        if (type === "due-next-month") {
+            return {
+                gte: this.startOfUtcDay(
+                    new Date(
+                        Date.UTC(
+                            today.getUTCFullYear(),
+                            today.getUTCMonth() + 1,
+                            1
+                        )
+                    )
+                ),
+                lte: this.endOfUtcDay(
+                    new Date(
+                        Date.UTC(
+                            today.getUTCFullYear(),
+                            today.getUTCMonth() + 2,
+                            0
+                        )
+                    )
+                ),
+            };
+        }
+        if (type === "receivables-maturity-schedule") {
+            const bucket = this.resolveMaturityBucket(daysRange);
+            if (!bucket) {
+                return { gte: today };
+            }
+            return {
+                gte: this.startOfUtcDay(this.addDays(today, bucket.min)),
+                lte: this.endOfUtcDay(this.addDays(today, bucket.max)),
+            };
+        }
+        return null;
+    }
+
+    private customerDisplayName(customer: {
+        customer_number?: string | null;
+        Company?: { name?: string | null } | null;
+        Person?: {
+            first_name?: string | null;
+            last_name?: string | null;
+        } | null;
+    }): string {
+        const company = customer.Company?.name?.trim();
+        if (company) {
+            return company;
+        }
+        const person = [customer.Person?.first_name, customer.Person?.last_name]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+        return person || customer.customer_number || "";
+    }
+
+    private async chartDetailsEnvelope(
+        accountId: number,
+        summary: Record<string, number>,
+        data: unknown[] = []
+    ) {
+        const currency = await this.accountCurrency(accountId);
+        return serializeBigInt({
+            details: [],
+            data,
+            totalRecords: summary.totalRecords ?? data.length,
+            summary,
+            currency,
+        });
+    }
+
+    private async invoiceChartSummary(where: Record<string, unknown>) {
+        const [totalRecords, amountAgg] = await Promise.all([
+            this.db.invoice.count({ where }),
+            this.db.invoice.aggregate({
+                where,
+                _sum: {
+                    outstanding_debt: true,
+                    customer_outstanding_debt: true,
+                },
+            }),
+        ]);
+        const outstanding = Number(amountAgg._sum.outstanding_debt ?? 0);
+        const customerOutstanding = Number(
+            amountAgg._sum.customer_outstanding_debt ?? 0
+        );
+        return {
+            totalRecords,
+            totalAmount: outstanding || customerOutstanding,
+        };
+    }
+
     async getChartDetails(user: JwtPayload, query: SystemListQuery = {}) {
         const { userInfo, accountId } = await this.scope(user);
 
-        // Invoice-shaped aging drill-down. Rows come from the dashboard_invoices
-        // report, so only the summary cards are served here — and they reuse the
-        // grid's locked filters so the cards match its record count. Invoice has
-        // no owner/business-unit column, so that scope is applied via Customer.
-        if (query.type === "aging-portfolio") {
-            const bucket = this.resolveAgingBucket(query.daysRange);
-            const today = this.startOfUtcDay(new Date());
+        const accessWhere =
+            await this.accessScope.buildCustomerAccessWhere(userInfo);
+        const selectedBu = await this.selectedBusinessUnitFilter(query);
+        const today = this.startOfUtcDay(new Date());
+
+        // Invoice-shaped overdue / aging drill-downs. Rows come from the
+        // dashboard_invoices report, so only summary cards are served here.
+        if (
+            query.type === "aging-portfolio" ||
+            query.type === "overdue-invoices"
+        ) {
+            const bucket =
+                query.type === "aging-portfolio"
+                    ? this.resolveAgingBucket(query.daysRange)
+                    : null;
             const customerScope = [
-                ...(await this.accessScope.buildCustomerAccessWhere(userInfo)),
+                ...accessWhere,
                 { collection_status: "Active" as const },
             ];
-            const selectedBu = await this.selectedBusinessUnitFilter(query);
             if (selectedBu) {
                 customerScope.push(
                     selectedBu as (typeof customerScope)[number]
                 );
             }
-
             const where = {
                 account_id: accountId,
                 status: { in: [...UNPAID_INVOICE_STATUSES] },
@@ -882,46 +1067,55 @@ export class SystemService {
                       }
                     : { lt: today },
             };
-
-            const [totalRecords, amountAgg, currency] = await Promise.all([
-                this.db.invoice.count({ where }),
-                this.db.invoice.aggregate({
-                    where,
-                    _sum: { outstanding_debt: true },
-                }),
-                this.accountCurrency(accountId),
-            ]);
-
-            return serializeBigInt({
-                details: [],
-                data: [],
-                totalRecords,
-                summary: {
-                    totalRecords,
-                    totalAmount: Number(amountAgg._sum.outstanding_debt ?? 0),
-                },
-                currency,
-            });
+            const summary = await this.invoiceChartSummary(where);
+            return this.chartDetailsEnvelope(accountId, summary);
         }
 
-        // The overdue drill-downs render their rows from the dashboard_customers
-        // report, so only the summary cards are served here. Both types share
-        // one predicate with those locked report filters, otherwise the cards
-        // and the grid row count would disagree.
+        // Due-family and maturity buckets share Due + outstanding membership
+        // with the dashboard_invoices_due locked filters.
+        const isDueFamily = (
+            DUE_CHART_TYPES as readonly string[]
+        ).includes(query.type || "");
+        const isMaturityInvoiceList =
+            query.type === "receivables-maturity-schedule" &&
+            !!this.resolveMaturityBucket(query.daysRange);
+        if (isDueFamily || isMaturityInvoiceList) {
+            const customerScope = [
+                ...accessWhere,
+                { collection_status: { in: ["Active", "Inactive"] as const } },
+            ];
+            if (selectedBu) {
+                customerScope.push(
+                    selectedBu as (typeof customerScope)[number]
+                );
+            }
+            const dueDate = this.dueDateFilterForChart(
+                query.type || "",
+                today,
+                query.daysRange
+            );
+            const where = {
+                account_id: accountId,
+                status: "Due" as const,
+                customer_outstanding_debt: { gt: 0 },
+                Customer: { AND: customerScope },
+                ...(dueDate ? { due_date: dueDate } : {}),
+            };
+            const summary = await this.invoiceChartSummary(where);
+            return this.chartDetailsEnvelope(accountId, summary);
+        }
+
+        // The overdue customer drills render rows from dashboard_customers.
         if (
             query.type === "overdue-amount" ||
             query.type === "overdue-customers"
         ) {
             const periodFilter = this.openCollectionPeriodFilter();
-            const customerScope = [
-                ...(await this.accessScope.buildCustomerAccessWhere(userInfo)),
-            ];
-            const selectedBu = await this.selectedBusinessUnitFilter(query);
+            const customerScope = [...accessWhere];
             if (selectedBu) {
                 customerScope.push(selectedBu);
             }
-
-            const [totalRecords, amountAgg, currency] = await Promise.all([
+            const [totalRecords, amountAgg] = await Promise.all([
                 this.db.customer.count({
                     where: {
                         AND: [
@@ -937,24 +1131,201 @@ export class SystemService {
                     },
                     _sum: { total_outstanding_amount: true },
                 }),
-                this.accountCurrency(accountId),
             ]);
-
-            return serializeBigInt({
-                details: [],
-                data: [],
+            return this.chartDetailsEnvelope(accountId, {
                 totalRecords,
-                summary: {
+                totalAmount: Number(
+                    amountAgg._sum.total_outstanding_amount ?? 0
+                ),
+            });
+        }
+
+        if (
+            (
+                COLLECTED_MTD_CHART_TYPES as readonly string[]
+            ).includes(query.type || "")
+        ) {
+            const parsed = this.parseYearMonth(query.period);
+            if (parsed) {
+                const { start, end } = this.utcMonthRange(
+                    parsed.year,
+                    parsed.monthIndex
+                );
+                const where = {
+                    account_id: accountId,
+                    payment_date: { gte: start, lte: end },
+                    ...LINKED_PAYMENT,
+                };
+                const [totalRecords, amountAgg] = await Promise.all([
+                    this.db.invoicePayment.count({ where }),
+                    this.db.invoicePayment.aggregate({
+                        where,
+                        _sum: { amount: true },
+                    }),
+                ]);
+                const totalAmount = Number(amountAgg._sum.amount ?? 0);
+                return this.chartDetailsEnvelope(accountId, {
+                    totalRecords,
+                    totalAmount,
+                    totalCollectedRecords: totalRecords,
+                });
+            }
+        }
+
+        if (query.type === "active-customers") {
+            const parsed = this.parseYearMonth(query.period);
+            if (parsed) {
+                const now = new Date();
+                let year = parsed.year;
+                if (
+                    year > now.getUTCFullYear() ||
+                    (year === now.getUTCFullYear() &&
+                        parsed.monthIndex > now.getUTCMonth())
+                ) {
+                    year -= 1;
+                }
+                const { start, end } = this.utcMonthRange(
+                    year,
+                    parsed.monthIndex
+                );
+                const enteredWhere = {
+                    AND: [
+                        ...accessWhere,
+                        { collection_status: "Active" as const },
+                        { created_at: { gte: start, lte: end } },
+                        ...(selectedBu ? [selectedBu] : []),
+                    ],
+                };
+                const exitedWhere = {
+                    AND: [
+                        ...accessWhere,
+                        { collection_status: "Inactive" as const },
+                        { modified_at: { gte: start, lte: end } },
+                    ],
+                };
+                const [enteredCount, exitedCount] = await Promise.all([
+                    this.db.customer.count({ where: enteredWhere }),
+                    this.db.customer.count({ where: exitedWhere }),
+                ]);
+                return this.chartDetailsEnvelope(accountId, {
+                    totalRecords: enteredCount + exitedCount,
+                    totalAmount: 0,
+                    enteredCount,
+                    exitedCount,
+                });
+            }
+        }
+
+        if (
+            query.type === "collection-efforts" ||
+            query.type === "automated-phase-split"
+        ) {
+            const customerScope = [
+                ...accessWhere,
+                { collection_status: "Active" as const },
+            ];
+            if (selectedBu) {
+                customerScope.push(
+                    selectedBu as (typeof customerScope)[number]
+                );
+            }
+            const periodWhere = {
+                period_end_date: null,
+                total_outstanding_amount: { gt: 0 },
+                Customer: { AND: customerScope },
+                ...(query.type === "automated-phase-split"
+                    ? { current_category: "Automated" as const }
+                    : {}),
+            };
+            const [totalRecords, amountAgg, invoiceAgg, periods] =
+                await Promise.all([
+                    this.db.customerCollectionPeriod.count({
+                        where: periodWhere,
+                    }),
+                    this.db.customerCollectionPeriod.aggregate({
+                        where: periodWhere,
+                        _sum: { total_outstanding_amount: true },
+                    }),
+                    this.db.customerCollectionPeriod.aggregate({
+                        where: periodWhere,
+                        _sum: { no_of_overdue_invoices: true },
+                    }),
+                    this.db.customerCollectionPeriod.findMany({
+                        where: periodWhere,
+                        take: 20000,
+                        include: {
+                            Customer: {
+                                select: {
+                                    id: true,
+                                    customer_number: true,
+                                    Company: { select: { name: true } },
+                                    Person: {
+                                        select: {
+                                            first_name: true,
+                                            last_name: true,
+                                        },
+                                    },
+                                    Owner: {
+                                        select: {
+                                            name: true,
+                                            first_name: true,
+                                            last_name: true,
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    }),
+                ]);
+            const data = periods.map((period) => {
+                const owner = period.Customer?.Owner;
+                const assignedAgent =
+                    owner?.name ||
+                    [owner?.first_name, owner?.last_name]
+                        .filter(Boolean)
+                        .join(" ") ||
+                    "";
+                return {
+                    accountId: period.Customer?.customer_number || "",
+                    customerName: this.customerDisplayName(
+                        period.Customer || {}
+                    ),
+                    outstandingAmount: Number(
+                        period.total_outstanding_amount ?? 0
+                    ),
+                    promiseToPayAmount: Number(
+                        period.promise_to_pay_amount ?? 0
+                    ),
+                    invoiceCount: Number(period.no_of_overdue_invoices ?? 0),
+                    lastActivity: period.last_call,
+                    date: period.period_start_date,
+                    phase: period.current_category || "",
+                    assignedAgent,
+                    customerCurrency: period.currency,
+                };
+            });
+            return this.chartDetailsEnvelope(
+                accountId,
+                {
                     totalRecords,
                     totalAmount: Number(
                         amountAgg._sum.total_outstanding_amount ?? 0
                     ),
+                    totalInvoiceCount: Number(
+                        invoiceAgg._sum.no_of_overdue_invoices ?? 0
+                    ),
                 },
-                currency,
-            });
+                data
+            );
         }
 
-        return { details: [], totalRecords: 0 };
+        // UI always reads `data` + `summary` (+ optional `currency`). Keep the
+        // legacy `details` key empty for older callers; do not return a bare
+        // `{ details, totalRecords }` stub that leaves the chart-details page empty.
+        return this.chartDetailsEnvelope(accountId, {
+            totalRecords: 0,
+            totalAmount: 0,
+        });
     }
 
     async getControlCenter(user: JwtPayload, operation?: string | null) {
