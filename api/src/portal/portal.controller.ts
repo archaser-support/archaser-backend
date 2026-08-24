@@ -18,6 +18,24 @@ export class PortalDomainController {
         return this.portal.createPublicDispute(body);
     }
 
+    @Post("send-verification-code")
+    @ApiOperation({ summary: "Portal send verification code" })
+    async sendVerificationCode(@Body() body: Record<string, unknown>) {
+        return this.portal.sendVerificationCode(body);
+    }
+
+    @Post("verify-code")
+    @ApiOperation({ summary: "Portal verify email code" })
+    async verifyCode(@Body() body: Record<string, unknown>) {
+        return this.portal.verifyCode(body);
+    }
+
+    @Post("verification-email")
+    @ApiOperation({ summary: "Portal contact email for verification" })
+    async verificationEmail(@Body() body: Record<string, unknown>) {
+        return this.portal.verificationEmail(body);
+    }
+
     @Post("update-promise-to-pay")
     @ApiOperation({
         summary: "Portal update-promise-to-pay (public, Nest-native)",

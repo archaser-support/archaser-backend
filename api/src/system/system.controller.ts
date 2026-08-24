@@ -50,18 +50,23 @@ export class SystemController {
     @ApiOperation({ summary: "Control center overview (Nest-native)" })
     async controlCenter(
         @CurrentUser() user: JwtPayload,
-        @Query("operation") operation?: string
+        @Query() query: SystemListQuery
     ) {
-        return this.system.getControlCenter(user, operation || "stats");
+        return this.system.getControlCenter(
+            user,
+            query.operation || "stats",
+            query
+        );
     }
 
     @Get("control-center/:operation")
     @ApiOperation({ summary: "Control center by operation (Nest-native)" })
     async controlCenterOp(
         @CurrentUser() user: JwtPayload,
-        @Param("operation") operation: string
+        @Param("operation") operation: string,
+        @Query() query: SystemListQuery
     ) {
-        return this.system.getControlCenter(user, operation);
+        return this.system.getControlCenter(user, operation, query);
     }
 
     @Post("control-center")
@@ -124,6 +129,15 @@ export class SystemController {
     @ApiOperation({ summary: "Agents follow-up list (Nest-native)" })
     async agentsFollowUp(@CurrentUser() user: JwtPayload) {
         return this.system.getAgentsFollowUp(user);
+    }
+
+    @Put("agents/follow-up")
+    @ApiOperation({ summary: "Clear a follow-up time on a collection period" })
+    async clearAgentsFollowUp(
+        @CurrentUser() user: JwtPayload,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.system.clearAgentsFollowUp(user, body);
     }
 
     @Get("promise-to-pay")

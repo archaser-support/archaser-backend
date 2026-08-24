@@ -331,6 +331,7 @@ export class SmsService {
         ]);
         return serializeBigInt({
             countryVendors: rows,
+            mappings: rows,
             totalRecords: total,
             page,
             limit,
