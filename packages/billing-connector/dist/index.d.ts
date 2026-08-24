@@ -1,4 +1,4 @@
-export { encryptCredentials, decryptCredentials, isBillingConnectorEncryptionConfigured, } from "./utils/billingConnectorCrypto";
+export { encryptCredentials, decryptCredentials, isBillingConnectorEncryptionConfigured, parseStoredConnectorCredentials, } from "./utils/billingConnectorCrypto";
 export { SAMPLE_NOOP_EXTENSION_KEY, listRegisteredExtensionKeys, getRegisteredExtension, isRegisteredExtensionKey, resolveExtensionAttachmentInput, type BillingAccountExtension, type ExtensionAttachmentUpsertInput, type ExtensionAttachmentUpsertPatch, type ExtensionEntityType, type ExtensionMappedBatch, type ExtensionSyncWindow, type ExtensionTransformContext, } from "./extensions";
 export { assertPriorityProvider } from "./provider";
 export { testPriorityConnection } from "./priority/PriorityClient";
@@ -21,6 +21,14 @@ export { CUSTOMER_SAMPLES, CONTACT_SAMPLES, INVOICE_SAMPLES, PAYMENT_SAMPLES, SA
 export { PriorityProviderClient } from "./priority/PriorityProviderClient";
 export { ConnectorFeature, type BillingProviderClient, type SourceField, type PullPage, type PullOptions, } from "./billing/BillingProviderClient";
 export { runInProcessSync, type RunInProcessSyncOptions, type RunInProcessSyncResult, } from "./sync/runInProcessSync";
+export { runPreviewSync, discoverConnectorFields, } from "./sync/runPreviewSync";
+export { fetchPriorityEntitySetCatalog } from "./priority/PriorityClient";
+export { getImportEntityFieldCatalog } from "./utils/connectorFieldUtils";
+export { allEnabledEntitiesPreviewPassed, clearPreviewPass, clearPreviewPasses, parsePreviewPassesMap, previewPassesToPrismaJson, } from "./services/billingConnectorPreviewPasses";
+export { entitySetCatalogToPrismaJson, entitySetsToPrismaJson, getDefaultEntitySets, listChangedEntitySetEntities, mergeEntitySetsPatch, parseEntitySetCatalog, parseEntitySetsMap, type EntitySetsMap, } from "./services/billingConnectorEntitySets";
+export { listChangedPullFilterEntities, mergePullFiltersPatch, pullFiltersToPrismaJson, toPublicPullFilters, type PullFiltersMap, } from "./services/billingConnectorPullFilters";
+export { clearRunningSync, getRunningSync, listSyncRuns, registerRunningSync, upsertSyncRun, type ConnectorSyncRunSummary, } from "./sync/connectorSyncRuntime";
+export { requestConnectorSyncCancel } from "./sync/connectorSyncCancelRegistry";
 export { runStagedExtensionSync, planDefaultSyncWindows, STAGED_ENTITY_ORDER, type RunStagedExtensionSyncOptions, type RunStagedExtensionSyncResult, type StagedWindowOutcome, } from "./sync/stagedExtensionSync";
 export { syncDueBillingConnectors, type SyncDueBillingConnectorsResult, } from "./services/syncDueBillingConnectors";
 export { importMappedEntityBatch, extractMaxUpdatedAt, updateAccountLastSyncDate, type EntityImportBatchResult, type ImportEntityType, } from "./import/entityImporter";
