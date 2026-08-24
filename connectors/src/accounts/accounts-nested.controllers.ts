@@ -174,13 +174,17 @@ export class BillingConnectorController {
     async sync(
         @CurrentUser() user: JwtPayload,
         @Param("accountId", ParseIntPipe) accountId: number,
-        @Body() body: Record<string, unknown>
+        @Body() body: Record<string, unknown>,
+        @Query("mode") mode?: string
     ) {
         return this.service.billingConnectorAction(
             user,
             accountId,
             "sync",
-            body
+            {
+                ...(body ?? {}),
+                ...(mode ? { mode } : {}),
+            }
         );
     }
 

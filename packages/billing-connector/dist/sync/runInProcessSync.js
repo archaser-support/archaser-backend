@@ -1,27 +1,18 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ConnectorSyncCancelledError = void 0;
 exports.runInProcessSync = runInProcessSync;
+const extensions_1 = require("../extensions");
 const PriorityProviderClient_1 = require("../priority/PriorityProviderClient");
 const PriorityClient_1 = require("../priority/PriorityClient");
 const provider_1 = require("../provider");
 const billingConnectorCrypto_1 = require("../utils/billingConnectorCrypto");
 const entityImporter_1 = require("../import/entityImporter");
-const billingConnectorEntitySets_1 = require("../services/billingConnectorEntitySets");
-const billingConnectorPullFilters_1 = require("../services/billingConnectorPullFilters");
-const connectorSyncCancelRegistry_1 = require("./connectorSyncCancelRegistry");
-class ConnectorSyncCancelledError extends Error {
-    constructor(executionId) {
-        super(`Sync cancelled (${executionId})`);
-        this.name = "ConnectorSyncCancelledError";
-    }
-}
-exports.ConnectorSyncCancelledError = ConnectorSyncCancelledError;
-/** Matches staging BillingConnectorSyncService backfill walk order. */
+const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
+const stagedExtensionSync_1 = require("./stagedExtensionSync");
 const ENTITY_ORDER = [
     "Customer",
-    "Invoice",
     "Payment",
+    "Invoice",
     "Contact",
 ];
 function emptyStats() {
@@ -37,20 +28,30 @@ function emptyStats() {
         importErrors: 0,
     };
 }
-function throwIfCancelled(executionId) {
-    if (executionId && (0, connectorSyncCancelRegistry_1.isConnectorSyncCancelRequested)(executionId)) {
-        throw new ConnectorSyncCancelledError(executionId);
+function normalizeExtensionConfig(value) {
+    if (value == null)
+        return null;
+    if (typeof value !== "object" || Array.isArray(value))
+        return null;
+    return { ...value };
+}
+function enabledEntitiesFromConnector(raw) {
+    if (!Array.isArray(raw)) {
+        return [...stagedExtensionSync_1.STAGED_ENTITY_ORDER];
     }
+    return raw.filter((e) => typeof e === "string" &&
+        stagedExtensionSync_1.STAGED_ENTITY_ORDER.includes(e));
 }
 /**
  * In-process Priority sync for main API / worker (D71).
- * Pulls mapped entities, maps ERP fields, upserts into Postgres.
- * Manual backfill/incremental checks the in-process cancel registry between entities.
+ * Accounts with extension_key use staged windowed plugin path;
+ * accounts without a key keep entity-by-entity pull/map/import.
  */
 async function runInProcessSync(options) {
-    const { prisma, accountId, trigger = "manual", userId, executionId, mode, } = options;
+    const { prisma, accountId, trigger = "manual", userId, dryRun = false, } = options;
     const stats = emptyStats();
-    const entity_stats = {};
+    const resolveExtension = options.resolveExtension ?? extensions_1.getRegisteredExtension;
+    const importBatch = options.importBatch ?? entityImporter_1.importMappedEntityBatch;
     try {
         const connector = await prisma.billingConnector.findUnique({
             where: { account_id: accountId },
@@ -60,12 +61,30 @@ async function runInProcessSync(options) {
                 ok: false,
                 accountId,
                 provider: "UNKNOWN",
-                executionId,
                 stats,
-                entity_stats,
                 message: "No billing connector configured for this account",
                 error: "CONNECTOR_NOT_FOUND",
             };
+        }
+        const extensionKey = typeof connector.extension_key === "string"
+            ? connector.extension_key.trim() || null
+            : null;
+        // Fail fast at sync start — never silently fall back to legacy path.
+        let extension;
+        if (extensionKey) {
+            extension = resolveExtension(extensionKey);
+            if (!extension) {
+                return {
+                    ok: false,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    extension_key: extensionKey,
+                    dry_run: dryRun,
+                    message: `Unknown extension_key: ${extensionKey}`,
+                    error: `Unknown extension_key: ${extensionKey}`,
+                };
+            }
         }
         try {
             (0, provider_1.assertPriorityProvider)(connector.provider);
@@ -75,113 +94,153 @@ async function runInProcessSync(options) {
                 ok: false,
                 accountId,
                 provider: connector.provider,
-                executionId,
                 stats,
-                entity_stats,
                 message: `Provider ${connector.provider} is not supported`,
                 error: err instanceof Error ? err.message : "UNSUPPORTED_PROVIDER",
             };
         }
-        if (!connector.credentials_encrypted || !connector.base_url) {
-            return {
-                ok: false,
-                accountId,
-                provider: connector.provider,
-                executionId,
-                stats,
-                entity_stats,
-                message: "Missing base_url or credentials",
-                error: "MISSING_CREDENTIALS",
-            };
+        if (!options.provider) {
+            if (!connector.credentials_encrypted || !connector.base_url) {
+                return {
+                    ok: false,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    message: "Missing base_url or credentials",
+                    error: "MISSING_CREDENTIALS",
+                };
+            }
         }
-        let credentials;
-        try {
-            credentials = (0, billingConnectorCrypto_1.parseStoredConnectorCredentials)(connector.credentials_encrypted);
+        let credentials = {};
+        if (!options.provider) {
+            try {
+                credentials = (0, billingConnectorCrypto_1.decryptCredentials)(connector.credentials_encrypted);
+            }
+            catch (err) {
+                return {
+                    ok: false,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    message: "Failed to decrypt credentials",
+                    error: err instanceof Error
+                        ? err.message
+                        : "DECRYPTION_FAILED",
+                };
+            }
         }
-        catch (err) {
-            return {
-                ok: false,
-                accountId,
-                provider: connector.provider,
-                executionId,
-                stats,
-                entity_stats,
-                message: "Failed to decrypt credentials",
-                error: err instanceof Error ? err.message : "DECRYPTION_FAILED",
-            };
+        if (!options.skipConnectionTest && !options.provider) {
+            const connectionResult = await (0, PriorityClient_1.testPriorityConnection)({
+                baseUrl: connector.base_url,
+                authType: connector.auth_type,
+                credentials,
+            });
+            await prisma.billingConnector.update({
+                where: { id: connector.id },
+                data: {
+                    last_connection_test_at: connectionResult.testedAt,
+                    last_connection_error: connectionResult.ok
+                        ? null
+                        : connectionResult.error ?? null,
+                },
+            });
+            if (!connectionResult.ok) {
+                return {
+                    ok: false,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    message: "Connection test failed",
+                    error: connectionResult.error,
+                };
+            }
         }
-        const connectionResult = await (0, PriorityClient_1.testPriorityConnection)({
-            baseUrl: connector.base_url,
-            authType: connector.auth_type,
-            credentials,
-        });
-        await prisma.billingConnector.update({
-            where: { id: connector.id },
-            data: {
-                last_connection_test_at: connectionResult.testedAt,
-                last_connection_error: connectionResult.ok
-                    ? null
-                    : connectionResult.error ?? null,
-            },
-        });
-        if (!connectionResult.ok) {
-            return {
-                ok: false,
-                accountId,
-                provider: connector.provider,
-                executionId,
-                stats,
-                entity_stats,
-                message: "Connection test failed",
-                error: connectionResult.error,
-            };
-        }
-        const client = new PriorityProviderClient_1.PriorityProviderClient({
-            baseUrl: connector.base_url,
-            authType: connector.auth_type,
-            credentials,
-        });
+        const client = options.provider ??
+            new PriorityProviderClient_1.PriorityProviderClient({
+                baseUrl: connector.base_url,
+                authType: connector.auth_type,
+                credentials,
+            });
         const mappings = await prisma.connectorFieldMapping.findMany({
             where: { connector_id: connector.id },
         });
         const mappingByType = new Map(mappings.map((m) => [String(m.import_type), m]));
-        const entitySets = (0, billingConnectorEntitySets_1.parseEntitySetsMap)(connector.entity_sets);
-        const enabled = Array.isArray(connector.enabled_entities)
-            ? connector.enabled_entities
-            : ENTITY_ORDER;
-        const requested = options.importTypes
-            ? new Set(options.importTypes)
-            : null;
-        const effectiveMode = mode ??
-            (connector.sync_mode === "INCREMENTAL"
-                ? "incremental"
-                : "backfill");
-        if (effectiveMode === "backfill" && !connector.backfill_started_at) {
-            await prisma.billingConnector.update({
-                where: { id: connector.id },
-                data: { backfill_started_at: new Date() },
+        const mappingRulesByType = new Map(mappings.map((m) => [
+            String(m.import_type),
+            (0, connectorFieldUtils_1.parseMappingRules)(m.mapping),
+        ]));
+        // -------- Staged extension path --------
+        if (extensionKey && extension) {
+            const enabled = enabledEntitiesFromConnector(connector.enabled_entities);
+            let windows = options.windows;
+            if (!windows) {
+                let earliest = null;
+                for (const entityType of enabled) {
+                    const syncState = await prisma.connectorSyncState.findFirst({
+                        where: {
+                            connector_id: connector.id,
+                            entity_type: entityType,
+                        },
+                    });
+                    const watermark = syncState?.last_max_updated_at ?? null;
+                    if (watermark &&
+                        (!earliest || watermark < earliest)) {
+                        earliest = watermark;
+                    }
+                }
+                windows = (0, stagedExtensionSync_1.planDefaultSyncWindows)({
+                    earliestWatermark: earliest,
+                });
+            }
+            const staged = await (0, stagedExtensionSync_1.runStagedExtensionSync)({
+                prisma,
+                accountId,
+                connectorId: connector.id,
+                extension,
+                extensionConfig: normalizeExtensionConfig(connector.extension_config),
+                provider: client,
+                mappingByType: mappingRulesByType,
+                enabledEntities: enabled,
+                windows,
+                dryRun,
+                userId,
+                importBatch,
             });
-        }
-        for (const entityType of ENTITY_ORDER) {
-            throwIfCancelled(executionId);
-            if (requested && !requested.has(entityType)) {
-                continue;
+            if (!dryRun) {
+                await (0, entityImporter_1.updateAccountLastSyncDate)(prisma, accountId);
             }
-            if (!enabled.includes(entityType)) {
-                continue;
-            }
-            const mapping = mappingByType.get(entityType);
-            if (!mapping)
-                continue;
-            const entityStat = {
-                pulled: 0,
-                success: 0,
-                failed: 0,
-                skipped: 0,
+            const imported = staged.stats.customersImported +
+                staged.stats.contactsImported +
+                staged.stats.invoicesImported +
+                staged.stats.paymentsImported;
+            return {
+                ok: staged.ok,
+                accountId,
+                provider: connector.provider,
+                stats: staged.stats,
+                extension_key: extensionKey,
+                dry_run: dryRun,
+                preview_batch: staged.previewBatch,
+                window_outcomes: staged.windows.map((w) => ({
+                    start: w.window.start,
+                    end: w.window.end,
+                    ok: w.ok,
+                    error: w.error,
+                    imported: w.imported,
+                })),
+                message: dryRun
+                    ? `Preview via ${trigger} (extension ${extensionKey}): processed without writes`
+                    : `Synced via ${trigger} (extension ${extensionKey}): imported ${imported} rows (${staged.stats.importErrors} errors)`,
+                error: staged.error,
             };
-            entity_stats[entityType] = entityStat;
-            try {
-                throwIfCancelled(executionId);
+        }
+        // -------- Legacy entity-by-entity path (no extension_key) --------
+        if (dryRun) {
+            // Preview without extension: pull+map only, no writes.
+            for (const entityType of ENTITY_ORDER) {
+                const mapping = mappingByType.get(entityType);
+                if (!mapping)
+                    continue;
                 const syncState = await prisma.connectorSyncState.findFirst({
                     where: {
                         connector_id: connector.id,
@@ -189,27 +248,47 @@ async function runInProcessSync(options) {
                     },
                 });
                 const pullResult = await client.pull(entityType, {
-                    since: effectiveMode === "incremental"
-                        ? syncState?.last_max_updated_at ?? null
-                        : null,
+                    since: syncState?.last_max_updated_at ?? null,
                     pageSize: 100,
-                    entitySet: entitySets[entityType] ?? null,
-                    filter: (0, billingConnectorPullFilters_1.resolveEntityPullFilterOData)(connector.pull_filters, entityType),
                 });
-                throwIfCancelled(executionId);
+                const processedKey = `${entityType.toLowerCase()}sProcessed`;
+                stats[processedKey] =
+                    pullResult.records.length;
+            }
+            return {
+                ok: true,
+                accountId,
+                provider: connector.provider,
+                stats,
+                extension_key: null,
+                dry_run: true,
+                message: `Preview via ${trigger}: no extension (legacy path, no writes)`,
+            };
+        }
+        for (const entityType of ENTITY_ORDER) {
+            const mapping = mappingByType.get(entityType);
+            if (!mapping)
+                continue;
+            try {
+                const syncState = await prisma.connectorSyncState.findFirst({
+                    where: {
+                        connector_id: connector.id,
+                        entity_type: entityType,
+                    },
+                });
+                const pullResult = await client.pull(entityType, {
+                    since: syncState?.last_max_updated_at ?? null,
+                    pageSize: 100,
+                });
                 const processedKey = `${entityType.toLowerCase()}sProcessed`;
                 const importedKey = `${entityType.toLowerCase()}sImported`;
                 stats[processedKey] =
                     pullResult.records.length;
-                entityStat.pulled = pullResult.records.length;
-                const importResult = await (0, entityImporter_1.importMappedEntityBatch)(prisma, entityType, pullResult.records, accountId, mapping.mapping, userId);
+                const importResult = await importBatch(prisma, entityType, pullResult.records, accountId, mapping.mapping, userId);
                 stats[importedKey] =
                     importResult.success;
                 stats.importErrors += importResult.failed;
-                entityStat.success = importResult.success;
-                entityStat.failed = importResult.failed;
                 const maxUpdated = (0, entityImporter_1.extractMaxUpdatedAt)(pullResult.records) ?? new Date();
-                const now = new Date();
                 await prisma.connectorSyncState.upsert({
                     where: {
                         connector_id_entity_type: {
@@ -220,27 +299,17 @@ async function runInProcessSync(options) {
                     create: {
                         connector_id: connector.id,
                         entity_type: entityType,
-                        last_successful_run_at: now,
-                        last_attempt_at: now,
+                        last_successful_run_at: new Date(),
+                        last_attempt_at: new Date(),
                         last_max_updated_at: maxUpdated,
-                        backfill_records_pulled: pullResult.records.length,
-                        backfill_completed: effectiveMode === "backfill",
-                        backfill_completed_at: effectiveMode === "backfill" ? now : null,
                         last_error: importResult.failed > 0
                             ? importResult.errors.slice(0, 3).join("; ")
                             : null,
                     },
                     update: {
-                        last_successful_run_at: now,
-                        last_attempt_at: now,
+                        last_successful_run_at: new Date(),
+                        last_attempt_at: new Date(),
                         last_max_updated_at: maxUpdated,
-                        backfill_records_pulled: pullResult.records.length,
-                        ...(effectiveMode === "backfill"
-                            ? {
-                                backfill_completed: true,
-                                backfill_completed_at: now,
-                            }
-                            : {}),
                         last_error: importResult.failed > 0
                             ? importResult.errors.slice(0, 3).join("; ")
                             : null,
@@ -248,12 +317,8 @@ async function runInProcessSync(options) {
                 });
             }
             catch (err) {
-                if (err instanceof ConnectorSyncCancelledError) {
-                    throw err;
-                }
                 const message = err instanceof Error ? err.message : "Unknown error";
                 stats.importErrors += 1;
-                entityStat.failed += 1;
                 await prisma.connectorSyncState.upsert({
                     where: {
                         connector_id_entity_type: {
@@ -279,19 +344,13 @@ async function runInProcessSync(options) {
             stats.contactsImported +
             stats.invoicesImported +
             stats.paymentsImported;
-        if (effectiveMode === "backfill") {
-            await prisma.billingConnector.update({
-                where: { id: connector.id },
-                data: { sync_mode: "INCREMENTAL" },
-            });
-        }
         return {
             ok: stats.importErrors === 0,
             accountId,
             provider: connector.provider,
-            executionId,
             stats,
-            entity_stats,
+            extension_key: null,
+            dry_run: false,
             message: `Synced via ${trigger}: imported ${imported} rows (${stats.importErrors} errors)`,
             error: stats.importErrors > 0
                 ? `${stats.importErrors} import error(s)`
@@ -299,27 +358,12 @@ async function runInProcessSync(options) {
         };
     }
     catch (err) {
-        if (err instanceof ConnectorSyncCancelledError) {
-            return {
-                ok: false,
-                cancelled: true,
-                accountId,
-                provider: "UNKNOWN",
-                executionId,
-                stats,
-                entity_stats,
-                message: "Sync stopped by operator",
-                error: "cancelled",
-            };
-        }
         const message = err instanceof Error ? err.message : "Unknown error";
         return {
             ok: false,
             accountId,
             provider: "UNKNOWN",
-            executionId,
             stats,
-            entity_stats,
             message: "Sync failed with unexpected error",
             error: message,
         };
