@@ -19,6 +19,7 @@ import {
     type ImportEntityType,
 } from "../import/entityImporter";
 import { parseMappingRules, type MappingRule } from "../utils/connectorFieldUtils";
+import { isConnectorSyncCancelRequested } from "./connectorSyncCancelRegistry";
 import {
     planDefaultSyncWindows,
     runStagedExtensionSync,
@@ -33,6 +34,9 @@ export interface RunInProcessSyncOptions {
     userId?: string;
     /** Preview / dry-run: pull+map+plugin without entity DB writes. */
     dryRun?: boolean;
+    /** In-process cancel / sync-run id (API cancel endpoint). */
+    executionId?: string;
+    mode?: "backfill" | "incremental";
     /** Override window plan (multi-window backfills / tests). */
     windows?: ExtensionSyncWindow[];
     /** Injected provider (skips live Priority client construction). */
@@ -64,6 +68,11 @@ export interface RunInProcessSyncResult {
     };
     message: string;
     error?: string;
+    cancelled?: boolean;
+    entity_stats?: Record<
+        string,
+        { pulled: number; success: number; failed: number; skipped: number }
+    >;
     /** Present on staged extension preview / sync when a key is set. */
     extension_key?: string | null;
     dry_run?: boolean;
@@ -99,6 +108,49 @@ function emptyStats() {
     };
 }
 
+function entityStatsFrom(stats: ReturnType<typeof emptyStats>) {
+    return {
+        Customer: {
+            pulled: stats.customersProcessed,
+            success: stats.customersImported,
+            failed: 0,
+            skipped: 0,
+        },
+        Contact: {
+            pulled: stats.contactsProcessed,
+            success: stats.contactsImported,
+            failed: 0,
+            skipped: 0,
+        },
+        Invoice: {
+            pulled: stats.invoicesProcessed,
+            success: stats.invoicesImported,
+            failed: 0,
+            skipped: 0,
+        },
+        Payment: {
+            pulled: stats.paymentsProcessed,
+            success: stats.paymentsImported,
+            failed: 0,
+            skipped: 0,
+        },
+    };
+}
+
+function attachSyncMeta(
+    result: RunInProcessSyncResult,
+    options: RunInProcessSyncOptions
+): RunInProcessSyncResult {
+    const cancelled = options.executionId
+        ? isConnectorSyncCancelRequested(options.executionId)
+        : Boolean(result.cancelled);
+    return {
+        ...result,
+        cancelled,
+        entity_stats: result.entity_stats ?? entityStatsFrom(result.stats),
+    };
+}
+
 function normalizeExtensionConfig(
     value: unknown
 ): Record<string, unknown> | null {
@@ -126,6 +178,12 @@ function enabledEntitiesFromConnector(
  * accounts without a key keep entity-by-entity pull/map/import.
  */
 export async function runInProcessSync(
+    options: RunInProcessSyncOptions
+): Promise<RunInProcessSyncResult> {
+    return attachSyncMeta(await runInProcessSyncBody(options), options);
+}
+
+async function runInProcessSyncBody(
     options: RunInProcessSyncOptions
 ): Promise<RunInProcessSyncResult> {
     const {

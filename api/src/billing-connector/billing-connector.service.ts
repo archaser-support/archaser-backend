@@ -709,7 +709,7 @@ export class BillingConnectorApiService {
                         (completedAt.getTime() - startedAt.getTime()) / 1000
                     )
                 ),
-                entity_stats: result.entity_stats,
+                entity_stats: result.entity_stats ?? {},
                 error_message: result.error ?? null,
                 error_type: result.cancelled ? "cancelled" : result.error ?? null,
             });
