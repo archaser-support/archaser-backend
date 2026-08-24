@@ -1384,6 +1384,51 @@ export async function takeCustomerPolicyTrendSnapshots(): Promise<CustomerPolicy
 }
 
 /**
+ * Prefer today's already-written snapshot so the Top 10 chart is a read.
+ * Full as-of rewrite stays on cron/backfill; doing it on every dashboard GET
+ * hangs Nest (socket hang up) and the chart never renders.
+ */
+async function resolveUsageTrendSnapshotDate(
+    accountId: number,
+    policyId: number | undefined,
+    todayUtc: Date
+): Promise<Date> {
+    const todayWhere = {
+        account_id: accountId,
+        snapshot_date: todayUtc,
+        ...(policyId != null ? { insurance_policy_id: policyId } : {}),
+    };
+    const todayCount = await prisma.customerPolicyTrend.count({
+        where: todayWhere,
+    });
+    if (todayCount === 0) {
+        try {
+            await syncCustomerPolicyTrendSnapshotForAccount(accountId, {
+                policyId,
+                snapshotDate: todayUtc,
+            });
+        } catch {
+            // Keep serving the latest stored snapshot if rewrite fails.
+        }
+    }
+    const remainingToday = await prisma.customerPolicyTrend.count({
+        where: todayWhere,
+    });
+    if (remainingToday > 0) {
+        return todayUtc;
+    }
+    const latest = await prisma.customerPolicyTrend.findFirst({
+        where: {
+            account_id: accountId,
+            ...(policyId != null ? { insurance_policy_id: policyId } : {}),
+        },
+        orderBy: { snapshot_date: "desc" },
+        select: { snapshot_date: true },
+    });
+    return latest?.snapshot_date ?? todayUtc;
+}
+
+/**
  * Top N customers by current AR / usage amount on the latest snapshot day.
  * Includes approved limit and usage % so the UI can compare both amount and percent.
  */
@@ -1396,13 +1441,12 @@ export async function getCustomerPolicyUsageTrend(
     }
 ): Promise<CustomerPolicyUsageTrendResponse> {
     const topN = Math.min(50, Math.max(1, options?.limit ?? 10));
-    const snapshotDate = startOfTodayUtc();
+    const snapshotDate = await resolveUsageTrendSnapshotDate(
+        accountId,
+        options?.policyId,
+        startOfTodayUtc()
+    );
     const hasTopUpPoliciesFlag = await hasTopUpPolicies(accountId);
-
-    await syncCustomerPolicyTrendSnapshotForAccount(accountId, {
-        policyId: options?.policyId,
-        snapshotDate,
-    });
 
     const dateStr = normalizeDateString(snapshotDate);
 

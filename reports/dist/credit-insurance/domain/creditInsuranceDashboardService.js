@@ -276,48 +276,42 @@ const invoiceTermsBreachWhere = (accountId) => ({
     OR: TERMS_BREACH_OR,
 });
 exports.invoiceTermsBreachWhere = invoiceTermsBreachWhere;
+function termsBreachOutstandingLineSql(netOfCapacityGap) {
+    const outstanding = client_1.Prisma.sql `
+        CASE
+            WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
+            ELSE COALESCE(i.customer_outstanding_debt, 0)
+        END
+    `;
+    if (!netOfCapacityGap) {
+        return outstanding;
+    }
+    return client_1.Prisma.sql `GREATEST(0, (${outstanding}) - COALESCE(i.capacity_gap_amount, 0))`;
+}
+function termsBreachOutstandingLineSqlByCurrency(netOfCapacityGap) {
+    const outstanding = client_1.Prisma.sql `
+        CASE
+            WHEN COALESCE(i.customer_outstanding_debt, 0) != 0 THEN i.customer_outstanding_debt
+            ELSE COALESCE(i.amount, 0)
+        END
+    `;
+    if (!netOfCapacityGap) {
+        return outstanding;
+    }
+    return client_1.Prisma.sql `GREATEST(0, (${outstanding}) - COALESCE(i.capacity_gap_amount_limit, 0))`;
+}
 /**
  * Sum of line outstanding for this customer's invoices in due/overdue terms breach
  * (same breach flags as the credit dashboard terms report).
+ *
+ * When {@link excludeCapacityGapInvoices} is true, each breached invoice contributes
+ * outstanding minus its capacity gap so at-risk does not double-count.
  */
 async function getCustomerTermsBreachOutstandingSum(accountId, customerId, options) {
-    const excludeGap = options?.excludeCapacityGapInvoices === true;
+    const line = termsBreachOutstandingLineSql(options?.excludeCapacityGapInvoices === true);
     const policyId = options?.policyId;
-    const rows = excludeGap
-        ? await domain_db_1.prisma.$queryRaw `
-        SELECT COALESCE(
-            SUM(
-                CASE
-                    WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                    ELSE COALESCE(i.customer_outstanding_debt, 0)
-                END
-            ),
-            0
-        )::float AS t
-        FROM "Invoice" i
-        WHERE i.account_id = ${accountId}
-          AND i.customer_id = ${customerId}
-          AND i.status IN ('Due', 'Overdue')
-          AND COALESCE(i.in_capacity_gap, false) = false
-          AND (
-            i.reporting_breach = true
-            OR i.ctv_payment_term = true
-            OR i.ctv_customer_overdue_mep = true
-            OR i.ctv_outdated_dcl = true
-            OR i.ctv_invoice_after_policy_end = true
-          )
-          ${policyId != null ? client_1.Prisma.sql `AND i.policy_id = ${policyId}` : client_1.Prisma.empty}
-    `
-        : await domain_db_1.prisma.$queryRaw `
-        SELECT COALESCE(
-            SUM(
-                CASE
-                    WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                    ELSE COALESCE(i.customer_outstanding_debt, 0)
-                END
-            ),
-            0
-        )::float AS t
+    const rows = await domain_db_1.prisma.$queryRaw `
+        SELECT COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
@@ -333,7 +327,7 @@ async function getCustomerTermsBreachOutstandingSum(accountId, customerId, optio
     `;
     return Number(rows[0]?.t ?? 0);
 }
-/** Terms-breach outstanding for at-risk (omits {@link Invoice.in_capacity_gap} invoices). */
+/** Terms-breach outstanding for at-risk (net of invoice capacity gap). */
 async function getCustomerTermsBreachOutstandingForAtRisk(accountId, customerId, options) {
     return getCustomerTermsBreachOutstandingSum(accountId, customerId, {
         ...options,
@@ -372,44 +366,10 @@ async function getCustomerTermsBreachOutstandingSumByCurrency(accountId, custome
     if (!code) {
         return 0;
     }
-    const excludeGap = options?.excludeCapacityGapInvoices === true;
+    const line = termsBreachOutstandingLineSqlByCurrency(options?.excludeCapacityGapInvoices === true);
     const policyId = options?.policyId;
-    const rows = excludeGap
-        ? await domain_db_1.prisma.$queryRaw `
-        SELECT COALESCE(
-            SUM(
-                CASE
-                    WHEN COALESCE(i.customer_outstanding_debt, 0) != 0 THEN i.customer_outstanding_debt
-                    ELSE COALESCE(i.amount, 0)
-                END
-            ),
-            0
-        )::float AS t
-        FROM "Invoice" i
-        WHERE i.account_id = ${accountId}
-          AND i.customer_id = ${customerId}
-          AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
-          AND i.status IN ('Due', 'Overdue')
-          AND COALESCE(i.in_capacity_gap, false) = false
-          AND (
-            i.reporting_breach = true
-            OR i.ctv_payment_term = true
-            OR i.ctv_customer_overdue_mep = true
-            OR i.ctv_outdated_dcl = true
-            OR i.ctv_invoice_after_policy_end = true
-          )
-          ${policyId != null ? client_1.Prisma.sql `AND i.policy_id = ${policyId}` : client_1.Prisma.empty}
-    `
-        : await domain_db_1.prisma.$queryRaw `
-        SELECT COALESCE(
-            SUM(
-                CASE
-                    WHEN COALESCE(i.customer_outstanding_debt, 0) != 0 THEN i.customer_outstanding_debt
-                    ELSE COALESCE(i.amount, 0)
-                END
-            ),
-            0
-        )::float AS t
+    const rows = await domain_db_1.prisma.$queryRaw `
+        SELECT COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
@@ -426,7 +386,7 @@ async function getCustomerTermsBreachOutstandingSumByCurrency(accountId, custome
     `;
     return Number(rows[0]?.t ?? 0);
 }
-/** Terms-breach outstanding in invoice currency for at-risk (omits gap invoices). */
+/** Terms-breach outstanding in invoice currency for at-risk (net of invoice capacity gap). */
 async function getCustomerTermsBreachOutstandingByCurrencyForAtRisk(accountId, customerId, currency, options) {
     return getCustomerTermsBreachOutstandingSumByCurrency(accountId, customerId, currency, { ...options, excludeCapacityGapInvoices: true });
 }
@@ -510,13 +470,12 @@ async function resolveOpenArOnPolicyInLimitCurrency(accountId, customerId, polic
  */
 async function fetchTermsBreachOutstandingByCustomerInAccountCurrency(accountId, accountCurrency, policyId, excludeCapacityGapInvoices, businessUnitFilter) {
     const accountCur = accountCurrency.trim().toUpperCase();
-    const excludeGap = excludeCapacityGapInvoices === true;
+    const netOfGap = excludeCapacityGapInvoices === true;
     const invoices = await domain_db_1.prisma.invoice.findMany({
         where: (0, customerPolicyQueryHelpers_1.applyBusinessUnitFilterToInvoiceWhere)({
             account_id: accountId,
             status: { in: ["Due", "Overdue"] },
             ...(policyId != null ? { policy_id: policyId } : {}),
-            ...(excludeGap ? { in_capacity_gap: false } : {}),
             Customer: {
                 account_id: accountId,
                 collection_status: { in: COLLECTION_LIVE },
@@ -529,6 +488,7 @@ async function fetchTermsBreachOutstandingByCustomerInAccountCurrency(accountId,
             customer_outstanding_debt: true,
             amount: true,
             customer_currency: true,
+            capacity_gap_amount: true,
         },
     });
     const map = new Map();
@@ -549,59 +509,26 @@ async function fetchTermsBreachOutstandingByCustomerInAccountCurrency(accountId,
             const val = custOutstanding !== 0 ? custOutstanding : amount;
             converted = await (0, customerCreditInsuranceHeaderAmounts_1.convertAmountToCurrencyLatestRate)(custCurrency, accountCur, val);
         }
-        const line = (0, openReceivableByCustomerCurrency_1.computeInvoiceLineOpenArInAccountCurrency)(inv, accountCur, converted);
+        let line = (0, openReceivableByCustomerCurrency_1.computeInvoiceLineOpenArInAccountCurrency)(inv, accountCur, converted);
+        if (netOfGap) {
+            const gap = Math.max(0, Number(inv.capacity_gap_amount ?? 0));
+            line = Math.max(0, line - gap);
+        }
         map.set(inv.customer_id, (map.get(inv.customer_id) ?? 0) + line);
     }
     return map;
 }
 /**
  * Terms-breach outstanding grouped by customer.
- * When {@link excludeCapacityGapInvoices} is true, omits invoices flagged
- * {@link Invoice.in_capacity_gap} (for at-risk exposure deduplication).
+ * When {@link excludeCapacityGapInvoices} is true, each line is outstanding
+ * minus capacity gap so at-risk does not double-count.
  */
 async function fetchTermsBreachOutstandingByCustomer(accountId, policyId, excludeCapacityGapInvoices) {
-    const excludeGap = excludeCapacityGapInvoices === true;
+    const line = termsBreachOutstandingLineSql(excludeCapacityGapInvoices === true);
     const rows = policyId != null
-        ? excludeGap
-            ? await domain_db_1.prisma.$queryRaw `
+        ? await domain_db_1.prisma.$queryRaw `
         SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS t
-        FROM "Invoice" i
-        INNER JOIN "Customer" c ON c.id = i.customer_id
-        WHERE i.account_id = ${accountId}
-          AND c.account_id = ${accountId}
-          AND c.collection_status IN ('Active', 'Inactive')
-          AND i.policy_id = ${policyId}
-          AND i.status IN ('Due', 'Overdue')
-          AND COALESCE(i.in_capacity_gap, false) = false
-          AND (
-            i.reporting_breach = true
-            OR i.ctv_payment_term = true
-            OR i.ctv_customer_overdue_mep = true
-            OR i.ctv_outdated_dcl = true
-            OR i.ctv_invoice_after_policy_end = true
-          )
-        GROUP BY i.customer_id
-      `
-            : await domain_db_1.prisma.$queryRaw `
-        SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS t
+          COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
         WHERE i.account_id = ${accountId}
@@ -618,42 +545,9 @@ async function fetchTermsBreachOutstandingByCustomer(accountId, policyId, exclud
           )
         GROUP BY i.customer_id
       `
-        : excludeGap
-            ? await domain_db_1.prisma.$queryRaw `
+        : await domain_db_1.prisma.$queryRaw `
         SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS t
-        FROM "Invoice" i
-        WHERE i.account_id = ${accountId}
-          AND i.status IN ('Due', 'Overdue')
-          AND COALESCE(i.in_capacity_gap, false) = false
-          AND (
-            i.reporting_breach = true
-            OR i.ctv_payment_term = true
-            OR i.ctv_customer_overdue_mep = true
-            OR i.ctv_outdated_dcl = true
-            OR i.ctv_invoice_after_policy_end = true
-          )
-        GROUP BY i.customer_id
-      `
-            : await domain_db_1.prisma.$queryRaw `
-        SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS t
+          COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
         WHERE i.account_id = ${accountId}
           AND i.status IN ('Due', 'Overdue')

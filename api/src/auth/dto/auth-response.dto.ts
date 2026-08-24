@@ -47,6 +47,9 @@ export class MeResponseDto {
     secondary_color?: string | null;
 
     @ApiProperty({ required: false, nullable: true })
+    chart_palette_color?: string | null;
+
+    @ApiProperty({ required: false, nullable: true })
     currency?: string | null;
 
     @ApiProperty({ required: false, nullable: true })

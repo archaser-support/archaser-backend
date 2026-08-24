@@ -35,13 +35,16 @@ export declare const invoiceTermsBreachWhere: (accountId: number) => Prisma.Invo
 /**
  * Sum of line outstanding for this customer's invoices in due/overdue terms breach
  * (same breach flags as the credit dashboard terms report).
+ *
+ * When {@link excludeCapacityGapInvoices} is true, each breached invoice contributes
+ * outstanding minus its capacity gap so at-risk does not double-count.
  */
 export declare function getCustomerTermsBreachOutstandingSum(accountId: number, customerId: number, options?: {
     excludeCapacityGapInvoices?: boolean;
     /** When set, only Due/Overdue invoices tagged with this insurance policy. */
     policyId?: number;
 }): Promise<number>;
-/** Terms-breach outstanding for at-risk (omits {@link Invoice.in_capacity_gap} invoices). */
+/** Terms-breach outstanding for at-risk (net of invoice capacity gap). */
 export declare function getCustomerTermsBreachOutstandingForAtRisk(accountId: number, customerId: number, options?: {
     policyId?: number;
 }): Promise<number>;
@@ -61,7 +64,7 @@ export declare function getCustomerTermsBreachOutstandingSumByCurrency(accountId
     excludeCapacityGapInvoices?: boolean;
     policyId?: number;
 }): Promise<number>;
-/** Terms-breach outstanding in invoice currency for at-risk (omits gap invoices). */
+/** Terms-breach outstanding in invoice currency for at-risk (net of invoice capacity gap). */
 export declare function getCustomerTermsBreachOutstandingByCurrencyForAtRisk(accountId: number, customerId: number, currency: string, options?: {
     policyId?: number;
 }): Promise<number>;
@@ -116,7 +119,7 @@ export type CreditDashboardSummary = {
     policyRiskExposureCustomerCount: number;
     /**
      * Uncapped driver sum: no-policy → full AR; with policy → capacity gap +
-     * terms breach (gap invoices omitted from breach; before min with AR).
+     * terms breach net of invoice capacity gap (before min with AR).
      */
     grossRiskExposure: number;
     overdueBlockCustomerCount: number;

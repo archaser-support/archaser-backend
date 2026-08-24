@@ -262,6 +262,7 @@ function mapSqlRow(row) {
         ctvOutdatedDcl: Boolean(row.ctv_outdated_dcl),
         ctvInvoiceAfterPolicyEnd: Boolean(row.ctv_invoice_after_policy_end),
         inCapacityGap: Boolean(row.in_capacity_gap),
+        capacityGapAmount: Number(row.capacity_gap_amount ?? 0),
         actualReportingDate: row.actual_reporting_date,
         lastPaymentDate: row.last_payment_date,
     };
@@ -298,6 +299,7 @@ async function loadAsOfOpenInvoiceCandidates(accountId, asOfDate, options) {
             COALESCE(i.ctv_outdated_dcl, false) AS ctv_outdated_dcl,
             COALESCE(i.ctv_invoice_after_policy_end, false) AS ctv_invoice_after_policy_end,
             COALESCE(i.in_capacity_gap, false) AS in_capacity_gap,
+            COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
             i.actual_reporting_date,
             p.last_payment_date
         FROM "Invoice" i
@@ -397,14 +399,14 @@ function sumAsOfTermsBreachFromLines(lines, asOfDate, options) {
         if (!isTermsBreachLine(line)) {
             continue;
         }
-        if (options?.excludeCapacityGapInvoices && line.inCapacityGap) {
-            continue;
-        }
         const computed = computeAsOfOpenInvoiceLine(line, asOfDate);
         if (!computed) {
             continue;
         }
-        total += computed.openAmount;
+        const open = computed.openAmount;
+        total += options?.excludeCapacityGapInvoices
+            ? Math.max(0, open - Math.max(0, line.capacityGapAmount ?? 0))
+            : open;
     }
     return total;
 }
@@ -564,14 +566,14 @@ async function getCustomerAsOfTermsBreachOutstandingSum(accountId, customerId, a
         if (!isTermsBreachLine(line)) {
             continue;
         }
-        if (options?.excludeCapacityGapInvoices && line.inCapacityGap) {
-            continue;
-        }
         const computed = computeAsOfOpenInvoiceLine(line, asOfDate);
         if (!computed) {
             continue;
         }
-        total += computed.openAmount;
+        const open = computed.openAmount;
+        total += options?.excludeCapacityGapInvoices
+            ? Math.max(0, open - Math.max(0, line.capacityGapAmount ?? 0))
+            : open;
     }
     return total;
 }
@@ -609,9 +611,6 @@ async function buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLin
         if (!isTermsBreachLine(line)) {
             continue;
         }
-        if (options?.excludeCapacityGapInvoices && line.inCapacityGap) {
-            continue;
-        }
         const computed = computeAsOfOpenInvoiceLine(line, asOfDate);
         if (!computed) {
             continue;
@@ -634,7 +633,10 @@ async function buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLin
                 : synthetic.amount;
             converted = await (0, customerCreditInsuranceHeaderAmounts_1.convertAmountToCurrencyLatestRate)(custCurrency, accountCur, val);
         }
-        const lineAmount = (0, openReceivableByCustomerCurrency_1.computeInvoiceLineOpenArInAccountCurrency)(synthetic, accountCur, converted);
+        let lineAmount = (0, openReceivableByCustomerCurrency_1.computeInvoiceLineOpenArInAccountCurrency)(synthetic, accountCur, converted);
+        if (options?.excludeCapacityGapInvoices) {
+            lineAmount = Math.max(0, lineAmount - Math.max(0, line.capacityGapAmount ?? 0));
+        }
         map.set(computed.customerId, (map.get(computed.customerId) ?? 0) + lineAmount);
     }
     return map;

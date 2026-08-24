@@ -2,7 +2,7 @@
  * Post-query enrichment for credit dashboard ViewBased customer reports.
  * Supplies legacy CreditInsuranceReportGrid metrics (open AR, policy risk, etc.).
  */
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { type LimitWarningRow } from "./creditInsuranceDashboardService";
 export declare const CREDIT_DASHBOARD_ENRICHED_CUSTOMER_FIELDS: Set<string>;
 export declare function isCreditDashboardEnrichedCustomerField(field: string): boolean;

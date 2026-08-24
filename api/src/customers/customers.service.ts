@@ -455,6 +455,8 @@ export class CustomersService {
                     select: {
                         promise_to_pay: true,
                         max_promise_to_pay_allowed_per_cycle: true,
+                        currency: true,
+                        has_credit_insurance: true,
                     },
                 },
                 CustomerCollectionPeriod: {
@@ -498,12 +500,12 @@ export class CustomersService {
         // it the card renders 0 even when the customer has open invoices.
         const account = await this.db.account.findUnique({
             where: { id: accountId },
-            select: { currency: true },
+            select: { currency: true, has_credit_insurance: true },
         });
         const headerAr = await resolveCustomerHeaderOpenArAmounts({
             accountId,
             customerId: id,
-            accountCurrency: account?.currency,
+            accountCurrency: account?.currency ?? rest.Account?.currency,
             customer,
             dbClient: this.db,
         });
@@ -511,6 +513,14 @@ export class CustomersService {
         return serializeBigInt({
             ...rest,
             ...headerAr,
+            Account: {
+                ...rest.Account,
+                currency: rest.Account?.currency ?? account?.currency ?? null,
+                has_credit_insurance:
+                    rest.Account?.has_credit_insurance ??
+                    account?.has_credit_insurance ??
+                    false,
+            },
             customerPolicies,
             activeCustomerPolicy:
                 customerPolicies.find((policy) => policy.is_active) ?? null,

@@ -55,48 +55,26 @@ function scopedInvoiceWhere(accountId, policyId) {
     return base;
 }
 async function fetchTermsBreachOutstandingByCustomer(accountId, policyId, excludeCapacityGapInvoices) {
-    const excludeGap = excludeCapacityGapInvoices === true;
+    const line = excludeCapacityGapInvoices
+        ? client_1.Prisma.sql `GREATEST(
+            0,
+            (
+              CASE
+                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
+                ELSE COALESCE(i.customer_outstanding_debt, 0)
+              END
+            ) - COALESCE(i.capacity_gap_amount, 0)
+          )`
+        : client_1.Prisma.sql `
+            CASE
+              WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
+              ELSE COALESCE(i.customer_outstanding_debt, 0)
+            END
+          `;
     const rows = policyId != null
-        ? excludeGap
-            ? await domain_db_1.prisma.$queryRaw `
+        ? await domain_db_1.prisma.$queryRaw `
         SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS t
-        FROM "Invoice" i
-        INNER JOIN "Customer" c ON c.id = i.customer_id
-        WHERE i.account_id = ${accountId}
-          AND c.account_id = ${accountId}
-          AND c.collection_status IN ('Active', 'Inactive')
-          AND i.policy_id = ${policyId}
-          AND i.status IN ('Due', 'Overdue')
-          AND COALESCE(i.in_capacity_gap, false) = false
-          AND (
-            i.reporting_breach = true
-            OR i.ctv_payment_term = true
-            OR i.ctv_customer_overdue_mep = true
-            OR i.ctv_outdated_dcl = true
-            OR i.ctv_invoice_after_policy_end = true
-          )
-        GROUP BY i.customer_id
-      `
-            : await domain_db_1.prisma.$queryRaw `
-        SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS t
+          COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
         WHERE i.account_id = ${accountId}
@@ -115,15 +93,7 @@ async function fetchTermsBreachOutstandingByCustomer(accountId, policyId, exclud
       `
         : await domain_db_1.prisma.$queryRaw `
         SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS t
+          COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
         WHERE i.account_id = ${accountId}

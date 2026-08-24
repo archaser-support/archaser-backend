@@ -66,7 +66,7 @@ export function sumFlagBasedTermsBreachOutstanding(
         }
 
         const outstanding = Math.max(0, invoice.outstanding);
-        if (options?.excludeCapacityGapInvoices && invoice.inCapacityGap) {
+        if (options?.excludeCapacityGapInvoices) {
             total += Math.max(
                 0,
                 outstanding - Math.max(0, invoice.capacityGapAmount ?? 0)

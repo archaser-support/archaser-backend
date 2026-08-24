@@ -11,6 +11,7 @@ export interface JwtPayload {
     account_name?: string | null;
     primary_color?: string | null;
     secondary_color?: string | null;
+    chart_palette_color?: string | null;
     currency?: string | null;
     sidebar_collapsed?: boolean | null;
 }
