@@ -5,6 +5,7 @@ export {
     encryptCredentials,
     decryptCredentials,
     isBillingConnectorEncryptionConfigured,
+    parseStoredConnectorCredentials,
 } from "./utils/billingConnectorCrypto";
 
 // ==============================
@@ -134,6 +135,53 @@ export {
     type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
 } from "./sync/runInProcessSync";
+
+export {
+    runPreviewSync,
+    discoverConnectorFields,
+} from "./sync/runPreviewSync";
+
+export { fetchPriorityEntitySetCatalog } from "./priority/PriorityClient";
+
+export { getImportEntityFieldCatalog } from "./utils/connectorFieldUtils";
+
+export {
+    allEnabledEntitiesPreviewPassed,
+    clearPreviewPass,
+    clearPreviewPasses,
+    parsePreviewPassesMap,
+    previewPassesToPrismaJson,
+} from "./services/billingConnectorPreviewPasses";
+
+export {
+    entitySetCatalogToPrismaJson,
+    entitySetsToPrismaJson,
+    getDefaultEntitySets,
+    listChangedEntitySetEntities,
+    mergeEntitySetsPatch,
+    parseEntitySetCatalog,
+    parseEntitySetsMap,
+    type EntitySetsMap,
+} from "./services/billingConnectorEntitySets";
+
+export {
+    listChangedPullFilterEntities,
+    mergePullFiltersPatch,
+    pullFiltersToPrismaJson,
+    toPublicPullFilters,
+    type PullFiltersMap,
+} from "./services/billingConnectorPullFilters";
+
+export {
+    clearRunningSync,
+    getRunningSync,
+    listSyncRuns,
+    registerRunningSync,
+    upsertSyncRun,
+    type ConnectorSyncRunSummary,
+} from "./sync/connectorSyncRuntime";
+
+export { requestConnectorSyncCancel } from "./sync/connectorSyncCancelRegistry";
 
 export {
     runStagedExtensionSync,
