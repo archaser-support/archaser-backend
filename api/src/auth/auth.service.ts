@@ -31,6 +31,7 @@ export interface JwtPayload {
     account_name?: string | null;
     primary_color?: string | null;
     secondary_color?: string | null;
+    chart_palette_color?: string | null;
     currency?: string | null;
     sidebar_collapsed?: boolean | null;
 }
@@ -121,6 +122,7 @@ export class AuthService {
                       name: true,
                       primary_color: true,
                       secondary_color: true,
+                      chart_palette_color: true,
                       currency: true,
                   },
               })
@@ -139,6 +141,7 @@ export class AuthService {
             account_name: account?.name ?? null,
             primary_color: account?.primary_color ?? null,
             secondary_color: account?.secondary_color ?? null,
+            chart_palette_color: account?.chart_palette_color ?? null,
             currency: account?.currency ?? null,
             sidebar_collapsed: user.sidebar_collapsed ?? null,
         });
@@ -172,6 +175,7 @@ export class AuthService {
                       name: true,
                       primary_color: true,
                       secondary_color: true,
+                      chart_palette_color: true,
                       currency: true,
                   },
               })
@@ -190,6 +194,7 @@ export class AuthService {
             account_name: account?.name ?? null,
             primary_color: account?.primary_color ?? null,
             secondary_color: account?.secondary_color ?? null,
+            chart_palette_color: account?.chart_palette_color ?? null,
             currency: account?.currency ?? null,
             sidebar_collapsed: dbUser.sidebar_collapsed ?? null,
         };
@@ -439,6 +444,10 @@ export class AuthService {
                     sso_enabled: true,
                     sso_providers: true,
                     currency: true,
+                    name: true,
+                    primary_color: true,
+                    secondary_color: true,
+                    chart_palette_color: true,
                 },
             });
 
@@ -465,6 +474,10 @@ export class AuthService {
                     account_id: dbUser.account_id,
                     role: dbUser.role,
                     name: dbUser.name,
+                    account_name: account.name ?? null,
+                    primary_color: account.primary_color ?? null,
+                    secondary_color: account.secondary_color ?? null,
+                    chart_palette_color: account.chart_palette_color ?? null,
                     currency: account.currency ?? null,
                 },
             };
