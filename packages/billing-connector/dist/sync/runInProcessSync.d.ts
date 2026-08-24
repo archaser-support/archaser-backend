@@ -9,6 +9,9 @@ export interface RunInProcessSyncOptions {
     userId?: string;
     /** Preview / dry-run: pull+map+plugin without entity DB writes. */
     dryRun?: boolean;
+    /** In-process cancel / sync-run id (API cancel endpoint). */
+    executionId?: string;
+    mode?: "backfill" | "incremental";
     /** Override window plan (multi-window backfills / tests). */
     windows?: ExtensionSyncWindow[];
     /** Injected provider (skips live Priority client construction). */
@@ -37,6 +40,13 @@ export interface RunInProcessSyncResult {
     };
     message: string;
     error?: string;
+    cancelled?: boolean;
+    entity_stats?: Record<string, {
+        pulled: number;
+        success: number;
+        failed: number;
+        skipped: number;
+    }>;
     /** Present on staged extension preview / sync when a key is set. */
     extension_key?: string | null;
     dry_run?: boolean;

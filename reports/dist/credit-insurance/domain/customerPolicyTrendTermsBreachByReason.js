@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.invoiceOutstandingInAccountCurrency = invoiceOutstandingInAccountCurrency;
 exports.invoiceMatchesPolicyScope = invoiceMatchesPolicyScope;
@@ -99,10 +132,52 @@ function aggregateTermsBreachByReasonFromInvoices(invoices, policyScope) {
     return compactTermsBreachByReasonSnapshot(buckets);
 }
 /**
- * Live breach invoices for one customer, optionally scoped to one insurance policy
+ * Live (or as-of) breach invoices for one customer, optionally scoped to one insurance policy
  * (`null` = invoices with no `policy_id`).
+ * When `asOfDate` is set, uses payment-ledger open amounts instead of live Due/Overdue.
  */
-async function getCustomerTermsBreachByReasonSnapshot(accountId, customerId, policyId) {
+async function getCustomerTermsBreachByReasonSnapshot(accountId, customerId, policyId, options) {
+    if (options?.asOfDate) {
+        const { loadAsOfOpenInvoiceCandidates, computeAsOfOpenInvoiceLine } = await Promise.resolve().then(() => __importStar(require("./asOfOpenAr")));
+        const lines = await loadAsOfOpenInvoiceCandidates(accountId, options.asOfDate, {
+            customerIds: [customerId],
+            policyId: policyId ?? undefined,
+        });
+        const invoices = [];
+        for (const line of lines) {
+            const isBreach = line.reportingBreach ||
+                line.ctvPaymentTerm ||
+                line.ctvCustomerOverdueMep ||
+                line.ctvOutdatedDcl ||
+                line.ctvInvoiceAfterPolicyEnd;
+            if (!isBreach) {
+                continue;
+            }
+            const computed = computeAsOfOpenInvoiceLine(line, options.asOfDate);
+            if (!computed) {
+                continue;
+            }
+            if (policyId === null && computed.policyId != null) {
+                continue;
+            }
+            if (policyId != null && computed.policyId !== policyId) {
+                continue;
+            }
+            invoices.push({
+                policyId: computed.policyId,
+                outstanding: computed.openAmount,
+                reportingBreach: computed.reportingBreach,
+                ctvPaymentTerm: computed.ctvPaymentTerm,
+                ctvCustomerOverdueMep: computed.ctvCustomerOverdueMep,
+                ctvOutdatedDcl: computed.ctvOutdatedDcl,
+                ctvInvoiceAfterPolicyEnd: computed.ctvInvoiceAfterPolicyEnd,
+            });
+        }
+        return {
+            snapshot: aggregateTermsBreachByReasonFromInvoices(invoices, policyId),
+            invoiceCount: invoices.length,
+        };
+    }
     const rows = await domain_db_1.prisma.invoice.findMany({
         where: {
             account_id: accountId,

@@ -33,8 +33,11 @@ export type CustomerTermsBreachByReasonSnapshotResult = {
     invoiceCount: number;
 };
 /**
- * Live breach invoices for one customer, optionally scoped to one insurance policy
+ * Live (or as-of) breach invoices for one customer, optionally scoped to one insurance policy
  * (`null` = invoices with no `policy_id`).
+ * When `asOfDate` is set, uses payment-ledger open amounts instead of live Due/Overdue.
  */
-export declare function getCustomerTermsBreachByReasonSnapshot(accountId: number, customerId: number, policyId: number | null): Promise<CustomerTermsBreachByReasonSnapshotResult>;
+export declare function getCustomerTermsBreachByReasonSnapshot(accountId: number, customerId: number, policyId: number | null, options?: {
+    asOfDate?: Date;
+}): Promise<CustomerTermsBreachByReasonSnapshotResult>;
 export declare function termsBreachByReasonSnapshotToJson(snapshot: TermsBreachByReasonSnapshot): Prisma.InputJsonValue;

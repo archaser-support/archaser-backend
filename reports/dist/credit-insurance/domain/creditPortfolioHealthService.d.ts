@@ -142,6 +142,8 @@ export type PortfolioUtilizationSection = {
     distributionCustomerCount: number;
     /** Daily portfolio / DCL / Named utilization for the Utilization chart. */
     daily: PortfolioUtilizationDailyPoint[];
+    /** Snapshot day used for top customers and distribution; null when none. */
+    asOfDate: string | null;
 };
 export type PortfolioCostDailyPoint = {
     snapshotDate: string;
@@ -208,6 +210,8 @@ export type CreditPortfolioHealthQuery = {
     accessibleBusinessUnitIds?: number[] | null;
     isAdmin?: boolean;
 };
+/** Latest snapshot YYYY-MM-DD on or before `rangeToYmd`, or null. */
+export declare function latestSnapshotYmdOnOrBefore(snapshotYmds: string[], rangeToYmd: string): string | null;
 export declare function isInsurerDeclinedReason(reason: unknown): boolean;
 /**
  * Calendar-consecutive longest run of days whose value equals `target`.
@@ -353,6 +357,7 @@ export declare function buildUtilizationSection(input: {
     }>;
     periodActiveTopUpCount: number;
     periodCustomersWithTopUp: number;
+    asOfDate?: string | null;
 }): PortfolioUtilizationSection;
 /**
  * Effective cost = period cost ÷ average daily compliant exposure.

@@ -47,6 +47,10 @@ export type CreditDashboardSummaryHistory = {
  */
 export declare function takeCreditDashboardDailySnapshotsForAccount(accountId: number, options?: {
     snapshotDate?: Date;
+    /** When set (e.g. shared backfill load), skip a second ledger query. */
+    asOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[];
+    /** Generate-job only: treat reporting-late as off in this snapshot. */
+    ignoreReportingBreach?: boolean;
 }): Promise<{
     scopesProcessed: number;
 }>;

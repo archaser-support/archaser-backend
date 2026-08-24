@@ -72,8 +72,11 @@ function computeOutdatedDclAtEvaluation(args) {
         args.dclCustomerSinceMonths !== null &&
         args.dclCustomerSinceMonths !== undefined) {
         const oldestAllowedCustomerSince = (0, date_fns_1.addMonths)(evalStart, -args.dclCustomerSinceMonths);
+        // If the gap is less than dclCustomerSinceMonths, outdated_dcl = True.
+        // This means the customer is newer than the threshold date
+        // (activeCustomerSince >= oldestAllowedCustomerSince).
         isActiveCustomerSinceTooOld =
-            (0, date_fns_1.differenceInCalendarDays)(oldestAllowedCustomerSince, args.activeCustomerSince) > 0;
+            (0, date_fns_1.differenceInCalendarDays)(args.activeCustomerSince, oldestAllowedCustomerSince) >= 0;
     }
     return isBelowMinScore || isScoreValidityExpired || isActiveCustomerSinceTooOld;
 }

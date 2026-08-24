@@ -489,6 +489,13 @@ exports.REPORT_METADATA = {
                     translationNamespace: "invoices",
                 },
                 {
+                    name: "credit_for_invoice_number",
+                    type: "string",
+                    label: "Credit for Invoice",
+                    translationKey: "credit_for_invoice_number",
+                    translationNamespace: "invoices",
+                },
+                {
                     name: "amount",
                     type: "number",
                     label: "Amount",

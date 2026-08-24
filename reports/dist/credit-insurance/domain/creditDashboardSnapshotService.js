@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.takeCreditDashboardDailySnapshotsForAccount = takeCreditDashboardDailySnapshotsForAccount;
 exports.takeCreditDashboardDailySnapshots = takeCreditDashboardDailySnapshots;
@@ -11,6 +44,7 @@ const insurancePolicyLifecycle_1 = require("./shared/insurancePolicyLifecycle");
 const creditInsuranceDashboardService_1 = require("./creditInsuranceDashboardService");
 const hasTopUpPolicies_1 = require("./hasTopUpPolicies");
 const insurancePolicyStatusCron_1 = require("./insurancePolicyStatusCron");
+const asOfOpenAr_1 = require("./asOfOpenAr");
 function normalizeDateString(value) {
     return value.toISOString().slice(0, 10);
 }
@@ -51,10 +85,13 @@ async function listSnapshotScopes(asOfDate) {
     }
     return scopes;
 }
-async function processDashboardSnapshotsForAccount(accountId, accountScopes, snapshotDate) {
+async function processDashboardSnapshotsForAccount(accountId, accountScopes, snapshotDate, preloadedAsOfLines, ignoreReportingBreach) {
     let scopesProcessed = 0;
+    const loadedLines = preloadedAsOfLines ??
+        (await (await Promise.resolve().then(() => __importStar(require("./asOfOpenAr")))).loadAsOfOpenInvoiceCandidates(accountId, snapshotDate));
+    const asOfLines = (0, asOfOpenAr_1.withReportingBreachIgnored)(loadedLines, ignoreReportingBreach === true);
     for (const scope of accountScopes) {
-        const summary = await (0, creditInsuranceDashboardService_1.getCreditDashboardSummary)(scope.accountId, scope.policyId ?? undefined);
+        const summary = await (0, creditInsuranceDashboardService_1.getCreditDashboardSummary)(scope.accountId, scope.policyId ?? undefined, undefined, true, { asOfDate: snapshotDate, asOfLines });
         await upsertDailySnapshot(scope, summary, snapshotDate);
         scopesProcessed++;
     }
@@ -62,7 +99,7 @@ async function processDashboardSnapshotsForAccount(accountId, accountScopes, sna
     for (const businessUnitId of businessUnitIds) {
         const businessUnitFilter = { business_unit_id: businessUnitId };
         for (const scope of accountScopes) {
-            const summary = await (0, creditInsuranceDashboardService_1.getCreditDashboardSummary)(scope.accountId, scope.policyId ?? undefined, businessUnitFilter);
+            const summary = await (0, creditInsuranceDashboardService_1.getCreditDashboardSummary)(scope.accountId, scope.policyId ?? undefined, businessUnitFilter, true, { asOfDate: snapshotDate, asOfLines });
             await upsertDailySnapshot({ ...scope, businessUnitId }, summary, snapshotDate);
             scopesProcessed++;
         }
@@ -242,7 +279,7 @@ async function upsertDailySnapshot(scope, summary, snapshotDate) {
 async function takeCreditDashboardDailySnapshotsForAccount(accountId, options) {
     const snapshotDate = options?.snapshotDate ?? (0, insurancePolicyLifecycle_1.startOfTodayUtc)();
     const accountScopes = await listSnapshotScopesForAccount(accountId, snapshotDate);
-    const scopesProcessed = await processDashboardSnapshotsForAccount(accountId, accountScopes, snapshotDate);
+    const scopesProcessed = await processDashboardSnapshotsForAccount(accountId, accountScopes, snapshotDate, options?.asOfLines, options?.ignoreReportingBreach);
     return { scopesProcessed };
 }
 async function takeCreditDashboardDailySnapshots() {
