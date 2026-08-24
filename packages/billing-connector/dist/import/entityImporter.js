@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.shouldSkipReportingBreachOnConnectorWrite = shouldSkipReportingBreachOnConnectorWrite;
 exports.extractMaxUpdatedAt = extractMaxUpdatedAt;
 exports.importMappedEntityBatch = importMappedEntityBatch;
 exports.updateAccountLastSyncDate = updateAccountLastSyncDate;
@@ -10,10 +11,23 @@ const normalizeInvoiceImportInput_1 = require("./normalizeInvoiceImportInput");
 const normalizePaymentInput_1 = require("./normalizePaymentInput");
 const sortInvoicesForImport_1 = require("./sortInvoicesForImport");
 const linkOrphanedCreditNotes_1 = require("../invoice/linkOrphanedCreditNotes");
+function shouldSkipReportingBreachOnConnectorWrite(params) {
+    const mode = String(params.syncMode).toUpperCase();
+    return mode === "BACKFILL" && params.skipReportingBreachOnBackfill === true;
+}
 function extractMaxUpdatedAt(records) {
     let max = null;
     for (const record of records) {
-        const raw = record.UDATE ?? record.udate ?? record.updated_at;
+        const rawParent = record._rawRecord;
+        const rawRecord = rawParent && typeof rawParent === "object" && !Array.isArray(rawParent)
+            ? rawParent
+            : undefined;
+        const raw = record.UDATE ??
+            record.udate ??
+            record.updated_at ??
+            rawRecord?.UDATE ??
+            rawRecord?.udate ??
+            rawRecord?.updated_at;
         if (!raw)
             continue;
         const parsed = new Date(String(raw));
@@ -53,7 +67,7 @@ async function getInvoiceNumbersWithPayments(prisma, accountId, invoiceNumbers) 
         .map((r) => r.invoice_number)
         .filter((n) => Boolean(n)));
 }
-async function importInvoiceBatch(prisma, rows, accountId, userId) {
+async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
     const result = {
         success: 0,
         failed: 0,
@@ -123,6 +137,9 @@ async function importInvoiceBatch(prisma, rows, accountId, userId) {
                 customer_outstanding_debt: customerOutstanding,
                 credit_for_invoice_number: invoice.credit_for_invoice_number ?? null,
                 priority_erp_debit: invoice.priority_erp_debit ?? null,
+                ...(options?.skipReportingBreach === true
+                    ? { reporting_breach: false }
+                    : {}),
                 invoice_date: invoice.invoice_date
                     ? new Date(invoice.invoice_date)
                     : new Date(),
@@ -177,7 +194,7 @@ async function importInvoiceBatch(prisma, rows, accountId, userId) {
 /**
  * Prisma-native entity upsert for connector sync and manual import.
  */
-async function importMappedEntityBatch(prisma, importType, records, accountId, mappingJson, userId) {
+async function importMappedEntityBatch(prisma, importType, records, accountId, mappingJson, userId, options) {
     const result = {
         success: 0,
         failed: 0,
@@ -318,7 +335,7 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
         return result;
     }
     if (importType === "Invoice") {
-        return importInvoiceBatch(prisma, rows, accountId, userId);
+        return importInvoiceBatch(prisma, rows, accountId, userId, options);
     }
     const payments = rows.map((row) => (0, normalizePaymentInput_1.toPaymentInput)(row, accountId));
     const paymentResults = await (0, importPaymentService_1.importPayments)(prisma, payments, accountId, userId);

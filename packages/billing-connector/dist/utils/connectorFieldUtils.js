@@ -332,7 +332,7 @@ function mapErpRecord(erpRecord, rules) {
     const result = {};
     Object.defineProperty(result, "_rawRecord", {
         value: erpRecord,
-        enumerable: false,
+        enumerable: true,
         writable: true,
         configurable: true,
     });

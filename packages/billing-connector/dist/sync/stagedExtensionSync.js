@@ -163,7 +163,9 @@ async function runStagedExtensionSync(options) {
                 continue;
             }
             // Already mapped — pass null mapping so importer does not re-map.
-            const importResult = await importFn(options.prisma, entityType, rows, options.accountId, null, options.userId);
+            const importResult = await importFn(options.prisma, entityType, rows, options.accountId, null, options.userId, {
+                skipReportingBreach: options.skipReportingBreach === true,
+            });
             bumpImported(stats, entityType, importResult.success, importResult.failed);
             windowImported += importResult.success;
             windowErrors += importResult.failed;

@@ -1,10 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
 import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionEntityType, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
-import { type EntityImportBatchResult, type ImportEntityType } from "../import/entityImporter";
+import { type EntityImportBatchOptions, type EntityImportBatchResult, type ImportEntityType } from "../import/entityImporter";
 import { type MappingRule } from "../utils/connectorFieldUtils";
 export declare const STAGED_ENTITY_ORDER: ExtensionEntityType[];
-export type ImportBatchFn = (prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string) => Promise<EntityImportBatchResult>;
+export type ImportBatchFn = (prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string, options?: EntityImportBatchOptions) => Promise<EntityImportBatchResult>;
 export interface StagedWindowOutcome {
     window: ExtensionSyncWindow;
     ok: boolean;
@@ -25,6 +25,7 @@ export interface RunStagedExtensionSyncOptions {
     windows: ExtensionSyncWindow[];
     dryRun?: boolean;
     userId?: string;
+    skipReportingBreach?: boolean;
     importBatch?: ImportBatchFn;
 }
 export interface RunStagedExtensionSyncResult {

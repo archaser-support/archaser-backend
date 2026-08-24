@@ -22,12 +22,35 @@ export interface EntityImportBatchResult {
     errors: string[];
 }
 
+export interface EntityImportBatchOptions {
+    skipReportingBreach?: boolean;
+}
+
+export function shouldSkipReportingBreachOnConnectorWrite(params: {
+    syncMode: "BACKFILL" | "INCREMENTAL" | "backfill" | "incremental";
+    skipReportingBreachOnBackfill: boolean;
+}): boolean {
+    const mode = String(params.syncMode).toUpperCase();
+    return mode === "BACKFILL" && params.skipReportingBreachOnBackfill === true;
+}
+
 export function extractMaxUpdatedAt(
     records: Record<string, unknown>[]
 ): Date | null {
     let max: Date | null = null;
     for (const record of records) {
-        const raw = record.UDATE ?? record.udate ?? record.updated_at;
+        const rawParent = record._rawRecord;
+        const rawRecord =
+            rawParent && typeof rawParent === "object" && !Array.isArray(rawParent)
+                ? (rawParent as Record<string, unknown>)
+                : undefined;
+        const raw =
+            record.UDATE ??
+            record.udate ??
+            record.updated_at ??
+            rawRecord?.UDATE ??
+            rawRecord?.udate ??
+            rawRecord?.updated_at;
         if (!raw) continue;
         const parsed = new Date(String(raw));
         if (Number.isNaN(parsed.getTime())) continue;
@@ -81,7 +104,8 @@ async function importInvoiceBatch(
     prisma: PrismaClient,
     rows: Record<string, unknown>[],
     accountId: number,
-    userId?: string
+    userId?: string,
+    options?: EntityImportBatchOptions
 ): Promise<EntityImportBatchResult> {
     const result: EntityImportBatchResult = {
         success: 0,
@@ -170,6 +194,9 @@ async function importInvoiceBatch(
                 credit_for_invoice_number:
                     invoice.credit_for_invoice_number ?? null,
                 priority_erp_debit: invoice.priority_erp_debit ?? null,
+                ...(options?.skipReportingBreach === true
+                    ? { reporting_breach: false }
+                    : {}),
                 invoice_date: invoice.invoice_date
                     ? new Date(invoice.invoice_date)
                     : new Date(),
@@ -238,7 +265,8 @@ export async function importMappedEntityBatch(
     records: Record<string, unknown>[],
     accountId: number,
     mappingJson: unknown,
-    userId?: string
+    userId?: string,
+    options?: EntityImportBatchOptions
 ): Promise<EntityImportBatchResult> {
     const result: EntityImportBatchResult = {
         success: 0,
@@ -386,7 +414,7 @@ export async function importMappedEntityBatch(
     }
 
     if (importType === "Invoice") {
-        return importInvoiceBatch(prisma, rows, accountId, userId);
+        return importInvoiceBatch(prisma, rows, accountId, userId, options);
     }
 
     const payments = rows.map((row) => toPaymentInput(row, accountId));

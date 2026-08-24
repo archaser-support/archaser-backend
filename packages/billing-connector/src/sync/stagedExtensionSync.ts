@@ -10,6 +10,7 @@ import type {
 import {
     importMappedEntityBatch,
     extractMaxUpdatedAt,
+    type EntityImportBatchOptions,
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "../import/entityImporter";
@@ -31,7 +32,8 @@ export type ImportBatchFn = (
     records: Record<string, unknown>[],
     accountId: number,
     mappingJson: unknown,
-    userId?: string
+    userId?: string,
+    options?: EntityImportBatchOptions
 ) => Promise<EntityImportBatchResult>;
 
 export interface StagedWindowOutcome {
@@ -55,6 +57,7 @@ export interface RunStagedExtensionSyncOptions {
     windows: ExtensionSyncWindow[];
     dryRun?: boolean;
     userId?: string;
+    skipReportingBreach?: boolean;
     importBatch?: ImportBatchFn;
 }
 
@@ -278,7 +281,10 @@ export async function runStagedExtensionSync(
                 rows,
                 options.accountId,
                 null,
-                options.userId
+                options.userId,
+                {
+                    skipReportingBreach: options.skipReportingBreach === true,
+                }
             );
             bumpImported(
                 stats,

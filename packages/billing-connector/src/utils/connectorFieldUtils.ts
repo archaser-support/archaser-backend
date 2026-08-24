@@ -378,7 +378,7 @@ export function mapErpRecord(
     const result: Record<string, unknown> = {};
     Object.defineProperty(result, "_rawRecord", {
         value: erpRecord,
-        enumerable: false,
+        enumerable: true,
         writable: true,
         configurable: true,
     });

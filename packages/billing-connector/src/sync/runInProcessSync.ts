@@ -14,6 +14,7 @@ import { decryptCredentials } from "../utils/billingConnectorCrypto";
 import {
     extractMaxUpdatedAt,
     importMappedEntityBatch,
+    shouldSkipReportingBreachOnConnectorWrite,
     updateAccountLastSyncDate,
     type EntityImportBatchResult,
     type ImportEntityType,
@@ -219,6 +220,12 @@ async function runInProcessSyncBody(
                 ? connector.extension_key.trim() || null
                 : null;
 
+        const skipReportingBreach = shouldSkipReportingBreachOnConnectorWrite({
+            syncMode: options.mode === "incremental" ? "INCREMENTAL" : "BACKFILL",
+            skipReportingBreachOnBackfill:
+                connector.skip_reporting_breach_on_backfill === true,
+        });
+
         // Fail fast at sync start — never silently fall back to legacy path.
         let extension: BillingAccountExtension | undefined;
         if (extensionKey) {
@@ -379,6 +386,7 @@ async function runInProcessSyncBody(
                 windows,
                 dryRun,
                 userId,
+                skipReportingBreach,
                 importBatch,
             });
 
@@ -476,7 +484,8 @@ async function runInProcessSyncBody(
                     pullResult.records as Record<string, unknown>[],
                     accountId,
                     mapping.mapping,
-                    userId
+                    userId,
+                    { skipReportingBreach }
                 );
                 (stats as Record<string, number>)[importedKey] =
                     importResult.success;

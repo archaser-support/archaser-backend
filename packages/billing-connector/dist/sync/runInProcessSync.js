@@ -111,6 +111,10 @@ async function runInProcessSyncBody(options) {
         const extensionKey = typeof connector.extension_key === "string"
             ? connector.extension_key.trim() || null
             : null;
+        const skipReportingBreach = (0, entityImporter_1.shouldSkipReportingBreachOnConnectorWrite)({
+            syncMode: options.mode === "incremental" ? "INCREMENTAL" : "BACKFILL",
+            skipReportingBreachOnBackfill: connector.skip_reporting_breach_on_backfill === true,
+        });
         // Fail fast at sync start — never silently fall back to legacy path.
         let extension;
         if (extensionKey) {
@@ -246,6 +250,7 @@ async function runInProcessSyncBody(options) {
                 windows,
                 dryRun,
                 userId,
+                skipReportingBreach,
                 importBatch,
             });
             if (!dryRun) {
@@ -326,7 +331,7 @@ async function runInProcessSyncBody(options) {
                 const importedKey = `${entityType.toLowerCase()}sImported`;
                 stats[processedKey] =
                     pullResult.records.length;
-                const importResult = await importBatch(prisma, entityType, pullResult.records, accountId, mapping.mapping, userId);
+                const importResult = await importBatch(prisma, entityType, pullResult.records, accountId, mapping.mapping, userId, { skipReportingBreach });
                 stats[importedKey] =
                     importResult.success;
                 stats.importErrors += importResult.failed;
