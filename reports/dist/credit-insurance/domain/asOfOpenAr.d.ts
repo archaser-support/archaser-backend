@@ -43,6 +43,7 @@ export type AsOfOpenInvoiceLine = {
     ctvOutdatedDcl: boolean;
     ctvInvoiceAfterPolicyEnd: boolean;
     inCapacityGap: boolean;
+    capacityGapAmount?: number;
     actualReportingDate?: Date | null;
 };
 /** Policy terms used to recompute invoice breach flags as of a snapshot day. */

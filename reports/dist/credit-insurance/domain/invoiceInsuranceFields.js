@@ -395,9 +395,9 @@ function computeCustomerCapacityGapAmountForAccountDisplay(customer, _accountCur
  * Allocated at-risk for a customer **with** a linked policy:
  * min(open AR, capacity gap + terms-breach outstanding).
  *
- * Terms-breach outstanding passed in must **exclude** invoices already in the
- * capacity gap (`excludeCapacityGapInvoices` on breach queries) so one invoice
- * is not counted twice.
+ * Terms-breach outstanding must be **net of invoice capacity gap** so the same
+ * money is not added twice. `min(AR, …)` still caps when the remaining sum
+ * exceeds open AR.
  */
 function computeCustomerRiskExposure(args) {
     const ar = Math.max(0, args.totalAr);
