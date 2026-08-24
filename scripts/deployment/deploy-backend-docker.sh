@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+
+# Ubuntu /bin/sh is dash. `set -o pipefail` is bash-only, so re-exec if
+# this file was started with `sh scripts/deployment/deploy-backend-docker.sh`.
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec /usr/bin/env bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 usage() {
@@ -32,6 +39,59 @@ require_cmd() {
 
 log() {
     printf "\n==> %s\n" "$1"
+}
+
+host_mem_mb() {
+    awk '/MemTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0
+}
+
+host_swap_mb() {
+    awk '/SwapTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0
+}
+
+# t3.small/t3.micro OOM-kills a full workspace `npm ci`. Add 2G swap when RAM is low.
+ensure_deploy_swap() {
+    if [[ ! -r /proc/meminfo ]]; then
+        return 0
+    fi
+    local mem_mb swap_mb
+    mem_mb="$(host_mem_mb)"
+    swap_mb="$(host_swap_mb)"
+    log "Host memory: ${mem_mb}MB RAM, ${swap_mb}MB swap"
+    if (( mem_mb >= 3072 || swap_mb >= 1024 )); then
+        return 0
+    fi
+    local swapfile="/swapfile.archaser-deploy"
+    if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true 2>/dev/null; then
+        echo "Warning: ${mem_mb}MB RAM and ${swap_mb}MB swap — npm ci may be OOM-killed."
+        echo "Add swap, then re-run:"
+        echo "  sudo fallocate -l 2G $swapfile && sudo chmod 600 $swapfile && sudo mkswap $swapfile && sudo swapon $swapfile"
+        return 0
+    fi
+    if [[ ! -f "$swapfile" ]]; then
+        log "Low RAM — creating 2G swap at $swapfile"
+        sudo fallocate -l 2G "$swapfile" || sudo dd if=/dev/zero of="$swapfile" bs=1M count=2048 status=none
+        sudo chmod 600 "$swapfile"
+        sudo mkswap "$swapfile" >/dev/null
+    fi
+    sudo swapon "$swapfile" 2>/dev/null || true
+    log "Host memory after swap: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+}
+
+npm_ci_low_memory() {
+    local mem_mb heap_mb
+    mem_mb="$(host_mem_mb)"
+    heap_mb=768
+    if (( mem_mb > 0 && mem_mb < 2048 )); then
+        heap_mb=512
+    elif (( mem_mb >= 4096 )); then
+        heap_mb=2048
+    fi
+    log "npm ci (heap ${heap_mb}MB, maxsockets 1, ignore-scripts)"
+    # Ignore scripts so prisma/husky do not spawn extra Node during peak install.
+    # Prisma generate still runs later in this script.
+    NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
+        npm ci --no-audit --no-fund --maxsockets 1 --ignore-scripts
 }
 
 ENVIRONMENT=""
@@ -141,6 +201,7 @@ fi
 
 cd "$ROOT_DIR"
 log "Deploy root: $ROOT_DIR"
+ensure_deploy_swap
 
 log "Preparing env files"
 cp "$ENV_SOURCE" "$ENV_TARGET"
@@ -148,7 +209,7 @@ cp "$ENV_SOURCE" "$ROOT_DIR/.env"
 
 if [[ "$SKIP_INSTALL" != "true" ]]; then
     log "Installing dependencies (npm ci)"
-    npm ci --no-audit
+    npm_ci_low_memory
 else
     log "Skipping npm ci (--skip-install)"
 fi
