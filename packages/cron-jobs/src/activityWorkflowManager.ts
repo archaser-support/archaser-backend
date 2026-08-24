@@ -17,6 +17,7 @@ import { resolveAccountEmailSender } from "./email/accountSender";
 import { getEmailErrorSummary } from "./email/emailErrorClassification";
 import { sendEmailWithRetry } from "./email/sendEmailWithRetry";
 import { addEmailTracking } from "./email/emailTrackingUtils";
+import { resolvePublicApiOrigin } from "./publicApiUrl";
 import { jobLog } from "./logging/jobLog";
 import { publishControlCenterUpdate } from "./realtime/publishControlCenterUpdate";
 import { calculateNextAutomatedActivityTime } from "./scheduling/calculateNextAutomatedActivityTime";
@@ -534,9 +535,7 @@ async function processEmailActivity(
     const customer = activity.Customer;
     const sender = await resolveAccountEmailSender(prisma, account.id);
     const countryId = customer.Country?.id ?? null;
-    const trackingBaseUrl =
-        process.env.NEXT_PUBLIC_BASE_URL ||
-        process.env.NEXT_PUBLIC_NEST_API_BASE_URL;
+    const trackingBaseUrl = resolvePublicApiOrigin();
 
     const templateBundle = activity.ActivitiesSequence
         ? getRawTemplateContent(

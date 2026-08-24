@@ -18,6 +18,7 @@ const accountSender_1 = require("./email/accountSender");
 const emailErrorClassification_1 = require("./email/emailErrorClassification");
 const sendEmailWithRetry_1 = require("./email/sendEmailWithRetry");
 const emailTrackingUtils_1 = require("./email/emailTrackingUtils");
+const publicApiUrl_1 = require("./publicApiUrl");
 const jobLog_1 = require("./logging/jobLog");
 const publishControlCenterUpdate_1 = require("./realtime/publishControlCenterUpdate");
 const calculateNextAutomatedActivityTime_1 = require("./scheduling/calculateNextAutomatedActivityTime");
@@ -209,7 +210,7 @@ async function sendDueActivities(prisma, options, stats) {
     }
 }
 /**
- * Process a single activity: send SMS or Email stub
+ * Process a single activity: send SMS or Email (with pragmatic channel selection).
  */
 async function processActivity(prisma, activity, options, stats) {
     const pendingContacts = activity.ActivityContact.filter((ac) => ac.status === "Scheduled");
@@ -410,8 +411,7 @@ async function processEmailActivity(prisma, activity, pendingContacts, stats) {
     const customer = activity.Customer;
     const sender = await (0, accountSender_1.resolveAccountEmailSender)(prisma, account.id);
     const countryId = customer.Country?.id ?? null;
-    const trackingBaseUrl = process.env.NEXT_PUBLIC_BASE_URL ||
-        process.env.NEXT_PUBLIC_NEST_API_BASE_URL;
+    const trackingBaseUrl = (0, publicApiUrl_1.resolvePublicApiOrigin)();
     const templateBundle = activity.ActivitiesSequence
         ? (0, processTemplateContent_1.getRawTemplateContent)({
             activity_type: "Email",

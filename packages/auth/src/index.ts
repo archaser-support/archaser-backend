@@ -15,3 +15,8 @@ export {
     SoftDualAuthGuard,
     isPublicPagesApiPath,
 } from "./soft-dual-auth.guard";
+export {
+    enablePublicCors,
+    parseCorsOrigins,
+    PUBLIC_CORS_ALLOWED_HEADERS,
+} from "./public-cors";

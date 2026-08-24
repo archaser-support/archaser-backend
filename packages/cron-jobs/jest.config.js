@@ -2,7 +2,7 @@
 module.exports = {
     moduleFileExtensions: ["js", "json", "ts"],
     rootDir: ".",
-    roots: ["<rootDir>/../../../tests/backend/packages/cron-jobs"],
+    roots: ["<rootDir>/test"],
     testMatch: ["**/*.test.ts"],
     transform: {
         "^.+\\.(t|j)s$": [

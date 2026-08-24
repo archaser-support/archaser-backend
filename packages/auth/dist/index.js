@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isPublicPagesApiPath = exports.SoftDualAuthGuard = exports.InternalServiceClient = exports.InternalSecretGuard = exports.DualAuthGuard = exports.CurrentUser = exports.CronSecretGuard = exports.ArchaserAuthModule = exports.AccessScopeService = exports.AUTH_DATABASE = void 0;
+exports.PUBLIC_CORS_ALLOWED_HEADERS = exports.parseCorsOrigins = exports.enablePublicCors = exports.isPublicPagesApiPath = exports.SoftDualAuthGuard = exports.InternalServiceClient = exports.InternalSecretGuard = exports.DualAuthGuard = exports.CurrentUser = exports.CronSecretGuard = exports.ArchaserAuthModule = exports.AccessScopeService = exports.AUTH_DATABASE = void 0;
 var auth_database_1 = require("./auth-database");
 Object.defineProperty(exports, "AUTH_DATABASE", { enumerable: true, get: function () { return auth_database_1.AUTH_DATABASE; } });
 var access_scope_service_1 = require("./access-scope.service");
@@ -20,3 +20,7 @@ Object.defineProperty(exports, "InternalServiceClient", { enumerable: true, get:
 var soft_dual_auth_guard_1 = require("./soft-dual-auth.guard");
 Object.defineProperty(exports, "SoftDualAuthGuard", { enumerable: true, get: function () { return soft_dual_auth_guard_1.SoftDualAuthGuard; } });
 Object.defineProperty(exports, "isPublicPagesApiPath", { enumerable: true, get: function () { return soft_dual_auth_guard_1.isPublicPagesApiPath; } });
+var public_cors_1 = require("./public-cors");
+Object.defineProperty(exports, "enablePublicCors", { enumerable: true, get: function () { return public_cors_1.enablePublicCors; } });
+Object.defineProperty(exports, "parseCorsOrigins", { enumerable: true, get: function () { return public_cors_1.parseCorsOrigins; } });
+Object.defineProperty(exports, "PUBLIC_CORS_ALLOWED_HEADERS", { enumerable: true, get: function () { return public_cors_1.PUBLIC_CORS_ALLOWED_HEADERS; } });

@@ -4,13 +4,10 @@
  * utils/emailTrackingUtils.ts
  */
 
+import { resolvePublicApiOrigin } from "../publicApiUrl";
+
 function resolveBaseUrl(baseUrl?: string): string {
-    return (
-        baseUrl ||
-        process.env.NEXT_PUBLIC_BASE_URL ||
-        process.env.NEXT_PUBLIC_NEST_API_BASE_URL ||
-        "https://archaser.com"
-    );
+    return resolvePublicApiOrigin(baseUrl);
 }
 
 export function addTrackingPixel(

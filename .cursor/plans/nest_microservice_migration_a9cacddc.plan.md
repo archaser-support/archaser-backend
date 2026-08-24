@@ -185,7 +185,7 @@ flowchart LR
 ### Stage 1B — Amplify UI — **Lane B — wiring done**
 
 - Amplify Hosting SSR; JWT Bearer + OpenAPI client (`@archaser/openapi-client` + FE `nestOpenApiClient`).
-- Staging nginx redirects UI to Amplify; Nest APIs stay on EC2.
+- Staging nginx redirects UI to Amplify; Nest APIs live on **api.staging.archaser.com** (see `ec2-staging-api-domain.plan.md`).
 - Console env + `NEST_CORS_ORIGINS` remain host/ops steps.
 - Production Amplify cutover optional (EC2 Next UI remains).
 

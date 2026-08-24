@@ -2,11 +2,13 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import cookieParser from "cookie-parser";
+import { enablePublicCors } from "@archaser/auth";
 import { AppModule } from "./app.module";
 
 async function bootstrap() {
     const app = await NestFactory.create(AppModule);
     app.use(cookieParser());
+    enablePublicCors(app);
 
     const config = new DocumentBuilder()
         .setTitle("Archaser Connectors")

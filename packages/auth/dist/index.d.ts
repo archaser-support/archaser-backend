@@ -8,3 +8,4 @@ export { InternalSecretGuard } from "./internal-secret.guard";
 export { InternalServiceClient } from "./internal-service.client";
 export { type JwtPayload } from "./jwt-payload";
 export { SoftDualAuthGuard, isPublicPagesApiPath, } from "./soft-dual-auth.guard";
+export { enablePublicCors, parseCorsOrigins, PUBLIC_CORS_ALLOWED_HEADERS, } from "./public-cors";
