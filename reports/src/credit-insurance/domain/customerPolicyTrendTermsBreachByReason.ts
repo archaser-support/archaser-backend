@@ -160,14 +160,64 @@ export type CustomerTermsBreachByReasonSnapshotResult = {
 };
 
 /**
- * Live breach invoices for one customer, optionally scoped to one insurance policy
+ * Live (or as-of) breach invoices for one customer, optionally scoped to one insurance policy
  * (`null` = invoices with no `policy_id`).
+ * When `asOfDate` is set, uses payment-ledger open amounts instead of live Due/Overdue.
  */
 export async function getCustomerTermsBreachByReasonSnapshot(
     accountId: number,
     customerId: number,
-    policyId: number | null
+    policyId: number | null,
+    options?: { asOfDate?: Date }
 ): Promise<CustomerTermsBreachByReasonSnapshotResult> {
+    if (options?.asOfDate) {
+        const { loadAsOfOpenInvoiceCandidates, computeAsOfOpenInvoiceLine } =
+            await import("./asOfOpenAr");
+        const lines = await loadAsOfOpenInvoiceCandidates(
+            accountId,
+            options.asOfDate,
+            {
+                customerIds: [customerId],
+                policyId: policyId ?? undefined,
+            }
+        );
+        const invoices: TermsBreachInvoiceForAggregation[] = [];
+        for (const line of lines) {
+            const isBreach =
+                line.reportingBreach ||
+                line.ctvPaymentTerm ||
+                line.ctvCustomerOverdueMep ||
+                line.ctvOutdatedDcl ||
+                line.ctvInvoiceAfterPolicyEnd;
+            if (!isBreach) {
+                continue;
+            }
+            const computed = computeAsOfOpenInvoiceLine(line, options.asOfDate);
+            if (!computed) {
+                continue;
+            }
+            if (policyId === null && computed.policyId != null) {
+                continue;
+            }
+            if (policyId != null && computed.policyId !== policyId) {
+                continue;
+            }
+            invoices.push({
+                policyId: computed.policyId,
+                outstanding: computed.openAmount,
+                reportingBreach: computed.reportingBreach,
+                ctvPaymentTerm: computed.ctvPaymentTerm,
+                ctvCustomerOverdueMep: computed.ctvCustomerOverdueMep,
+                ctvOutdatedDcl: computed.ctvOutdatedDcl,
+                ctvInvoiceAfterPolicyEnd: computed.ctvInvoiceAfterPolicyEnd,
+            });
+        }
+        return {
+            snapshot: aggregateTermsBreachByReasonFromInvoices(invoices, policyId),
+            invoiceCount: invoices.length,
+        };
+    }
+
     const rows = await prisma.invoice.findMany({
         where: {
             account_id: accountId,
