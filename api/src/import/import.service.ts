@@ -259,7 +259,7 @@ export class ImportService {
             } as never,
         });
 
-        return serializeBigInt(job);
+        return serializeBigInt({ ...job, jobId: job.id });
     }
 
     async completeJob(user: JwtPayload, body: Record<string, unknown>) {
@@ -321,7 +321,40 @@ export class ImportService {
             throw new NotFoundException({ error: "Import job not found" });
         }
 
-        return serializeBigInt(job);
+        const { ImportRecord: importRecords = [], ...jobFields } = job;
+        const records = importRecords.map((record) => ({
+            ...record,
+            original_data: record.original_data,
+        }));
+        const successful = records.filter(
+            (record) =>
+                record.status === "Success" || record.status === "Validated"
+        ).length;
+        const failed = records.filter(
+            (record) => record.status === "Failed"
+        ).length;
+
+        return serializeBigInt({
+            ...jobFields,
+            jobId: job.id,
+            records,
+            results: records.map((record) => ({
+                index: record.row_index,
+                success:
+                    record.status === "Success" ||
+                    record.status === "Validated",
+                skipped: record.status === "Skipped",
+                message: record.result_message || "",
+                originalData: record.original_data || {},
+                customerId: record.entity_id,
+            })),
+            statistics: {
+                total: records.length || job.total_records,
+                successful: job.successful_records || successful,
+                failed: job.failed_records || failed,
+            },
+            metadata: job.metadata,
+        });
     }
 }
 

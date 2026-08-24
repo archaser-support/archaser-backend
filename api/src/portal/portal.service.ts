@@ -1,3 +1,4 @@
+import { randomInt } from "crypto";
 import {
     BadRequestException,
     Injectable,
@@ -83,6 +84,8 @@ export class PortalService {
                         chart_palette_color: true,
                     },
                 },
+                Country: { select: { name: true } },
+                State: { select: { name: true } },
             },
         });
         if (!customer) {
@@ -101,24 +104,29 @@ export class PortalService {
         switch (suffix) {
             case "portal-data":
                 return this.portalData(customer);
-            case "agent-portal":
-                return serializeBigInt({
-                    customer_uuid: customer.customer_uuid,
-                    customer_number: customer.customer_number,
-                });
+            case "agent-portal": {
+                const bootstrap = await this.createDisputeBootstrap(
+                    customer,
+                    language
+                );
+                return {
+                    ...bootstrap,
+                    isOpenDispute: Boolean(bootstrap.hasDisputedInvoices),
+                };
+            }
             case "invoices":
                 return this.invoicesFor(customer);
             case "disputes":
             case "view-disputes":
-                return this.disputesFor(customer.id);
+                return this.disputesFor(customer, language);
             case "create-dispute":
                 return this.createDisputeBootstrap(customer, language);
             case "bank-details":
-                return { bank_details: null };
+                return this.bankDetailsFor(customer);
             case "banks":
                 return { banks: [] };
             case "wrong-contact":
-                return { ok: true };
+                return this.wrongContactFor(customer);
             default:
                 throw new NotFoundException({
                     error: "Portal customer path not served by Nest domain",
@@ -427,12 +435,139 @@ export class PortalService {
         });
     }
 
-    private async disputesFor(customerId: number) {
+    private async disputesFor(
+        customer: Awaited<ReturnType<PortalService["findCustomerByUuid"]>>,
+        language?: string
+    ) {
+        const requested = resolveDbLanguage(
+            language,
+            resolveDbLanguage(customer.language)
+        );
         const disputes = await this.db.customerDispute.findMany({
-            where: { customer_id: customerId },
+            where: { customer_id: customer.id },
             orderBy: { created_at: "desc" },
+            include: {
+                DisputeReason: {
+                    select: {
+                        name: true,
+                        DisputeReasonLanguage: {
+                            select: { language: true, name: true },
+                        },
+                    },
+                },
+                User_CustomerDispute_owner_idToUser: {
+                    select: {
+                        name: true,
+                        first_name: true,
+                        last_name: true,
+                    },
+                },
+                DisputeInvoice: {
+                    include: {
+                        Invoice: {
+                            select: PortalService.PORTAL_INVOICE_SELECT,
+                        },
+                    },
+                },
+            },
         });
-        return serializeBigInt({ disputes, totalRecords: disputes.length });
+
+        const mapped = disputes.map((dispute) => {
+            const translated = dispute.DisputeReason?.DisputeReasonLanguage.find(
+                (entry) => resolveDbLanguage(entry.language) === requested
+            );
+            const owner = dispute.User_CustomerDispute_owner_idToUser;
+            const ownerName =
+                owner?.name ||
+                `${owner?.first_name || ""} ${owner?.last_name || ""}`.trim();
+            const initials = ownerName
+                ? ownerName
+                      .split(/\s+/)
+                      .filter(Boolean)
+                      .map((part) => part[0])
+                      .join("")
+                      .slice(0, 2)
+                      .toUpperCase()
+                : "";
+            const hasContact =
+                dispute.contact_first_name ||
+                dispute.contact_email ||
+                dispute.contact_mobile;
+            return {
+                id: dispute.id,
+                status: dispute.dispute_status,
+                reason: translated?.name || dispute.DisputeReason?.name || null,
+                comment: dispute.customer_comment,
+                created_at: dispute.created_at,
+                modified_at: dispute.modified_at,
+                assignedUser: owner
+                    ? { initials: initials || "?", name: ownerName }
+                    : null,
+                contact: hasContact
+                    ? {
+                          name: `${dispute.contact_first_name || ""} ${dispute.contact_last_name || ""}`.trim(),
+                          email: dispute.contact_email || "",
+                          mobile: dispute.contact_mobile || "",
+                      }
+                    : null,
+                resolutionComment: dispute.resolution_comment,
+                invoices: dispute.DisputeInvoice.map((row) =>
+                    this.toPortalInvoice(row.Invoice)
+                ),
+            };
+        });
+
+        return serializeBigInt({
+            disputes: mapped,
+            totalRecords: mapped.length,
+            customerName: this.resolveCustomerDisplayName(customer),
+            logo: await this.resolvePortalLogo(customer.Account?.logo),
+            customerCurrency:
+                customer.customer_due_currency1 ||
+                customer.Account?.currency ||
+                "USD",
+            country: customer.Country?.name || null,
+            state: customer.State?.name || null,
+        });
+    }
+
+    private async bankDetailsFor(
+        customer: Awaited<ReturnType<PortalService["findCustomerByUuid"]>>
+    ) {
+        const banks = await this.db.customerBanks.findMany({
+            where: { customer_id: customer.id },
+            include: {
+                AccountBankAccounts: {
+                    include: {
+                        Country: { select: { iso2: true, name: true } },
+                    },
+                },
+            },
+            orderBy: { id: "asc" },
+        });
+        return serializeBigInt({
+            Account: {
+                name: customer.Account?.name || null,
+                logo: await this.resolvePortalLogo(customer.Account?.logo),
+            },
+            CustomerBanks: banks.map((bank) => ({
+                id: bank.id,
+                customer_bank_account_id: bank.customer_bank_account_id,
+                CustomerBankAccount: bank.AccountBankAccounts,
+            })),
+        });
+    }
+
+    private async wrongContactFor(
+        customer: Awaited<ReturnType<PortalService["findCustomerByUuid"]>>
+    ) {
+        return serializeBigInt({
+            id: customer.id,
+            Account: {
+                name: customer.Account?.name || null,
+                logo: await this.resolvePortalLogo(customer.Account?.logo),
+            },
+        });
     }
 
     /**
@@ -529,6 +664,10 @@ export class PortalService {
     }
 
     async createPublicDispute(body: Record<string, unknown>) {
+        if (String(body.dispute_type || "") === "contact") {
+            return this.createContactDispute(body);
+        }
+
         const customerId = parseInt(String(body.customer_id ?? ""), 10);
         const reasonId = parseInt(String(body.dispute_reason_id ?? ""), 10);
         if (!Number.isFinite(customerId) || !Number.isFinite(reasonId)) {
@@ -651,6 +790,161 @@ export class PortalService {
             disputeId: dispute.id,
             invoicesLinked: invoices.length,
         });
+    }
+
+    private async createContactDispute(body: Record<string, unknown>) {
+        const customerId = parseInt(String(body.customer_id ?? ""), 10);
+        if (!Number.isFinite(customerId)) {
+            throw new BadRequestException({ error: "customer_id is required" });
+        }
+
+        const customer = await this.db.customer.findFirst({
+            where: { id: customerId },
+            select: { id: true, account_id: true },
+        });
+        if (!customer) {
+            throw new NotFoundException({ error: "Customer not found" });
+        }
+
+        const collection = await this.db.customerCollectionPeriod.findFirst({
+            where: { customer_id: customer.id, period_end_date: null },
+            select: { id: true },
+            orderBy: { id: "desc" },
+        });
+        if (!collection) {
+            throw new BadRequestException({
+                error: "No active collection period",
+            });
+        }
+
+        const comment = String(body.contact_comment ?? "");
+        const now = new Date();
+        const created = await this.db.$transaction(async (tx) => {
+            const dispute = await tx.customerDispute.create({
+                data: {
+                    customer_id: customer.id,
+                    dispute_status: "Under_Review",
+                    customer_comment: comment,
+                    customer_collection_period_id: collection.id,
+                    contact_first_name:
+                        String(body.contact_first_name ?? "") || null,
+                    contact_last_name:
+                        String(body.contact_last_name ?? "") || null,
+                    contact_email: String(body.contact_email ?? "") || null,
+                    contact_mobile: String(body.contact_mobile ?? "") || null,
+                } as never,
+                select: { id: true },
+            });
+
+            await tx.activity.create({
+                data: {
+                    customer_id: customer.id,
+                    account_id: customer.account_id,
+                    type: "Dispute",
+                    status: "COMPLETED",
+                    title: "{{disputes.fields.filed_portal_title}}",
+                    title_params: {
+                        userId: "portal_user",
+                        disputeId: String(dispute.id),
+                        disputeReason: "contact",
+                    },
+                    content: comment,
+                    collection_period_id: collection.id,
+                    schedule_time: now,
+                    actual_delivery_time: now,
+                    system_generated: true,
+                } as never,
+            });
+
+            await tx.customerCollectionPeriod.update({
+                where: { id: collection.id },
+                data: { last_dispute_date: now } as never,
+            });
+
+            return dispute;
+        });
+
+        return serializeBigInt({ ok: true, disputeId: created.id });
+    }
+
+    private obfuscateEmail(email: string): string {
+        const [local, domain] = email.split("@");
+        if (!domain) {
+            return email;
+        }
+        return `${local.slice(0, 2)}***@${domain}`;
+    }
+
+    private async portalContactEmail(
+        customerUUID: string,
+        contactId?: number
+    ) {
+        const customer = await this.findCustomerByUuid(customerUUID);
+        const contact = await this.db.contact.findFirst({
+            where: {
+                customer_id: customer.id,
+                email: { not: null },
+                ...(Number.isFinite(contactId) ? { id: contactId } : {}),
+            },
+            select: { id: true, email: true },
+            orderBy: { id: "asc" },
+        });
+        if (!contact?.email) {
+            throw new NotFoundException({ error: "No contact email" });
+        }
+        return { customer, email: contact.email };
+    }
+
+    async sendVerificationCode(body: Record<string, unknown>) {
+        const customerUUID = String(body.customerUUID || "");
+        const contactId = body.contactId != null ? Number(body.contactId) : NaN;
+        const { email } = await this.portalContactEmail(
+            customerUUID,
+            Number.isFinite(contactId) ? contactId : undefined
+        );
+        const code = String(randomInt(100000, 1000000));
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+        await this.db.verificationCode.deleteMany({
+            where: { customer_uuid: customerUUID },
+        });
+        await this.db.verificationCode.create({
+            data: {
+                customer_uuid: customerUUID,
+                code,
+                expires_at: expiresAt,
+            },
+        });
+        return {
+            success: true,
+            emailObfuscated: this.obfuscateEmail(email),
+        };
+    }
+
+    async verifyCode(body: Record<string, unknown>) {
+        const customerUUID = String(body.customerUUID || "");
+        const code = String(body.code || "").trim();
+        if (!UUID_PATTERN.test(customerUUID) || !code) {
+            return { valid: false };
+        }
+        const row = await this.db.verificationCode.findFirst({
+            where: {
+                customer_uuid: customerUUID,
+                code,
+                expires_at: { gt: new Date() },
+            },
+            orderBy: { created_at: "desc" },
+        });
+        return { valid: Boolean(row) };
+    }
+
+    async verificationEmail(body: Record<string, unknown>) {
+        const customerUUID = String(body.customerUUID || "");
+        const contactId = body.contactId != null ? Number(body.contactId) : NaN;
+        const { email } = await this.portalContactEmail(
+            customerUUID,
+            Number.isFinite(contactId) ? contactId : undefined
+        );
+        return { email };
     }
 
     async updatePromiseToPay(body: Record<string, unknown>) {

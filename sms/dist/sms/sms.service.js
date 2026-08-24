@@ -274,6 +274,7 @@ let SmsService = SmsService_1 = class SmsService {
         ]);
         return (0, serialize_bigint_1.serializeBigInt)({
             countryVendors: rows,
+            mappings: rows,
             totalRecords: total,
             page,
             limit,
