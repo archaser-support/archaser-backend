@@ -1,4 +1,5 @@
 import { cost_calculation_method, Prisma } from "@prisma/client";
+import { type AsOfOpenInvoiceLine } from "./asOfOpenAr";
 export type RiskExposurePolicySeries = {
     policyId: number;
     policyLabel: string;
@@ -52,6 +53,7 @@ export type CustomerPolicyCustomerTrendPoint = {
     usageAmount: number;
     approvedLimit: number | null;
     usagePct: number | null;
+    registrationFeePercent: number | null;
 } & CustomerPolicyDailyCostChangeFields;
 export type CustomerPolicyCustomerTrendLatestPoint = CustomerPolicyCustomerTrendPoint & CustomerPolicyDailyCostKpiMetadata;
 export type CustomerPolicyTrendRowForPoint = {
@@ -68,6 +70,7 @@ export type CustomerPolicyTrendRowForPoint = {
     total_daily_cost?: Prisma.Decimal | null;
     cost_calculation_method?: cost_calculation_method | null;
     cost_percent?: Prisma.Decimal | null;
+    registration_fee_percent?: Prisma.Decimal | null;
 };
 export type CustomerPolicyCustomerTrendResponse = {
     customerId: number;
@@ -132,11 +135,17 @@ export declare function computeCustomerUsageBarSegments(args: {
     usagePct: number | null;
 };
 /**
- * Upsert today's {@link CustomerPolicyTrend} rows for one account (live open AR + top-up).
+ * Upsert {@link CustomerPolicyTrend} rows for one account as of `snapshotDate`
+ * (payment-ledger open AR + Health family; top-ups/costs already date-bounded).
  */
 export declare function syncCustomerPolicyTrendSnapshotForAccount(accountId: number, options?: {
     policyId?: number;
     snapshotDate?: Date;
+    customerIds?: number[];
+    /** When set (e.g. shared backfill load), skip a second ledger query. */
+    asOfLines?: AsOfOpenInvoiceLine[];
+    /** Generate-job only: treat reporting-late as off in this snapshot. */
+    ignoreReportingBreach?: boolean;
 }): Promise<number>;
 /**
  * Upsert one daily row per customer with an active {@link CustomerPolicy} on credit-insurance accounts.

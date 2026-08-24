@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parsePortfolioHealthDateRange = exports.defaultPortfolioHealthDateRange = exports.countInclusiveCalendarDays = exports.UTILIZATION_DISTRIBUTION_BIN_KEYS = exports.NO_COVERAGE_REASON_KEYS = exports.INSURER_DECLINED_REASON = exports.PORTFOLIO_HEALTH_BELOW_THRESHOLD_PCT = void 0;
+exports.latestSnapshotYmdOnOrBefore = latestSnapshotYmdOnOrBefore;
 exports.isInsurerDeclinedReason = isInsurerDeclinedReason;
 exports.longestExactValueStreakWindow = longestExactValueStreakWindow;
 exports.longestExactValueStreak = longestExactValueStreak;
@@ -67,6 +68,16 @@ function utcDayPlusOne(ymd) {
     const d = new Date(`${ymd}T12:00:00.000Z`);
     d.setUTCDate(d.getUTCDate() + 1);
     return d.toISOString().slice(0, 10);
+}
+/** Latest snapshot YYYY-MM-DD on or before `rangeToYmd`, or null. */
+function latestSnapshotYmdOnOrBefore(snapshotYmds, rangeToYmd) {
+    let latest = null;
+    for (const ymd of snapshotYmds) {
+        if (ymd <= rangeToYmd && (latest == null || ymd > latest)) {
+            latest = ymd;
+        }
+    }
+    return latest;
 }
 function isInsurerDeclinedReason(reason) {
     if (reason == null) {
@@ -639,6 +650,7 @@ function emptyUtilizationSection() {
         })),
         distributionCustomerCount: 0,
         daily: [],
+        asOfDate: null,
     };
 }
 function buildUtilizationSection(input) {
@@ -669,6 +681,7 @@ function buildUtilizationSection(input) {
         distribution: distribution.bins,
         distributionCustomerCount: distribution.customerCount,
         daily: [...input.daily].sort((a, b) => a.snapshotDate.localeCompare(b.snapshotDate)),
+        asOfDate: input.asOfDate ?? null,
     };
 }
 /**
@@ -1614,13 +1627,7 @@ async function getCreditPortfolioHealth(accountId, query) {
         scopedCustomerIds,
         includeNoPolicyExposure: query.includeNoPolicyExposure,
     };
-    const asOfScope = {
-        asOfDateUtc: parsed.toDateUtc,
-        policyId: query.policyId,
-        scopedCustomerIds,
-        includeNoPolicyExposure: query.includeNoPolicyExposure,
-    };
-    const [accountCurrency, cptRows, noCoverageRows, reasonRows, breachRows, utilizationRows, rangeCostInputs, topCustomers, distributionCustomers, withoutPolicyByDate, periodTopUps,] = await Promise.all([
+    const [accountCurrency, cptRows, noCoverageRows, reasonRows, breachRows, utilizationRows, rangeCostInputs, withoutPolicyByDate, periodTopUps,] = await Promise.all([
         fetchAccountCurrency(accountId),
         fetchCptDailyHealthAggregates(accountId, cptScope),
         fetchCptNoCoverageDayAggregates(accountId, cptScope),
@@ -1628,8 +1635,6 @@ async function getCreditPortfolioHealth(accountId, query) {
         fetchCptApprovedBreachReasonDayAggregates(accountId, cptScope),
         fetchCptUtilizationDayAggregates(accountId, cptScope),
         fetchPortfolioRangeCostInputs(accountId, cptScope),
-        fetchCptTopUtilizationCustomers(accountId, asOfScope),
-        fetchCptUtilizationDistribution(accountId, asOfScope),
         query.includeNoPolicyExposure
             ? fetchWithoutPolicyByDate(accountId, {
                 fromDateUtc: parsed.fromDateUtc,
@@ -1647,6 +1652,22 @@ async function getCreditPortfolioHealth(accountId, query) {
             scopedCustomerIds,
         }),
     ]);
+    const snapshotYmds = cptRows.map((row) => normalizeDateString(row.snapshot_date));
+    const asOfDate = latestSnapshotYmdOnOrBefore(snapshotYmds, parsed.to);
+    const asOfScope = {
+        asOfDateUtc: asOfDate != null
+            ? startOfUtcDayFromYmd(asOfDate)
+            : parsed.toDateUtc,
+        policyId: query.policyId,
+        scopedCustomerIds,
+        includeNoPolicyExposure: query.includeNoPolicyExposure,
+    };
+    const [topCustomers, distributionCustomers] = asOfDate != null
+        ? await Promise.all([
+            fetchCptTopUtilizationCustomers(accountId, asOfScope),
+            fetchCptUtilizationDistribution(accountId, asOfScope),
+        ])
+        : [[], []];
     const withoutPolicyAmountByDate = new Map();
     withoutPolicyByDate.forEach((value, date) => {
         withoutPolicyAmountByDate.set(date, value.amount);
@@ -1689,6 +1710,7 @@ async function getCreditPortfolioHealth(accountId, query) {
             distributionCustomers,
             periodActiveTopUpCount: periodTopUps.periodActiveTopUpCount,
             periodCustomersWithTopUp: periodTopUps.periodCustomersWithTopUp,
+            asOfDate,
         }),
         costs: buildCostsSection({
             periodCost: rangeCost.periodCost,

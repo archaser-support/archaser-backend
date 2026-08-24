@@ -191,7 +191,11 @@ export declare function convertApprovedLimitToAccountCurrency(amount: number | n
     customerId?: number;
     policyId?: number;
 }): Promise<number | null>;
-export declare function getCreditDashboardSummary(accountId: number, policyId?: number, businessUnitFilter?: Prisma.CustomerWhereInput, includeNoPolicyExposure?: boolean): Promise<CreditDashboardSummary>;
+export declare function getCreditDashboardSummary(accountId: number, policyId?: number, businessUnitFilter?: Prisma.CustomerWhereInput, includeNoPolicyExposure?: boolean, options?: {
+    asOfDate?: Date;
+    /** Preloaded payment-ledger rows for `asOfDate` (avoids N SQL loads per scope). */
+    asOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[];
+}): Promise<CreditDashboardSummary>;
 export type OverdueBlockRow = {
     customerId: number;
     policyNumber: string | null;

@@ -8,6 +8,7 @@ const provider_1 = require("../provider");
 const billingConnectorCrypto_1 = require("../utils/billingConnectorCrypto");
 const entityImporter_1 = require("../import/entityImporter");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
+const connectorSyncCancelRegistry_1 = require("./connectorSyncCancelRegistry");
 const stagedExtensionSync_1 = require("./stagedExtensionSync");
 const ENTITY_ORDER = [
     "Customer",
@@ -26,6 +27,44 @@ function emptyStats() {
         invoicesImported: 0,
         paymentsImported: 0,
         importErrors: 0,
+    };
+}
+function entityStatsFrom(stats) {
+    return {
+        Customer: {
+            pulled: stats.customersProcessed,
+            success: stats.customersImported,
+            failed: 0,
+            skipped: 0,
+        },
+        Contact: {
+            pulled: stats.contactsProcessed,
+            success: stats.contactsImported,
+            failed: 0,
+            skipped: 0,
+        },
+        Invoice: {
+            pulled: stats.invoicesProcessed,
+            success: stats.invoicesImported,
+            failed: 0,
+            skipped: 0,
+        },
+        Payment: {
+            pulled: stats.paymentsProcessed,
+            success: stats.paymentsImported,
+            failed: 0,
+            skipped: 0,
+        },
+    };
+}
+function attachSyncMeta(result, options) {
+    const cancelled = options.executionId
+        ? (0, connectorSyncCancelRegistry_1.isConnectorSyncCancelRequested)(options.executionId)
+        : Boolean(result.cancelled);
+    return {
+        ...result,
+        cancelled,
+        entity_stats: result.entity_stats ?? entityStatsFrom(result.stats),
     };
 }
 function normalizeExtensionConfig(value) {
@@ -48,6 +87,9 @@ function enabledEntitiesFromConnector(raw) {
  * accounts without a key keep entity-by-entity pull/map/import.
  */
 async function runInProcessSync(options) {
+    return attachSyncMeta(await runInProcessSyncBody(options), options);
+}
+async function runInProcessSyncBody(options) {
     const { prisma, accountId, trigger = "manual", userId, dryRun = false, } = options;
     const stats = emptyStats();
     const resolveExtension = options.resolveExtension ?? extensions_1.getRegisteredExtension;

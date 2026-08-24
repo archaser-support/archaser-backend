@@ -5,6 +5,7 @@ export type InsurancePolicyTrendPoint = {
     maxTotalCover: number | null;
     costCalculationMethod: string | null;
     costPercent: number | null;
+    registrationFeePercent: number | null;
     activeCustomerCount: number;
     totalApprovedLimit: number | null;
     totalOpenAr: number;

@@ -25,6 +25,7 @@
   },
   "scripts": {
     "postinstall": "prisma generate --schema=./prisma/schema.prisma && node ./scripts/sync-prisma-client.js",
+    "dev:all": "bash ./scripts/startup/dev-microservices.sh",
     "dev:api": "npm run start:dev -w @archaser/api",
     "start:api": "npm run start:prod -w @archaser/api",
     "build:api": "npm run build -w @archaser/database && npm run build -w @archaser/api",

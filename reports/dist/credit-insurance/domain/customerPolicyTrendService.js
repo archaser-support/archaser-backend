@@ -15,7 +15,7 @@ exports.getCustomerPolicyPortfolioTrend = getCustomerPolicyPortfolioTrend;
 exports.getCustomerRiskExposureAmountTrendByPolicy = getCustomerRiskExposureAmountTrendByPolicy;
 const client_1 = require("@prisma/client");
 const domain_db_1 = require("../domain-db");
-const creditInsuranceDashboardService_1 = require("./creditInsuranceDashboardService");
+const asOfOpenAr_1 = require("./asOfOpenAr");
 const policyGapAmounts_1 = require("./policyGapAmounts");
 const invoiceInsuranceFields_1 = require("./invoiceInsuranceFields");
 const customerPolicyTrendSnapshotPayload_1 = require("./customerPolicyTrendSnapshotPayload");
@@ -329,6 +329,7 @@ function mapCustomerPolicyTrendRowToPoint(row) {
             approved_limit: row.approved_limit,
             effective_approved_limit: row.effective_approved_limit,
         }),
+        registrationFeePercent: decimalToNumber(row.registration_fee_percent),
         ...mapDailyCostFieldsFromTrendRow(row),
     };
 }
@@ -348,7 +349,8 @@ async function getCustomerDailyCostFromTrend(accountId, customerId, options) {
             t.top_up_cost_currency,
             t.total_daily_cost,
             t.cost_calculation_method,
-            t.cost_percent
+            t.cost_percent,
+            t.registration_fee_percent
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${accountId}
           AND t.customer_id = ${customerId}
@@ -454,11 +456,17 @@ function mapTrendRowToTopCustomer(r, hasTopUpPolicies) {
     };
 }
 /**
- * Upsert today's {@link CustomerPolicyTrend} rows for one account (live open AR + top-up).
+ * Upsert {@link CustomerPolicyTrend} rows for one account as of `snapshotDate`
+ * (payment-ledger open AR + Health family; top-ups/costs already date-bounded).
  */
 async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
     const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
-    const openArByCustomer = await (0, creditInsuranceDashboardService_1.fetchOpenReceivableByCustomerMap)(accountId, options?.policyId);
+    let ledgerLines = options?.asOfLines ??
+        (await (0, asOfOpenAr_1.loadAsOfOpenInvoiceCandidates)(accountId, snapshotDate, {
+            policyId: options?.policyId,
+            customerIds: options?.customerIds,
+        }));
+    const openArByCustomer = (0, asOfOpenAr_1.buildAsOfOpenReceivableByCustomerMapFromLines)(ledgerLines, snapshotDate);
     const account = await domain_db_1.prisma.account.findUnique({
         where: { id: accountId },
         select: { currency: true },
@@ -470,6 +478,9 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
             Customer: {
                 account_id: accountId,
                 collection_status: { in: [...COLLECTION_LIVE] },
+                ...(options?.customerIds != null && options.customerIds.length > 0
+                    ? { id: { in: options.customerIds } }
+                    : {}),
             },
             ...(options?.policyId != null
                 ? { insurance_policy_id: options.policyId }
@@ -499,6 +510,8 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
             credit_score_input_date: true,
             active_customer_since: true,
             outdated_dcl: true,
+            cost_percent: true,
+            registration_fee_percent: true,
             capacity_gap_amount: true,
             capacity_gap_amount1: true,
             capacity_gap_currency1: true,
@@ -513,6 +526,7 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
                 select: {
                     cost_calculation_method: true,
                     cost_percent: true,
+                    end_date: true,
                 },
             },
         },
@@ -552,9 +566,32 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
     }
     const accountHasTopUp = await (0, hasTopUpPolicies_1.hasTopUpPolicies)(accountId);
     const priorDayRowsByKey = await loadPredecessorTrendRowsByKey(accountId, snapshotDate);
-    for (const customerId of customerIds) {
-        await (0, syncCreditInsuranceGapPipeline_1.ensureCustomerCapacityGapStored)(customerId);
+    const CAPACITY_GAP_CONCURRENCY = 25;
+    for (let i = 0; i < customerIds.length; i += CAPACITY_GAP_CONCURRENCY) {
+        const batch = customerIds.slice(i, i + CAPACITY_GAP_CONCURRENCY);
+        await Promise.all(batch.map((customerId) => (0, syncCreditInsuranceGapPipeline_1.ensureCustomerCapacityGapStored)(customerId)));
     }
+    const termsByCustomerAndPolicy = new Map();
+    for (const cp of activePolicies) {
+        const terms = {
+            maxPaymentTerm: cp.max_payment_term,
+            maxAllowedMep: cp.max_allowed_mep,
+            reportingDays: cp.reporting_days,
+            mepCutoffDayOfMonth: cp.mep_cutoff_day_of_month,
+            mepSubstituteDayOfMonth: cp.mep_substitute_day_of_month,
+            reportingCutoffDayOfMonth: cp.reporting_cutoff_day_of_month,
+            reportingSubstituteDayOfMonth: cp.reporting_substitute_day_of_month,
+            paymentTermCutoffDayOfMonth: cp.payment_term_cutoff_day_of_month,
+            paymentTermSubstituteDayOfMonth: cp.payment_term_substitute_day_of_month,
+            policyEndDate: cp.InsurancePolicy?.end_date ?? null,
+        };
+        termsByCustomerAndPolicy.set((0, asOfOpenAr_1.asOfTermsScopeKey)(cp.customer_id, cp.insurance_policy_id), terms);
+        const fallbackKey = (0, asOfOpenAr_1.asOfTermsScopeKey)(cp.customer_id, null);
+        if (!termsByCustomerAndPolicy.has(fallbackKey)) {
+            termsByCustomerAndPolicy.set(fallbackKey, terms);
+        }
+    }
+    ledgerLines = (0, asOfOpenAr_1.overlayAsOfTermsFlagsOnLines)(ledgerLines, snapshotDate, termsByCustomerAndPolicy, { ignoreReportingBreach: options?.ignoreReportingBreach === true });
     let rowsUpserted = 0;
     for (const cp of activePolicies) {
         const limitCurrency = cp.approved_limit_currency?.trim().toUpperCase() ||
@@ -562,7 +599,7 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
             "USD";
         let usageAmount = 0;
         if (cp.insurance_policy_id != null) {
-            usageAmount = Math.max(0, await (0, creditInsuranceDashboardService_1.resolveOpenArOnPolicyInLimitCurrency)(accountId, cp.customer_id, cp.insurance_policy_id, limitCurrency, accountCurrency));
+            usageAmount = Math.max(0, (0, asOfOpenAr_1.resolveAsOfOpenArOnPolicyInLimitCurrencyFromLines)(ledgerLines, cp.customer_id, cp.insurance_policy_id, limitCurrency, accountCurrency, snapshotDate));
         }
         else {
             usageAmount = Math.max(0, openArByCustomer.get(cp.customer_id) ?? 0);
@@ -594,19 +631,26 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
             hasLinkedPolicy: (0, policyExclusion_1.hasActiveLinkedPolicy)(cp.insurance_policy_id),
             exclusionReason: cp.policy_exclusion_reason,
         });
-        const [totalReceivables, flagBasedTermsBreach, flagBasedTermsBreachForAtRisk, termsBreachByReason,] = await Promise.all([
-            policyScope != null
-                ? (0, creditInsuranceDashboardService_1.fetchOpenReceivableForCustomer)(accountId, cp.customer_id, policyScope)
-                : Promise.resolve(Math.max(0, openArByCustomer.get(cp.customer_id) ?? 0)),
-            (0, creditInsuranceDashboardService_1.getCustomerTermsBreachOutstandingSum)(accountId, cp.customer_id, policyScope != null ? { policyId: policyScope } : undefined),
-            (0, creditInsuranceDashboardService_1.getCustomerTermsBreachOutstandingForAtRisk)(accountId, cp.customer_id, policyScope != null ? { policyId: policyScope } : undefined),
-            uncovered
-                ? Promise.resolve({
-                    snapshot: {},
-                    invoiceCount: 0,
-                })
-                : (0, customerPolicyTrendTermsBreachByReason_1.getCustomerTermsBreachByReasonSnapshot)(accountId, cp.customer_id, cp.insurance_policy_id),
-        ]);
+        const totalReceivables = policyScope != null
+            ? (0, asOfOpenAr_1.sumAsOfOpenAmountFromLines)(ledgerLines, snapshotDate, {
+                customerId: cp.customer_id,
+                policyId: policyScope,
+            })
+            : Math.max(0, openArByCustomer.get(cp.customer_id) ?? 0);
+        const flagBasedTermsBreach = (0, asOfOpenAr_1.sumAsOfTermsBreachFromLines)(ledgerLines, snapshotDate, {
+            customerId: cp.customer_id,
+            ...(policyScope != null ? { policyId: policyScope } : {}),
+        });
+        const flagBasedTermsBreachForAtRisk = flagBasedTermsBreach;
+        const termsBreachInvoices = uncovered
+            ? []
+            : (0, asOfOpenAr_1.asOfTermsBreachInvoicesFromLines)(ledgerLines, snapshotDate, cp.customer_id, cp.insurance_policy_id);
+        const termsBreachByReason = uncovered
+            ? { snapshot: {}, invoiceCount: 0 }
+            : {
+                snapshot: (0, customerPolicyTrendTermsBreachByReason_1.aggregateTermsBreachByReasonFromInvoices)(termsBreachInvoices, cp.insurance_policy_id),
+                invoiceCount: termsBreachInvoices.length,
+            };
         const termsBreachOutstanding = uncovered
             ? totalReceivables
             : flagBasedTermsBreach;
@@ -616,7 +660,7 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
         const financialPayload = (0, customerPolicyTrendSnapshotPayload_1.buildCustomerPolicyTrendSnapshotPayload)({
             accountCurrency,
             totalReceivables,
-            capacityGapAmount: (0, policyGapAmounts_1.storedCapacityGapAmount)(cp),
+            capacityGapAmount: (0, asOfOpenAr_1.asOfCapacityGapAmount)(totalReceivables, decimalToNumber(effectiveApprovedLimit), Boolean(cp.outdated_dcl)),
             termsBreachOutstanding,
             termsBreachOutstandingForAtRisk: termsBreachForAtRisk,
             arInLimitCurrency: usageAmount,
@@ -713,6 +757,7 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
                     total_daily_cost,
                     cost_calculation_method,
                     cost_percent,
+                    registration_fee_percent,
                     financial_currency,
                     total_receivables,
                     health_index,
@@ -762,6 +807,7 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
                     ${totalDailyCost},
                     ${costSnapshot.costCalculationMethod}::"cost_calculation_method",
                     ${snapshottedCostPercent},
+                    ${cp.registration_fee_percent},
                     ${financialPayload.financialCurrency},
                     ${financialPayload.totalReceivables},
                     ${financialPayload.healthIndex},
@@ -810,6 +856,7 @@ async function syncCustomerPolicyTrendSnapshotForAccount(accountId, options) {
                     total_daily_cost = EXCLUDED.total_daily_cost,
                     cost_calculation_method = EXCLUDED.cost_calculation_method,
                     cost_percent = EXCLUDED.cost_percent,
+                    registration_fee_percent = EXCLUDED.registration_fee_percent,
                     financial_currency = EXCLUDED.financial_currency,
                     total_receivables = EXCLUDED.total_receivables,
                     health_index = EXCLUDED.health_index,
@@ -959,7 +1006,8 @@ async function getCustomerPolicyTrendForCustomer(accountId, customerId, options)
             t.top_up_cost_currency,
             t.total_daily_cost,
             t.cost_calculation_method,
-            t.cost_percent
+            t.cost_percent,
+            t.registration_fee_percent
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${accountId}
           AND t.customer_id = ${customerId}
