@@ -125,7 +125,7 @@ node utilities/testEmail.ts
 ### Deployment (EC2 Docker)
 
 ```bash
-# From backend deploy root on EC2 (default app-dir /home/ubuntu/<env>)
+# From backend checkout on EC2 (staging default: /home/ubuntu/api)
 bash scripts/deployment/deploy-backend-docker.sh --env staging
 bash scripts/deployment/deploy-backend-docker.sh --env production
 
