@@ -1,5 +1,6 @@
 import {
     BadRequestException,
+    ConflictException,
     Injectable,
     NotFoundException,
     OnModuleInit,
@@ -24,6 +25,13 @@ import {
     getInsurancePolicyTrend,
     getNamedPolicyTrend,
 } from "./domain/insurancePolicyTrendService";
+import {
+    CreditAsOfBackfillConflictError,
+    getCreditAsOfBackfillJobStatus,
+    pauseCreditAsOfBackfillJob,
+    retryCreditAsOfBackfillJob,
+    startCreditAsOfBackfillJob,
+} from "./domain/creditAsOfBackfillJob";
 import {
     getCapacityGapReport,
     getLimitWarningReport,
@@ -476,5 +484,84 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
         const code = this.parseOptionalString(raw);
         if (!code || !isTermsBreachReasonFilter(code)) return undefined;
         return code;
+    }
+
+    async asOfBackfillStatus(user: JwtPayload, query: Record<string, unknown>) {
+        const ctx = await this.access.authorize(user, query);
+        const status = await getCreditAsOfBackfillJobStatus(ctx.accountId);
+        return serializeBigInt(status);
+    }
+
+    async asOfBackfillStart(
+        user: JwtPayload,
+        query: Record<string, unknown>,
+        body: Record<string, unknown>
+    ) {
+        const ctx = await this.access.authorize(user, query);
+        const from = this.parseRequiredYmd(body.from ?? body.fromDate, "from");
+        const to = this.parseRequiredYmd(body.to ?? body.toDate, "to");
+        try {
+            const status = await startCreditAsOfBackfillJob(
+                ctx.accountId,
+                from,
+                to,
+                {
+                    requestedBy: user.sub ?? user.email ?? null,
+                    skipReportingBreach: this.parseSkipReportingBreach(
+                        body.skipReportingBreach
+                    ),
+                }
+            );
+            return serializeBigInt(status);
+        } catch (error) {
+            if (error instanceof CreditAsOfBackfillConflictError) {
+                throw new ConflictException({ error: error.message });
+            }
+            if (error instanceof Error) {
+                throw new BadRequestException({ error: error.message });
+            }
+            throw error;
+        }
+    }
+
+    async asOfBackfillPause(user: JwtPayload, query: Record<string, unknown>) {
+        const ctx = await this.access.authorize(user, query);
+        const status = await pauseCreditAsOfBackfillJob(ctx.accountId);
+        return serializeBigInt(status);
+    }
+
+    async asOfBackfillRetry(user: JwtPayload, query: Record<string, unknown>) {
+        const ctx = await this.access.authorize(user, query);
+        try {
+            const status = await retryCreditAsOfBackfillJob(ctx.accountId);
+            return serializeBigInt(status);
+        } catch (error) {
+            if (error instanceof CreditAsOfBackfillConflictError) {
+                throw new ConflictException({ error: error.message });
+            }
+            if (error instanceof Error) {
+                throw new BadRequestException({ error: error.message });
+            }
+            throw error;
+        }
+    }
+
+    private parseRequiredYmd(raw: unknown, field: string): Date {
+        const s = this.parseOptionalString(raw);
+        if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+            throw new BadRequestException({
+                error: `${field} must be YYYY-MM-DD`,
+            });
+        }
+        const [y, m, d] = s.split("-").map(Number);
+        return new Date(Date.UTC(y!, m! - 1, d!));
+    }
+
+    /** Omitted / invalid → true (Generate default: ignore reporting-late). */
+    private parseSkipReportingBreach(raw: unknown): boolean {
+        if (raw === false || raw === "false" || raw === 0 || raw === "0") {
+            return false;
+        }
+        return true;
     }
 }

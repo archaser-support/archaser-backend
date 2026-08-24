@@ -12,6 +12,7 @@ import {
 } from "./creditInsuranceDashboardService";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
 import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron";
+import { withReportingBreachIgnored } from "./asOfOpenAr";
 
 type SnapshotScope = {
     accountId: number;
@@ -132,14 +133,29 @@ async function listSnapshotScopes(asOfDate: Date): Promise<SnapshotScope[]> {
 async function processDashboardSnapshotsForAccount(
     accountId: number,
     accountScopes: SnapshotScope[],
-    snapshotDate: Date
+    snapshotDate: Date,
+    preloadedAsOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[],
+    ignoreReportingBreach?: boolean
 ): Promise<number> {
     let scopesProcessed = 0;
+
+    const loadedLines =
+        preloadedAsOfLines ??
+        (await (
+            await import("./asOfOpenAr")
+        ).loadAsOfOpenInvoiceCandidates(accountId, snapshotDate));
+    const asOfLines = withReportingBreachIgnored(
+        loadedLines,
+        ignoreReportingBreach === true
+    );
 
     for (const scope of accountScopes) {
         const summary = await getCreditDashboardSummary(
             scope.accountId,
-            scope.policyId ?? undefined
+            scope.policyId ?? undefined,
+            undefined,
+            true,
+            { asOfDate: snapshotDate, asOfLines }
         );
         await upsertDailySnapshot(scope, summary, snapshotDate);
         scopesProcessed++;
@@ -152,7 +168,9 @@ async function processDashboardSnapshotsForAccount(
             const summary = await getCreditDashboardSummary(
                 scope.accountId,
                 scope.policyId ?? undefined,
-                businessUnitFilter
+                businessUnitFilter,
+                true,
+                { asOfDate: snapshotDate, asOfLines }
             );
             await upsertDailySnapshot(
                 { ...scope, businessUnitId },
@@ -367,7 +385,13 @@ async function upsertDailySnapshot(
  */
 export async function takeCreditDashboardDailySnapshotsForAccount(
     accountId: number,
-    options?: { snapshotDate?: Date }
+    options?: {
+        snapshotDate?: Date;
+        /** When set (e.g. shared backfill load), skip a second ledger query. */
+        asOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[];
+        /** Generate-job only: treat reporting-late as off in this snapshot. */
+        ignoreReportingBreach?: boolean;
+    }
 ): Promise<{ scopesProcessed: number }> {
     const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
     const accountScopes = await listSnapshotScopesForAccount(
@@ -377,7 +401,9 @@ export async function takeCreditDashboardDailySnapshotsForAccount(
     const scopesProcessed = await processDashboardSnapshotsForAccount(
         accountId,
         accountScopes,
-        snapshotDate
+        snapshotDate,
+        options?.asOfLines,
+        options?.ignoreReportingBreach
     );
     return { scopesProcessed };
 }
