@@ -4,11 +4,12 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  bash backend/scripts/deployment/deploy-backend-docker.sh --env <staging|production> [options]
+  bash scripts/deployment/deploy-backend-docker.sh --env <staging|production> [options]
 
 Options:
   --env <name>         Required. One of: staging, production
-  --app-dir <path>     Deploy root on EC2 (default: /home/ubuntu/<env>)
+  --app-dir <path>     Backend checkout on EC2
+                       (default: /home/ubuntu/api for staging, /home/ubuntu/production for production)
   --skip-install       Skip npm ci
   --skip-build         Skip backend workspace builds
   --no-grafana         Skip monitoring stack compose
@@ -16,8 +17,8 @@ Options:
   -h, --help           Show this help
 
 Examples:
-  bash backend/scripts/deployment/deploy-backend-docker.sh --env staging
-  bash backend/scripts/deployment/deploy-backend-docker.sh --env production --no-grafana
+  bash scripts/deployment/deploy-backend-docker.sh --env staging
+  bash scripts/deployment/deploy-backend-docker.sh --env production --no-grafana
 EOF
 }
 
@@ -90,11 +91,29 @@ if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
 fi
 
 if [[ -z "$APP_DIR" ]]; then
-    APP_DIR="/home/ubuntu/$ENVIRONMENT"
+    if [[ "$ENVIRONMENT" == "staging" ]]; then
+        APP_DIR="/home/ubuntu/api"
+    else
+        APP_DIR="/home/ubuntu/production"
+    fi
 fi
 
-ROOT_DIR="$APP_DIR"
-BACKEND_DIR="$ROOT_DIR/backend"
+# Split-repo checkout (staging EC2: /home/ubuntu/api) or nested backend/ under a parent root.
+if [[ -f "$APP_DIR/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
+    ROOT_DIR="$APP_DIR"
+    BACKEND_DIR="$APP_DIR"
+    PRISMA_SCHEMA="prisma/schema.prisma"
+    SYNC_SCRIPT="scripts/sync-prisma-client.js"
+elif [[ -f "$APP_DIR/backend/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
+    ROOT_DIR="$APP_DIR"
+    BACKEND_DIR="$APP_DIR/backend"
+    PRISMA_SCHEMA="backend/prisma/schema.prisma"
+    SYNC_SCRIPT="backend/scripts/sync-prisma-client.js"
+else
+    echo "Error: app dir not found or missing compose file: $APP_DIR"
+    exit 1
+fi
+
 ENV_SOURCE="$BACKEND_DIR/.env.$ENVIRONMENT"
 ENV_TARGET="$BACKEND_DIR/.env"
 COMPOSE_BACKEND="$BACKEND_DIR/docker-compose.backend.$ENVIRONMENT.yml"
@@ -109,11 +128,6 @@ MONITORING_PROJECT="archaser-monitoring$PROJECT_SUFFIX"
 
 require_cmd docker
 require_cmd npm
-
-if [[ ! -d "$ROOT_DIR" ]]; then
-    echo "Error: app dir not found: $ROOT_DIR"
-    exit 1
-fi
 
 if [[ ! -f "$COMPOSE_BACKEND" ]]; then
     echo "Error: backend compose not found: $COMPOSE_BACKEND"
@@ -156,14 +170,14 @@ fi
 
 if [[ "$SKIP_PRISMA" != "true" ]]; then
     log "Generating Prisma client"
-    npx prisma generate --schema=backend/prisma/schema.prisma
-    node backend/scripts/sync-prisma-client.js
+    npx prisma generate --schema="$PRISMA_SCHEMA"
+    node "$SYNC_SCRIPT"
 else
     log "Skipping prisma generate (--skip-prisma)"
 fi
 
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
-docker compose \
+BACKEND_HOST_DIR="$BACKEND_DIR" docker compose \
     --project-name "$BACKEND_PROJECT" \
     --env-file "$ENV_TARGET" \
     -f "$COMPOSE_BACKEND" \
@@ -185,7 +199,7 @@ else
 fi
 
 log "Backend stack status"
-docker compose \
+BACKEND_HOST_DIR="$BACKEND_DIR" docker compose \
     --project-name "$BACKEND_PROJECT" \
     --env-file "$ENV_TARGET" \
     -f "$COMPOSE_BACKEND" \

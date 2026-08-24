@@ -16,7 +16,7 @@ services:
 
   api:
     image: node:20-alpine
-    working_dir: /workspace/backend
+    working_dir: /workspace
     command: sh -lc "npm run start:api"
     env_file:
       - .env
@@ -36,7 +36,7 @@ services:
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
       CONNECTION_LIMIT_API: "10"
     volumes:
-      - /home/ubuntu/staging:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:3010:3010"
     depends_on:
@@ -48,7 +48,7 @@ services:
 
   worker:
     image: node:20-alpine
-    working_dir: /workspace/backend
+    working_dir: /workspace
     command: sh -lc "npm run start -w @archaser/worker"
     env_file:
       - .env
@@ -63,7 +63,7 @@ services:
       REPORTS_SERVICE_URL: http://reports:3006
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
     volumes:
-      - /home/ubuntu/staging:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:3003:3003"
     depends_on:
@@ -75,7 +75,7 @@ services:
 
   sms:
     image: node:20-alpine
-    working_dir: /workspace/backend
+    working_dir: /workspace
     command: sh -lc "npm run start -w @archaser/sms"
     env_file:
       - .env
@@ -84,14 +84,14 @@ services:
       SMS_PORT: 3004
       CONNECTION_LIMIT_SMS: 5
     volumes:
-      - /home/ubuntu/staging:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:3004:3004"
     restart: unless-stopped
 
   connectors:
     image: node:20-alpine
-    working_dir: /workspace/backend
+    working_dir: /workspace
     command: sh -lc "npm run start -w @archaser/connectors"
     env_file:
       - .env
@@ -102,7 +102,7 @@ services:
       ENABLE_CONNECTORS_SYNC_WORKERS: "true"
       REDIS_URL: redis://redis:6379
     volumes:
-      - /home/ubuntu/staging:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:3005:3005"
     depends_on:
@@ -112,7 +112,7 @@ services:
 
   reports:
     image: node:20-alpine
-    working_dir: /workspace/backend
+    working_dir: /workspace
     command: sh -lc "npm run start -w @archaser/reports"
     env_file:
       - .env
@@ -120,7 +120,7 @@ services:
       NODE_ENV: production
       REPORTS_PORT: 3006
     volumes:
-      - /home/ubuntu/staging:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:3006:3006"
     restart: unless-stopped
