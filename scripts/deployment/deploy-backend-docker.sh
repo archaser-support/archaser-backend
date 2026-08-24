@@ -78,6 +78,30 @@ ensure_deploy_swap() {
     log "Host memory after swap: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
 }
 
+DOCKER=(docker)
+
+# ubuntu is often not in the docker group yet. Use passwordless sudo when the socket is denied.
+resolve_docker_cli() {
+    if docker info >/dev/null 2>&1; then
+        DOCKER=(docker)
+        return 0
+    fi
+    if command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+        log "Docker socket not writable by this user — using sudo docker"
+        DOCKER=(sudo -n docker)
+        return 0
+    fi
+    echo "Error: cannot talk to the Docker daemon (permission denied on /var/run/docker.sock)."
+    echo "Add this user to the docker group and start a new SSH session:"
+    echo "  sudo usermod -aG docker \"\$USER\""
+    echo "Then log out and back in, or run: newgrp docker"
+    exit 1
+}
+
+docker_compose() {
+    "${DOCKER[@]}" compose "$@"
+}
+
 npm_ci_low_memory() {
     local mem_mb heap_mb
     mem_mb="$(host_mem_mb)"
@@ -188,6 +212,7 @@ MONITORING_PROJECT="archaser-monitoring$PROJECT_SUFFIX"
 
 require_cmd docker
 require_cmd npm
+resolve_docker_cli
 
 if [[ ! -f "$COMPOSE_BACKEND" ]]; then
     echo "Error: backend compose not found: $COMPOSE_BACKEND"
@@ -238,7 +263,7 @@ else
 fi
 
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
-BACKEND_HOST_DIR="$BACKEND_DIR" docker compose \
+BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
     --project-name "$BACKEND_PROJECT" \
     --env-file "$ENV_TARGET" \
     -f "$COMPOSE_BACKEND" \
@@ -247,7 +272,7 @@ BACKEND_HOST_DIR="$BACKEND_DIR" docker compose \
 if [[ "$NO_GRAFANA" != "true" ]]; then
     if [[ -f "$COMPOSE_MONITORING" ]]; then
         log "Starting monitoring stack (Grafana + Loki + Prometheus + Promtail)"
-        MONITORING_ENV="$ENVIRONMENT" docker compose \
+        MONITORING_ENV="$ENVIRONMENT" docker_compose \
             --project-name "$MONITORING_PROJECT" \
             --env-file "$ENV_TARGET" \
             -f "$COMPOSE_MONITORING" \
@@ -260,7 +285,7 @@ else
 fi
 
 log "Backend stack status"
-BACKEND_HOST_DIR="$BACKEND_DIR" docker compose \
+BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
     --project-name "$BACKEND_PROJECT" \
     --env-file "$ENV_TARGET" \
     -f "$COMPOSE_BACKEND" \
@@ -268,7 +293,7 @@ BACKEND_HOST_DIR="$BACKEND_DIR" docker compose \
 
 if [[ "$NO_GRAFANA" != "true" && -f "$COMPOSE_MONITORING" ]]; then
     log "Monitoring stack status"
-    MONITORING_ENV="$ENVIRONMENT" docker compose \
+    MONITORING_ENV="$ENVIRONMENT" docker_compose \
         --project-name "$MONITORING_PROJECT" \
         --env-file "$ENV_TARGET" \
         -f "$COMPOSE_MONITORING" \
