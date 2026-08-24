@@ -70,6 +70,8 @@ model Account {
   sso_providers                         String?                         @db.VarChar(100)
   has_collection                        Boolean                         @default(true)
   has_credit_insurance                  Boolean                         @default(false)
+  /// When false, File Import is hidden from nav, Import page, and role matrix (UI-only).
+  has_file_import                       Boolean                         @default(true)
   enable_customer_checkpoints           Boolean                         @default(false)
   /// AR coverage percentage threshold to include a customer in limit warnings (e.g. 95).
   credit_limit_warning_threshold_pct    Int?                            @db.SmallInt
@@ -898,8 +900,6 @@ model CustomerPolicy {
   credit_score_input_date         DateTime?             @db.Date
   active_customer_since           DateTime?             @db.Date
   outdated_dcl                    Boolean               @default(false)
-  cost_percent                    Decimal?              @db.Decimal(10, 2)
-  registration_fee_percent        Decimal?              @db.Decimal(10, 2)
   is_active                       Boolean               @default(false)
   capacity_gap_amount             Float?
   capacity_gap_amount_date        DateTime?             @db.Date
@@ -966,7 +966,6 @@ model CustomerPolicyTrend {
   total_daily_cost               Decimal?              @db.Decimal(20, 4)
   cost_calculation_method        cost_calculation_method?
   cost_percent                   Decimal?              @db.Decimal(10, 2)
-  registration_fee_percent       Decimal?              @db.Decimal(10, 2)
   financial_currency             String?               @db.VarChar(16)
   total_receivables              Decimal?              @db.Decimal(20, 4)
   health_index                   Float?
@@ -1054,7 +1053,6 @@ model InsurancePolicyTrend {
   reporting_days               Int?
   cost_calculation_method      cost_calculation_method?
   cost_percent                 Decimal?                  @db.Decimal(10, 2)
-  registration_fee_percent     Decimal?                  @db.Decimal(10, 2)
   status                       record_status             @default(Draft)
   active_customer_count        Int                       @default(0)
   total_approved_limit         Decimal?                  @db.Decimal(20, 4)
@@ -1148,7 +1146,6 @@ model InsurancePolicy {
   payment_term_substitute_day_of_month Int?
   cost_calculation_method      cost_calculation_method?
   cost_percent                 Decimal?                  @db.Decimal(10, 2)
-  registration_fee_percent     Decimal?                  @db.Decimal(10, 2)
   status                       record_status             @default(Draft)
   auto_activate_on_term_start  Boolean                   @default(false)
   created_by                   String?                   @db.VarChar
@@ -1656,7 +1653,6 @@ model Invoice {
   net_amount                     Float?
   credit_for_invoice_number      String?                   @db.VarChar
   customer_net_amount            Float?
-  priority_erp_debit             String?                   @db.VarChar(10)
   generic_text1                  String?
   generic_text2                  String?
   generic_number1                Float?
@@ -1745,7 +1741,7 @@ model InvoicePayment {
   Invoice                               Invoice?  @relation(fields: [invoice_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   Account                               Account   @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_account")
 
-  @@index([account_id, customer_id, reference], map: "idx_invoice_payment_customer_reference")
+  @@unique([account_id, customer_id, reference], map: "idx_unique_customer_reference")
   @@index([created_by], map: "idx_invoice_payment_created_by")
   @@index([modified_by], map: "idx_invoice_payment_modified_by")
   @@index([account_id], map: "idx_invoicepayment_customer_id")
@@ -2657,19 +2653,10 @@ model BillingConnector {
   include_older_open_invoices   Boolean                @default(true)
   /// When true, backfill invoice writes do not stamp reporting_breach (incremental/cron unchanged).
   skip_reporting_breach_on_backfill Boolean             @default(false)
-  /// Per-entity pull filters (advanced OData and/or rules). Empty = pull all for that entity.
-  pull_filters                  Json                   @default("{}")
-  /// True when pull filters changed after reset; next Backfill runs soft-exclude cleanup.
-  pull_filters_cleanup_pending  Boolean                @default(false)
-  /// ImportType names whose filters changed and still need soft-exclude cleanup.
-  pull_filters_cleanup_entities Json                   @default("[]")
-  /// Per-entity Priority OData entity-set overrides (omit key = contract default).
-  entity_sets                   Json                   @default("{}")
-  /// Cached EntitySet names from $metadata for the table picker.
-  entity_set_catalog            Json?
-  entity_set_catalog_fetched_at DateTime?              @db.Timestamptz(6)
-  /// Per-entity preview pass flags ({ ImportType: { passed, completed_at } }). Sample rows are session-only.
-  preview_passes                Json                   @default("{}")
+  /// Optional account-extension plugin key (registry). Null/empty = standard sync path.
+  extension_key                 String?                @db.VarChar(100)
+  /// Plugin-owned settings JSON for the attached extension.
+  extension_config              Json?
   last_connection_test_at       DateTime?              @db.Timestamptz(6)
   last_connection_error         String?                @db.VarChar(500)
   created_at                    DateTime               @default(now()) @db.Timestamptz(6)
@@ -2685,19 +2672,13 @@ model BillingConnector {
 }
 
 model ConnectorFieldMapping {
-  id                         Int              @id @default(autoincrement())
-  connector_id               Int
-  import_type                ImportType
-  mapping                    Json
-  is_complete                Boolean          @default(false)
-  /// Cached Priority field paths from the last Discover (until re-discover).
-  discovered_headers         Json?
-  /// Sample values keyed by discovered header path.
-  discovered_example_values  Json?
-  discovered_sample_count    Int?
-  discovered_at              DateTime?        @db.Timestamptz(6)
-  modified_at                DateTime         @default(now()) @db.Timestamptz(6)
-  modified_by                String?          @db.VarChar
+  id           Int              @id @default(autoincrement())
+  connector_id Int
+  import_type  ImportType
+  mapping      Json
+  is_complete  Boolean          @default(false)
+  modified_at  DateTime         @default(now()) @db.Timestamptz(6)
+  modified_by  String?          @db.VarChar
   BillingConnector BillingConnector @relation(fields: [connector_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([connector_id, import_type], map: "unique_connector_field_mapping")

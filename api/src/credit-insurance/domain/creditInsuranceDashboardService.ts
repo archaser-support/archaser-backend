@@ -1190,12 +1190,19 @@ export async function getCreditDashboardSummary(
     accountId: number,
     policyId?: number,
     businessUnitFilter?: Prisma.CustomerWhereInput,
-    includeNoPolicyExposure: boolean = true
+    includeNoPolicyExposure: boolean = true,
+    options?: {
+        asOfDate?: Date;
+        /** Preloaded payment-ledger rows for `asOfDate` (avoids N SQL loads per scope). */
+        asOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[];
+    }
 ): Promise<CreditDashboardSummary> {
     const whereCust = customersScoped(accountId, policyId, businessUnitFilter);
     const useScopedTermsBreachAgg = hasDashboardBusinessUnitScope(
         businessUnitFilter
     );
+    const asOfDate = options?.asOfDate;
+    const asOfLines = options?.asOfLines;
 
     const accountRow = await (prisma.account.findUnique as any)({
         where: { id: accountId },
@@ -1391,27 +1398,66 @@ export async function getCreditDashboardSummary(
     const customerHasActiveLinkedPolicy = (customerId: number): boolean =>
         activeLinkedPolicyCustomerIds.has(customerId);
     const [openArByCustomer, termsOutstandingByCustomer, termsBreachForAtRiskByCustomer] =
-        await Promise.all([
-        fetchOpenReceivableByCustomerMapInAccountCurrency(
-            accountId,
-            accountCurrency,
-            { customerIds, policyId }
-        ),
-        fetchTermsBreachOutstandingByCustomerInAccountCurrency(
-            accountId,
-            accountCurrency,
-            policyId,
-            false,
-            businessUnitFilter
-        ),
-        fetchTermsBreachOutstandingByCustomerInAccountCurrency(
-            accountId,
-            accountCurrency,
-            policyId,
-            true,
-            businessUnitFilter
-        ),
-    ]);
+        asOfDate != null
+            ? await (async () => {
+                  const asOf = await import("./asOfOpenAr");
+                  const lines =
+                      asOfLines ??
+                      (await asOf.loadAsOfOpenInvoiceCandidates(
+                          accountId,
+                          asOfDate,
+                          { customerIds, policyId }
+                      ));
+                  return Promise.all([
+                      asOf.buildAsOfOpenReceivableByCustomerMapInAccountCurrencyFromLines(
+                          lines,
+                          accountCurrency,
+                          asOfDate,
+                          { customerIds, policyId }
+                      ),
+                      asOf.buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLines(
+                          lines,
+                          accountCurrency,
+                          asOfDate,
+                          {
+                              policyId,
+                              excludeCapacityGapInvoices: false,
+                              customerIds,
+                          }
+                      ),
+                      asOf.buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLines(
+                          lines,
+                          accountCurrency,
+                          asOfDate,
+                          {
+                              policyId,
+                              excludeCapacityGapInvoices: true,
+                              customerIds,
+                          }
+                      ),
+                  ]);
+              })()
+            : await Promise.all([
+                  fetchOpenReceivableByCustomerMapInAccountCurrency(
+                      accountId,
+                      accountCurrency,
+                      { customerIds, policyId }
+                  ),
+                  fetchTermsBreachOutstandingByCustomerInAccountCurrency(
+                      accountId,
+                      accountCurrency,
+                      policyId,
+                      false,
+                      businessUnitFilter
+                  ),
+                  fetchTermsBreachOutstandingByCustomerInAccountCurrency(
+                      accountId,
+                      accountCurrency,
+                      policyId,
+                      true,
+                      businessUnitFilter
+                  ),
+              ]);
 
     const openArForCustomer = (c: (typeof customers)[number]): number => {
         const fromInv = openArByCustomer.get(c.id);

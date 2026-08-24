@@ -181,6 +181,18 @@ export class PermissionsService {
             accountId = requestedAccountId;
         }
 
+        return this.getFilteredPermissionCatalog(accountId);
+    }
+
+    /**
+     * Product-aware permissions catalog for an account (same rules as the
+     * matrix UI). Used by getPermissionsMatrix and to preserve hidden grants
+     * when roles are saved while a product flag is off.
+     */
+    private async getFilteredPermissionCatalog(accountId: number): Promise<{
+        permissions: string[];
+        permissionsByCategory: Record<string, Record<string, string[]>>;
+    }> {
         let permissionsByCategory = this.getPermissionsByCategory();
         let allPermissions = this.getAllPermissionKeys();
 
@@ -189,6 +201,7 @@ export class PermissionsService {
             select: {
                 has_collection: true,
                 has_credit_insurance: true,
+                has_file_import: true,
             } as never,
         });
 
@@ -198,6 +211,9 @@ export class PermissionsService {
         const isCreditOnlyAccount =
             (account as { has_collection?: boolean } | null)
                 ?.has_collection === false && hasCreditInsurance;
+        const hasFileImport =
+            (account as { has_file_import?: boolean } | null)
+                ?.has_file_import !== false;
 
         if (account && !hasCreditInsurance) {
             const creditOnly = new Set([
@@ -208,6 +224,17 @@ export class PermissionsService {
             permissionsByCategory = this.filterCategoryKeys(
                 permissionsByCategory,
                 creditOnly
+            );
+        }
+
+        if (account && !hasFileImport) {
+            const importKeys = new Set(
+                ALL_PERMISSION_KEYS.filter((k) => k.startsWith("import_"))
+            );
+            allPermissions = allPermissions.filter((k) => !importKeys.has(k));
+            permissionsByCategory = this.filterCategoryKeys(
+                permissionsByCategory,
+                importKeys
             );
         }
 
@@ -429,6 +456,28 @@ export class PermissionsService {
         }
 
         const allPermissions = this.getAllPermissionKeys();
+        const catalog = await this.getFilteredPermissionCatalog(accountId);
+        const matrixKeys = new Set(catalog.permissions);
+
+        // Keep grants for keys hidden by product flags (e.g. import_* when
+        // has_file_import is off) so turning a flag back on restores them.
+        const existingRows = await this.db.rolePermission.findMany({
+            where: {
+                account_id: accountId,
+                role: role as never,
+            },
+            select: { permission_key: true },
+        });
+        const preservedHidden = existingRows
+            .map((r) => r.permission_key)
+            .filter(
+                (key) =>
+                    !matrixKeys.has(key) && allPermissions.includes(key)
+            );
+
+        permissionsToSave = Array.from(
+            new Set([...permissionsToSave, ...preservedHidden])
+        );
 
         await this.db.$transaction(async (tx) => {
             await tx.rolePermission.deleteMany({
