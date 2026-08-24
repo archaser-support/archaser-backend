@@ -18,6 +18,9 @@ export type OperationsListQuery = {
     stats?: string;
     type?: string;
     priority?: string;
+    search?: string;
+    sortField?: string;
+    sortDirection?: string;
 };
 
 @Injectable()
@@ -41,6 +44,9 @@ export class OperationsService {
         }
         if (operationType === "notifications") {
             return this.listNotifications(user, query);
+        }
+        if (operationType === "legal-cases") {
+            return this.listLegalCases(user, query);
         }
         return this.stubList(operationType);
     }
@@ -231,6 +237,154 @@ export class OperationsService {
             totalAmount,
             totalCustomers,
         };
+    }
+
+    async listLegalCases(user: JwtPayload, query: OperationsListQuery) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const effectiveRole = userInfo.viewAsUserRole || userInfo.role;
+        const hasViewAs = await this.accessScope.hasPermission(
+            accountId,
+            effectiveRole,
+            "use_view_as"
+        );
+        const ownerFilter = await this.accessScope.getOwnerFilter(
+            userInfo.userId,
+            hasViewAs,
+            userInfo.viewAsUserId,
+            userInfo.viewAsUserRole,
+            userInfo.viewAsUserAccountId
+        );
+
+        const page = Math.max(1, parseInt(query.page || "1", 10) || 1);
+        const limit = Math.min(
+            10000,
+            Math.max(1, parseInt(query.limit || "25", 10) || 25)
+        );
+        const skip = (page - 1) * limit;
+        const search = query.search || "";
+        const sortField = query.sortField || "last_call";
+        const sortDirection = query.sortDirection === "asc" ? "asc" : "desc";
+
+        const customerSearch = search
+            ? {
+                  OR: [
+                      {
+                          customer_number: {
+                              contains: search,
+                              mode: "insensitive" as const,
+                          },
+                      },
+                      {
+                          Company: {
+                              name: {
+                                  contains: search,
+                                  mode: "insensitive" as const,
+                              },
+                          },
+                      },
+                      {
+                          Person: {
+                              first_name: {
+                                  contains: search,
+                                  mode: "insensitive" as const,
+                              },
+                          },
+                      },
+                      {
+                          Person: {
+                              last_name: {
+                                  contains: search,
+                                  mode: "insensitive" as const,
+                              },
+                          },
+                      },
+                  ],
+              }
+            : {};
+
+        const where = {
+            current_category: "Legal" as const,
+            period_end_date: null,
+            Customer: {
+                account_id: accountId,
+                collection_status: "Active" as const,
+                ...ownerFilter,
+                ...customerSearch,
+            },
+        };
+
+        const orderBy =
+            sortField === "amount_overdue" ||
+            sortField === "total_outstanding_amount"
+                ? { total_outstanding_amount: sortDirection as "asc" | "desc" }
+                : sortField === "date_moved_to_legal"
+                  ? { period_start_date: sortDirection as "asc" | "desc" }
+                  : { last_call: sortDirection as "asc" | "desc" };
+
+        const [periods, totalRecords] = await Promise.all([
+            this.db.customerCollectionPeriod.findMany({
+                where,
+                include: {
+                    Customer: {
+                        select: {
+                            id: true,
+                            customer_number: true,
+                            oldest_invoice_overdue_date: true,
+                            Company: { select: { name: true } },
+                            Person: {
+                                select: {
+                                    first_name: true,
+                                    last_name: true,
+                                },
+                            },
+                            Country: { select: { name: true } },
+                        },
+                    },
+                },
+                skip,
+                take: limit,
+                orderBy,
+            }),
+            this.db.customerCollectionPeriod.count({ where }),
+        ]);
+
+        const now = Date.now();
+        const legalCases = periods.map((period) => {
+            const customer = period.Customer;
+            const personName = `${customer?.Person?.first_name || ""} ${customer?.Person?.last_name || ""}`.trim();
+            const overdueDate = customer?.oldest_invoice_overdue_date;
+            const daysPastDue = overdueDate
+                ? Math.max(
+                      0,
+                      Math.floor(
+                          (now - new Date(overdueDate).getTime()) /
+                              (24 * 60 * 60 * 1000)
+                      )
+                  )
+                : 0;
+            return {
+                id: period.id,
+                customer_id: period.customer_id,
+                customer: customer?.Company?.name || personName || "",
+                customer_number: customer?.customer_number || "",
+                amount_overdue: period.total_outstanding_amount || 0,
+                currency: period.currency || "",
+                days_past_due: daysPastDue,
+                customer_country: customer?.Country?.name || "Unknown",
+                last_call: period.last_call,
+                last_call_result: period.last_call_result,
+                period_end_date: period.period_end_date,
+                date_moved_to_legal: period.period_start_date,
+            };
+        });
+
+        return serializeBigInt({
+            legalCases,
+            totalRecords,
+            currentPage: page,
+            totalPages: Math.max(1, Math.ceil(totalRecords / limit)),
+        });
     }
 
     private emptyNotificationStats() {

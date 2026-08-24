@@ -148,6 +148,34 @@ export declare class SmsCountryVendorsController {
             created_by: string | null;
             modified_by: string | null;
         })[];
+        mappings: ({
+            Country: {
+                id: number;
+                name: string;
+                iso2: string | null;
+                emoji: string | null;
+            };
+            SMSVendor: {
+                id: number;
+                is_active: boolean | null;
+                name: string;
+                provider: string;
+            };
+        } & {
+            id: number;
+            country_id: number;
+            vendor_id: number;
+            is_default: boolean | null;
+            is_active: boolean | null;
+            created_at: Date | null;
+            modified_at: Date | null;
+            cost_per_sms: import("@prisma/client/runtime/library").Decimal | null;
+            currency: string | null;
+            comment: string | null;
+            phone_number: string | null;
+            created_by: string | null;
+            modified_by: string | null;
+        })[];
         totalRecords: number;
         page: number;
         limit: number;

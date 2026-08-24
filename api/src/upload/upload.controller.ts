@@ -55,24 +55,30 @@ export class UploadController {
                 .update(`${key}:${user.sub}:${Date.now()}`)
                 .digest("hex")
                 .slice(0, 16);
+            const publicUrl = `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
             return {
                 success: true,
                 bucket,
                 region,
                 key,
+                filePath: key,
                 contentType,
-                uploadUrl: `https://${bucket}.s3.${region}.amazonaws.com/${key}?X-Amz-Stub=${hash}`,
-                publicUrl: `https://${bucket}.s3.${region}.amazonaws.com/${key}`,
+                uploadUrl: `${publicUrl}?X-Amz-Stub=${hash}`,
+                publicUrl,
+                url: publicUrl,
                 stub: true,
             };
         }
 
+        const publicUrl = `/uploads/${encodeURIComponent(key)}`;
         return {
             success: true,
             key,
+            filePath: key,
             contentType,
             uploadUrl: `/api/upload/local-stub/${encodeURIComponent(key)}`,
-            publicUrl: `/uploads/${encodeURIComponent(key)}`,
+            publicUrl,
+            url: publicUrl,
             stub: true,
             message:
                 "AWS_* not configured — returning Nest-native local stub URLs",

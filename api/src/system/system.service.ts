@@ -1328,72 +1328,351 @@ export class SystemService {
         });
     }
 
-    async getControlCenter(user: JwtPayload, operation?: string | null) {
+    async getControlCenter(
+        user: JwtPayload,
+        operation?: string | null,
+        query: SystemListQuery = {}
+    ) {
         const { accountId } = await this.scope(user);
         const op = operation || "stats";
 
         if (op === "stats" || op === "agents") {
-            const agents = await this.db.user.findMany({
-                where: {
-                    account_id: accountId,
-                    status: "Active",
-                    role: { in: [...COLLECTION_ROLES] },
-                },
-                select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    first_name: true,
-                    last_name: true,
-                    role: true,
-                    image: true,
-                    business_unit_id: true,
-                },
-                orderBy: { name: "asc" },
+            return this.controlCenterStats(accountId);
+        }
+        if (op === "customers-without-contact") {
+            return this.listControlCenterCustomers(accountId, query, {
+                Contact: { none: {} },
             });
-
-            const [activeCustomers, overdueInvoices, openDisputes] =
-                await Promise.all([
-                    this.db.customer.count({
-                        where: {
-                            account_id: accountId,
-                            collection_status: "Active",
-                        },
-                    }),
-                    this.db.invoice.count({
-                        where: {
-                            account_id: accountId,
-                            status: "Overdue",
-                        },
-                    }),
-                    this.db.customerDispute.count({
-                        where: {
-                            Customer: { account_id: accountId },
-                            dispute_status: {
-                                notIn: ["Resolved", "Cancelled"],
-                            },
-                        },
-                    }),
-                ]);
-
-            return serializeBigInt({
-                agents,
-                agentCount: agents.length,
-                stats: {
-                    activeCustomers,
-                    overdueInvoices,
-                    openDisputes,
-                },
-                noContacts: { active: 0, inactive: 0 },
-                invalidContacts: { active: 0, inactive: 0 },
-                invoicesWithoutCustomer: { total: 0 },
-                orphanCreditInvoices: { total: 0 },
+        }
+        if (op === "customers-with-invalid-contact") {
+            return this.listControlCenterCustomers(accountId, query, {
+                Contact: { some: this.invalidContactWhere() },
+            });
+        }
+        if (op === "invoices-without-customer") {
+            return this.listControlCenterInvoices(accountId, query, {
+                customer_id: null,
+            });
+        }
+        if (op === "orphan-credit-invoices") {
+            return this.listControlCenterInvoices(accountId, query, {
+                amount: { lt: 0 },
+                credit_for_invoice_id: null,
             });
         }
 
         throw new NotFoundException({
             error: "Control center endpoint not found",
         });
+    }
+
+    private invalidContactWhere() {
+        return {
+            OR: [
+                { email_status: { in: ["Bounced", "Failure"] as const } },
+                { email_bounce_count: { gt: 0 } },
+                { last_email_bounce: { not: null } },
+            ],
+        };
+    }
+
+    private closedInvoiceStatuses() {
+        return ["Paid", "Void", "Cancelled"] as const;
+    }
+
+    private async countByCollectionStatus(
+        accountId: number,
+        extraWhere: Record<string, unknown>
+    ) {
+        const [active, inactive] = await Promise.all([
+            this.db.customer.count({
+                where: {
+                    account_id: accountId,
+                    collection_status: "Active",
+                    ...extraWhere,
+                },
+            }),
+            this.db.customer.count({
+                where: {
+                    account_id: accountId,
+                    collection_status: { not: "Active" },
+                    ...extraWhere,
+                },
+            }),
+        ]);
+        return { active, inactive };
+    }
+
+    private async countInvoicesByClosedStatus(
+        accountId: number,
+        extraWhere: Record<string, unknown>
+    ) {
+        const closed = [...this.closedInvoiceStatuses()];
+        const [active, inactive] = await Promise.all([
+            this.db.invoice.count({
+                where: {
+                    account_id: accountId,
+                    status: { notIn: closed },
+                    ...extraWhere,
+                },
+            }),
+            this.db.invoice.count({
+                where: {
+                    account_id: accountId,
+                    status: { in: closed },
+                    ...extraWhere,
+                },
+            }),
+        ]);
+        return { active, inactive };
+    }
+
+    private async controlCenterStats(accountId: number) {
+        const agents = await this.db.user.findMany({
+            where: {
+                account_id: accountId,
+                status: "Active",
+                role: { in: [...COLLECTION_ROLES] },
+            },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                first_name: true,
+                last_name: true,
+                role: true,
+                image: true,
+                business_unit_id: true,
+            },
+            orderBy: { name: "asc" },
+        });
+
+        const [
+            activeCustomers,
+            overdueInvoices,
+            openDisputes,
+            noContacts,
+            invalidContacts,
+            invoicesWithoutCustomer,
+            orphanCreditInvoices,
+        ] = await Promise.all([
+            this.db.customer.count({
+                where: {
+                    account_id: accountId,
+                    collection_status: "Active",
+                },
+            }),
+            this.db.invoice.count({
+                where: {
+                    account_id: accountId,
+                    status: "Overdue",
+                },
+            }),
+            this.db.customerDispute.count({
+                where: {
+                    Customer: { account_id: accountId },
+                    dispute_status: {
+                        notIn: ["Resolved", "Cancelled"],
+                    },
+                },
+            }),
+            this.countByCollectionStatus(accountId, {
+                Contact: { none: {} },
+            }),
+            this.countByCollectionStatus(accountId, {
+                Contact: { some: this.invalidContactWhere() },
+            }),
+            this.countInvoicesByClosedStatus(accountId, {
+                customer_id: null,
+            }),
+            this.countInvoicesByClosedStatus(accountId, {
+                amount: { lt: 0 },
+                credit_for_invoice_id: null,
+            }),
+        ]);
+
+        return serializeBigInt({
+            agents,
+            agentCount: agents.length,
+            stats: {
+                activeCustomers,
+                overdueInvoices,
+                openDisputes,
+            },
+            noContacts,
+            invalidContacts,
+            invoicesWithoutCustomer,
+            orphanCreditInvoices,
+        });
+    }
+
+    private controlCenterPage(query: SystemListQuery) {
+        const page = Math.max(1, parseInt(query.page || "1", 10) || 1);
+        const limit = Math.min(
+            10000,
+            Math.max(1, parseInt(query.limit || "25", 10) || 25)
+        );
+        return { page, limit, skip: (page - 1) * limit };
+    }
+
+    private controlCenterCustomerInclude() {
+        return {
+            Person: { select: { first_name: true, last_name: true } },
+            Company: { select: { name: true } },
+            CustomerCollectionPeriod: {
+                where: { period_end_date: null },
+                take: 1,
+                orderBy: { id: "desc" as const },
+                select: {
+                    current_category: true,
+                    total_outstanding_amount: true,
+                    currency: true,
+                    no_of_overdue_invoices: true,
+                },
+            },
+        };
+    }
+
+    private async listControlCenterCustomers(
+        accountId: number,
+        query: SystemListQuery,
+        extraWhere: Record<string, unknown>
+    ) {
+        const { page, limit, skip } = this.controlCenterPage(query);
+        const search = query.query || query.search || "";
+        const status = query.status;
+        const selectedUserId = query.selectedUserId;
+        const sortField = query.sortField || "customer_number";
+        const sortDirection = query.sortDirection === "desc" ? "desc" : "asc";
+
+        const where: Record<string, unknown> = {
+            account_id: accountId,
+            ...extraWhere,
+            ...(status ? { collection_status: status } : {}),
+            ...(selectedUserId ? { owner_id: selectedUserId } : {}),
+        };
+        if (search) {
+            where.OR = [
+                {
+                    customer_number: {
+                        contains: search,
+                        mode: "insensitive",
+                    },
+                },
+                {
+                    Company: {
+                        name: { contains: search, mode: "insensitive" },
+                    },
+                },
+                {
+                    Person: {
+                        first_name: {
+                            contains: search,
+                            mode: "insensitive",
+                        },
+                    },
+                },
+                {
+                    Person: {
+                        last_name: {
+                            contains: search,
+                            mode: "insensitive",
+                        },
+                    },
+                },
+            ];
+        }
+
+        const orderBy =
+            sortField === "name"
+                ? { Company: { name: sortDirection as "asc" | "desc" } }
+                : sortField === "collection_status"
+                  ? { collection_status: sortDirection as "asc" | "desc" }
+                  : { customer_number: sortDirection as "asc" | "desc" };
+
+        const [customers, totalRecords] = await Promise.all([
+            this.db.customer.findMany({
+                where,
+                include: this.controlCenterCustomerInclude(),
+                skip,
+                take: limit,
+                orderBy,
+            }),
+            this.db.customer.count({ where }),
+        ]);
+
+        return serializeBigInt({ customers, totalRecords, page, limit });
+    }
+
+    private async listControlCenterInvoices(
+        accountId: number,
+        query: SystemListQuery,
+        extraWhere: Record<string, unknown>
+    ) {
+        const { page, limit, skip } = this.controlCenterPage(query);
+        const search = query.query || query.search || "";
+        const selectedUserId = query.selectedUserId;
+        const sortField = query.sortField || "invoice_number";
+        const sortDirection = query.sortDirection === "desc" ? "desc" : "asc";
+
+        const where: Record<string, unknown> = {
+            account_id: accountId,
+            ...extraWhere,
+        };
+        if (search) {
+            where.invoice_number = {
+                contains: search,
+                mode: "insensitive",
+            };
+        }
+        if (selectedUserId) {
+            where.Customer = { owner_id: selectedUserId };
+        }
+
+        const sortable = new Set([
+            "invoice_number",
+            "invoice_date",
+            "amount",
+            "status",
+            "id",
+        ]);
+        const orderBy = {
+            [sortable.has(sortField) ? sortField : "invoice_number"]:
+                sortDirection,
+        };
+
+        const [invoices, totalRecords] = await Promise.all([
+            this.db.invoice.findMany({
+                where,
+                select: {
+                    id: true,
+                    invoice_number: true,
+                    invoice_date: true,
+                    amount: true,
+                    status: true,
+                    customer_id: true,
+                    Customer: {
+                        select: {
+                            id: true,
+                            type: true,
+                            Person: {
+                                select: {
+                                    first_name: true,
+                                    last_name: true,
+                                },
+                            },
+                            Company: { select: { name: true } },
+                        },
+                    },
+                },
+                skip,
+                take: limit,
+                orderBy,
+            }),
+            this.db.invoice.count({ where }),
+        ]);
+
+        return serializeBigInt({ invoices, totalRecords, page, limit });
     }
 
     async postControlCenter(
@@ -2128,6 +2407,37 @@ export class SystemService {
         });
     }
 
+    async clearAgentsFollowUp(
+        user: JwtPayload,
+        body: Record<string, unknown>
+    ) {
+        const { accountId } = await this.scope(user);
+        const id = parseInt(String(body.id ?? ""), 10);
+        if (!Number.isFinite(id)) {
+            throw new BadRequestException({ error: "id is required" });
+        }
+
+        const period = await this.db.customerCollectionPeriod.findFirst({
+            where: {
+                id,
+                Customer: { account_id: accountId },
+            },
+            select: { id: true },
+        });
+        if (!period) {
+            throw new NotFoundException({
+                error: "Collection period not found",
+            });
+        }
+
+        await this.db.customerCollectionPeriod.update({
+            where: { id: period.id },
+            data: { follow_up_time: null },
+        });
+
+        return { success: true, id: period.id };
+    }
+
     async getAgentsStats(user: JwtPayload, query: SystemListQuery = {}) {
         const { accountId } = await this.scope(user);
         const currency = await this.accountCurrency(accountId);
@@ -2288,38 +2598,42 @@ export class SystemService {
 
     async getPromiseToPayStats(user: JwtPayload) {
         const { accountId } = await this.scope(user);
+        const currency = await this.accountCurrency(accountId);
+        const where = {
+            current_category: "Promise_to_pay" as const,
+            period_end_date: null,
+            Customer: {
+                account_id: accountId,
+                collection_status: "Active" as const,
+            },
+        };
         const [count, agg] = await Promise.all([
-            this.db.customerCollectionPeriod.count({
-                where: {
-                    current_category: "Promise_to_pay",
-                    period_end_date: null,
-                    Customer: {
-                        account_id: accountId,
-                        collection_status: "Active",
-                    },
-                },
-            }),
+            this.db.customerCollectionPeriod.count({ where }),
             this.db.customerCollectionPeriod.aggregate({
-                where: {
-                    current_category: "Promise_to_pay",
-                    period_end_date: null,
-                    Customer: {
-                        account_id: accountId,
-                        collection_status: "Active",
-                    },
-                },
+                where,
                 _sum: {
                     promise_to_pay_amount: true,
                     total_outstanding_amount: true,
+                    no_of_overdue_invoices: true,
                 },
             }),
         ]);
+        const totalOutstandingAmount = Number(
+            agg._sum.total_outstanding_amount ?? 0
+        );
+        const totalInvoices = Number(agg._sum.no_of_overdue_invoices ?? 0);
         return serializeBigInt({
+            stats: {
+                counts: {
+                    total_customers: count,
+                    total_invoices: totalInvoices,
+                    total_outstanding_amount: totalOutstandingAmount,
+                    currency,
+                },
+            },
             total: count,
             totalPromiseAmount: Number(agg._sum.promise_to_pay_amount ?? 0),
-            totalOutstandingAmount: Number(
-                agg._sum.total_outstanding_amount ?? 0
-            ),
+            totalOutstandingAmount,
         });
     }
 
@@ -2478,6 +2792,7 @@ export class SystemService {
                     timeoutPeriodSeconds: job.timeout_period_seconds,
                     sortOrder: job.sort_order,
                     createdAt: job.created_at,
+                    created_at: job.created_at,
                     modifiedAt: job.modified_at,
                 })),
             });
@@ -2510,18 +2825,43 @@ export class SystemService {
             if (!job) {
                 throw new NotFoundException({ error: "Cron job not found" });
             }
+            const executionId = `ack-${job.id}-${Date.now()}`;
+            const timestamp = new Date().toISOString();
             return {
                 success: true,
                 message: `Cron job ${job.name} trigger acknowledged`,
                 jobId: job.id,
-                timestamp: new Date().toISOString(),
+                timestamp,
+                data: { executionId },
+                result: {
+                    steps: [
+                        {
+                            timestamp,
+                            level: "INFO",
+                            stepNumber: 1,
+                            message: `Cron job ${job.name} trigger acknowledged`,
+                        },
+                    ],
+                },
             };
         }
+        const timestamp = new Date().toISOString();
         return {
             success: true,
             message: "Cron trigger acknowledged (all due)",
-            timestamp: new Date().toISOString(),
+            timestamp,
             body,
+            data: { executionId: `ack-all-${Date.now()}` },
+            result: {
+                steps: [
+                    {
+                        timestamp,
+                        level: "INFO",
+                        stepNumber: 1,
+                        message: "Cron trigger acknowledged (all due)",
+                    },
+                ],
+            },
         };
     }
 
@@ -2555,6 +2895,13 @@ export class SystemService {
             executionId,
             status: logs.length ? "completed" : "unknown",
             items: logs,
+            data: {
+                logs: logs.map((log) => ({
+                    ...log,
+                    created_at: log.timestamp,
+                    createdAt: log.timestamp,
+                })),
+            },
         });
     }
 
@@ -2743,30 +3090,30 @@ export class SystemService {
             smsFail6h,
             smsFail24h,
         ] = await Promise.all([
-            countActivity("Email", oneHourAgo, "Completed"),
-            countActivity("Email", sixHoursAgo, "Completed"),
-            countActivity("Email", twentyFourHoursAgo, "Completed"),
+            countActivity("Email", oneHourAgo, "COMPLETED"),
+            countActivity("Email", sixHoursAgo, "COMPLETED"),
+            countActivity("Email", twentyFourHoursAgo, "COMPLETED"),
             countActivity("Email", oneHourAgo),
             countActivity("Email", sixHoursAgo),
             countActivity("Email", twentyFourHoursAgo),
-            countActivity("Email", oneHourAgo, "Failed"),
-            countActivity("Email", sixHoursAgo, "Failed"),
-            countActivity("Email", twentyFourHoursAgo, "Failed"),
-            countActivity("SMS", oneHourAgo, "Completed"),
-            countActivity("SMS", sixHoursAgo, "Completed"),
-            countActivity("SMS", twentyFourHoursAgo, "Completed"),
+            countActivity("Email", oneHourAgo, "FAILED"),
+            countActivity("Email", sixHoursAgo, "FAILED"),
+            countActivity("Email", twentyFourHoursAgo, "FAILED"),
+            countActivity("SMS", oneHourAgo, "COMPLETED"),
+            countActivity("SMS", sixHoursAgo, "COMPLETED"),
+            countActivity("SMS", twentyFourHoursAgo, "COMPLETED"),
             countActivity("SMS", oneHourAgo),
             countActivity("SMS", sixHoursAgo),
             countActivity("SMS", twentyFourHoursAgo),
-            countActivity("SMS", oneHourAgo, "Failed"),
-            countActivity("SMS", sixHoursAgo, "Failed"),
-            countActivity("SMS", twentyFourHoursAgo, "Failed"),
+            countActivity("SMS", oneHourAgo, "FAILED"),
+            countActivity("SMS", sixHoursAgo, "FAILED"),
+            countActivity("SMS", twentyFourHoursAgo, "FAILED"),
         ]);
 
         const stuckGrouped = await this.db.activity.groupBy({
             by: ["status_reason"],
             where: {
-                status: { in: ["Pending", "Scheduled"] as never },
+                status: { in: ["SCHEDULED", "SENT"] as never },
                 schedule_time: { lt: oneHourAgo },
             },
             _count: { _all: true },
