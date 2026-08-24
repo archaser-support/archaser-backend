@@ -239,6 +239,15 @@ else
     log "Skipping npm ci (--skip-install)"
 fi
 
+# npm ci uses --ignore-scripts, so generate before any workspace tsc that imports PrismaClient.
+if [[ "$SKIP_PRISMA" != "true" ]]; then
+    log "Generating Prisma client"
+    npx prisma generate --schema="$PRISMA_SCHEMA"
+    node "$SYNC_SCRIPT"
+else
+    log "Skipping prisma generate (--skip-prisma)"
+fi
+
 if [[ "$SKIP_BUILD" != "true" ]]; then
     log "Building backend workspaces"
     npm run build -w @archaser/database
@@ -252,14 +261,6 @@ if [[ "$SKIP_BUILD" != "true" ]]; then
     npm run build -w @archaser/reports
 else
     log "Skipping backend builds (--skip-build)"
-fi
-
-if [[ "$SKIP_PRISMA" != "true" ]]; then
-    log "Generating Prisma client"
-    npx prisma generate --schema="$PRISMA_SCHEMA"
-    node "$SYNC_SCRIPT"
-else
-    log "Skipping prisma generate (--skip-prisma)"
 fi
 
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
