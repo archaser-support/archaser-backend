@@ -87,6 +87,7 @@ export type AccountAdminListQuery = {
     status?: string;
     deletionFilter?: string;
     account_id?: string;
+    customer_id?: string;
 };
 
 @Injectable()
@@ -142,12 +143,31 @@ export class AccountAdminEntitiesService {
         const page = parseInt(query.page || "1", 10);
         const limit = parseInt(query.limit || "25", 10);
 
-        const where: Record<string, unknown> =
-            isAdmin && config.scopeField === "id"
-                ? {}
-                : isAdmin && config.scopeField === "account_id"
-                  ? {}
-                  : { [config.scopeField]: accountId };
+        // Archaser admins may list accounts/users across tenants. Other entity
+        // types stay account-scoped (optional `account_id` query for admins).
+        let where: Record<string, unknown> = {};
+        if (
+            isAdmin &&
+            (entityType === "accounts" || entityType === "users")
+        ) {
+            where = {};
+        } else {
+            let scopeAccountId = accountId;
+            if (isAdmin && query.account_id) {
+                const parsed = parseInt(query.account_id, 10);
+                if (!Number.isNaN(parsed)) {
+                    scopeAccountId = parsed;
+                }
+            }
+            where = { [config.scopeField]: scopeAccountId };
+        }
+
+        if (entityType === "customer-banks" && query.customer_id) {
+            const customerId = parseInt(query.customer_id, 10);
+            if (!Number.isNaN(customerId)) {
+                where.customer_id = customerId;
+            }
+        }
 
         // Accounts/users build their own search OR (id, relations, etc.).
         if (
@@ -1554,6 +1574,146 @@ export class AccountAdminEntitiesService {
 
         return {
             message: "Bank account removed from business unit successfully",
+        };
+    }
+
+    async listCustomerBanks(
+        user: JwtPayload,
+        customerIdRaw: string,
+        query: AccountAdminListQuery = {}
+    ) {
+        const { accountId } = await this.scope(user);
+        const customerId = this.parseNumericId(customerIdRaw, "customer ID");
+        const limit = Math.min(
+            parseInt(query.limit || "1000", 10) || 1000,
+            5000
+        );
+
+        const customer = await this.db.customer.findFirst({
+            where: { id: customerId, account_id: accountId },
+            select: { id: true, account_id: true },
+        });
+        if (!customer) {
+            throw new NotFoundException({ error: "Customer not found" });
+        }
+
+        const rows = await this.db.customerBanks.findMany({
+            where: {
+                customer_id: customerId,
+                account_id: accountId,
+            },
+            take: limit,
+            orderBy: { id: "asc" },
+            include: {
+                AccountBankAccounts: {
+                    include: { Country: true },
+                },
+            },
+        });
+
+        return serializeBigInt({
+            data: rows,
+            totalRecords: rows.length,
+        });
+    }
+
+    async addCustomerBank(
+        user: JwtPayload,
+        customerIdRaw: string,
+        body: Record<string, unknown>
+    ) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const customerId = this.parseNumericId(customerIdRaw, "customer ID");
+        const bankAccountId = this.parseNumericId(
+            String(
+                body.customer_bank_account_id ??
+                    body.bank_account_id ??
+                    body.account_bank_account_id ??
+                    ""
+            ),
+            "bank account ID"
+        );
+
+        const customer = await this.db.customer.findFirst({
+            where: { id: customerId, account_id: accountId },
+            select: { id: true, account_id: true },
+        });
+        if (!customer) {
+            throw new NotFoundException({ error: "Customer not found" });
+        }
+
+        const bankAccount = await this.db.accountBankAccounts.findFirst({
+            where: { id: bankAccountId, account_id: accountId },
+        });
+        if (!bankAccount) {
+            throw new NotFoundException({ error: "Bank account not found" });
+        }
+
+        const existing = await this.db.customerBanks.findFirst({
+            where: {
+                customer_id: customerId,
+                customer_bank_account_id: bankAccountId,
+            },
+        });
+        if (existing) {
+            throw new BadRequestException({
+                error: "Bank account is already assigned to this customer",
+            });
+        }
+
+        const created = await this.db.customerBanks.create({
+            data: {
+                customer_id: customerId,
+                account_id: accountId,
+                customer_bank_account_id: bankAccountId,
+                created_by: userInfo.userId,
+                modified_by: userInfo.userId,
+            },
+            include: {
+                AccountBankAccounts: {
+                    include: { Country: true },
+                },
+            },
+        });
+
+        return serializeBigInt(created);
+    }
+
+    async removeCustomerBank(
+        user: JwtPayload,
+        customerIdRaw: string,
+        junctionIdRaw: string
+    ) {
+        const { accountId } = await this.scope(user);
+        const customerId = this.parseNumericId(customerIdRaw, "customer ID");
+        const junctionId = this.parseNumericId(junctionIdRaw, "junction ID");
+
+        const customer = await this.db.customer.findFirst({
+            where: { id: customerId, account_id: accountId },
+            select: { id: true },
+        });
+        if (!customer) {
+            throw new NotFoundException({ error: "Customer not found" });
+        }
+
+        const row = await this.db.customerBanks.findFirst({
+            where: {
+                id: junctionId,
+                customer_id: customerId,
+                account_id: accountId,
+            },
+        });
+        if (!row) {
+            throw new NotFoundException({
+                error: "Customer bank assignment not found",
+            });
+        }
+
+        await this.db.customerBanks.delete({ where: { id: row.id } });
+
+        return {
+            message: "Bank account removed from customer successfully",
         };
     }
 }
