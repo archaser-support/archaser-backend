@@ -1,11 +1,12 @@
+# Staging Nest stack on the API EC2 (api.staging.archaser.com).
+# Redis is docker-internal. Nest ports bind 127.0.0.1 for host nginx.
+# Public TLS is nginx on the host — see nginx/archaser-staging-api.conf.
 services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - archaser-redis-staging-data:/data
-    ports:
-      - "6379:6379"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -37,7 +38,7 @@ services:
     volumes:
       - /home/ubuntu/staging:/workspace
     ports:
-      - "3010:3010"
+      - "127.0.0.1:3010:3010"
     depends_on:
       redis:
         condition: service_healthy
@@ -64,7 +65,7 @@ services:
     volumes:
       - /home/ubuntu/staging:/workspace
     ports:
-      - "3003:3003"
+      - "127.0.0.1:3003:3003"
     depends_on:
       redis:
         condition: service_healthy
@@ -85,7 +86,7 @@ services:
     volumes:
       - /home/ubuntu/staging:/workspace
     ports:
-      - "3004:3004"
+      - "127.0.0.1:3004:3004"
     restart: unless-stopped
 
   connectors:
@@ -103,7 +104,7 @@ services:
     volumes:
       - /home/ubuntu/staging:/workspace
     ports:
-      - "3005:3005"
+      - "127.0.0.1:3005:3005"
     depends_on:
       redis:
         condition: service_healthy
@@ -121,7 +122,7 @@ services:
     volumes:
       - /home/ubuntu/staging:/workspace
     ports:
-      - "3006:3006"
+      - "127.0.0.1:3006:3006"
     restart: unless-stopped
 
 volumes:

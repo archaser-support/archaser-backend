@@ -31,8 +31,10 @@ export async function sendViaInforu(
     const customerMessageID = crypto.randomUUID();
     const base =
         options.webhookBaseUrl ||
-        process.env.NEXT_PUBLIC_BASE_URL ||
         process.env.SMS_WEBHOOK_BASE_URL ||
+        process.env.NEST_PUBLIC_URL ||
+        process.env.NEXT_PUBLIC_NEST_API_BASE_URL ||
+        process.env.NEXT_PUBLIC_BASE_URL ||
         "";
 
     const jsonData = {

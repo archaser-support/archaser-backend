@@ -10,11 +10,9 @@ exports.addClickTracking = addClickTracking;
 exports.addEmailTracking = addEmailTracking;
 exports.generateTrackingUrl = generateTrackingUrl;
 exports.generateTrackingPixelUrl = generateTrackingPixelUrl;
+const publicApiUrl_1 = require("../publicApiUrl");
 function resolveBaseUrl(baseUrl) {
-    return (baseUrl ||
-        process.env.NEXT_PUBLIC_BASE_URL ||
-        process.env.NEXT_PUBLIC_NEST_API_BASE_URL ||
-        "https://archaser.com");
+    return (0, publicApiUrl_1.resolvePublicApiOrigin)(baseUrl);
 }
 function addTrackingPixel(htmlContent, messageId, baseUrl) {
     const trackingUrl = `${resolveBaseUrl(baseUrl)}/api/email/track-open?messageId=${encodeURIComponent(messageId)}`;

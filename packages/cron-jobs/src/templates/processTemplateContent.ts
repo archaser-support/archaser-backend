@@ -1,3 +1,4 @@
+import { resolvePublicApiOrigin } from "../publicApiUrl";
 import { getCustomerPortalUrl } from "./getCustomerPortalUrl";
 
 function replaceContentMacros(
@@ -29,15 +30,10 @@ function replaceAccountContent(
         sub_domain?: string | null;
     }
 ): string {
-    const hostUrl =
-        process.env.NODE_ENV === "production" && process.env.NEXTAUTH_URL
-            ? new URL(process.env.NEXTAUTH_URL).hostname
-            : `localhost:${process.env.PORT || 3000}`;
-
     const customerName = account.name || "";
     let logoHtml = "";
     if (account.logo) {
-        const logoUrl = `${process.env.NEXTAUTH_URL || `http://${hostUrl}`}/api/accounts/${account.id}/logo?v=${Date.now()}`;
+        const logoUrl = `${resolvePublicApiOrigin()}/api/accounts/${account.id}/logo?v=${Date.now()}`;
         logoHtml = `<img src="${logoUrl}" alt="${customerName} Logo" style="max-width: 200px; height: auto;" />`;
     }
 

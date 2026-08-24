@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { ValidationPipe } from "@nestjs/common";
 import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module";
+import { enablePublicCors } from "@archaser/auth";
 import {
     enrichStranglerOpenApi,
     SWAGGER_DESCRIPTION,
@@ -23,20 +24,7 @@ async function bootstrap() {
 
     app.use(cookieParser());
 
-    const corsOrigins = [
-        process.env.NEXT_PUBLIC_BASE_URL,
-        process.env.NEST_CORS_ORIGINS,
-    ]
-        .filter(Boolean)
-        .flatMap((value) => String(value).split(","))
-        .map((origin) => origin.trim())
-        .filter(Boolean);
-
-    app.enableCors({
-        origin: corsOrigins.length > 0 ? corsOrigins : true,
-        credentials: true,
-        allowedHeaders: ["Authorization", "Content-Type", "Cookie"],
-    });
+    enablePublicCors(app);
 
     app.useGlobalPipes(
         new ValidationPipe({

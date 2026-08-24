@@ -142,6 +142,9 @@ fi
 if [[ "$SKIP_BUILD" != "true" ]]; then
     log "Building backend workspaces"
     npm run build -w @archaser/database
+    npm run build -w @archaser/auth
+    npm run build -w @archaser/sms-send
+    npm run build -w @archaser/cron-jobs
     npm run build -w @archaser/api
     npm run build -w @archaser/worker
     npm run build -w @archaser/sms
@@ -198,3 +201,7 @@ if [[ "$NO_GRAFANA" != "true" && -f "$COMPOSE_MONITORING" ]]; then
 fi
 
 log "Deployment complete"
+if [[ "$ENVIRONMENT" == "staging" ]]; then
+    log "Staging API host: install nginx/archaser-staging-api.conf for api.staging.archaser.com"
+    log "Do not run deploy-staging.sh (Next UI) on this box"
+fi

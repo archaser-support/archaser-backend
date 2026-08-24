@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 /**
- * Close Due/Overdue invoices with zero customer outstanding debt, then
- * recalculate customer rollups and refresh credit-insurance fields.
+ * Close Due/Overdue invoices with zero (or tolerance) customer outstanding debt,
+ * then recalculate customer rollups and refresh credit-insurance fields.
  */
 export declare function closeZeroOutstandingDebtInvoices(prisma: PrismaClient): Promise<{
     success: boolean;
