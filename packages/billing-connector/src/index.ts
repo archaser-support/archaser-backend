@@ -200,7 +200,9 @@ export {
 export {
     importMappedEntityBatch,
     extractMaxUpdatedAt,
+    shouldSkipReportingBreachOnConnectorWrite,
     updateAccountLastSyncDate,
+    type EntityImportBatchOptions,
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "./import/entityImporter";

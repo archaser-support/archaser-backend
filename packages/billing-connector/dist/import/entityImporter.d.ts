@@ -8,9 +8,16 @@ export interface EntityImportBatchResult {
     entityIds: number[];
     errors: string[];
 }
+export interface EntityImportBatchOptions {
+    skipReportingBreach?: boolean;
+}
+export declare function shouldSkipReportingBreachOnConnectorWrite(params: {
+    syncMode: "BACKFILL" | "INCREMENTAL" | "backfill" | "incremental";
+    skipReportingBreachOnBackfill: boolean;
+}): boolean;
 export declare function extractMaxUpdatedAt(records: Record<string, unknown>[]): Date | null;
 /**
  * Prisma-native entity upsert for connector sync and manual import.
  */
-export declare function importMappedEntityBatch(prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string): Promise<EntityImportBatchResult>;
+export declare function importMappedEntityBatch(prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string, options?: EntityImportBatchOptions): Promise<EntityImportBatchResult>;
 export declare function updateAccountLastSyncDate(prisma: PrismaClient, accountId: number, syncedAt?: Date): Promise<void>;
