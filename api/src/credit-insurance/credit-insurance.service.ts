@@ -66,6 +66,14 @@ export class CreditInsuranceService implements OnModuleInit {
             case "mark-reported-bulk":
                 await this.access.authorize(user, query);
                 return this.markReportedBulk(user, body);
+            case "asof-backfill-status":
+                return this.leaves.asOfBackfillStatus(user, query);
+            case "asof-backfill-start":
+                return this.leaves.asOfBackfillStart(user, query, body);
+            case "asof-backfill-pause":
+                return this.leaves.asOfBackfillPause(user, query);
+            case "asof-backfill-retry":
+                return this.leaves.asOfBackfillRetry(user, query);
             default:
                 await this.access.authorize(user, query);
                 return { ok: true };
