@@ -102,6 +102,10 @@ docker_compose() {
     "${DOCKER[@]}" compose "$@"
 }
 
+monitoring_stack_exists() {
+    "${DOCKER[@]}" ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'archaser-loki'
+}
+
 npm_ci_low_memory() {
     local mem_mb heap_mb
     mem_mb="$(host_mem_mb)"
@@ -271,15 +275,20 @@ BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
     up -d --remove-orphans
 
 if [[ "$NO_GRAFANA" != "true" ]]; then
-    if [[ -f "$COMPOSE_MONITORING" ]]; then
+    if [[ ! -f "$COMPOSE_MONITORING" ]]; then
+        log "Monitoring compose not found; skipping"
+    elif monitoring_stack_exists; then
+        log "Monitoring already running as archaser-loki (and siblings) — skipping compose up"
+        log "To replace it: sudo docker rm -f archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail"
+    else
         log "Starting monitoring stack (Grafana + Loki + Prometheus + Promtail)"
-        MONITORING_ENV="$ENVIRONMENT" docker_compose \
+        if ! MONITORING_ENV="$ENVIRONMENT" docker_compose \
             --project-name "$MONITORING_PROJECT" \
             --env-file "$ENV_TARGET" \
             -f "$COMPOSE_MONITORING" \
-            up -d --remove-orphans
-    else
-        log "Monitoring compose not found; skipping"
+            up -d --remove-orphans; then
+            echo "Warning: monitoring stack failed to start; Nest stack is already up."
+        fi
     fi
 else
     log "Skipping monitoring stack (--no-grafana)"
@@ -292,13 +301,9 @@ BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
     -f "$COMPOSE_BACKEND" \
     ps
 
-if [[ "$NO_GRAFANA" != "true" && -f "$COMPOSE_MONITORING" ]]; then
+if [[ "$NO_GRAFANA" != "true" ]]; then
     log "Monitoring stack status"
-    MONITORING_ENV="$ENVIRONMENT" docker_compose \
-        --project-name "$MONITORING_PROJECT" \
-        --env-file "$ENV_TARGET" \
-        -f "$COMPOSE_MONITORING" \
-        ps
+    "${DOCKER[@]}" ps --filter "name=archaser-loki" --filter "name=archaser-grafana" --filter "name=archaser-prometheus" --filter "name=archaser-promtail"
 fi
 
 log "Deployment complete"
