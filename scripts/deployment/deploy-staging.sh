@@ -7,6 +7,16 @@ if [ -z "${BASH_VERSION:-}" ]; then
     exec /bin/bash "$0" "$@"
 fi
 
+# Staging UI is Amplify. This EC2 box is Nest-only (api.staging.archaser.com).
+# Use: bash backend/scripts/deployment/deploy-backend-docker.sh --env staging
+if [ "${ALLOW_LEGACY_EC2_UI:-}" != "1" ]; then
+    echo "Error: deploy-staging.sh ships the Next UI to this EC2 and must not run here."
+    echo "Staging UI is Amplify at staging.archaser.com."
+    echo "Deploy Nest with: bash backend/scripts/deployment/deploy-backend-docker.sh --env staging"
+    echo "Override only for rollback: ALLOW_LEGACY_EC2_UI=1 bash .../deploy-staging.sh"
+    exit 1
+fi
+
 # Force npm scripts to use Linux shell in WSL/Linux.
 # This avoids accidental cmd.exe usage from a persisted npm script-shell config.
 export npm_config_script_shell="/bin/bash"

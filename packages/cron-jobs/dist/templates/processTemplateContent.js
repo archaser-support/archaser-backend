@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.processTemplateContent = processTemplateContent;
 exports.replaceDoubleBraceTemplateVariables = replaceDoubleBraceTemplateVariables;
 exports.getRawTemplateContent = getRawTemplateContent;
+const publicApiUrl_1 = require("../publicApiUrl");
 const getCustomerPortalUrl_1 = require("./getCustomerPortalUrl");
 function replaceContentMacros(content, replacements) {
     let result = content;
@@ -17,13 +18,10 @@ function replaceContentMacros(content, replacements) {
     return result;
 }
 function replaceAccountContent(content, account) {
-    const hostUrl = process.env.NODE_ENV === "production" && process.env.NEXTAUTH_URL
-        ? new URL(process.env.NEXTAUTH_URL).hostname
-        : `localhost:${process.env.PORT || 3000}`;
     const customerName = account.name || "";
     let logoHtml = "";
     if (account.logo) {
-        const logoUrl = `${process.env.NEXTAUTH_URL || `http://${hostUrl}`}/api/accounts/${account.id}/logo?v=${Date.now()}`;
+        const logoUrl = `${(0, publicApiUrl_1.resolvePublicApiOrigin)()}/api/accounts/${account.id}/logo?v=${Date.now()}`;
         logoHtml = `<img src="${logoUrl}" alt="${customerName} Logo" style="max-width: 200px; height: auto;" />`;
     }
     return replaceContentMacros(content, {
