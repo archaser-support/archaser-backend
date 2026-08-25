@@ -2,7 +2,7 @@
   "name": "@archaser/worker",
   "version": "0.0.1",
   "private": true,
-  "description": "Archaser BullMQ worker (Stage 2 peel \u2014 in-repo scaffold)",
+  "description": "Archaser BullMQ worker (Stage 2 peel — in-repo scaffold)",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
@@ -10,17 +10,17 @@
     "test": "echo \"worker: add consumer tests in peel CI\""
   },
   "dependencies": {
+    "@archaser/billing-connector": "*",
+    "@archaser/cron-jobs": "*",
     "@archaser/database": "*",
     "@nestjs/common": "^11.1.3",
-    "@nestjs/core": "^11.1.3",
     "@nestjs/config": "^4.0.2",
-    "bullmq": "^5.34.0",
+    "@nestjs/core": "^11.1.3",
+    "bullmq": "^5.81.3",
     "ioredis": "^5.4.2",
     "prom-client": "^15.1.3",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2",
-    "@archaser/billing-connector": "*",
-    "@archaser/cron-jobs": "*"
+    "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
