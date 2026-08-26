@@ -2,51 +2,42 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IDIGITAL_HELAM_PAYMENT_METHOD = exports.INVOICE_PAID_TOLERANCE = void 0;
 exports.recalculateInvoiceFromLinkedPayments = recalculateInvoiceFromLinkedPayments;
+exports.recalculateInvoicesFromLinkedPayments = recalculateInvoicesFromLinkedPayments;
 exports.linkDeferredPaymentAndRecalc = linkDeferredPaymentAndRecalc;
+const bulkWrite_1 = require("../import/bulkWrite");
 exports.INVOICE_PAID_TOLERANCE = 0.2;
 /** Exact FNCPATNAME close code stored on InvoicePayment.payment_method. */
 exports.IDIGITAL_HELAM_PAYMENT_METHOD = "חלמ";
+const LINKED_PAYMENT_RECALC_SELECT = {
+    id: true,
+    payment_date: true,
+    amount: true,
+    customer_amount: true,
+    payment_method: true,
+};
 function isConnectorHelamPayment(payment) {
     return (payment.payment_method ?? "").trim() === exports.IDIGITAL_HELAM_PAYMENT_METHOD;
 }
 function hasConnectorHelamClose(payments) {
     return payments.some(isConnectorHelamPayment);
 }
-async function recalculateInvoiceFromLinkedPayments(tx, invoiceId, options) {
-    const invoice = await tx.invoice.findUnique({
-        where: { id: invoiceId },
-    });
-    if (!invoice) {
-        throw new Error(`Invoice ${invoiceId} not found`);
-    }
-    const linkedPayments = await tx.invoicePayment.findMany({
-        where: { invoice_id: invoiceId },
-        select: {
-            id: true,
-            payment_date: true,
-            amount: true,
-            customer_amount: true,
-            payment_method: true,
-        },
-    });
+function buildInvoicePaidUpdate(invoice, linkedPayments, options, modifiedAt) {
     if (hasConnectorHelamClose(linkedPayments)) {
         const totalPaid = invoice.net_amount ?? 0;
         const totalCustomerPaid = invoice.customer_net_amount ?? 0;
-        return tx.invoice.update({
-            where: { id: invoiceId },
-            data: {
-                total_paid: totalPaid,
-                customer_total_paid: totalCustomerPaid,
-                outstanding_debt: 0,
-                customer_outstanding_debt: 0,
-                status: "Paid",
-                zero_limit_alert: false,
-                reporting_breach: false,
-            },
-        });
+        return {
+            total_paid: totalPaid,
+            customer_total_paid: totalCustomerPaid,
+            outstanding_debt: 0,
+            customer_outstanding_debt: 0,
+            status: "Paid",
+            zero_limit_alert: false,
+            reporting_breach: false,
+            modified_at: modifiedAt,
+        };
     }
     const useAbsPaidTotals = options?.normalizeNegativePaymentsForCreditClose === true &&
-        invoice.priority_erp_debit === "C";
+        invoice.custom_code1 === "C";
     let totalPaid = 0;
     let totalCustomerPaid = 0;
     if (useAbsPaidTotals) {
@@ -64,20 +55,75 @@ async function recalculateInvoiceFromLinkedPayments(tx, invoiceId, options) {
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;
     const newCustomerOutstanding = (invoice.customer_net_amount ?? 0) - totalCustomerPaid;
     const becomesPaid = newCustomerOutstanding <= exports.INVOICE_PAID_TOLERANCE;
+    return {
+        total_paid: totalPaid,
+        customer_total_paid: totalCustomerPaid,
+        outstanding_debt: newOutstanding,
+        customer_outstanding_debt: newCustomerOutstanding,
+        status: becomesPaid ? "Paid" : invoice.status,
+        modified_at: modifiedAt,
+        ...(becomesPaid && {
+            zero_limit_alert: false,
+            reporting_breach: false,
+        }),
+    };
+}
+async function recalculateInvoiceFromLinkedPayments(tx, invoiceId, options) {
+    const invoice = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+    });
+    if (!invoice) {
+        throw new Error(`Invoice ${invoiceId} not found`);
+    }
+    const linkedPayments = await tx.invoicePayment.findMany({
+        where: { invoice_id: invoiceId },
+        select: LINKED_PAYMENT_RECALC_SELECT,
+    });
     return tx.invoice.update({
         where: { id: invoiceId },
-        data: {
-            total_paid: totalPaid,
-            customer_total_paid: totalCustomerPaid,
-            outstanding_debt: newOutstanding,
-            customer_outstanding_debt: newCustomerOutstanding,
-            status: becomesPaid ? "Paid" : invoice.status,
-            ...(becomesPaid && {
-                zero_limit_alert: false,
-                reporting_breach: false,
-            }),
-        },
+        data: buildInvoicePaidUpdate(invoice, linkedPayments, options, new Date()),
     });
+}
+/**
+ * Recalculate many invoices with two reads and chunked writes instead of
+ * three round-trips per invoice.
+ */
+async function recalculateInvoicesFromLinkedPayments(prisma, targets) {
+    if (targets.size === 0)
+        return;
+    const invoiceIds = [...targets.keys()];
+    const [invoices, linkedPayments] = await Promise.all([
+        prisma.invoice.findMany({
+            where: { id: { in: invoiceIds } },
+            select: {
+                id: true,
+                net_amount: true,
+                customer_net_amount: true,
+                custom_code1: true,
+                status: true,
+            },
+        }),
+        prisma.invoicePayment.findMany({
+            where: { invoice_id: { in: invoiceIds } },
+            select: {
+                ...LINKED_PAYMENT_RECALC_SELECT,
+                invoice_id: true,
+            },
+        }),
+    ]);
+    const paymentsByInvoiceId = new Map();
+    for (const payment of linkedPayments) {
+        if (payment.invoice_id == null)
+            continue;
+        const list = paymentsByInvoiceId.get(payment.invoice_id) ?? [];
+        list.push(payment);
+        paymentsByInvoiceId.set(payment.invoice_id, list);
+    }
+    const modifiedAt = new Date();
+    await (0, bulkWrite_1.commitOps)(prisma, invoices.map((invoice) => prisma.invoice.update({
+        where: { id: invoice.id },
+        data: buildInvoicePaidUpdate(invoice, paymentsByInvoiceId.get(invoice.id) ?? [], targets.get(invoice.id), modifiedAt),
+    })));
 }
 async function linkDeferredPaymentAndRecalc(prisma, params) {
     const { invoicePaymentId, invoiceId, forceRecalc = false } = params;
@@ -114,7 +160,7 @@ async function linkDeferredPaymentAndRecalc(prisma, params) {
         }
         const linkedPayment = await tx.invoicePayment.update({
             where: { id: invoicePaymentId },
-            data: { invoice_id: invoiceId },
+            data: { invoice_id: invoiceId, modified_at: new Date() },
         });
         const updatedInvoice = await recalculateInvoiceFromLinkedPayments(tx, invoiceId);
         return {

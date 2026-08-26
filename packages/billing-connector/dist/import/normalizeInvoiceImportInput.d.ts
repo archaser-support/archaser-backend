@@ -12,7 +12,7 @@ export interface NormalizedInvoiceInput {
     status?: string;
     credit_for_invoice_number?: string;
     actual_reporting_date?: string | Date;
-    priority_erp_debit?: string;
+    custom_code1?: string;
 }
 /**
  * Normalize invoice import rows from file catalog or billing connector field names.

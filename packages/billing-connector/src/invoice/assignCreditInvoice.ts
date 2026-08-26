@@ -71,6 +71,7 @@ export async function assignCreditInvoice(
                 credit_for_invoice_id: targetInvoiceId,
                 credit_for_invoice_number:
                     currentTargetInvoice.invoice_number || null,
+                modified_at: new Date(),
             },
         });
         const targetInvoice = await tx.invoice.update({
@@ -80,6 +81,7 @@ export async function assignCreditInvoice(
                 customer_net_amount: newCustomerNetAmount,
                 outstanding_debt: newOutstandingDebt,
                 customer_outstanding_debt: newCustomerOutstandingDebt,
+                modified_at: new Date(),
             },
         });
         return { creditInvoice, targetInvoice };

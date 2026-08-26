@@ -373,6 +373,7 @@ export class BillingConnectorService {
             data: {
                 sync_mode: "BACKFILL",
                 modified_by: userId,
+                modified_at: new Date(),
             },
         });
     }
@@ -443,6 +444,7 @@ export class BillingConnectorService {
                 return "Active" as const;
             })(),
             modified_by: userId,
+            modified_at: new Date(),
             created_by: existing?.created_by ?? userId,
         };
 

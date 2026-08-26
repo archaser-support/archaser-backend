@@ -12,7 +12,7 @@ export interface NormalizedInvoiceInput {
     status?: string;
     credit_for_invoice_number?: string;
     actual_reporting_date?: string | Date;
-    priority_erp_debit?: string;
+    custom_code1?: string;
 }
 
 function toOptionalNumber(value: unknown): number | undefined {
@@ -32,6 +32,15 @@ function toOptionalString(value: unknown): string | undefined {
     return trimmed ? trimmed : undefined;
 }
 
+function toCustomCode1(value: unknown): string | undefined {
+    const trimmed = toOptionalString(value);
+    if (!trimmed) {
+        return undefined;
+    }
+    const upper = trimmed.toUpperCase();
+    return upper === "C" || upper === "D" ? upper : trimmed;
+}
+
 /**
  * Normalize invoice import rows from file catalog or billing connector field names.
  */
@@ -40,17 +49,17 @@ export function normalizeInvoiceImportInput(
     accountId: number
 ): NormalizedInvoiceInput {
     const raw = (row._rawRecord as Record<string, unknown> | undefined) ?? row;
-    const rawDebit =
-        row.DEBIT ??
-        raw.DEBIT ??
-        row.debit ??
-        raw.debit ??
-        row.priority_erp_debit ??
-        raw.priority_erp_debit;
-    const debitFlag =
-        typeof rawDebit === "string" ? rawDebit.trim().toUpperCase() : undefined;
-    const priorityErpDebit =
-        debitFlag === "C" || debitFlag === "D" ? debitFlag : undefined;
+    const mappedCustomCode1 =
+        toCustomCode1(row.custom_code1) ?? toCustomCode1(raw.custom_code1);
+    const debitFlag = (
+        toOptionalString(row.DEBIT) ??
+        toOptionalString(raw.DEBIT) ??
+        toOptionalString(row.debit) ??
+        toOptionalString(raw.debit)
+    )?.toUpperCase();
+    const customCode1 =
+        mappedCustomCode1 ??
+        (debitFlag === "C" || debitFlag === "D" ? debitFlag : undefined);
 
     const amount =
         toOptionalNumber(row.amount) ?? toOptionalNumber(row.base_amount) ?? 0;
@@ -70,7 +79,7 @@ export function normalizeInvoiceImportInput(
         amount,
         customer_amount: customerAmount,
         customer_currency: customerCurrency,
-        ...(priorityErpDebit ? { priority_erp_debit: priorityErpDebit } : {}),
+        ...(customCode1 ? { custom_code1: customCode1 } : {}),
     };
 
     const dueDate = toOptionalString(row.due_date);

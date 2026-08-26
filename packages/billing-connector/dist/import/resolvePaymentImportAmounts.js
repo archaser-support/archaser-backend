@@ -14,7 +14,7 @@ function isInvalidInvoiceRatio(invoiceAmount, invoiceCustomerAmount) {
  * Resolve base and customer payment amounts for import.
  * When base `amount` is omitted, derives it from the linked invoice's embedded FX ratio.
  */
-function resolvePaymentImportAmounts(row, invoice) {
+function resolvePaymentImportAmounts(row, invoice, options) {
     const customer_amount = row.customer_amount;
     const customer_currency = row.customer_currency.trim();
     if (customer_amount === 0) {
@@ -23,8 +23,9 @@ function resolvePaymentImportAmounts(row, invoice) {
             errorKey: "import.validation.paymentCustomerAmountZero",
         };
     }
-    const rowCurrency = normalizeCurrencyCode(customer_currency);
-    const invoiceCurrency = normalizeCurrencyCode(invoice.customer_currency);
+    const normalize = options?.normalizeCurrency ?? normalizeCurrencyCode;
+    const rowCurrency = normalize(customer_currency);
+    const invoiceCurrency = normalize(invoice.customer_currency);
     if (invoiceCurrency && rowCurrency !== invoiceCurrency) {
         return {
             ok: false,

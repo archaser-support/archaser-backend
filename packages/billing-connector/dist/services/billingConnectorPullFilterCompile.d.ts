@@ -13,6 +13,7 @@ export interface RulesEntityPullFilter {
     rules: PullFilterRule[];
 }
 export type EntityPullFilterConfig = AdvancedEntityPullFilter | RulesEntityPullFilter;
+export declare function andODataFilters(...parts: Array<string | null | undefined>): string | null;
 /**
  * Compile stored entity filter to OData $filter text.
  * Rules AND together. Advanced mode returns the stored expression as-is.

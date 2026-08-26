@@ -4,6 +4,7 @@ import {
     ForbiddenException,
     HttpException,
     Injectable,
+    Logger,
     NotFoundException,
 } from "@nestjs/common";
 import type { ImportType } from "@prisma/client";
@@ -48,8 +49,10 @@ import {
     runInProcessSync,
     runPreviewSync,
     clearRunningSync,
+    resolveExtensionAttachmentInput,
     toPublicPullFilters,
     upsertSyncRun,
+    patchSyncRunEntityStats,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
     type PullFiltersMap,
@@ -90,6 +93,23 @@ function parseStringArray(raw: unknown): string[] {
     return raw.filter((item): item is string => typeof item === "string");
 }
 
+function parsePullDateField(raw: unknown): string | null {
+    if (raw == null || raw === "") {
+        return null;
+    }
+    const trimmed = String(raw).trim();
+    if (!trimmed) {
+        return null;
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+        throw new BadRequestException({
+            error: `Invalid date field "${trimmed}"`,
+            code: "INVALID_PULL_DATE_FIELD",
+        });
+    }
+    return trimmed;
+}
+
 function parseExampleValues(raw: unknown): Record<string, unknown> {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
         return {};
@@ -114,6 +134,8 @@ function rethrowCoded(error: unknown): never {
 
 @Injectable()
 export class BillingConnectorApiService {
+    private readonly logger = new Logger(BillingConnectorApiService.name);
+
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService
@@ -169,6 +191,8 @@ export class BillingConnectorApiService {
         entity_set_catalog?: unknown;
         entity_set_catalog_fetched_at?: Date | null;
         preview_passes?: unknown;
+        extension_key?: string | null;
+        extension_config?: unknown;
         last_connection_test_at: Date | null;
         last_connection_error: string | null;
         created_at: Date;
@@ -233,6 +257,15 @@ export class BillingConnectorApiService {
             backfill_options_locked: areBackfillOptionsLocked(
                 connector.backfill_started_at
             ),
+            extension_key: connector.extension_key ?? null,
+            extension_config:
+                connector.extension_config &&
+                typeof connector.extension_config === "object" &&
+                !Array.isArray(connector.extension_config)
+                    ? (connector.extension_config as Record<string, unknown>)
+                    : connector.extension_key
+                      ? {}
+                      : null,
             preview_passes: parsePreviewPassesMap(connector.preview_passes),
             last_connection_test_at:
                 connector.last_connection_test_at?.toISOString() ?? null,
@@ -423,6 +456,42 @@ export class BillingConnectorApiService {
             data.skip_reporting_breach_on_backfill = skipBreachChange.value;
         }
 
+        let extensionPatch;
+        try {
+            extensionPatch = resolveExtensionAttachmentInput({
+                extension_key:
+                    body.extension_key === undefined
+                        ? undefined
+                        : (body.extension_key as string | null),
+                extension_config:
+                    body.extension_config === undefined
+                        ? undefined
+                        : body.extension_config,
+                existingKey: existing?.extension_key ?? null,
+            });
+        } catch (error: unknown) {
+            const err = error as { code?: string; message?: string };
+            if (
+                err?.code === "UNKNOWN_EXTENSION_KEY" ||
+                err?.code === "INVALID_EXTENSION_CONFIG" ||
+                err?.code === "EXTENSION_KEY_REQUIRED"
+            ) {
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid extension attachment",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (extensionPatch) {
+            if (extensionPatch.extension_key !== undefined) {
+                data.extension_key = extensionPatch.extension_key;
+            }
+            if (extensionPatch.extension_config !== undefined) {
+                data.extension_config = extensionPatch.extension_config;
+            }
+        }
+
         let nextEntitySets: EntitySetsMap | undefined;
         try {
             nextEntitySets =
@@ -567,6 +636,7 @@ export class BillingConnectorApiService {
                     last_connection_error: result.ok
                         ? null
                         : result.error ?? "Connection failed",
+                    modified_at: new Date(),
                 },
             });
         }
@@ -683,7 +753,54 @@ export class BillingConnectorApiService {
             trigger,
         });
         upsertSyncRun(accountId, runningSummary);
+        const onLog = (message: string) => {
+            this.logger.log(`[account ${accountId}] ${message}`);
+        };
+        onLog(`Starting ${mode} (execution ${executionId})`);
 
+        void this.runAcceptedSync({
+            accountId,
+            actor,
+            executionId,
+            mode: mode as "backfill" | "incremental",
+            trigger,
+            syncMode,
+            runningSummary,
+            onLog,
+        });
+
+        return {
+            result: {
+                ok: true,
+                accepted: true,
+                execution_id: executionId,
+                status: "RUNNING",
+                sync_mode: syncMode,
+                trigger,
+            },
+        };
+    }
+
+    private async runAcceptedSync(params: {
+        accountId: number;
+        actor: string | undefined;
+        executionId: string;
+        mode: "backfill" | "incremental";
+        trigger: string;
+        syncMode: string;
+        runningSummary: ConnectorSyncRunSummary;
+        onLog: (message: string) => void;
+    }) {
+        const {
+            accountId,
+            actor,
+            executionId,
+            mode,
+            trigger,
+            syncMode,
+            runningSummary,
+            onLog,
+        } = params;
         try {
             const result = await runInProcessSync({
                 prisma: this.db,
@@ -691,7 +808,16 @@ export class BillingConnectorApiService {
                 trigger,
                 userId: actor,
                 executionId,
-                mode: mode as "backfill" | "incremental",
+                mode,
+                onLog,
+                onProgress: (entityStats) => {
+                    patchSyncRunEntityStats(
+                        accountId,
+                        executionId,
+                        entityStats,
+                        runningSummary
+                    );
+                },
             });
             const completedAt = new Date();
             const status = result.cancelled
@@ -699,6 +825,11 @@ export class BillingConnectorApiService {
                 : result.ok
                   ? "SUCCESS"
                   : "FAILED";
+            onLog(
+                `Finished ${mode}: ${status}${
+                    result.error ? ` — ${result.error}` : ""
+                }`
+            );
             upsertSyncRun(accountId, {
                 ...runningSummary,
                 status,
@@ -706,28 +837,38 @@ export class BillingConnectorApiService {
                 duration_seconds: Math.max(
                     1,
                     Math.round(
-                        (completedAt.getTime() - startedAt.getTime()) / 1000
+                        (completedAt.getTime() -
+                            new Date(runningSummary.started_at).getTime()) /
+                            1000
                     )
                 ),
                 entity_stats: result.entity_stats ?? {},
                 error_message: result.error ?? null,
-                error_type: result.cancelled ? "cancelled" : result.error ?? null,
+                error_type: result.cancelled
+                    ? "cancelled"
+                    : result.error ?? null,
             });
-            return {
-                result: {
-                    ...result,
-                    execution_id: executionId,
-                    status,
-                    sync_mode: syncMode,
-                    trigger,
-                    duration_seconds: Math.max(
-                        1,
-                        Math.round(
-                            (completedAt.getTime() - startedAt.getTime()) / 1000
-                        )
-                    ),
-                },
-            };
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] ${mode} crashed: ${message}`
+            );
+            upsertSyncRun(accountId, {
+                ...runningSummary,
+                status: "FAILED",
+                completed_at: new Date().toISOString(),
+                duration_seconds: Math.max(
+                    1,
+                    Math.round(
+                        (Date.now() -
+                            new Date(runningSummary.started_at).getTime()) /
+                            1000
+                    )
+                ),
+                error_message: message,
+                error_type: "unexpected",
+            });
         } finally {
             clearRunningSync(accountId);
         }
@@ -776,6 +917,11 @@ export class BillingConnectorApiService {
                 error: "Billing connector not configured",
             });
         }
+        const running = getRunningSync(accountId);
+        if (running) {
+            requestConnectorSyncCancel(running.executionId);
+        }
+
         const entityType =
             typeof body.entity_type === "string" ? body.entity_type : null;
         if (
@@ -937,6 +1083,7 @@ export class BillingConnectorApiService {
                     discovered_example_values: {},
                     discovered_sample_count: null,
                     discovered_at: null,
+                    pull_date_field: null,
                 },
             };
         }
@@ -954,6 +1101,7 @@ export class BillingConnectorApiService {
                 ),
                 discovered_sample_count: row.discovered_sample_count,
                 discovered_at: row.discovered_at?.toISOString() ?? null,
+                pull_date_field: row.pull_date_field ?? null,
             },
         });
     }
@@ -997,6 +1145,10 @@ export class BillingConnectorApiService {
         }
         const isComplete = computeMappingCompleteness(importType, rules);
         const actor = this.accessScope.getEffectiveUserId(userInfo);
+        const pullDateField =
+            body.pull_date_field !== undefined
+                ? parsePullDateField(body.pull_date_field)
+                : undefined;
         const row = await this.db.connectorFieldMapping.upsert({
             where: {
                 connector_id_import_type: {
@@ -1010,12 +1162,18 @@ export class BillingConnectorApiService {
                 mapping: rules as never,
                 is_complete: isComplete,
                 modified_by: actor,
+                ...(pullDateField !== undefined
+                    ? { pull_date_field: pullDateField }
+                    : {}),
             },
             update: {
                 mapping: rules as never,
                 is_complete: isComplete,
                 modified_by: actor,
                 modified_at: new Date(),
+                ...(pullDateField !== undefined
+                    ? { pull_date_field: pullDateField }
+                    : {}),
             },
         });
         await this.db.billingConnector.update({
@@ -1040,6 +1198,7 @@ export class BillingConnectorApiService {
                 ),
                 discovered_sample_count: row.discovered_sample_count,
                 discovered_at: row.discovered_at?.toISOString() ?? null,
+                pull_date_field: row.pull_date_field ?? null,
             },
         });
     }

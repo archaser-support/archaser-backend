@@ -1,6 +1,9 @@
 import type { ImportType, Prisma } from "@prisma/client";
 
-import { compileEntityPullFilter } from "./billingConnectorPullFilterCompile";
+import {
+    andODataFilters,
+    compileEntityPullFilter,
+} from "./billingConnectorPullFilterCompile";
 
 export type PullFilterOperator =
     | "eq"
@@ -197,4 +200,83 @@ export function resolveEntityPullFilterOData(
 ): string | null {
     const map = parsePullFiltersMap(raw);
     return compileEntityPullFilter(map[importType]);
+}
+
+const ODATA_KEYWORDS = new Set([
+    "and",
+    "or",
+    "not",
+    "eq",
+    "ne",
+    "gt",
+    "ge",
+    "lt",
+    "le",
+    "true",
+    "false",
+    "null",
+    "startswith",
+    "contains",
+    "endswith",
+    "tolower",
+    "toupper",
+]);
+
+function isCustnameField(field: string): boolean {
+    return field.trim().toUpperCase() === "CUSTNAME";
+}
+
+/**
+ * Customer $filter that is safe to AND onto Invoice / Payment / Contact.
+ * Those entities share CUSTNAME; customer-only fields (CDES, …) would 400.
+ */
+export function resolveRelatedCustomerPullFilterOData(
+    raw: unknown
+): string | null {
+    const map = parsePullFiltersMap(raw);
+    const config = map.Customer;
+    if (!config) {
+        return null;
+    }
+    if (config.mode === "rules") {
+        if (
+            config.rules.length === 0 ||
+            !config.rules.every((rule) => isCustnameField(rule.field))
+        ) {
+            return null;
+        }
+        return compileEntityPullFilter(config);
+    }
+    const withoutLiterals = config.odata.replace(/'([^']|'')*'/g, "''");
+    const identifiers = withoutLiterals.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
+    const fields = identifiers.filter(
+        (token) => !ODATA_KEYWORDS.has(token.toLowerCase())
+    );
+    if (fields.length === 0 || !fields.every(isCustnameField)) {
+        return null;
+    }
+    return compileEntityPullFilter(config);
+}
+
+/**
+ * OData $filter for a live import pull: the entity's own pull filter, plus a
+ * CUSTNAME-only Customer filter on related entities so invoices/payments/
+ * contacts stay inside the same customer subset.
+ */
+export function resolveImportPullFilterOData(
+    raw: unknown,
+    importType: ImportType
+): string | null {
+    const entityFilter = resolveEntityPullFilterOData(raw, importType);
+    if (
+        importType !== "Invoice" &&
+        importType !== "Payment" &&
+        importType !== "Contact"
+    ) {
+        return entityFilter;
+    }
+    return andODataFilters(
+        resolveRelatedCustomerPullFilterOData(raw),
+        entityFilter
+    );
 }

@@ -160,6 +160,7 @@ export async function updateInvoicePayment(
                 reference: data.reference,
                 customer_amount: data.customer_amount,
                 modified_by: data.modified_by ?? null,
+                modified_at: new Date(),
             },
         });
 

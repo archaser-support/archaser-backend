@@ -27,6 +27,24 @@ export interface RunStagedExtensionSyncOptions {
     userId?: string;
     skipReportingBreach?: boolean;
     importBatch?: ImportBatchFn;
+    onLog?: (message: string) => void;
+    /** Live pulled/imported counts for GET /sync-runs polling. */
+    onProgress?: (stats: RunStagedExtensionSyncResult["stats"]) => void;
+    /** Cooperative cancel — checked between pages and after each import. */
+    shouldCancel?: () => boolean;
+    /**
+     * Backfill cutover: Invoice/Payment $filter by created date (IVDATE/PAYDATE).
+     * Customers and contacts still pull full history.
+     */
+    pullCreatedOnOrAfter?: boolean;
+    /** Stored BillingConnector.pull_filters — applied on every live pull. */
+    pullFilters?: unknown;
+    /** Stored BillingConnector.entity_sets — overrides TOTARPAY / etc. */
+    entitySets?: unknown;
+    /** Per-entity mapping pull_date_field (admin pick). */
+    dateFieldByType?: Map<string, string | null>;
+    /** Incremental watermark overlap (minutes). */
+    overlapMinutes?: number;
 }
 export interface RunStagedExtensionSyncResult {
     ok: boolean;
@@ -44,13 +62,13 @@ export interface RunStagedExtensionSyncResult {
         paymentsImported: number;
         importErrors: number;
     };
+    cancelled?: boolean;
     error?: string;
 }
 /**
- * Staged path: for each time/date window, pull+map all enabled entities,
- * run the extension plugin once, then persist in platform entity order.
- * Plugin failure fails the current window only; prior windows stay imported.
- * Never falls back to importing pre-plugin mapped rows.
+ * Staged path: for each window and entity, pull one page, run the extension
+ * plugin on that page, then upsert immediately. Prior pages stay imported if
+ * a later page or window fails. Never falls back to importing pre-plugin rows.
  */
 export declare function runStagedExtensionSync(options: RunStagedExtensionSyncOptions): Promise<RunStagedExtensionSyncResult>;
 /**

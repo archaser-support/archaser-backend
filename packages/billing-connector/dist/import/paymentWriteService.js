@@ -87,6 +87,7 @@ async function updateInvoicePayment(prisma, data, options) {
                 reference: data.reference,
                 customer_amount: data.customer_amount,
                 modified_by: data.modified_by ?? null,
+                modified_at: new Date(),
             },
         });
         const previousInvoiceId = existing.invoice_id;

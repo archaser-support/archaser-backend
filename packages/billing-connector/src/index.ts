@@ -12,15 +12,19 @@ export {
 // Account extensions (registry)
 // ==============================
 export {
+    ACCOUNT_10149_EXTENSION_KEY,
     SAMPLE_NOOP_EXTENSION_KEY,
     listRegisteredExtensionKeys,
     getRegisteredExtension,
     isRegisteredExtensionKey,
     resolveExtensionAttachmentInput,
+    resolveAccountBillingExtension,
     type BillingAccountExtension,
     type ExtensionAttachmentUpsertInput,
     type ExtensionAttachmentUpsertPatch,
+    type ExtensionCreditPaymentCloseInput,
     type ExtensionEntityType,
+    type ExtensionLinkedPayment,
     type ExtensionMappedBatch,
     type ExtensionSyncWindow,
     type ExtensionTransformContext,
@@ -119,6 +123,7 @@ export {
 } from "./priority/samplePayloads";
 
 export { PriorityProviderClient } from "./priority/PriorityProviderClient";
+export { odataSelectFieldsFromMapping } from "./priority/prioritySelectFields";
 export {
     ConnectorFeature,
     type BillingProviderClient,
@@ -168,6 +173,8 @@ export {
     listChangedPullFilterEntities,
     mergePullFiltersPatch,
     pullFiltersToPrismaJson,
+    resolveEntityPullFilterOData,
+    resolveImportPullFilterOData,
     toPublicPullFilters,
     type PullFiltersMap,
 } from "./services/billingConnectorPullFilters";
@@ -178,10 +185,15 @@ export {
     listSyncRuns,
     registerRunningSync,
     upsertSyncRun,
+    patchSyncRunEntityStats,
+    entityStatsFromCounts,
     type ConnectorSyncRunSummary,
 } from "./sync/connectorSyncRuntime";
 
-export { requestConnectorSyncCancel } from "./sync/connectorSyncCancelRegistry";
+export {
+    requestConnectorSyncCancel,
+    isConnectorSyncCancelRequested,
+} from "./sync/connectorSyncCancelRegistry";
 
 export {
     runStagedExtensionSync,
@@ -204,5 +216,6 @@ export {
     updateAccountLastSyncDate,
     type EntityImportBatchOptions,
     type EntityImportBatchResult,
+    type EntityImportRowResult,
     type ImportEntityType,
 } from "./import/entityImporter";
