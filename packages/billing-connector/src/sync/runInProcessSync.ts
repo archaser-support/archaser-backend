@@ -20,7 +20,15 @@ import {
     type ImportEntityType,
 } from "../import/entityImporter";
 import { parseMappingRules, type MappingRule } from "../utils/connectorFieldUtils";
+import { PRIORITY_RATE_LIMITS } from "../priority/priorityApiContract";
+import { odataSelectFieldsFromMapping } from "../priority/prioritySelectFields";
+import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
+import { resolveImportPullFilterOData } from "../services/billingConnectorPullFilters";
 import { isConnectorSyncCancelRequested } from "./connectorSyncCancelRegistry";
+import {
+    entityStatsFromCounts,
+    type ConnectorEntityStats,
+} from "./connectorSyncRuntime";
 import {
     planDefaultSyncWindows,
     runStagedExtensionSync,
@@ -50,6 +58,10 @@ export interface RunInProcessSyncOptions {
     ) => BillingAccountExtension | undefined;
     /** Override importer (tests / dry-run verification). */
     importBatch?: ImportBatchFn;
+    /** Progress lines for the host process terminal (Nest Logger, tests). */
+    onLog?: (message: string) => void;
+    /** Live pulled/imported counts for GET /sync-runs polling. */
+    onProgress?: (entityStats: ConnectorEntityStats) => void;
 }
 
 export interface RunInProcessSyncResult {
@@ -95,6 +107,13 @@ const ENTITY_ORDER: ImportEntityType[] = [
     "Contact",
 ];
 
+function emitSyncLog(
+    onLog: ((message: string) => void) | undefined,
+    message: string
+): void {
+    onLog?.(message);
+}
+
 function emptyStats() {
     return {
         customersProcessed: 0,
@@ -109,47 +128,34 @@ function emptyStats() {
     };
 }
 
+function emitProgress(
+    onProgress: ((entityStats: ConnectorEntityStats) => void) | undefined,
+    stats: ReturnType<typeof emptyStats>
+): void {
+    onProgress?.(entityStatsFromCounts(stats));
+}
+
 function entityStatsFrom(stats: ReturnType<typeof emptyStats>) {
-    return {
-        Customer: {
-            pulled: stats.customersProcessed,
-            success: stats.customersImported,
-            failed: 0,
-            skipped: 0,
-        },
-        Contact: {
-            pulled: stats.contactsProcessed,
-            success: stats.contactsImported,
-            failed: 0,
-            skipped: 0,
-        },
-        Invoice: {
-            pulled: stats.invoicesProcessed,
-            success: stats.invoicesImported,
-            failed: 0,
-            skipped: 0,
-        },
-        Payment: {
-            pulled: stats.paymentsProcessed,
-            success: stats.paymentsImported,
-            failed: 0,
-            skipped: 0,
-        },
-    };
+    return entityStatsFromCounts(stats);
 }
 
 function attachSyncMeta(
     result: RunInProcessSyncResult,
     options: RunInProcessSyncOptions
 ): RunInProcessSyncResult {
-    const cancelled = options.executionId
-        ? isConnectorSyncCancelRequested(options.executionId)
-        : Boolean(result.cancelled);
+    const cancelled = isCancelRequested(options) || Boolean(result.cancelled);
     return {
         ...result,
         cancelled,
         entity_stats: result.entity_stats ?? entityStatsFrom(result.stats),
     };
+}
+
+function isCancelRequested(options: RunInProcessSyncOptions): boolean {
+    return Boolean(
+        options.executionId &&
+            isConnectorSyncCancelRequested(options.executionId)
+    );
 }
 
 function normalizeExtensionConfig(
@@ -193,11 +199,13 @@ async function runInProcessSyncBody(
         trigger = "manual",
         userId,
         dryRun = false,
+        onLog,
     } = options;
     const stats = emptyStats();
     const resolveExtension =
         options.resolveExtension ?? getRegisteredExtension;
     const importBatch = options.importBatch ?? importMappedEntityBatch;
+    const log = (message: string) => emitSyncLog(onLog, message);
 
     try {
         const connector = await prisma.billingConnector.findUnique({
@@ -205,6 +213,7 @@ async function runInProcessSyncBody(
         });
 
         if (!connector) {
+            log("No billing connector configured for this account");
             return {
                 ok: false,
                 accountId,
@@ -225,12 +234,21 @@ async function runInProcessSyncBody(
             skipReportingBreachOnBackfill:
                 connector.skip_reporting_breach_on_backfill === true,
         });
+        const enabled = enabledEntitiesFromConnector(
+            connector.enabled_entities
+        );
+        log(
+            `Starting ${options.mode ?? trigger}${dryRun ? " preview" : ""} for account ${accountId} (${enabled.join(", ")}${
+                extensionKey ? `; extension ${extensionKey}` : ""
+            })`
+        );
 
         // Fail fast at sync start — never silently fall back to legacy path.
         let extension: BillingAccountExtension | undefined;
         if (extensionKey) {
             extension = resolveExtension(extensionKey);
             if (!extension) {
+                log(`Unknown extension_key: ${extensionKey}`);
                 return {
                     ok: false,
                     accountId,
@@ -293,6 +311,7 @@ async function runInProcessSyncBody(
         }
 
         if (!options.skipConnectionTest && !options.provider) {
+            log("Testing ERP connection…");
             const connectionResult = await testPriorityConnection({
                 baseUrl: connector.base_url as string,
                 authType: connector.auth_type,
@@ -306,10 +325,12 @@ async function runInProcessSyncBody(
                     last_connection_error: connectionResult.ok
                         ? null
                         : connectionResult.error ?? null,
+                    modified_at: new Date(),
                 },
             });
 
             if (!connectionResult.ok) {
+                log(`Connection test failed: ${connectionResult.error ?? "unknown error"}`);
                 return {
                     ok: false,
                     accountId,
@@ -319,6 +340,7 @@ async function runInProcessSyncBody(
                     error: connectionResult.error,
                 };
             }
+            log("Connection test passed");
         }
 
         const client: BillingProviderClient =
@@ -327,6 +349,7 @@ async function runInProcessSyncBody(
                 baseUrl: connector.base_url as string,
                 authType: connector.auth_type,
                 credentials,
+                onLog,
             });
 
         const mappings = await prisma.connectorFieldMapping.findMany({
@@ -341,35 +364,51 @@ async function runInProcessSyncBody(
                 parseMappingRules(m.mapping),
             ])
         );
+        const entitySets = parseEntitySetsMap(connector.entity_sets);
+        const dateFieldByType = new Map<string, string | null>(
+            mappings.map((row) => {
+                const value =
+                    "pull_date_field" in row
+                        ? (row as { pull_date_field?: string | null })
+                              .pull_date_field
+                        : null;
+                const trimmed =
+                    typeof value === "string" ? value.trim() : "";
+                return [String(row.import_type), trimmed || null];
+            })
+        );
 
         // -------- Staged extension path --------
         if (extensionKey && extension) {
-            const enabled = enabledEntitiesFromConnector(
-                connector.enabled_entities
-            );
-
+            const isIncremental = options.mode === "incremental";
             let windows = options.windows;
             if (!windows) {
-                let earliest: Date | null = null;
-                for (const entityType of enabled) {
-                    const syncState =
-                        await prisma.connectorSyncState.findFirst({
-                            where: {
-                                connector_id: connector.id,
-                                entity_type: entityType,
-                            },
-                        });
-                    const watermark = syncState?.last_max_updated_at ?? null;
-                    if (
-                        watermark &&
-                        (!earliest || watermark < earliest)
-                    ) {
-                        earliest = watermark;
+                if (isIncremental) {
+                    let earliest: Date | null = null;
+                    for (const entityType of enabled) {
+                        const syncState =
+                            await prisma.connectorSyncState.findFirst({
+                                where: {
+                                    connector_id: connector.id,
+                                    entity_type: entityType,
+                                },
+                            });
+                        const watermark = syncState?.last_max_updated_at ?? null;
+                        if (
+                            watermark &&
+                            (!earliest || watermark < earliest)
+                        ) {
+                            earliest = watermark;
+                        }
                     }
+                    windows = planDefaultSyncWindows({
+                        earliestWatermark: earliest,
+                    });
+                } else {
+                    windows = planDefaultSyncWindows({
+                        earliestWatermark: connector.backfill_start_date ?? null,
+                    });
                 }
-                windows = planDefaultSyncWindows({
-                    earliestWatermark: earliest,
-                });
             }
 
             const staged = await runStagedExtensionSync({
@@ -388,9 +427,19 @@ async function runInProcessSyncBody(
                 userId,
                 skipReportingBreach,
                 importBatch,
+                onLog,
+                onProgress: (liveStats) =>
+                    emitProgress(options.onProgress, liveStats),
+                shouldCancel: () => isCancelRequested(options),
+                pullCreatedOnOrAfter:
+                    !isIncremental && Boolean(connector.backfill_start_date),
+                pullFilters: connector.pull_filters,
+                entitySets: connector.entity_sets,
+                dateFieldByType,
+                overlapMinutes: connector.sync_overlap_minutes,
             });
 
-            if (!dryRun) {
+            if (!dryRun && !staged.cancelled) {
                 await updateAccountLastSyncDate(prisma, accountId);
             }
 
@@ -400,8 +449,20 @@ async function runInProcessSyncBody(
                 staged.stats.invoicesImported +
                 staged.stats.paymentsImported;
 
+            const finishMessage = staged.cancelled
+                ? `Stopped by operator after importing ${imported} row(s)`
+                : dryRun
+                ? `Preview via ${trigger} (extension ${extensionKey}): processed without writes`
+                : `Synced via ${trigger} (extension ${extensionKey}): imported ${imported} rows (${staged.stats.importErrors} errors)`;
+            log(
+                staged.ok
+                    ? finishMessage
+                    : `Sync failed: ${staged.error ?? finishMessage}`
+            );
+
             return {
                 ok: staged.ok,
+                cancelled: staged.cancelled,
                 accountId,
                 provider: connector.provider,
                 stats: staged.stats,
@@ -415,9 +476,7 @@ async function runInProcessSyncBody(
                     error: w.error,
                     imported: w.imported,
                 })),
-                message: dryRun
-                    ? `Preview via ${trigger} (extension ${extensionKey}): processed without writes`
-                    : `Synced via ${trigger} (extension ${extensionKey}): imported ${imported} rows (${staged.stats.importErrors} errors)`,
+                message: finishMessage,
                 error: staged.error,
             };
         }
@@ -426,6 +485,7 @@ async function runInProcessSyncBody(
         if (dryRun) {
             // Preview without extension: pull+map only, no writes.
             for (const entityType of ENTITY_ORDER) {
+                if (!enabled.includes(entityType)) continue;
                 const mapping = mappingByType.get(entityType);
                 if (!mapping) continue;
                 const syncState = await prisma.connectorSyncState.findFirst({
@@ -436,7 +496,19 @@ async function runInProcessSyncBody(
                 });
                 const pullResult = await client.pull(entityType, {
                     since: syncState?.last_max_updated_at ?? null,
-                    pageSize: 100,
+                    preferredDateField: dateFieldByType.get(entityType) ?? null,
+                    overlapMinutes: connector.sync_overlap_minutes,
+                    pageSize: PRIORITY_RATE_LIMITS.recommendedPageSize,
+                    entitySet: entitySets[entityType] ?? null,
+                    filter: resolveImportPullFilterOData(
+                        connector.pull_filters,
+                        entityType
+                    ),
+                    select: odataSelectFieldsFromMapping({
+                        mappingRules: mappingRulesByType.get(entityType) ?? [],
+                        extraFields: ["UDATE"],
+                        entityType,
+                    }),
                 });
                 const processedKey =
                     `${entityType.toLowerCase()}sProcessed` as keyof typeof stats;
@@ -454,11 +526,27 @@ async function runInProcessSyncBody(
             };
         }
 
+        log("Using standard entity-by-entity path (no extension)");
         for (const entityType of ENTITY_ORDER) {
+            if (isCancelRequested(options)) {
+                log("Stopped by operator");
+                return {
+                    ok: true,
+                    cancelled: true,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    extension_key: null,
+                    dry_run: false,
+                    message: "Stopped by operator",
+                };
+            }
+            if (!enabled.includes(entityType)) continue;
             const mapping = mappingByType.get(entityType);
             if (!mapping) continue;
 
             try {
+                log(`Pulling ${entityType}…`);
                 const syncState = await prisma.connectorSyncState.findFirst({
                     where: {
                         connector_id: connector.id,
@@ -468,7 +556,19 @@ async function runInProcessSyncBody(
 
                 const pullResult = await client.pull(entityType, {
                     since: syncState?.last_max_updated_at ?? null,
-                    pageSize: 100,
+                    preferredDateField: dateFieldByType.get(entityType) ?? null,
+                    overlapMinutes: connector.sync_overlap_minutes,
+                    pageSize: PRIORITY_RATE_LIMITS.recommendedPageSize,
+                    entitySet: entitySets[entityType] ?? null,
+                    filter: resolveImportPullFilterOData(
+                        connector.pull_filters,
+                        entityType
+                    ),
+                    select: odataSelectFieldsFromMapping({
+                        mappingRules: mappingRulesByType.get(entityType) ?? [],
+                        extraFields: ["UDATE"],
+                        entityType,
+                    }),
                 });
 
                 const processedKey =
@@ -477,7 +577,14 @@ async function runInProcessSyncBody(
                     `${entityType.toLowerCase()}sImported` as keyof typeof stats;
                 (stats as Record<string, number>)[processedKey] =
                     pullResult.records.length;
+                log(
+                    `Pulled ${entityType}: ${pullResult.records.length} record(s)`
+                );
+                emitProgress(options.onProgress, stats);
 
+                log(
+                    `Importing ${pullResult.records.length} ${entityType} row(s)…`
+                );
                 const importResult: EntityImportBatchResult = await importBatch(
                     prisma,
                     entityType,
@@ -485,11 +592,15 @@ async function runInProcessSyncBody(
                     accountId,
                     mapping.mapping,
                     userId,
-                    { skipReportingBreach }
+                    { skipReportingBreach, onLog, shouldCancel: () => isCancelRequested(options) }
                 );
                 (stats as Record<string, number>)[importedKey] =
                     importResult.success;
                 stats.importErrors += importResult.failed;
+                log(
+                    `Imported ${entityType}: ${importResult.success} success, ${importResult.failed} failed`
+                );
+                emitProgress(options.onProgress, stats);
 
                 const maxUpdated =
                     extractMaxUpdatedAt(
@@ -509,6 +620,7 @@ async function runInProcessSyncBody(
                         last_successful_run_at: new Date(),
                         last_attempt_at: new Date(),
                         last_max_updated_at: maxUpdated,
+                        backfill_records_pulled: pullResult.records.length,
                         last_error:
                             importResult.failed > 0
                                 ? importResult.errors.slice(0, 3).join("; ")
@@ -518,6 +630,7 @@ async function runInProcessSyncBody(
                         last_successful_run_at: new Date(),
                         last_attempt_at: new Date(),
                         last_max_updated_at: maxUpdated,
+                        backfill_records_pulled: pullResult.records.length,
                         last_error:
                             importResult.failed > 0
                                 ? importResult.errors.slice(0, 3).join("; ")
@@ -527,6 +640,7 @@ async function runInProcessSyncBody(
             } catch (err) {
                 const message =
                     err instanceof Error ? err.message : "Unknown error";
+                log(`${entityType} sync failed: ${message}`);
                 stats.importErrors += 1;
                 await prisma.connectorSyncState.upsert({
                     where: {
@@ -557,6 +671,10 @@ async function runInProcessSyncBody(
             stats.invoicesImported +
             stats.paymentsImported;
 
+        log(
+            `Synced via ${trigger}: imported ${imported} rows (${stats.importErrors} errors)`
+        );
+
         return {
             ok: stats.importErrors === 0,
             accountId,
@@ -572,6 +690,7 @@ async function runInProcessSyncBody(
         };
     } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
+        log(`Sync failed with unexpected error: ${message}`);
         return {
             ok: false,
             accountId,

@@ -15,19 +15,26 @@ function toOptionalString(value) {
     const trimmed = String(value).trim();
     return trimmed ? trimmed : undefined;
 }
+function toCustomCode1(value) {
+    const trimmed = toOptionalString(value);
+    if (!trimmed) {
+        return undefined;
+    }
+    const upper = trimmed.toUpperCase();
+    return upper === "C" || upper === "D" ? upper : trimmed;
+}
 /**
  * Normalize invoice import rows from file catalog or billing connector field names.
  */
 function normalizeInvoiceImportInput(row, accountId) {
     const raw = row._rawRecord ?? row;
-    const rawDebit = row.DEBIT ??
-        raw.DEBIT ??
-        row.debit ??
-        raw.debit ??
-        row.priority_erp_debit ??
-        raw.priority_erp_debit;
-    const debitFlag = typeof rawDebit === "string" ? rawDebit.trim().toUpperCase() : undefined;
-    const priorityErpDebit = debitFlag === "C" || debitFlag === "D" ? debitFlag : undefined;
+    const mappedCustomCode1 = toCustomCode1(row.custom_code1) ?? toCustomCode1(raw.custom_code1);
+    const debitFlag = (toOptionalString(row.DEBIT) ??
+        toOptionalString(raw.DEBIT) ??
+        toOptionalString(row.debit) ??
+        toOptionalString(raw.debit))?.toUpperCase();
+    const customCode1 = mappedCustomCode1 ??
+        (debitFlag === "C" || debitFlag === "D" ? debitFlag : undefined);
     const amount = toOptionalNumber(row.amount) ?? toOptionalNumber(row.base_amount) ?? 0;
     const customerAmount = toOptionalNumber(row.customer_amount) ??
         toOptionalNumber(row.invoice_amount);
@@ -41,7 +48,7 @@ function normalizeInvoiceImportInput(row, accountId) {
         amount,
         customer_amount: customerAmount,
         customer_currency: customerCurrency,
-        ...(priorityErpDebit ? { priority_erp_debit: priorityErpDebit } : {}),
+        ...(customCode1 ? { custom_code1: customCode1 } : {}),
     };
     const dueDate = toOptionalString(row.due_date);
     if (dueDate) {

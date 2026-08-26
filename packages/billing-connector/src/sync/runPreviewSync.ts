@@ -212,7 +212,10 @@ export async function runPreviewSync(params: {
     );
     await params.prisma.billingConnector.update({
         where: { id: connector.id },
-        data: { preview_passes: previewPassesToPrismaJson(nextPasses) },
+        data: {
+            preview_passes: previewPassesToPrismaJson(nextPasses),
+            modified_at: new Date(),
+        },
     });
 
     const completedAt = new Date();
@@ -353,6 +356,7 @@ export async function discoverConnectorFields(params: {
                 discovered.exampleValues as Prisma.InputJsonValue,
             discovered_sample_count: discovered.sampleCount,
             discovered_at: discoveredAt,
+            modified_at: discoveredAt,
             ...(params.userId ? { modified_by: params.userId } : {}),
         },
     });

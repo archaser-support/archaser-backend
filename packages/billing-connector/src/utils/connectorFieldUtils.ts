@@ -67,7 +67,7 @@ export function getImportEntityFieldCatalog(importType: ImportType): {
                 "customer_total_paid",
                 "currency",
                 "credit_for_invoice_number",
-                "priority_erp_debit",
+                "custom_code1",
             ],
             requiredFields: [
                 "customer_number",
@@ -154,7 +154,7 @@ const PRIORITY_DEFAULT_ERP_FIELDS: Partial<
         invoice_amount: "TOTPRICE",
         currency: "CODE",
         credit_for_invoice_number: "CREDITFOR",
-        priority_erp_debit: "DEBIT",
+        custom_code1: "DEBIT",
     },
     Payment: {
         reference: "IVNUM",

@@ -4,6 +4,7 @@ exports.PriorityProviderClient = void 0;
 const BillingProviderClient_1 = require("../billing/BillingProviderClient");
 const priorityApiContract_1 = require("./priorityApiContract");
 const connectorPaymentSynthetics_1 = require("../payment/connectorPaymentSynthetics");
+const resolveTablePullShape_1 = require("./resolveTablePullShape");
 const PriorityClient_1 = require("./PriorityClient");
 function normalizeServiceRoot(baseUrl) {
     return baseUrl.replace(/\/+$/, "");
@@ -36,8 +37,50 @@ function buildQueryString(params) {
     const search = new URLSearchParams(params);
     return search.toString();
 }
+function summarizePriorityHttpError(status, body) {
+    const trimmed = body.trim();
+    if (!trimmed) {
+        return `HTTP ${status}`;
+    }
+    if (/^<!DOCTYPE/i.test(trimmed) || /^<html/i.test(trimmed)) {
+        return `HTTP ${status} HTML gateway error`;
+    }
+    return trimmed.slice(0, 200);
+}
+function andODataFilters(...parts) {
+    const cleaned = parts
+        .map((part) => (typeof part === "string" ? part.trim() : ""))
+        .filter((part) => part.length > 0);
+    if (cleaned.length === 0) {
+        return undefined;
+    }
+    if (cleaned.length === 1) {
+        return cleaned[0];
+    }
+    return cleaned.map((part) => `(${part})`).join(" and ");
+}
+function odataLiteral(value) {
+    const trimmed = value.trim();
+    // Keyset order-by fields (CUSTNAME, IVNUM, PAYNUM, FNCNUM) are Edm.String
+    // even when the value looks numeric. Unquoted 10700194 is Edm.Int32 and
+    // Priority rejects `CUSTNAME gt 10700194`.
+    return `'${trimmed.replace(/'/g, "''")}'`;
+}
+function recordOrderByValue(record, orderBy) {
+    const raw = record[orderBy];
+    if (raw == null) {
+        return null;
+    }
+    const text = String(raw).trim();
+    return text.length > 0 ? text : null;
+}
+function dateGeIso(date, overlapMinutes) {
+    const ms = date.getTime() - overlapMinutes * 60 * 1000;
+    return new Date(ms).toISOString();
+}
 class PriorityProviderClient {
     constructor(config) {
+        this.tableColumnsByKey = new Map();
         this.config = config;
     }
     supportsFeature(feature) {
@@ -83,30 +126,46 @@ class PriorityProviderClient {
         const safeSkip = Number.isFinite(skip) && skip >= 0 ? skip : 0;
         const serviceRoot = normalizeServiceRoot(this.config.baseUrl);
         const collectionUrl = (0, priorityApiContract_1.buildEntityCollectionUrl)(serviceRoot, entity, options.entitySet);
-        const params = { $top: String(pageSize) };
-        if (entity === "Invoice" && priorityApiContract_1.PRIORITY_CREDIT_NOTE_HANDLING.subformSet) {
-            params.$expand = priorityApiContract_1.PRIORITY_CREDIT_NOTE_HANDLING.subformSet;
+        const columns = (0, resolveTablePullShape_1.columnNameSet)(await this.columnsForTable(entity, options.entitySet));
+        const endpoint = (0, priorityApiContract_1.getPriorityEntityEndpoint)(entity);
+        const orderBy = (0, resolveTablePullShape_1.pickOrderByField)(endpoint.defaultOrderBy, columns);
+        const needsDate = options.createdOnOrAfter != null || options.since != null;
+        const dateField = (0, resolveTablePullShape_1.pickDateField)(options.preferredDateField, columns);
+        if (needsDate && !dateField) {
+            throw new Error("No date column on this table");
         }
-        if (safeSkip > 0) {
+        const selectFields = (0, resolveTablePullShape_1.intersectSelectFields)([
+            orderBy,
+            ...(dateField ? [dateField] : []),
+            ...(options.select ?? []),
+        ], columns, [orderBy, ...(dateField ? [dateField] : [])]);
+        const params = { $top: String(pageSize) };
+        // Do not $expand CINVOICESCONT_SUBFORM on list pulls. Priority/idigital
+        // returns HTTP 502 (HTML gateway page) after ~2 minutes on that query.
+        // credit_for still maps from parent CREDITFOR / PIVNUM when present.
+        const useKeyset = options.pagination === "keyset" || Boolean(options.afterKey?.trim());
+        if (!useKeyset && safeSkip > 0) {
             params.$skip = String(safeSkip);
         }
-        const endpoint = (0, priorityApiContract_1.getPriorityEntityEndpoint)(entity);
-        const entitySetOverride = options.entitySet?.trim();
-        const orderBy = entitySetOverride &&
-            (entitySetOverride.includes("ARFNCITEMS") ||
-                entitySetOverride.includes("FNCITEMS"))
-            ? "FNCNUM"
-            : endpoint.defaultOrderBy;
         params.$orderby = orderBy;
-        if (options.filter && options.filter.trim()) {
-            params.$filter = options.filter.trim();
+        if (options.select != null && selectFields.length > 0) {
+            params.$select = selectFields.join(",");
         }
-        if (options.since) {
-            Object.assign(params, (0, priorityApiContract_1.buildIncrementalQueryParams)({
-                watermarkIso: options.since.toISOString(),
-                overlapMinutes: options.overlapMinutes ?? 0,
-                preferSince: true,
-            }));
+        const afterKey = options.afterKey?.trim();
+        const keysetFilter = useKeyset && afterKey
+            ? `${orderBy} gt ${odataLiteral(afterKey)}`
+            : null;
+        const dateBound = options.createdOnOrAfter ?? options.since;
+        const overlapMinutes = options.createdOnOrAfter == null && options.since
+            ? (options.overlapMinutes ?? 0)
+            : 0;
+        const dateFilter = dateField && dateBound
+            ? `${dateField} ge ${dateGeIso(dateBound, overlapMinutes)}`
+            : null;
+        (0, resolveTablePullShape_1.assertFilterFieldsExist)(options.filter, columns);
+        const combinedFilter = andODataFilters(options.filter, dateFilter, keysetFilter);
+        if (combinedFilter) {
+            params.$filter = combinedFilter;
         }
         const url = `${collectionUrl}?${buildQueryString(params)}`;
         const payload = await this.fetchJson(url);
@@ -119,19 +178,54 @@ class PriorityProviderClient {
             ? (0, connectorPaymentSynthetics_1.applyPaymentSyntheticsToRecords)(rawRecords)
             : rawRecords;
         const hasMore = records.length === pageSize;
-        const nextCursor = hasMore ? String(safeSkip + records.length) : null;
+        const lastKey = records.length
+            ? recordOrderByValue(records[records.length - 1], orderBy)
+            : null;
+        const nextCursor = useKeyset
+            ? hasMore
+                ? lastKey
+                : null
+            : hasMore
+                ? String(safeSkip + records.length)
+                : null;
         return {
             records,
             nextCursor,
             hasMore,
         };
     }
+    async columnsForTable(entity, entitySet) {
+        if (!(0, priorityApiContract_1.isPriorityEntityImportType)(entity)) {
+            throw new Error(`Unsupported entity: ${entity}`);
+        }
+        const key = `${entity}:${entitySet?.trim() ?? ""}`;
+        const cached = this.tableColumnsByKey.get(key);
+        if (cached) {
+            return cached;
+        }
+        this.config.onLog?.(`Sampling ${entity} columns (${entitySet?.trim() || "default table"})…`);
+        const sampled = await (0, PriorityClient_1.fetchPriorityTableColumns)(this.config, entity, {
+            entitySet,
+        });
+        if (!sampled.ok) {
+            throw new Error(sampled.error ?? "Failed to sample Priority table columns");
+        }
+        if (sampled.columns.length === 0) {
+            throw new Error("This table returned no columns; cannot build a safe request");
+        }
+        this.tableColumnsByKey.set(key, sampled.columns);
+        return sampled.columns;
+    }
     async fetchJson(url) {
         const authorization = buildAuthorizationHeader(this.config.authType, this.config.credentials);
+        const timeoutSeconds = priorityApiContract_1.PRIORITY_RATE_LIMITS.requestTimeoutSeconds;
+        const startedAt = Date.now();
+        this.config.onLog?.(`Priority GET ${url} (timeout ${timeoutSeconds}s)`);
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), priorityApiContract_1.PRIORITY_RATE_LIMITS.requestTimeoutSeconds * 1000);
+        const timeout = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+        let response;
         try {
-            const response = await fetch(url, {
+            response = await fetch(url, {
                 method: "GET",
                 headers: {
                     Accept: "application/json",
@@ -139,18 +233,33 @@ class PriorityProviderClient {
                 },
                 signal: controller.signal,
             });
-            if (!response.ok) {
-                const body = await response.text().catch(() => "");
-                const detail = body ? body.slice(0, 200) : response.statusText;
-                const error = new Error(`Priority returned ${response.status}: ${detail}`);
-                error.statusCode = response.status;
-                throw error;
+        }
+        catch (err) {
+            const elapsedMs = Date.now() - startedAt;
+            if (controller.signal.aborted) {
+                const message = `Priority request timed out after ${elapsedMs}ms (${timeoutSeconds}s limit)`;
+                this.config.onLog?.(message);
+                throw new Error(message);
             }
-            return response.json();
+            const message = err instanceof Error ? err.message : String(err);
+            this.config.onLog?.(`Priority request failed after ${elapsedMs}ms: ${message}`);
+            throw err;
         }
         finally {
             clearTimeout(timeout);
         }
+        const elapsedMs = Date.now() - startedAt;
+        if (!response.ok) {
+            const body = await response.text().catch(() => "");
+            const summary = summarizePriorityHttpError(response.status, body);
+            this.config.onLog?.(`Priority HTTP ${response.status} after ${elapsedMs}ms: ${summary}`);
+            const error = new Error(`Priority returned ${response.status}: ${summary}`);
+            error.statusCode = response.status;
+            throw error;
+        }
+        const payload = await response.json();
+        this.config.onLog?.(`Priority HTTP ${response.status} after ${elapsedMs}ms`);
+        return payload;
     }
 }
 exports.PriorityProviderClient = PriorityProviderClient;

@@ -7,6 +7,8 @@ exports.pullFiltersToPrismaJson = pullFiltersToPrismaJson;
 exports.listChangedPullFilterEntities = listChangedPullFilterEntities;
 exports.toPublicPullFilters = toPublicPullFilters;
 exports.resolveEntityPullFilterOData = resolveEntityPullFilterOData;
+exports.resolveRelatedCustomerPullFilterOData = resolveRelatedCustomerPullFilterOData;
+exports.resolveImportPullFilterOData = resolveImportPullFilterOData;
 const billingConnectorPullFilterCompile_1 = require("./billingConnectorPullFilterCompile");
 exports.PULL_FILTER_OPERATORS = [
     "eq",
@@ -139,4 +141,65 @@ function toPublicPullFilters(raw) {
 function resolveEntityPullFilterOData(raw, importType) {
     const map = parsePullFiltersMap(raw);
     return (0, billingConnectorPullFilterCompile_1.compileEntityPullFilter)(map[importType]);
+}
+const ODATA_KEYWORDS = new Set([
+    "and",
+    "or",
+    "not",
+    "eq",
+    "ne",
+    "gt",
+    "ge",
+    "lt",
+    "le",
+    "true",
+    "false",
+    "null",
+    "startswith",
+    "contains",
+    "endswith",
+    "tolower",
+    "toupper",
+]);
+function isCustnameField(field) {
+    return field.trim().toUpperCase() === "CUSTNAME";
+}
+/**
+ * Customer $filter that is safe to AND onto Invoice / Payment / Contact.
+ * Those entities share CUSTNAME; customer-only fields (CDES, …) would 400.
+ */
+function resolveRelatedCustomerPullFilterOData(raw) {
+    const map = parsePullFiltersMap(raw);
+    const config = map.Customer;
+    if (!config) {
+        return null;
+    }
+    if (config.mode === "rules") {
+        if (config.rules.length === 0 ||
+            !config.rules.every((rule) => isCustnameField(rule.field))) {
+            return null;
+        }
+        return (0, billingConnectorPullFilterCompile_1.compileEntityPullFilter)(config);
+    }
+    const withoutLiterals = config.odata.replace(/'([^']|'')*'/g, "''");
+    const identifiers = withoutLiterals.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
+    const fields = identifiers.filter((token) => !ODATA_KEYWORDS.has(token.toLowerCase()));
+    if (fields.length === 0 || !fields.every(isCustnameField)) {
+        return null;
+    }
+    return (0, billingConnectorPullFilterCompile_1.compileEntityPullFilter)(config);
+}
+/**
+ * OData $filter for a live import pull: the entity's own pull filter, plus a
+ * CUSTNAME-only Customer filter on related entities so invoices/payments/
+ * contacts stay inside the same customer subset.
+ */
+function resolveImportPullFilterOData(raw, importType) {
+    const entityFilter = resolveEntityPullFilterOData(raw, importType);
+    if (importType !== "Invoice" &&
+        importType !== "Payment" &&
+        importType !== "Contact") {
+        return entityFilter;
+    }
+    return (0, billingConnectorPullFilterCompile_1.andODataFilters)(resolveRelatedCustomerPullFilterOData(raw), entityFilter);
 }

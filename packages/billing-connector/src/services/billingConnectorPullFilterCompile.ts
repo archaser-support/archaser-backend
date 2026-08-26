@@ -26,7 +26,7 @@ export type EntityPullFilterConfig =
     | AdvancedEntityPullFilter
     | RulesEntityPullFilter;
 
-function andODataFilters(
+export function andODataFilters(
     ...parts: Array<string | null | undefined>
 ): string | null {
     const cleaned = parts

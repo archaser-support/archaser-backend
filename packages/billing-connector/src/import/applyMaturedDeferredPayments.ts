@@ -9,14 +9,31 @@ export interface MaturityResult {
 export async function applyMaturedDeferredPayments(
     prisma: PrismaClient,
     accountId: number,
-    asOf: Date
+    asOf: Date,
+    invoiceNumbers?: string[]
 ): Promise<MaturityResult> {
+    const scopedNumbers =
+        invoiceNumbers == null
+            ? null
+            : Array.from(
+                  new Set(
+                      invoiceNumbers.filter((n) => Boolean(n?.trim()))
+                  )
+              );
+
+    if (scopedNumbers && scopedNumbers.length === 0) {
+        return { matured: 0, deferredRemaining: 0 };
+    }
+
     const deferredRows = await prisma.invoicePayment.findMany({
         where: {
             account_id: accountId,
             invoice_id: null,
             payment_date: { lte: asOf },
-            invoice_number: { not: null },
+            invoice_number:
+                scopedNumbers == null
+                    ? { not: null }
+                    : { in: scopedNumbers },
         },
         select: {
             id: true,
