@@ -10,11 +10,13 @@ import {
 import type { PriorityEntityImportType } from "./samplePayloads";
 import { discoverFieldPathsFromRecords } from "../utils/connectorFieldUtils";
 import { applyPaymentSyntheticsToRecords } from "../payment/connectorPaymentSynthetics";
+import { columnNamesFromRecords } from "./resolveTablePullShape";
 
 export interface PriorityConnectionConfig {
     baseUrl: string;
     authType: ConnectorAuthType;
     credentials: Record<string, unknown>;
+    onLog?: (message: string) => void;
 }
 
 export interface PriorityTestConnectionResult {
@@ -236,6 +238,44 @@ export async function fetchPriorityEntitySamples(
             : rawRecords;
 
     return { ok: true, statusCode: result.statusCode, records };
+}
+
+export async function fetchPriorityTableColumns(
+    config: PriorityConnectionConfig,
+    importType: PriorityEntityImportType,
+    options?: { entitySet?: string | null }
+): Promise<
+    | { ok: true; columns: string[] }
+    | { ok: false; error: string; statusCode?: number }
+> {
+    const serviceRoot = normalizeServiceRoot(config.baseUrl);
+    const collectionUrl = buildEntityCollectionUrl(
+        serviceRoot,
+        importType,
+        options?.entitySet
+    );
+    const url = `${collectionUrl}?${new URLSearchParams({ $top: "5" }).toString()}`;
+    const result = await fetchPriorityJson(config, url);
+    if (!result.ok) {
+        return {
+            ok: false,
+            statusCode: result.statusCode,
+            error: result.error ?? "Failed to sample Priority table",
+        };
+    }
+    const payload = result.payload as { value?: unknown[] };
+    if (!Array.isArray(payload?.value)) {
+        return {
+            ok: false,
+            statusCode: result.statusCode,
+            error: "Unexpected Priority response shape (missing value array)",
+        };
+    }
+    const records = payload.value.filter(
+        (item): item is Record<string, unknown> =>
+            Boolean(item) && typeof item === "object" && !Array.isArray(item)
+    );
+    return { ok: true, columns: columnNamesFromRecords(records) };
 }
 
 export async function discoverPriorityFields(

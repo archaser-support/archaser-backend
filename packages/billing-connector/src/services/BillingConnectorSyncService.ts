@@ -217,7 +217,7 @@ export class BillingConnectorSyncService {
         ) {
             await prisma.billingConnector.update({
                 where: { id: connector.id },
-                data: { backfill_started_at: new Date() },
+                data: { backfill_started_at: new Date(), modified_at: new Date() },
             });
         }
 
@@ -379,7 +379,7 @@ export class BillingConnectorSyncService {
                 ) {
                     await prisma.billingConnector.update({
                         where: { id: connector.id },
-                        data: { sync_mode: "INCREMENTAL" },
+                        data: { sync_mode: "INCREMENTAL", modified_at: new Date() },
                     });
                 }
 
@@ -411,6 +411,7 @@ export class BillingConnectorSyncService {
                     data: {
                         consecutive_auth_failures: { increment: 1 },
                         last_connection_error: classified.message.slice(0, 500),
+                        modified_at: new Date(),
                     },
                 });
                 if (updated.consecutive_auth_failures >= 3) {
@@ -419,6 +420,7 @@ export class BillingConnectorSyncService {
                         data: {
                             status: "Error",
                             sync_enabled: false,
+                            modified_at: new Date(),
                         },
                     });
                 }

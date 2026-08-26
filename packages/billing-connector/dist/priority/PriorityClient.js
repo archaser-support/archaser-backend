@@ -2,11 +2,13 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.testPriorityConnection = testPriorityConnection;
 exports.fetchPriorityEntitySamples = fetchPriorityEntitySamples;
+exports.fetchPriorityTableColumns = fetchPriorityTableColumns;
 exports.discoverPriorityFields = discoverPriorityFields;
 exports.fetchPriorityEntitySetCatalog = fetchPriorityEntitySetCatalog;
 const priorityApiContract_1 = require("./priorityApiContract");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 const connectorPaymentSynthetics_1 = require("../payment/connectorPaymentSynthetics");
+const resolveTablePullShape_1 = require("./resolveTablePullShape");
 function buildAuthorizationHeader(authType, credentials) {
     if (authType === "API_KEY") {
         const { token } = credentials;
@@ -156,6 +158,29 @@ async function fetchPriorityEntitySamples(config, importType, top = 10, options)
         ? (0, connectorPaymentSynthetics_1.applyPaymentSyntheticsToRecords)(rawRecords)
         : rawRecords;
     return { ok: true, statusCode: result.statusCode, records };
+}
+async function fetchPriorityTableColumns(config, importType, options) {
+    const serviceRoot = normalizeServiceRoot(config.baseUrl);
+    const collectionUrl = (0, priorityApiContract_1.buildEntityCollectionUrl)(serviceRoot, importType, options?.entitySet);
+    const url = `${collectionUrl}?${new URLSearchParams({ $top: "5" }).toString()}`;
+    const result = await fetchPriorityJson(config, url);
+    if (!result.ok) {
+        return {
+            ok: false,
+            statusCode: result.statusCode,
+            error: result.error ?? "Failed to sample Priority table",
+        };
+    }
+    const payload = result.payload;
+    if (!Array.isArray(payload?.value)) {
+        return {
+            ok: false,
+            statusCode: result.statusCode,
+            error: "Unexpected Priority response shape (missing value array)",
+        };
+    }
+    const records = payload.value.filter((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+    return { ok: true, columns: (0, resolveTablePullShape_1.columnNamesFromRecords)(records) };
 }
 async function discoverPriorityFields(config, importType, top = 5, options) {
     const fetchResult = await fetchPriorityEntitySamples(config, importType, top, options);

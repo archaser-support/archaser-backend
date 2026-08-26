@@ -25,6 +25,51 @@ export interface ConnectorSyncRunSummary {
     cutover_summary?: string | null;
 }
 
+export type ConnectorEntityStats = ConnectorSyncRunSummary["entity_stats"];
+
+export interface ConnectorSyncCounts {
+    customersProcessed: number;
+    contactsProcessed: number;
+    invoicesProcessed: number;
+    paymentsProcessed: number;
+    customersImported: number;
+    contactsImported: number;
+    invoicesImported: number;
+    paymentsImported: number;
+    importErrors: number;
+}
+
+export function entityStatsFromCounts(
+    stats: ConnectorSyncCounts
+): ConnectorEntityStats {
+    return {
+        Customer: {
+            pulled: stats.customersProcessed,
+            success: stats.customersImported,
+            failed: 0,
+            skipped: 0,
+        },
+        Contact: {
+            pulled: stats.contactsProcessed,
+            success: stats.contactsImported,
+            failed: 0,
+            skipped: 0,
+        },
+        Invoice: {
+            pulled: stats.invoicesProcessed,
+            success: stats.invoicesImported,
+            failed: 0,
+            skipped: 0,
+        },
+        Payment: {
+            pulled: stats.paymentsProcessed,
+            success: stats.paymentsImported,
+            failed: 0,
+            skipped: 0,
+        },
+    };
+}
+
 export interface RunningConnectorSync {
     accountId: number;
     executionId: string;
@@ -60,6 +105,22 @@ export function upsertSyncRun(
     const next = existing.filter((run) => run.id !== summary.id);
     next.unshift(summary);
     historyByAccount.set(accountId, next.slice(0, MAX_HISTORY));
+}
+
+/** Live progress must not clobber a cancelled / finished status. */
+export function patchSyncRunEntityStats(
+    accountId: number,
+    executionId: string,
+    entityStats: ConnectorEntityStats,
+    fallback: ConnectorSyncRunSummary
+): void {
+    const existing = listSyncRuns(accountId).find(
+        (run) => run.id === executionId
+    );
+    upsertSyncRun(accountId, {
+        ...(existing ?? fallback),
+        entity_stats: entityStats,
+    });
 }
 
 export function listSyncRuns(

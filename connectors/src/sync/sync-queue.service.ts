@@ -52,6 +52,8 @@ export class SyncQueueService implements OnModuleInit, OnModuleDestroy {
                     prisma: this.db,
                     accountId,
                     trigger: String(job.data.trigger || "queue"),
+                    onLog: (message) =>
+                        this.logger.log(`[account ${accountId}] ${message}`),
                 });
             },
             { connection: this.connection }

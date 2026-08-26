@@ -104,6 +104,7 @@ Before finalizing any implementation plan (initial draft or after user feedback)
 - ❌ NEVER create .md files, READMEs, or run commands without approval (except implementation plans under `.cursor/plans/` and `/to-issues` slices under `.scratch/` — see above)
 - ❌ NEVER modify translation files without explicit permission
 - ❌ NEVER add new styles (theme overrides, global CSS, component `sx` blocks, or new CSS classes) without explicit user approval — reuse existing theme tokens, MUI variants, and patterns first
+- ❌ NEVER add, expand, or update tests unless the user explicitly asks for tests
 - ❌ NEVER run `npx prisma db push --force-reset` or `npx prisma migrate dev`
 - ❌ NEVER run `npm run dev` or any development server commands automatically
 - ✅ Use `search_replace` with 3-5 lines context, `read_file`, `grep_search`

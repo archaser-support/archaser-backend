@@ -1,4 +1,7 @@
-import type { Invoice, InvoicePayment, PrismaClient } from "@prisma/client";
+import type { Invoice, InvoicePayment, Prisma, PrismaClient } from "@prisma/client";
+import { resolveAccountBillingExtension } from "../extensions";
+import type { ExtensionLinkedPayment } from "../extensions/types";
+import { commitOps } from "../import/bulkWrite";
 
 export type LinkDeferredPaymentAndRecalcResult = {
     invoicePayment: InvoicePayment;
@@ -8,8 +11,10 @@ export type LinkDeferredPaymentAndRecalcResult = {
 
 export const INVOICE_PAID_TOLERANCE = 0.2;
 
-/** Exact FNCPATNAME close code stored on InvoicePayment.payment_method. */
-export const IDIGITAL_HELAM_PAYMENT_METHOD = "חלמ";
+export type InvoicePaidRecalcOptions = {
+    normalizeNegativePaymentsForCreditClose?: boolean;
+    isForcePaidClose?: (payment: ExtensionLinkedPayment) => boolean;
+};
 
 type LinkedPaymentForRecalc = {
     id: number;
@@ -19,60 +24,64 @@ type LinkedPaymentForRecalc = {
     payment_method: string | null;
 };
 
-function isConnectorHelamPayment(payment: LinkedPaymentForRecalc): boolean {
-    return (payment.payment_method ?? "").trim() === IDIGITAL_HELAM_PAYMENT_METHOD;
+type InvoiceForPaidRecalc = Pick<
+    Invoice,
+    "id" | "net_amount" | "customer_net_amount" | "custom_code1" | "status"
+>;
+
+const LINKED_PAYMENT_RECALC_SELECT = {
+    id: true,
+    payment_date: true,
+    amount: true,
+    customer_amount: true,
+    payment_method: true,
+} as const;
+
+function hasForcePaidClose(
+    payments: LinkedPaymentForRecalc[],
+    isForcePaidClose?: (payment: ExtensionLinkedPayment) => boolean
+): boolean {
+    if (!isForcePaidClose) return false;
+    return payments.some((payment) => isForcePaidClose(payment));
 }
 
-function hasConnectorHelamClose(payments: LinkedPaymentForRecalc[]): boolean {
-    return payments.some(isConnectorHelamPayment);
+async function resolveForcePaidClose(
+    prisma: unknown,
+    accountId: number,
+    existing?: InvoicePaidRecalcOptions["isForcePaidClose"]
+): Promise<InvoicePaidRecalcOptions["isForcePaidClose"]> {
+    if (existing) return existing;
+    const extension = await resolveAccountBillingExtension(
+        prisma as Parameters<typeof resolveAccountBillingExtension>[0],
+        accountId
+    );
+    return extension?.isForcePaidClose;
 }
 
-export async function recalculateInvoiceFromLinkedPayments(
-    tx: Pick<PrismaClient, "invoice" | "invoicePayment">,
-    invoiceId: number,
-    options?: {
-        normalizeNegativePaymentsForCreditClose?: boolean;
-    }
-): Promise<Invoice> {
-    const invoice = await tx.invoice.findUnique({
-        where: { id: invoiceId },
-    });
-
-    if (!invoice) {
-        throw new Error(`Invoice ${invoiceId} not found`);
-    }
-
-    const linkedPayments = await tx.invoicePayment.findMany({
-        where: { invoice_id: invoiceId },
-        select: {
-            id: true,
-            payment_date: true,
-            amount: true,
-            customer_amount: true,
-            payment_method: true,
-        },
-    });
-
-    if (hasConnectorHelamClose(linkedPayments)) {
+function buildInvoicePaidUpdate(
+    invoice: InvoiceForPaidRecalc,
+    linkedPayments: LinkedPaymentForRecalc[],
+    options: InvoicePaidRecalcOptions | undefined,
+    modifiedAt: Date
+): Prisma.InvoiceUpdateInput {
+    if (hasForcePaidClose(linkedPayments, options?.isForcePaidClose)) {
         const totalPaid = invoice.net_amount ?? 0;
         const totalCustomerPaid = invoice.customer_net_amount ?? 0;
-        return tx.invoice.update({
-            where: { id: invoiceId },
-            data: {
-                total_paid: totalPaid,
-                customer_total_paid: totalCustomerPaid,
-                outstanding_debt: 0,
-                customer_outstanding_debt: 0,
-                status: "Paid",
-                zero_limit_alert: false,
-                reporting_breach: false,
-            },
-        });
+        return {
+            total_paid: totalPaid,
+            customer_total_paid: totalCustomerPaid,
+            outstanding_debt: 0,
+            customer_outstanding_debt: 0,
+            status: "Paid",
+            zero_limit_alert: false,
+            reporting_breach: false,
+            modified_at: modifiedAt,
+        };
     }
 
     const useAbsPaidTotals =
         options?.normalizeNegativePaymentsForCreditClose === true &&
-        invoice.priority_erp_debit === "C";
+        invoice.custom_code1 === "C";
 
     let totalPaid = 0;
     let totalCustomerPaid = 0;
@@ -94,20 +103,132 @@ export async function recalculateInvoiceFromLinkedPayments(
         (invoice.customer_net_amount ?? 0) - totalCustomerPaid;
     const becomesPaid = newCustomerOutstanding <= INVOICE_PAID_TOLERANCE;
 
+    return {
+        total_paid: totalPaid,
+        customer_total_paid: totalCustomerPaid,
+        outstanding_debt: newOutstanding,
+        customer_outstanding_debt: newCustomerOutstanding,
+        status: becomesPaid ? "Paid" : invoice.status,
+        modified_at: modifiedAt,
+        ...(becomesPaid && {
+            zero_limit_alert: false,
+            reporting_breach: false,
+        }),
+    };
+}
+
+export async function recalculateInvoiceFromLinkedPayments(
+    tx: Pick<PrismaClient, "invoice" | "invoicePayment">,
+    invoiceId: number,
+    options?: InvoicePaidRecalcOptions
+): Promise<Invoice> {
+    const invoice = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+    });
+
+    if (!invoice) {
+        throw new Error(`Invoice ${invoiceId} not found`);
+    }
+
+    const linkedPayments = await tx.invoicePayment.findMany({
+        where: { invoice_id: invoiceId },
+        select: LINKED_PAYMENT_RECALC_SELECT,
+    });
+
+    const isForcePaidClose = await resolveForcePaidClose(
+        tx,
+        invoice.account_id,
+        options?.isForcePaidClose
+    );
+
     return tx.invoice.update({
         where: { id: invoiceId },
-        data: {
-            total_paid: totalPaid,
-            customer_total_paid: totalCustomerPaid,
-            outstanding_debt: newOutstanding,
-            customer_outstanding_debt: newCustomerOutstanding,
-            status: becomesPaid ? "Paid" : invoice.status,
-            ...(becomesPaid && {
-                zero_limit_alert: false,
-                reporting_breach: false,
-            }),
-        },
+        data: buildInvoicePaidUpdate(
+            invoice,
+            linkedPayments,
+            { ...options, isForcePaidClose },
+            new Date()
+        ),
     });
+}
+
+/**
+ * Recalculate many invoices with two reads and chunked writes instead of
+ * three round-trips per invoice.
+ */
+export async function recalculateInvoicesFromLinkedPayments(
+    prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">,
+    targets: Map<number, InvoicePaidRecalcOptions>
+): Promise<void> {
+    if (targets.size === 0) return;
+
+    const invoiceIds = [...targets.keys()];
+    const [invoices, linkedPayments] = await Promise.all([
+        prisma.invoice.findMany({
+            where: { id: { in: invoiceIds } },
+            select: {
+                id: true,
+                account_id: true,
+                net_amount: true,
+                customer_net_amount: true,
+                custom_code1: true,
+                status: true,
+            },
+        }),
+        prisma.invoicePayment.findMany({
+            where: { invoice_id: { in: invoiceIds } },
+            select: {
+                ...LINKED_PAYMENT_RECALC_SELECT,
+                invoice_id: true,
+            },
+        }),
+    ]);
+
+    const paymentsByInvoiceId = new Map<number, LinkedPaymentForRecalc[]>();
+    for (const payment of linkedPayments) {
+        if (payment.invoice_id == null) continue;
+        const list = paymentsByInvoiceId.get(payment.invoice_id) ?? [];
+        list.push(payment);
+        paymentsByInvoiceId.set(payment.invoice_id, list);
+    }
+
+    const forcePaidByAccount = new Map<
+        number,
+        InvoicePaidRecalcOptions["isForcePaidClose"]
+    >();
+    for (const invoice of invoices) {
+        if (forcePaidByAccount.has(invoice.account_id)) continue;
+        const target = targets.get(invoice.id);
+        forcePaidByAccount.set(
+            invoice.account_id,
+            await resolveForcePaidClose(
+                prisma,
+                invoice.account_id,
+                target?.isForcePaidClose
+            )
+        );
+    }
+
+    const modifiedAt = new Date();
+    await commitOps(
+        prisma,
+        invoices.map((invoice) =>
+            prisma.invoice.update({
+                where: { id: invoice.id },
+                data: buildInvoicePaidUpdate(
+                    invoice,
+                    paymentsByInvoiceId.get(invoice.id) ?? [],
+                    {
+                        ...targets.get(invoice.id),
+                        isForcePaidClose: forcePaidByAccount.get(
+                            invoice.account_id
+                        ),
+                    },
+                    modifiedAt
+                ),
+            })
+        )
+    );
 }
 
 export async function linkDeferredPaymentAndRecalc(
@@ -163,7 +284,7 @@ export async function linkDeferredPaymentAndRecalc(
 
         const linkedPayment = await tx.invoicePayment.update({
             where: { id: invoicePaymentId },
-            data: { invoice_id: invoiceId },
+            data: { invoice_id: invoiceId, modified_at: new Date() },
         });
 
         const updatedInvoice = await recalculateInvoiceFromLinkedPayments(

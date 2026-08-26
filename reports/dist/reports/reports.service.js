@@ -171,6 +171,7 @@ let ReportsService = class ReportsService {
             .toLowerCase()
             .replace(/[^a-z0-9_]+/g, "_")
             .slice(0, 200) || `report_${Date.now()}`;
+        const canManageSystem = this.access.isAdminAccount(userInfo.accountId);
         const created = await this.db.report.create({
             data: {
                 account_id: accountId,
@@ -183,7 +184,7 @@ let ReportsService = class ReportsService {
                     filters: [],
                 },
                 is_public: Boolean(body.is_public),
-                is_system: false,
+                is_system: canManageSystem ? Boolean(body.is_system) : false,
                 is_default: Boolean(body.is_default),
                 context: body.context || null,
                 created_by: userId,
@@ -200,13 +201,17 @@ let ReportsService = class ReportsService {
         const accountId = this.access.getEffectiveAccountId(userInfo);
         const userId = this.access.getEffectiveUserId(userInfo);
         const existing = await this.db.report.findFirst({
-            where: { id, account_id: accountId, is_system: false },
+            where: { id, account_id: accountId },
         });
         if (!existing) {
             throw new common_1.NotFoundException("Report not found");
         }
+        const canManageSystem = this.access.isAdminAccount(userInfo.accountId);
+        if (existing.is_system && !canManageSystem) {
+            throw new common_1.ForbiddenException("System reports cannot be modified");
+        }
         const data = { modified_by: userId };
-        for (const key of [
+        const keys = [
             "name",
             "description",
             "report_config",
@@ -214,7 +219,9 @@ let ReportsService = class ReportsService {
             "is_default",
             "context",
             "unique_name",
-        ]) {
+            ...(canManageSystem ? ["is_system"] : []),
+        ];
+        for (const key of keys) {
             if (body[key] !== undefined) {
                 data[key] = body[key];
             }

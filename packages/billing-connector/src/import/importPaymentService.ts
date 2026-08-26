@@ -1,10 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 import { collectPaymentReferenceAliases } from "../payment/connectorPaymentSynthetics";
+import { recalculateInvoicesFromLinkedPayments } from "../invoice/linkDeferredPaymentAndRecalc";
+import { commitOps, lastWinsByKey } from "./bulkWrite";
 import {
-    createDeferredInvoicePayment,
-    createLinkedInvoicePayment,
-    updateInvoicePayment,
-} from "./paymentWriteService";
+    resolveAccountBillingExtension,
+    type BillingAccountExtension,
+} from "../extensions";
 import type { InvoicePaymentInput } from "./normalizePaymentInput";
 import { resolvePaymentImportAmounts } from "./resolvePaymentImportAmounts";
 
@@ -49,6 +50,11 @@ function sameCalendarDay(a: Date, b: Date): boolean {
     return a.toISOString().slice(0, 10) === b.toISOString().slice(0, 10);
 }
 
+/** InvoicePayment amounts are Postgres Real (float32); ERP values are JS float64. */
+function sameRealAmount(existing: number, next: number): boolean {
+    return existing === next || Math.fround(existing) === Math.fround(next);
+}
+
 function isUnchangedPayment(
     existing: ExistingPaymentRow,
     next: {
@@ -64,13 +70,14 @@ function isUnchangedPayment(
 ): boolean {
     const existingInvoiceNumber = (existing.invoice_number ?? "").trim();
     const nextInvoiceNumber = next.invoice_number.trim();
+    const sameLink = existing.invoice_id === next.invoice_id;
     return (
-        existing.amount === next.amount &&
-        existing.customer_amount === next.customer_amount &&
+        sameRealAmount(existing.amount, next.amount) &&
+        sameRealAmount(existing.customer_amount, next.customer_amount) &&
         existing.customer_currency === next.customer_currency &&
         sameCalendarDay(existing.payment_date, next.payment_date) &&
         existing.reference === next.reference &&
-        existing.invoice_id === next.invoice_id &&
+        sameLink &&
         existingInvoiceNumber === nextInvoiceNumber &&
         (existing.payment_method ?? "") === next.payment_method
     );
@@ -86,23 +93,53 @@ function asNonEmptyString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function isIdigitalPaymentRow(raw: Record<string, unknown>): boolean {
-    const fncnum = asNonEmptyString(raw.FNCNUM);
-    const fnciref1 = asNonEmptyString(raw.FNCIREF1);
-    const freconnum = raw.FRECONNUM;
-    const hasFreconnum =
-        (typeof freconnum === "string" && freconnum.trim().length > 0) ||
-        typeof freconnum === "number";
-    return (fncnum != null && fnciref1 != null) || hasFreconnum;
+function matchExistingPayment(
+    rows: ExistingPaymentRow[],
+    uniqueAliases: string[],
+    rawReference: string,
+    targetInvoiceNumber: string,
+    effectiveReference: string
+): ExistingPaymentRow | null {
+    const exact = rows.find((row) => row.reference === effectiveReference);
+    if (exact) return exact;
+
+    for (const alias of uniqueAliases) {
+        if (!alias.includes("|") || alias === effectiveReference) continue;
+        const hit = rows.find((row) => row.reference === alias);
+        if (hit) return hit;
+    }
+
+    if (targetInvoiceNumber) {
+        const byRawAndInvoice = rows.find(
+            (row) =>
+                row.reference === rawReference &&
+                (row.invoice_number ?? "").trim() === targetInvoiceNumber
+        );
+        if (byRawAndInvoice) return byRawAndInvoice;
+    }
+
+    const aliasSet = new Set(uniqueAliases);
+    return rows.find((row) => aliasSet.has(row.reference)) ?? null;
 }
 
 export async function importPayments(
     prisma: PrismaClient,
     paymentRecords: InvoicePaymentInput[],
     accountId: number,
-    userId?: string
+    userId?: string,
+    options?: { extension?: BillingAccountExtension }
 ): Promise<ImportPaymentResult[]> {
-    const customerNumbers = [...new Set(paymentRecords.map((p) => p.customer_number))];
+    const results: ImportPaymentResult[] = paymentRecords.map((_, index) => ({
+        index,
+        success: false,
+    }));
+    const extension =
+        options?.extension ??
+        (await resolveAccountBillingExtension(prisma, accountId));
+
+    const customerNumbers = [
+        ...new Set(paymentRecords.map((p) => p.customer_number)),
+    ];
     const customers = await prisma.customer.findMany({
         where: {
             account_id: accountId,
@@ -117,29 +154,37 @@ export async function importPayments(
         }
     }
 
-    const results: ImportPaymentResult[] = [];
+    type PreparedPayment = {
+        index: number;
+        record: InvoicePaymentInput;
+        customerId: number;
+        rawReference: string;
+        effectiveReference: string;
+        uniqueAliases: string[];
+        targetInvoiceNumber: string;
+        paymentDate: Date;
+        paymentMethod: string;
+    };
+
+    const prepared: PreparedPayment[] = [];
 
     for (let i = 0; i < paymentRecords.length; i++) {
         const record = { ...paymentRecords[i], account_id: accountId };
         const customerId = customerByNumber.get(record.customer_number);
-
         if (customerId === undefined) {
-            results.push({
+            results[i] = {
                 index: i,
                 success: false,
                 message: `Customer ${record.customer_number} not found`,
-            });
+            };
             continue;
         }
-
-        const resolvedCustomerId = customerId;
-
         if (!record.reference) {
-            results.push({
+            results[i] = {
                 index: i,
                 success: false,
                 message: "Reference ID is required",
-            });
+            };
             continue;
         }
 
@@ -149,286 +194,417 @@ export async function importPayments(
                 (record as InvoicePaymentInput & { FNCIREF1?: string }).FNCIREF1
             ) ||
             "";
-
         const rawReference = record.reference.trim();
         const shouldCompositeRef =
             targetInvoiceNumber.length > 0 &&
             !rawReference.includes("|") &&
             rawReference !== targetInvoiceNumber;
-
         const effectiveReference = shouldCompositeRef
             ? `${rawReference}|${targetInvoiceNumber}`
             : rawReference;
         record.reference = effectiveReference;
-
         const aliases = collectPaymentReferenceAliases(
             erpRowFromRecord(record),
             effectiveReference,
             targetInvoiceNumber
         );
-        const uniqueAliases =
-            aliases.length > 0 ? aliases : [effectiveReference];
-
-        const existingPayment = (await prisma.invoicePayment.findFirst({
-            where: {
-                account_id: record.account_id,
-                customer_id: resolvedCustomerId,
-                OR: targetInvoiceNumber
-                    ? [
-                          { reference: { in: uniqueAliases } },
-                          {
-                              reference: rawReference,
-                              invoice_number: targetInvoiceNumber,
-                          },
-                      ]
-                    : [{ reference: { in: uniqueAliases } }],
-            },
-            select: {
-                id: true,
-                reference: true,
-                amount: true,
-                customer_amount: true,
-                customer_currency: true,
-                payment_date: true,
-                invoice_id: true,
-                invoice_number: true,
-                payment_method: true,
-            },
-        })) as ExistingPaymentRow | null;
-
-        const invoice = await prisma.invoice.findFirst({
-            where: {
-                invoice_number: targetInvoiceNumber,
-                customer_id: resolvedCustomerId,
-            },
-            select: {
-                id: true,
-                amount: true,
-                customer_amount: true,
-                customer_currency: true,
-                invoice_number: true,
-                priority_erp_debit: true,
-            },
+        prepared.push({
+            index: i,
+            record,
+            customerId,
+            rawReference,
+            effectiveReference,
+            uniqueAliases: aliases.length > 0 ? aliases : [effectiveReference],
+            targetInvoiceNumber,
+            paymentDate: new Date(record.payment_date),
+            paymentMethod: record.payment_method ?? "",
         });
+    }
+
+    const winners = lastWinsByKey(
+        prepared,
+        (row) => `${row.customerId}::${row.effectiveReference}`
+    );
+    if (winners.length === 0) {
+        return results;
+    }
+
+    const customerIds = [...new Set(winners.map((row) => row.customerId))];
+    const invoiceNumbers = [
+        ...new Set(
+            winners
+                .map((row) => row.targetInvoiceNumber)
+                .filter((n) => n.length > 0)
+        ),
+    ];
+    const allAliases = [
+        ...new Set(winners.flatMap((row) => row.uniqueAliases)),
+    ];
+
+    const [invoices, existingPayments] = await Promise.all([
+        invoiceNumbers.length === 0
+            ? Promise.resolve([])
+            : prisma.invoice.findMany({
+                  where: {
+                      invoice_number: { in: invoiceNumbers },
+                      customer_id: { in: customerIds },
+                  },
+                  select: {
+                      id: true,
+                      amount: true,
+                      customer_amount: true,
+                      customer_currency: true,
+                      invoice_number: true,
+                      custom_code1: true,
+                      customer_id: true,
+                  },
+              }),
+        customerIds.length === 0
+            ? Promise.resolve([])
+            : prisma.invoicePayment.findMany({
+                  where: {
+                      account_id: accountId,
+                      customer_id: { in: customerIds },
+                      OR: [
+                          { reference: { in: allAliases } },
+                          ...(invoiceNumbers.length > 0
+                              ? [{ invoice_number: { in: invoiceNumbers } }]
+                              : []),
+                      ],
+                  },
+                  select: {
+                      id: true,
+                      reference: true,
+                      amount: true,
+                      customer_amount: true,
+                      customer_currency: true,
+                      payment_date: true,
+                      invoice_id: true,
+                      invoice_number: true,
+                      payment_method: true,
+                      customer_id: true,
+                  },
+              }),
+    ]);
+
+    const invoiceByCustomerNumber = new Map<
+        string,
+        (typeof invoices)[number]
+    >();
+    for (const invoice of invoices) {
+        if (invoice.invoice_number && invoice.customer_id != null) {
+            invoiceByCustomerNumber.set(
+                `${invoice.customer_id}::${invoice.invoice_number}`,
+                invoice
+            );
+        }
+    }
+
+    const existingByCustomer = new Map<number, ExistingPaymentRow[]>();
+    for (const row of existingPayments as Array<
+        ExistingPaymentRow & { customer_id: number }
+    >) {
+        const list = existingByCustomer.get(row.customer_id) ?? [];
+        list.push(row);
+        existingByCustomer.set(row.customer_id, list);
+    }
+
+    const inserts: Array<Record<string, unknown>> = [];
+    const updates: Array<{
+        id: number;
+        data: Record<string, unknown>;
+        previousInvoiceId: number | null;
+        newInvoiceId: number | null;
+        normalizeNegative?: boolean;
+        winner: PreparedPayment;
+        deferred: boolean;
+    }> = [];
+    const createdMeta: Array<{
+        winner: PreparedPayment;
+        deferred: boolean;
+        invoiceId: number | null;
+        normalizeNegative?: boolean;
+    }> = [];
+    const skippedIds = new Map<string, ImportPaymentResult>();
+    const failedIds = new Map<string, ImportPaymentResult>();
+    const invoiceIdsToRecalc = new Map<
+        number,
+        {
+            normalizeNegativePaymentsForCreditClose?: boolean;
+            isForcePaidClose?: BillingAccountExtension["isForcePaidClose"];
+        }
+    >();
+
+    const markRecalc = (
+        invoiceId: number | null,
+        normalizeNegative?: boolean
+    ) => {
+        if (invoiceId == null) return;
+        const prev = invoiceIdsToRecalc.get(invoiceId) ?? {};
+        invoiceIdsToRecalc.set(invoiceId, {
+            normalizeNegativePaymentsForCreditClose:
+                prev.normalizeNegativePaymentsForCreditClose === true ||
+                normalizeNegative === true,
+            isForcePaidClose: extension?.isForcePaidClose,
+        });
+    };
+
+    for (const winner of winners) {
+        const key = `${winner.customerId}::${winner.effectiveReference}`;
+        const existingPayment = matchExistingPayment(
+            existingByCustomer.get(winner.customerId) ?? [],
+            winner.uniqueAliases,
+            winner.rawReference,
+            winner.targetInvoiceNumber,
+            winner.effectiveReference
+        );
+        const invoice = invoiceByCustomerNumber.get(
+            `${winner.customerId}::${winner.targetInvoiceNumber}`
+        );
 
         if (!invoice) {
-            const deferredAmounts = resolveDeferredPaymentAmounts(record);
-            const paymentDate = new Date(record.payment_date);
-            const paymentMethod = record.payment_method ?? "";
-
+            const deferredAmounts = resolveDeferredPaymentAmounts(winner.record);
+            const nextSnapshot = {
+                amount: deferredAmounts.amount,
+                customer_amount: deferredAmounts.customer_amount,
+                customer_currency: deferredAmounts.customer_currency,
+                payment_date: winner.paymentDate,
+                reference: winner.effectiveReference,
+                invoice_id: existingPayment?.invoice_id ?? null,
+                invoice_number: winner.targetInvoiceNumber,
+                payment_method: winner.paymentMethod,
+            };
             if (existingPayment) {
-                if (
-                    isUnchangedPayment(existingPayment, {
-                        amount: deferredAmounts.amount,
-                        customer_amount: deferredAmounts.customer_amount,
-                        customer_currency: deferredAmounts.customer_currency,
-                        payment_date: paymentDate,
-                        reference: effectiveReference,
-                        invoice_id: null,
-                        invoice_number: record.invoice_number,
-                        payment_method: paymentMethod,
-                    })
-                ) {
-                    results.push({
-                        index: i,
+                if (isUnchangedPayment(existingPayment, nextSnapshot)) {
+                    skippedIds.set(key, {
+                        index: winner.index,
                         success: true,
                         skipped: true,
                         invoicePaymentId: existingPayment.id,
-                        customerId: resolvedCustomerId,
+                        customerId: winner.customerId,
                         message: "import.results.paymentSkipped",
                     });
                     continue;
                 }
-
-                try {
-                    const { invoicePayment } = await updateInvoicePayment(
-                        prisma,
-                        {
-                            id: existingPayment.id,
-                            invoice_id: null,
-                            invoice_number: record.invoice_number,
-                            amount: deferredAmounts.amount,
-                            customer_amount: deferredAmounts.customer_amount,
-                            customer_currency: deferredAmounts.customer_currency,
-                            payment_date: paymentDate,
-                            payment_method: paymentMethod,
-                            reference: effectiveReference,
-                            customer_id: resolvedCustomerId,
-                            account_id: record.account_id,
-                            modified_by: userId ?? null,
-                        }
-                    );
-                    results.push({
-                        index: i,
-                        success: true,
-                        deferred: true,
-                        invoicePaymentId: invoicePayment.id,
-                        customerId: resolvedCustomerId,
-                        message: "import.results.paymentDeferred",
-                    });
-                } catch (err) {
-                    results.push({
-                        index: i,
-                        success: false,
-                        message:
-                            err instanceof Error ? err.message : "Unknown error",
-                    });
-                }
+                updates.push({
+                    id: existingPayment.id,
+                    previousInvoiceId: existingPayment.invoice_id,
+                    newInvoiceId: existingPayment.invoice_id,
+                    winner,
+                    deferred: existingPayment.invoice_id == null,
+                    data: {
+                        invoice_id: existingPayment.invoice_id,
+                        invoice_number: winner.targetInvoiceNumber || null,
+                        customer_currency: deferredAmounts.customer_currency,
+                        payment_date: winner.paymentDate,
+                        amount: deferredAmounts.amount,
+                        payment_method: winner.paymentMethod,
+                        reference: winner.effectiveReference,
+                        customer_amount: deferredAmounts.customer_amount,
+                        modified_by: userId ?? null,
+                        modified_at: new Date(),
+                    },
+                });
                 continue;
             }
-
-            try {
-                const deferredPayment = await createDeferredInvoicePayment(
-                    prisma,
-                    {
-                        invoice_number: record.invoice_number,
-                        amount: deferredAmounts.amount,
-                        payment_date: paymentDate,
-                        payment_method: paymentMethod,
-                        reference: record.reference,
-                        customer_id: resolvedCustomerId,
-                        account_id: record.account_id,
-                        customer_currency: deferredAmounts.customer_currency,
-                        customer_amount: deferredAmounts.customer_amount,
-                        created_by: userId ?? null,
-                        modified_by: userId ?? null,
-                    }
-                );
-                results.push({
-                    index: i,
-                    success: true,
-                    deferred: true,
-                    invoicePaymentId: deferredPayment.id,
-                    customerId: resolvedCustomerId,
-                    message: "import.results.paymentDeferred",
-                });
-            } catch (err) {
-                results.push({
-                    index: i,
-                    success: false,
-                    message:
-                        err instanceof Error ? err.message : "Unknown error",
-                });
-            }
+            inserts.push({
+                invoice_id: null,
+                invoice_number: winner.targetInvoiceNumber || null,
+                customer_currency: deferredAmounts.customer_currency,
+                payment_date: winner.paymentDate,
+                amount: deferredAmounts.amount,
+                payment_method: winner.paymentMethod,
+                reference: winner.record.reference,
+                customer_id: winner.customerId,
+                account_id: accountId,
+                customer_amount: deferredAmounts.customer_amount,
+                created_by: userId ?? null,
+                modified_by: userId ?? null,
+            });
+            createdMeta.push({
+                winner,
+                deferred: true,
+                invoiceId: null,
+            });
             continue;
         }
 
         const amountResolution = resolvePaymentImportAmounts(
             {
-                amount: record.amount,
-                customer_amount: record.customer_amount,
-                customer_currency: record.customer_currency,
+                amount: winner.record.amount,
+                customer_amount: winner.record.customer_amount,
+                customer_currency: winner.record.customer_currency,
             },
             {
                 amount: invoice.amount,
                 customer_amount: invoice.customer_amount,
                 customer_currency: invoice.customer_currency,
-            }
+            },
+            extension?.normalizePaymentCurrency
+                ? { normalizeCurrency: extension.normalizePaymentCurrency }
+                : undefined
         );
-
         if (!amountResolution.ok) {
-            results.push({
-                index: i,
+            failedIds.set(key, {
+                index: winner.index,
                 success: false,
                 message: amountResolution.errorKey,
             });
             continue;
         }
 
-        const paymentDate = new Date(record.payment_date);
-        const paymentMethod = record.payment_method ?? "";
-        const rawErpRow = erpRowFromRecord(record);
-        const normalizeNegativePaymentsForCreditClose =
-            isIdigitalPaymentRow(rawErpRow) &&
-            invoice.priority_erp_debit === "C" &&
-            amountResolution.customer_amount < 0;
-        const paymentWriteOptions = normalizeNegativePaymentsForCreditClose
-            ? { normalizeNegativePaymentsForCreditClose: true }
-            : undefined;
+        const rawErpRow = erpRowFromRecord(winner.record);
+        const normalizeNegative =
+            extension?.shouldNormalizeNegativeCreditPayments?.({
+                rawErpRow,
+                invoiceCustomCode1: invoice.custom_code1,
+                customerAmount: amountResolution.customer_amount,
+            }) === true;
         const nextSnapshot = {
             amount: amountResolution.amount,
             customer_amount: amountResolution.customer_amount,
             customer_currency: amountResolution.customer_currency,
-            payment_date: paymentDate,
-            reference: effectiveReference,
+            payment_date: winner.paymentDate,
+            reference: winner.effectiveReference,
             invoice_id: invoice.id,
-            invoice_number: targetInvoiceNumber,
-            payment_method: paymentMethod,
+            invoice_number: winner.targetInvoiceNumber,
+            payment_method: winner.paymentMethod,
         };
 
-        try {
-            if (existingPayment) {
-                if (isUnchangedPayment(existingPayment, nextSnapshot)) {
-                    results.push({
-                        index: i,
-                        success: true,
-                        skipped: true,
-                        invoicePaymentId: existingPayment.id,
-                        customerId: resolvedCustomerId,
-                        message: "import.results.paymentSkipped",
-                    });
-                    continue;
-                }
-
-                const { invoicePayment } = await updateInvoicePayment(
-                    prisma,
-                    {
-                        id: existingPayment.id,
-                        invoice_id: invoice.id,
-                        invoice_number: record.invoice_number,
-                        amount: amountResolution.amount,
-                        customer_amount: amountResolution.customer_amount,
-                        customer_currency: amountResolution.customer_currency,
-                        payment_date: paymentDate,
-                        payment_method: paymentMethod,
-                        reference: effectiveReference,
-                        customer_id: resolvedCustomerId,
-                        account_id: record.account_id,
-                        modified_by: userId ?? null,
-                    },
-                    paymentWriteOptions
-                );
-
-                results.push({
-                    index: i,
+        if (existingPayment) {
+            if (isUnchangedPayment(existingPayment, nextSnapshot)) {
+                skippedIds.set(key, {
+                    index: winner.index,
                     success: true,
-                    invoicePaymentId: invoicePayment.id,
-                    customerId: resolvedCustomerId,
+                    skipped: true,
+                    invoicePaymentId: existingPayment.id,
+                    customerId: winner.customerId,
+                    message: "import.results.paymentSkipped",
                 });
                 continue;
             }
-
-            const { invoicePayment } = await createLinkedInvoicePayment(
-                prisma,
-                {
+            updates.push({
+                id: existingPayment.id,
+                previousInvoiceId: existingPayment.invoice_id,
+                newInvoiceId: invoice.id,
+                winner,
+                deferred: false,
+                normalizeNegative,
+                data: {
                     invoice_id: invoice.id,
-                    invoice_number: record.invoice_number,
-                    amount: amountResolution.amount,
-                    payment_date: paymentDate,
-                    payment_method: paymentMethod,
-                    reference: record.reference,
-                    customer_id: resolvedCustomerId,
-                    account_id: record.account_id,
+                    invoice_number: winner.targetInvoiceNumber || null,
                     customer_currency: amountResolution.customer_currency,
+                    payment_date: winner.paymentDate,
+                    amount: amountResolution.amount,
+                    payment_method: winner.paymentMethod,
+                    reference: winner.effectiveReference,
                     customer_amount: amountResolution.customer_amount,
-                    created_by: userId ?? null,
                     modified_by: userId ?? null,
+                    modified_at: new Date(),
                 },
-                paymentWriteOptions
-            );
+            });
+            continue;
+        }
 
-            results.push({
-                index: i,
-                success: true,
-                invoicePaymentId: invoicePayment.id,
-                customerId: resolvedCustomerId,
-            });
-        } catch (err) {
-            results.push({
-                index: i,
-                success: false,
-                message: err instanceof Error ? err.message : "Unknown error",
-            });
+        inserts.push({
+            invoice_id: invoice.id,
+            invoice_number: winner.targetInvoiceNumber || null,
+            amount: amountResolution.amount,
+            payment_date: winner.paymentDate,
+            payment_method: winner.paymentMethod,
+            reference: winner.record.reference,
+            customer_id: winner.customerId,
+            account_id: accountId,
+            customer_currency: amountResolution.customer_currency,
+            customer_amount: amountResolution.customer_amount,
+            created_by: userId ?? null,
+            modified_by: userId ?? null,
+        });
+        createdMeta.push({
+            winner,
+            deferred: false,
+            invoiceId: invoice.id,
+            normalizeNegative,
+        });
+    }
+
+    if (inserts.length > 0) {
+        await prisma.invoicePayment.createMany({ data: inserts as never });
+    }
+    if (updates.length > 0) {
+        await commitOps(
+            prisma,
+            updates.map((row) =>
+                prisma.invoicePayment.update({
+                    where: { id: row.id },
+                    data: row.data as never,
+                })
+            )
+        );
+    }
+
+    const createdPayments =
+        inserts.length === 0
+            ? []
+            : await prisma.invoicePayment.findMany({
+                  where: {
+                      account_id: accountId,
+                      reference: {
+                          in: createdMeta.map(
+                              (row) => row.winner.effectiveReference
+                          ),
+                      },
+                      customer_id: { in: customerIds },
+                  },
+                  select: { id: true, reference: true, customer_id: true },
+              });
+
+    const createdIdByKey = new Map<string, number>();
+    for (const row of createdPayments) {
+        createdIdByKey.set(`${row.customer_id}::${row.reference}`, row.id);
+    }
+
+    const winnerResult = new Map<string, ImportPaymentResult>();
+    for (const [key, skipped] of skippedIds) {
+        winnerResult.set(key, skipped);
+    }
+    for (const [key, failed] of failedIds) {
+        winnerResult.set(key, failed);
+    }
+    for (const row of createdMeta) {
+        const key = `${row.winner.customerId}::${row.winner.effectiveReference}`;
+        const invoicePaymentId = createdIdByKey.get(key);
+        winnerResult.set(key, {
+            index: row.winner.index,
+            success: true,
+            deferred: row.deferred,
+            invoicePaymentId,
+            customerId: row.winner.customerId,
+            message: row.deferred ? "import.results.paymentDeferred" : undefined,
+        });
+        markRecalc(row.invoiceId, row.normalizeNegative);
+    }
+    for (const row of updates) {
+        const key = `${row.winner.customerId}::${row.winner.effectiveReference}`;
+        winnerResult.set(key, {
+            index: row.winner.index,
+            success: true,
+            deferred: row.deferred,
+            invoicePaymentId: row.id,
+            customerId: row.winner.customerId,
+            message: row.deferred ? "import.results.paymentDeferred" : undefined,
+        });
+        markRecalc(row.previousInvoiceId, row.normalizeNegative);
+        markRecalc(row.newInvoiceId, row.normalizeNegative);
+    }
+
+    await recalculateInvoicesFromLinkedPayments(prisma, invoiceIdsToRecalc);
+
+    for (const row of prepared) {
+        const key = `${row.customerId}::${row.effectiveReference}`;
+        const winner = winnerResult.get(key);
+        if (winner) {
+            results[row.index] = { ...winner, index: row.index };
         }
     }
 

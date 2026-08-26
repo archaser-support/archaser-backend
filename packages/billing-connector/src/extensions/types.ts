@@ -1,6 +1,7 @@
 /**
  * Billing account extension (plugin) contract.
  * Transform runs after field mapping and before entity import.
+ * Optional payment-close hooks run during payment import and invoice recalc.
  */
 export type ExtensionEntityType =
     | "Customer"
@@ -25,6 +26,16 @@ export interface ExtensionTransformContext {
     extension_config: Record<string, unknown> | null;
 }
 
+export type ExtensionLinkedPayment = {
+    payment_method: string | null;
+};
+
+export type ExtensionCreditPaymentCloseInput = {
+    rawErpRow: Record<string, unknown>;
+    invoiceCustomCode1: string | null | undefined;
+    customerAmount: number;
+};
+
 export interface BillingAccountExtension {
     key: string;
     /** Human-readable label for admin UI / docs. */
@@ -36,6 +47,19 @@ export interface BillingAccountExtension {
     transform(
         ctx: ExtensionTransformContext
     ): ExtensionMappedBatch | Promise<ExtensionMappedBatch>;
+    /**
+     * Linked payment is a close marker (not a money settlement).
+     * Recalc then stamps the invoice Paid from invoice net.
+     */
+    isForcePaidClose?(payment: ExtensionLinkedPayment): boolean;
+    /**
+     * Use absolute payment amounts when closing a credit invoice.
+     */
+    shouldNormalizeNegativeCreditPayments?(
+        row: ExtensionCreditPaymentCloseInput
+    ): boolean;
+    /** Canonicalize payment vs invoice currency before attach. */
+    normalizePaymentCurrency?(currency: string | null | undefined): string;
 }
 
 export type ExtensionAttachmentUpsertInput = {

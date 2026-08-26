@@ -4,6 +4,7 @@ export interface PriorityConnectionConfig {
     baseUrl: string;
     authType: ConnectorAuthType;
     credentials: Record<string, unknown>;
+    onLog?: (message: string) => void;
 }
 export interface PriorityTestConnectionResult {
     ok: boolean;
@@ -26,6 +27,16 @@ export declare function fetchPriorityEntitySamples(config: PriorityConnectionCon
     entitySet?: string | null;
     filter?: string | null;
 }): Promise<PriorityFetchResult>;
+export declare function fetchPriorityTableColumns(config: PriorityConnectionConfig, importType: PriorityEntityImportType, options?: {
+    entitySet?: string | null;
+}): Promise<{
+    ok: true;
+    columns: string[];
+} | {
+    ok: false;
+    error: string;
+    statusCode?: number;
+}>;
 export declare function discoverPriorityFields(config: PriorityConnectionConfig, importType: PriorityEntityImportType, top?: number, options?: {
     entitySet?: string | null;
 }): Promise<{

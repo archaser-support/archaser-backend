@@ -2,13 +2,21 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.applyMaturedDeferredPayments = applyMaturedDeferredPayments;
 const linkDeferredPaymentAndRecalc_1 = require("../invoice/linkDeferredPaymentAndRecalc");
-async function applyMaturedDeferredPayments(prisma, accountId, asOf) {
+async function applyMaturedDeferredPayments(prisma, accountId, asOf, invoiceNumbers) {
+    const scopedNumbers = invoiceNumbers == null
+        ? null
+        : Array.from(new Set(invoiceNumbers.filter((n) => Boolean(n?.trim()))));
+    if (scopedNumbers && scopedNumbers.length === 0) {
+        return { matured: 0, deferredRemaining: 0 };
+    }
     const deferredRows = await prisma.invoicePayment.findMany({
         where: {
             account_id: accountId,
             invoice_id: null,
             payment_date: { lte: asOf },
-            invoice_number: { not: null },
+            invoice_number: scopedNumbers == null
+                ? { not: null }
+                : { in: scopedNumbers },
         },
         select: {
             id: true,
