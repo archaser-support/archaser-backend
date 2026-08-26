@@ -24,10 +24,513 @@
     "panels": [
         {
             "gridPos": {
-                "h": 2,
+                "h": 1,
                 "w": 24,
                 "x": 0,
                 "y": 0
+            },
+            "id": 700,
+            "title": "Nest services",
+            "type": "row",
+            "collapsed": false
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 0,
+                "y": 1
+            },
+            "id": 701,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-api\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "API",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 4,
+                "y": 1
+            },
+            "id": 702,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-worker\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "Worker",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 8,
+                "y": 1
+            },
+            "id": 703,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-sms\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "SMS",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 12,
+                "y": 1
+            },
+            "id": 704,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-connectors\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "Connectors",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 8,
+                "x": 16,
+                "y": 1
+            },
+            "id": 705,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-reports\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "Reports",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 5
+            },
+            "id": 710,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(nest_http_requests_total{service=\"archaser-api\"}[5m])) by (status_code)",
+                    "legendFormat": "{{status_code}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "API request rate",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "min": 0,
+                    "max": 1
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 5
+            },
+            "id": 711,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(nest_http_requests_total{service=\"archaser-api\",status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(nest_http_requests_total{service=\"archaser-api\"}[5m])), 1e-9)",
+                    "legendFormat": "5xx rate",
+                    "refId": "A"
+                }
+            ],
+            "title": "API 5xx rate",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percent"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 13
+            },
+            "id": 712,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "rate(archaser_worker_process_cpu_seconds_total{job=\"archaser-worker\"}[1m]) * 100",
+                    "legendFormat": "worker CPU",
+                    "refId": "A"
+                }
+            ],
+            "title": "Worker CPU",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bytes"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 13
+            },
+            "id": 713,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "archaser_worker_nodejs_heap_size_used_bytes{job=\"archaser-worker\"}",
+                    "legendFormat": "heap used",
+                    "refId": "A"
+                },
+                {
+                    "expr": "archaser_worker_nodejs_heap_size_total_bytes{job=\"archaser-worker\"}",
+                    "legendFormat": "heap total",
+                    "refId": "B"
+                }
+            ],
+            "title": "Worker heap",
+            "type": "timeseries"
+        },
+        {
+            "gridPos": {
+                "h": 2,
+                "w": 24,
+                "x": 0,
+                "y": 22
             },
             "id": 10,
             "options": {
@@ -43,7 +546,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 2
+                "y": 24
             },
             "id": 1,
             "title": "Server Availability (Uptime)",
@@ -90,7 +593,7 @@
                 "h": 4,
                 "w": 6,
                 "x": 6,
-                "y": 3
+                "y": 25
             },
             "id": 3,
             "options": {
@@ -149,7 +652,7 @@
                 "h": 4,
                 "w": 6,
                 "x": 12,
-                "y": 3
+                "y": 25
             },
             "id": 1001,
             "options": {
@@ -200,7 +703,7 @@
                 "h": 4,
                 "w": 6,
                 "x": 12,
-                "y": 7
+                "y": 29
             },
             "id": 1003,
             "options": {
@@ -255,7 +758,7 @@
                 "h": 4,
                 "w": 6,
                 "x": 18,
-                "y": 3
+                "y": 25
             },
             "id": 1002,
             "options": {
@@ -306,7 +809,7 @@
                 "h": 4,
                 "w": 6,
                 "x": 18,
-                "y": 7
+                "y": 29
             },
             "id": 1004,
             "options": {
@@ -334,7 +837,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 7
+                "y": 29
             },
             "id": 109,
             "title": "Resource Utilization (Core)",
@@ -349,7 +852,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 8
+                "y": 30
             },
             "id": 71,
             "options": {
@@ -363,13 +866,13 @@
             },
             "targets": [
                 {
-                    "expr": "nodejs_heap_size_used_bytes{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} - Heap Used",
+                    "expr": "nest_nodejs_heap_size_used_bytes{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api - Heap Used",
                     "refId": "A"
                 },
                 {
-                    "expr": "nodejs_heap_size_total_bytes{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} - Heap Total",
+                    "expr": "nest_nodejs_heap_size_total_bytes{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api - Heap Total",
                     "refId": "B"
                 }
             ],
@@ -385,7 +888,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 8
+                "y": 30
             },
             "id": 72,
             "options": {
@@ -399,8 +902,8 @@
             },
             "targets": [
                 {
-                    "expr": "rate(process_cpu_seconds_total{instance=\"Staging\"}[1m])",
-                    "legendFormat": "{{instance}} CPU %",
+                    "expr": "rate(nest_process_cpu_seconds_total{job=\"archaser-api\", instance=\"Staging\"}[1m])",
+                    "legendFormat": "api CPU %",
                     "refId": "A"
                 }
             ],
@@ -412,7 +915,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 16
+                "y": 38
             },
             "id": 400,
             "title": "Infrastructure Statistics",
@@ -427,13 +930,13 @@
                 "h": 8,
                 "w": 8,
                 "x": 0,
-                "y": 17
+                "y": 39
             },
             "id": 401,
             "targets": [
                 {
-                    "expr": "nodejs_eventloop_lag_seconds{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} Lag",
+                    "expr": "nest_nodejs_eventloop_lag_seconds{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api Lag",
                     "refId": "A"
                 }
             ],
@@ -449,18 +952,18 @@
                 "h": 8,
                 "w": 8,
                 "x": 8,
-                "y": 17
+                "y": 39
             },
             "id": 402,
             "targets": [
                 {
-                    "expr": "nodejs_active_handles_total{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} Handles",
+                    "expr": "nest_nodejs_active_handles_total{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api Handles",
                     "refId": "A"
                 },
                 {
-                    "expr": "nodejs_active_requests_total{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} Requests",
+                    "expr": "nest_nodejs_active_requests_total{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api Requests",
                     "refId": "B"
                 }
             ],
@@ -476,13 +979,13 @@
                 "h": 8,
                 "w": 8,
                 "x": 16,
-                "y": 17
+                "y": 39
             },
             "id": 403,
             "targets": [
                 {
-                    "expr": "sum by(instance, space) (nodejs_heap_space_size_used_bytes{instance=\"Staging\"})",
-                    "legendFormat": "{{instance}} - {{space}}",
+                    "expr": "sum by(instance, space) (nest_nodejs_heap_space_size_used_bytes{job=\"archaser-api\", instance=\"Staging\"})",
+                    "legendFormat": "api - {{space}}",
                     "refId": "A"
                 }
             ],
@@ -494,7 +997,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 25
+                "y": 47
             },
             "id": 500,
             "title": "Runtime KPIs",
@@ -509,13 +1012,13 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 26
+                "y": 48
             },
             "id": 501,
             "targets": [
                 {
-                    "expr": "rate(nodejs_gc_duration_seconds_sum{instance=\"Staging\"}[5m])",
-                    "legendFormat": "{{instance}} GC Rate",
+                    "expr": "rate(nest_nodejs_gc_duration_seconds_sum{job=\"archaser-api\", instance=\"Staging\"}[5m])",
+                    "legendFormat": "api GC Rate",
                     "refId": "A"
                 }
             ],
@@ -531,7 +1034,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 26
+                "y": 48
             },
             "id": 502,
             "targets": [
@@ -549,7 +1052,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 34
+                "y": 56
             },
             "id": 503,
             "title": "Email/SMS Connectivity Status",
@@ -600,7 +1103,7 @@
                 "h": 4,
                 "w": 4,
                 "x": 0,
-                "y": 35
+                "y": 57
             },
             "id": 504,
             "options": {
@@ -671,7 +1174,7 @@
                 "h": 4,
                 "w": 4,
                 "x": 4,
-                "y": 35
+                "y": 57
             },
             "id": 505,
             "options": {
@@ -740,7 +1243,7 @@
                 "h": 8,
                 "w": 16,
                 "x": 8,
-                "y": 35
+                "y": 57
             },
             "id": 506,
             "options": {
@@ -797,7 +1300,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 43
+                "y": 65
             },
             "id": 600,
             "title": "Log Analysis",
@@ -812,7 +1315,7 @@
                 "h": 8,
                 "w": 8,
                 "x": 0,
-                "y": 44
+                "y": 66
             },
             "id": 110,
             "options": {
@@ -825,12 +1328,12 @@
             },
             "targets": [
                 {
-                    "expr": "sum by(level) (count_over_time({service=\"archaser-core\", host=\"staging\"} [$__range]))",
-                    "legendFormat": "{{level}}",
+                    "expr": "sum by(compose_service) (count_over_time({job=\"nest-docker\", environment=\"staging\"} [$__range]))",
+                    "legendFormat": "{{compose_service}}",
                     "refId": "A"
                 }
             ],
-            "title": "Log Level Distribution",
+            "title": "Log volume by service",
             "type": "piechart"
         },
         {
@@ -842,12 +1345,12 @@
                 "h": 8,
                 "w": 16,
                 "x": 8,
-                "y": 44
+                "y": 66
             },
             "id": 111,
             "targets": [
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", level=~\"error|critical|fatal\", host=\"staging\"} [$__interval])) or sum(count_over_time({job=\"pm2\", app_name=~\".+\", log_type=\"error\", host=\"staging\"} [$__interval]))",
+                    "expr": "sum(count_over_time({job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)error|exception|fatal\" [$__interval]))",
                     "legendFormat": "Errors",
                     "refId": "A"
                 }
@@ -864,7 +1367,7 @@
                 "h": 8,
                 "w": 24,
                 "x": 0,
-                "y": 52
+                "y": 74
             },
             "id": 112,
             "options": {
@@ -874,7 +1377,7 @@
             },
             "targets": [
                 {
-                    "expr": "{job=~\"pm2|archaser-core\", level=~\"(?i)error|critical|fatal\", host=\"staging\"}",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)error|critical|fatal|exception\"",
                     "refId": "A"
                 }
             ],
@@ -890,13 +1393,13 @@
                 "h": 8,
                 "w": 24,
                 "x": 0,
-                "y": 60
+                "y": 82
             },
             "id": 113,
             "targets": [
                 {
-                    "expr": "sum by(source) (count_over_time({service=\"archaser-core\", host=\"staging\"} [$__range]))",
-                    "legendFormat": "{{source}}",
+                    "expr": "sum by(compose_service) (count_over_time({job=\"nest-docker\", environment=\"staging\"} [$__range]))",
+                    "legendFormat": "{{compose_service}}",
                     "queryType": "instant",
                     "refId": "A"
                 }
@@ -933,12 +1436,9 @@
     "schemaVersion": 36,
     "style": "dark",
     "tags": [
-        "app",
-        "prometheus",
-        "health",
-        "production",
-        "staging",
-        "infra"
+        "archaser",
+        "infra",
+        "staging"
     ],
     "templating": {
         "list": []

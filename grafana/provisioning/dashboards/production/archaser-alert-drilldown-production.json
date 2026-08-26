@@ -29,7 +29,7 @@
             "id": 10,
             "options": {
                 "mode": "markdown",
-                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-staging/archaser-home-staging) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-staging/cron-health-staging) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-staging/communications-staging) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-staging/infrastructure-staging)"
+                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-prod/archaser-home-production) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-prod/cron-health-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production)"
             },
             "title": "",
             "type": "text",
@@ -627,7 +627,7 @@
                     "refId": "A"
                 }
             ],
-            "title": "Overdue — open period category N/A",
+            "title": "Overdue \u2014 open period category N/A",
             "type": "table",
             "description": "Customers with overdue exposure while the open collection period has no current_category (shown as N/A in the app)."
         }
@@ -638,7 +638,7 @@
     "tags": [
         "alerts",
         "drilldown",
-        "staging"
+        "production"
     ],
     "templating": {
         "list": []
@@ -649,8 +649,8 @@
     },
     "timepicker": {},
     "timezone": "browser",
-    "title": "Alert Drilldown - Staging",
-    "uid": "alert-drilldown-staging",
+    "title": "Alert Drilldown - Production",
+    "uid": "alert-drilldown-prod",
     "version": 2,
     "weekStart": ""
 }

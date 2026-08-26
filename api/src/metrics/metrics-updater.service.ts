@@ -262,6 +262,15 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                                 .labels(job.name)
                                 .set(job.last_execution_duration_seconds);
                         }
+                        this.m.cronJobSuccessCount30d
+                            .labels(job.name)
+                            .set(job.success_count_30d || 0);
+                        this.m.cronJobFailureCount30d
+                            .labels(job.name)
+                            .set(job.failure_count_30d || 0);
+                        this.m.cronJobTimeoutCount30d
+                            .labels(job.name)
+                            .set(job.timeout_count_30d || 0);
                         if (job.last_run_at) {
                             this.m.cronJobLastRun
                                 .labels(job.name)

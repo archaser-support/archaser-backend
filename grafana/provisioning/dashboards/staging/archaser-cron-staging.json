@@ -32,7 +32,7 @@
             "id": 10,
             "options": {
                 "mode": "markdown",
-                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-prod/archaser-home-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-prod/alert-drilldown-production)"
+                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-staging/archaser-home-staging) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-staging/communications-staging) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-staging/infrastructure-staging) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-staging/alert-drilldown-staging)"
             },
             "title": "",
             "type": "text",
@@ -93,7 +93,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_total{instance=\"Production\"}",
+                    "expr": "archaser_cron_jobs_total{instance=\"Staging\"}",
                     "refId": "A"
                 }
             ],
@@ -148,7 +148,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_running{instance=\"Production\"}",
+                    "expr": "archaser_cron_jobs_running{instance=\"Staging\"}",
                     "refId": "A"
                 }
             ],
@@ -203,7 +203,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_overdue{instance=\"Production\"}",
+                    "expr": "archaser_cron_jobs_overdue{instance=\"Staging\"}",
                     "refId": "A"
                 }
             ],
@@ -263,7 +263,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_job_success_rate{instance=\"Production\"}",
+                    "expr": "archaser_cron_job_success_rate{instance=\"Staging\"}",
                     "refId": "A"
                 }
             ],
@@ -365,17 +365,17 @@
             },
             "targets": [
                 {
-                    "expr": "sum(increase(archaser_cron_job_executions_total{status=\"SUCCESS\", instance=\"Production\"}[24h]))",
+                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Staging\"})",
                     "legendFormat": "SUCCESS",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(increase(archaser_cron_job_executions_total{status=\"FAILED\", instance=\"Production\"}[24h]))",
+                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Staging\"})",
                     "legendFormat": "FAILED",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum(increase(archaser_cron_job_executions_total{status=\"TIMEOUT\", instance=\"Production\"}[24h]))",
+                    "expr": "sum(archaser_cron_job_timeout_count_30d{instance=\"Staging\"})",
                     "legendFormat": "TIMEOUT",
                     "refId": "C"
                 }
@@ -388,10 +388,10 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 11
+                "y": 29
             },
-            "id": 200,
-            "title": "Production - Job Execution Details",
+            "id": 300,
+            "title": "Staging - Job Execution Details",
             "type": "row"
         },
         {
@@ -403,49 +403,49 @@
                 "h": 10,
                 "w": 14,
                 "x": 0,
-                "y": 12
+                "y": 30
             },
-            "id": 201,
-            "title": "Production Job Statistics (24h)",
+            "id": 301,
+            "title": "Staging Job Statistics (24h)",
             "type": "table",
             "targets": [
                 {
-                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Production\"}[24h]))",
+                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Staging\"} + archaser_cron_job_failure_count_30d{instance=\"Staging\"} + archaser_cron_job_timeout_count_30d{instance=\"Staging\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Total Executions",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Production\", status=\"SUCCESS\"}[24h]))",
+                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Staging\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Success Count",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Production\", status=\"FAILED\"}[24h]))",
+                    "expr": "sum by(job_name) (archaser_cron_job_failure_count_30d{instance=\"Staging\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Failure Count",
                     "refId": "C"
                 },
                 {
-                    "expr": "max by(job_name) (archaser_cron_job_duration_seconds{instance=\"Production\"})",
+                    "expr": "max by(job_name) (archaser_cron_job_duration_seconds{instance=\"Staging\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Duration (s)",
                     "refId": "D"
                 },
                 {
-                    "expr": "max by(job_name) (archaser_cron_job_last_run_timestamp_seconds{instance=\"Production\"}) * 1000",
+                    "expr": "max by(job_name) (archaser_cron_job_last_run_timestamp_seconds{instance=\"Staging\"}) * 1000",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Last Run",
                     "refId": "E"
                 },
                 {
-                    "expr": "max by(job_name) (archaser_cron_job_next_run_timestamp_seconds{instance=\"Production\"}) * 1000",
+                    "expr": "max by(job_name) (archaser_cron_job_next_run_timestamp_seconds{instance=\"Staging\"}) * 1000",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Next Run",
@@ -616,9 +616,9 @@
                 "h": 10,
                 "w": 10,
                 "x": 14,
-                "y": 12
+                "y": 30
             },
-            "id": 202,
+            "id": 302,
             "options": {
                 "legend": {
                     "calcs": [],
@@ -633,17 +633,17 @@
             },
             "targets": [
                 {
-                    "expr": "sum(rate(archaser_cron_job_executions_total{instance=\"Production\", status=\"SUCCESS\"}[1h])) * 3600",
+                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Staging\"})",
                     "legendFormat": "Success",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(rate(archaser_cron_job_executions_total{instance=\"Production\", status=\"FAILED\"}[1h])) * 3600",
+                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Staging\"})",
                     "legendFormat": "Failed",
                     "refId": "B"
                 }
             ],
-            "title": "Production Execution Trend (per hour)",
+            "title": "Staging Execution Trend (per hour)",
             "type": "timeseries"
         },
         {
@@ -651,10 +651,10 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 22
+                "y": 40
             },
-            "id": 203,
-            "title": "Production - Job Duration Analysis",
+            "id": 303,
+            "title": "Staging - Job Duration Analysis",
             "type": "row"
         },
         {
@@ -693,9 +693,9 @@
                 "h": 6,
                 "w": 24,
                 "x": 0,
-                "y": 23
+                "y": 41
             },
-            "id": 204,
+            "id": 304,
             "options": {
                 "displayMode": "lcd",
                 "minVizHeight": 10,
@@ -712,12 +712,12 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_job_duration_seconds{instance=\"Production\"}",
+                    "expr": "archaser_cron_job_duration_seconds{instance=\"Staging\"}",
                     "legendFormat": "{{job_name}}",
                     "refId": "A"
                 }
             ],
-            "title": "Production Job Duration",
+            "title": "Staging Job Duration",
             "type": "bargauge"
         },
         {
@@ -725,7 +725,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 29
+                "y": 47
             },
             "id": 310,
             "title": "Cron Intensity & Logs",
@@ -740,7 +740,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 30
+                "y": 48
             },
             "id": 104,
             "options": {
@@ -753,9 +753,9 @@
             },
             "targets": [
                 {
-                    "expr": "sum by(source) (count_over_time({service=\"archaser-core\", environment=\"production\"} |~ \"(?i)cron\" [$__interval]))",
+                    "expr": "sum by(compose_service) (count_over_time({job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)cron|bullmq|repeatable\" [$__interval]))",
                     "format": "heatmap",
-                    "legendFormat": "{{source}}",
+                    "legendFormat": "{{compose_service}}",
                     "refId": "A"
                 }
             ],
@@ -771,7 +771,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 30
+                "y": 48
             },
             "id": 105,
             "options": {
@@ -781,7 +781,7 @@
             },
             "targets": [
                 {
-                    "expr": "{service=\"archaser-core\", environment=\"production\"} |~ \"(?i)cron\"",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)cron|bullmq|repeatable\"",
                     "refId": "A"
                 }
             ],
@@ -790,14 +790,14 @@
         }
     ],
     "schemaVersion": 38,
-    "title": "Cron Health - Production",
+    "title": "Cron Jobs - Staging",
     "tags": [
         "cron",
         "jobs",
         "health"
     ],
     "timezone": "browser",
-    "uid": "archaser-cron-v1-prod",
+    "uid": "archaser-cron-v1-staging",
     "version": 2,
     "weekStart": ""
 }

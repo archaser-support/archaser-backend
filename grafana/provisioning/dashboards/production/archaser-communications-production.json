@@ -38,7 +38,7 @@
             "id": 10,
             "options": {
                 "mode": "markdown",
-                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-staging/archaser-home-staging) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-staging/cron-health-staging) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-staging/infrastructure-staging) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-staging/alert-drilldown-staging)"
+                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-prod/archaser-home-production) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-prod/cron-health-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-prod/alert-drilldown-production)"
             },
             "title": "",
             "type": "text",
@@ -105,7 +105,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_active_collection_periods{instance=\"Staging\"}",
+                    "expr": "archaser_active_collection_periods{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -158,7 +158,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_system_activities_created_24h{instance=\"Staging\"}",
+                    "expr": "archaser_system_activities_created_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -216,7 +216,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_activities_stuck{instance=\"Staging\"}",
+                    "expr": "archaser_activities_stuck{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -270,7 +270,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_emails_sent_24h{instance=\"Staging\"}",
+                    "expr": "archaser_emails_sent_24h{instance=\"Production\"}",
                     "legendFormat": "__auto",
                     "refId": "A"
                 }
@@ -337,7 +337,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_email_contacts_total_24h{instance=\"Staging\"}",
+                    "expr": "archaser_email_contacts_total_24h{instance=\"Production\"}",
                     "legendFormat": "__auto",
                     "refId": "A"
                 }
@@ -394,17 +394,17 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_email_contacts_delivered_24h{instance=\"Staging\"}",
+                    "expr": "archaser_email_contacts_delivered_24h{instance=\"Production\"}",
                     "legendFormat": "Delivered",
                     "refId": "A"
                 },
                 {
-                    "expr": "archaser_email_contacts_bounced_24h{instance=\"Staging\"}",
+                    "expr": "archaser_email_contacts_bounced_24h{instance=\"Production\"}",
                     "legendFormat": "Bounced",
                     "refId": "B"
                 },
                 {
-                    "expr": "archaser_email_contacts_failed_24h{instance=\"Staging\"}",
+                    "expr": "archaser_email_contacts_failed_24h{instance=\"Production\"}",
                     "legendFormat": "Failed",
                     "refId": "C"
                 }
@@ -459,7 +459,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_email_contacts_delivered_24h{instance=\"Staging\"}",
+                    "expr": "archaser_email_contacts_delivered_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -513,7 +513,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_email_contacts_bounced_24h{instance=\"Staging\"}",
+                    "expr": "archaser_email_contacts_bounced_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -567,7 +567,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_email_contacts_opened_24h{instance=\"Staging\"}",
+                    "expr": "archaser_email_contacts_opened_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -621,7 +621,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_email_contacts_clicked_24h{instance=\"Staging\"}",
+                    "expr": "archaser_email_contacts_clicked_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -683,7 +683,7 @@
             },
             "targets": [
                 {
-                    "expr": "(archaser_email_contacts_delivered_24h{instance=\"Staging\"} / archaser_email_contacts_total_24h{instance=\"Staging\"}) * 100",
+                    "expr": "(archaser_email_contacts_delivered_24h{instance=\"Production\"} / archaser_email_contacts_total_24h{instance=\"Production\"}) * 100",
                     "refId": "A"
                 }
             ],
@@ -745,7 +745,7 @@
             },
             "targets": [
                 {
-                    "expr": "(archaser_email_contacts_bounced_24h{instance=\"Staging\"} / archaser_email_contacts_total_24h{instance=\"Staging\"}) * 100",
+                    "expr": "(archaser_email_contacts_bounced_24h{instance=\"Production\"} / archaser_email_contacts_total_24h{instance=\"Production\"}) * 100",
                     "refId": "A"
                 }
             ],
@@ -807,7 +807,7 @@
             },
             "targets": [
                 {
-                    "expr": "(archaser_email_contacts_opened_24h{instance=\"Staging\"} / archaser_email_contacts_total_24h{instance=\"Staging\"}) * 100",
+                    "expr": "(archaser_email_contacts_opened_24h{instance=\"Production\"} / archaser_email_contacts_total_24h{instance=\"Production\"}) * 100",
                     "refId": "A"
                 }
             ],
@@ -869,7 +869,7 @@
             },
             "targets": [
                 {
-                    "expr": "(archaser_email_contacts_clicked_24h{instance=\"Staging\"} / archaser_email_contacts_total_24h{instance=\"Staging\"}) * 100",
+                    "expr": "(archaser_email_contacts_clicked_24h{instance=\"Production\"} / archaser_email_contacts_total_24h{instance=\"Production\"}) * 100",
                     "refId": "A"
                 }
             ],
@@ -936,12 +936,12 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_sms_sent_24h{instance=\"Staging\"}",
+                    "expr": "archaser_sms_sent_24h{instance=\"Production\"}",
                     "legendFormat": "Sent",
                     "refId": "A"
                 },
                 {
-                    "expr": "archaser_sms_failed_24h{instance=\"Staging\"}",
+                    "expr": "archaser_sms_failed_24h{instance=\"Production\"}",
                     "legendFormat": "Failed",
                     "refId": "B"
                 }
@@ -996,7 +996,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_sms_sent_24h{instance=\"Staging\"}",
+                    "expr": "archaser_sms_sent_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -1054,7 +1054,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_sms_failed_24h{instance=\"Staging\"}",
+                    "expr": "archaser_sms_failed_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -1112,7 +1112,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_contacts_high_bounce{instance=\"Staging\"}",
+                    "expr": "archaser_contacts_high_bounce{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -1170,7 +1170,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_contacts_low_comm_score{instance=\"Staging\"}",
+                    "expr": "archaser_contacts_low_comm_score{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -1202,12 +1202,12 @@
             "id": 107,
             "targets": [
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", host=\"staging\"} |~ \"Delivery\" [$__interval]))",
+                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", environment=\"production\"} |~ \"Delivery\" [$__interval]))",
                     "legendFormat": "Sent / Delivered",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", host=\"staging\"} |~ \"Open\" [$__interval]))",
+                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", environment=\"production\"} |~ \"Open\" [$__interval]))",
                     "legendFormat": "Opened",
                     "refId": "B"
                 }
@@ -1229,7 +1229,7 @@
             "id": 108,
             "targets": [
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"InforuStatusChecker\", host=\"staging\"} [$__interval]))",
+                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"InforuStatusChecker\", environment=\"production\"} [$__interval]))",
                     "legendFormat": "SMS Checks",
                     "refId": "A"
                 }
@@ -1255,8 +1255,8 @@
     },
     "timepicker": {},
     "timezone": "",
-    "title": "Communications - Staging",
-    "uid": "archaser-comm-unified-staging",
+    "title": "Communications - Production",
+    "uid": "archaser-comm-unified-prod",
     "version": 2,
     "weekStart": ""
 }

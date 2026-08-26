@@ -59,6 +59,27 @@ export function createArchaserBusinessMetrics(register: Registry) {
     registers: [register],
 });
 
+    const cronJobSuccessCount30d = new Gauge({
+        name: "archaser_cron_job_success_count_30d",
+        help: "Cron job success count (rolling 30d) from Postgres",
+        labelNames: ["job_name"],
+        registers: [register],
+    });
+
+    const cronJobFailureCount30d = new Gauge({
+        name: "archaser_cron_job_failure_count_30d",
+        help: "Cron job failure count (rolling 30d) from Postgres",
+        labelNames: ["job_name"],
+        registers: [register],
+    });
+
+    const cronJobTimeoutCount30d = new Gauge({
+        name: "archaser_cron_job_timeout_count_30d",
+        help: "Cron job timeout count (rolling 30d) from Postgres",
+        labelNames: ["job_name"],
+        registers: [register],
+    });
+
     const cronJobLastRun = new Gauge({
     name: "archaser_cron_job_last_run_timestamp_seconds",
     help: "Timestamp of the last cron job run",
@@ -449,6 +470,9 @@ export function createArchaserBusinessMetrics(register: Registry) {
         cronJobSuccessRate,
         cronJobExecutions,
         cronJobDuration,
+        cronJobSuccessCount30d,
+        cronJobFailureCount30d,
+        cronJobTimeoutCount30d,
         cronJobLastRun,
         cronJobNextRun,
         emailsSent,
