@@ -98,6 +98,15 @@ Decisions locked via plan review (update if product changes):
 | D14 | Pilot accounts | **10013** internal dogfood first, then real Priority customer | Permission clone pattern uses 10013 as master |
 | D15 | Per-entity sync UI | Billing tab: per-entity `last_successful_run_at` + backfill progress; AppHeader: account-level `last_sync_date` | Header stale on partial failure; tab shows entity truth |
 | D16 | Feature flag UI | `billing_connector_enabled` toggle on General Information — **archaser_admin only** | Same pattern as `has_credit_insurance` |
+| D17 | Bulk write style | Few database calls per group: look up matches once, insert new together, update existing together | Replaces per-row find/create/update in `importMappedEntityBatch`. File import must stop calling that saver with `[row]`. |
+| D18 | Invoice math direction | Later invoices depend on earlier ones (oldest first). Not earlier invoices depending on later ones. | Sort by `invoice_date` then `invoice_number` stays required. Derived FIFO/limit flags cannot be computed independently inside the bulk insert. |
+| D19 | When later-invoice math runs | Bulk-save stored fields, then run FIFO / overdue / capacity-gap math once per customer after the whole ERP page | Reinforces D8. Do not recompute after every 20-row group. Credit linking and deferred-payment attach stay in this after-page pass. |
+| D20 | Write chunk size | One bulk write per ERP page (~500), then D19 math for that page | Stop slicing connector pages with `backfill_import_batch_size` (20). File upload bulk-saves whatever rows arrived in that HTTP request. |
+| D21 | Bad row in a page | Skip/fail the bad rows, bulk-save the rest of the page | Validate in memory first; only send good rows to insert/update. Keep per-row success/failed/skipped counts. |
+| D22 | File upload vs connector | Same bulk saver for connector pages and file-upload batches | `ImportService.importLeaf` passes the full request batch, not `[row]`. Policy import stays per-row. |
+| D23 | Payments | Bulk-save payments too, then recalculate each affected invoice once | 40 payments on INV-1 → one outstanding recalc, not 40. Unchanged skip still uses account + customer + reference. |
+| D24 | Same key twice in one page | Last copy in the page wins | Collapse duplicates in memory before insert (INV-9 $100 then $120 → one row at $120). Required because Invoice has no unique `(account_id, invoice_number)`. |
+| D25 | Cancel during a page | Finish the current page’s bulk save, then stop | Cancel is checked between pages only. Do not abort the in-flight page transaction (that would undo good rows from D21). |
 
 ## Architecture
 
@@ -229,6 +238,44 @@ Applies to:
 **Post-import:** Continue calling [`postImportOverdueMetrics`](server/services/creditInsurance/postImportOverdueMetrics.ts) + [`syncInvoiceCapacityGapFlagsForCustomer`](server/services/creditInsurance/syncInvoiceCapacityGapFlags.ts) after import — ordering reduces transient wrong flags during import, not a substitute for recompute.
 
 **Follow-up alignment (optional):** [`syncInvoiceCapacityGapFlagsForCustomer`](server/services/creditInsurance/syncInvoiceCapacityGapFlags.ts) currently uses `orderBy: [{ invoice_date: "asc" }, { id: "asc" }]`. Consider changing tiebreaker to `invoice_number` asc for consistency with import order (separate small PR if needed).
+
+---
+
+## Bulk import writes (D17–D25)
+
+Import already **pulls** in pages and **accepts** arrays, but **writes** one record at a time. That is the bottleneck.
+
+**Today**
+
+| Path | What happens |
+|------|----------------|
+| ERP connector | Priority page ~500 → `importMappedEntityBatch` loops find + create/update per row (customer, then invoice). Payments look up customers once, then still write one payment transaction each (and recalc that invoice each time). |
+| File upload | UI sends a batch, then [`ImportService.importLeaf`](api/src/import/import.service.ts) calls `importMappedEntityBatch(..., [row])` — one save per row. |
+| Older sync service | Slices mapped rows into `backfill_import_batch_size` (20), then still writes one-by-one inside each slice. |
+
+**Target**
+
+1. Look up existing customers / invoices / payments / contacts for the whole page (or file batch) in a few `findMany` calls.
+2. Collapse same-key duplicates in memory — **last row wins** (D24).
+3. Split good vs bad rows in memory (D21). Missing customer, missing required fields, unknown country → failed/skipped; do not send them to the write.
+4. `createMany` new rows; batched `update` existing rows. Invoice has **no** unique `(account_id, invoice_number)` — do not use SQL `ON CONFLICT` until the gate below is resolved.
+5. After the ERP page (file: after that HTTP batch): link orphaned credits, attach matured deferred payments, **one outstanding recalc per affected invoice** (D23), then FIFO / overdue metrics **once per customer** (D8 / D19).
+6. Sort invoices oldest-first **before** save so the after-page FIFO pass sees a complete, ordered set (D18). Stored fields on each invoice do not look at other invoices during insert.
+
+**Do not** keep writing invoices or payments one-by-one “so math stays correct.” Stored fields go in bulk; later-invoice math runs after the page.
+
+**Cancel:** check between pages only; finish the in-flight page (D25).
+
+**Logging:** one summary line per page (pulled / inserted / updated / failed). Keep per-row error text for failed/skipped rows. Drop per-success `Invoice INV-9 created` lines on connector sync.
+
+**`backfill_import_batch_size`:** no longer slices connector writes. Leave the column as-is for now (do not migrate it away in this change). File upload bulk size = the HTTP batch the UI already sends.
+
+### Discovery gates
+
+| Gate | Blocking? | If Yes | If No |
+|------|-----------|--------|-------|
+| Production already has duplicate invoices on `(account_id, invoice_number)` | Blocking for a unique-index follow-up only | This change keeps in-memory last-wins (D24). Do **not** add a unique constraint in the same PR. | Optional follow-up: add `@@unique([account_id, invoice_number])` so future upserts cannot create duplicates. |
+| File-upload HTTP batch size stays ~20 | Informational | Server bulk-saves those 20. Speedup is “20 round trips → ~4”, not 500. | Out of scope unless requested: raise the file-upload batch size. |
 
 ---
 
@@ -866,7 +913,7 @@ flowchart TD
   Start[Admin starts backfill] --> ModeBACKFILL[BillingConnector.sync_mode = BACKFILL]
   ModeBACKFILL --> EntityOrder[Customer then Contact then Invoice then Payment per enabled_entities]
   EntityOrder --> PullPage[Pull ERP page using backfill_cursor]
-  PullPage --> ImportBatch[Import batch of 20 rows]
+  PullPage --> ImportBatch[Bulk-write the ERP page]
   ImportBatch --> Cap{Time or page cap hit?}
   Cap -->|Yes| SaveCursor[Save backfill_cursor PARTIAL run]
   SaveCursor --> Resume[Next manual or cron run resumes]
@@ -886,7 +933,7 @@ flowchart TD
 | `BillingConnector` | `backfill_started_at` | When initial load began |
 | `BillingConnector` | `backfill_max_pages_per_run` | Cap ERP pages per run |
 | `BillingConnector` | `backfill_max_duration_seconds` | Cap wall-clock per run |
-| `BillingConnector` | `backfill_import_batch_size` | Rows per import batch (default 20) |
+| `BillingConnector` | `backfill_import_batch_size` | Legacy (default 20). **Do not** slice connector pages with this; write size = ERP page (D20). |
 | `ConnectorSyncState` | `backfill_completed` | Per-entity completion flag |
 | `ConnectorSyncState` | `backfill_completed_at` | When entity backfill finished |
 | `ConnectorSyncState` | `backfill_cursor` | ERP pagination resume token |
@@ -899,8 +946,8 @@ flowchart TD
 - **Do not advance `last_max_updated_at`** until `backfill_completed = true` for that entity
 - **`PARTIAL` runs are expected** — not a failure; cron/manual resumes from `backfill_cursor`
 - **Entity order enforced:** Customer backfill before Contact and Invoice (contacts and invoices reference `customer_number`); Invoice backfill before Payment (payments reference `invoice_number` + `customer_number`)
-- **Invoice batches:** sort by `invoice_date` asc, `invoice_number` asc; group by customer when batching
-- **`postImportOverdueMetrics`:** once per ERP page per deduped affected customer (D8), not per batch or end of entity
+- **Invoice pages:** sort by `invoice_date` asc, `invoice_number` asc; last duplicate key in the page wins (D24); bulk-write stored fields; FIFO after the page (D19)
+- **`postImportOverdueMetrics`:** once per ERP page per deduped affected customer (D8 / D19), not per 20-row group or end of entity
 
 ### Run caps (defaults)
 
@@ -908,7 +955,7 @@ flowchart TD
 |-----|---------|--------|
 | `backfill_max_pages_per_run` | 50 | Save `backfill_cursor`, status `PARTIAL` |
 | `backfill_max_duration_seconds` | 600 | Same |
-| `backfill_import_batch_size` | 20 | Next batch in same run until page/duration cap |
+| `backfill_import_batch_size` | 20 (unused for connector writes) | Connector writes the full ERP page; next page until page/duration cap |
 
 ### Adding entities mid-backfill / mid-INCREMENTAL
 
@@ -1004,11 +1051,12 @@ Re-pulling the same ERP page after crash must not create duplicates:
 - **Invoices:** upsert by `(account_id, invoice_number)` (+ customer linkage)
 - **Contacts / payments:** same natural-key upsert paths as file import
 
-**Import batch transaction boundary:** each `backfill_import_batch_size` batch (20 rows) should commit independently. If a batch fails halfway:
+**Import page transaction boundary:** one bulk write per ERP page (D20). Validate and drop bad rows first (D21), then commit the good rows together.
 
-- Successful rows within batch remain committed (if per-row upsert)
-- Failed rows logged on `ImportRecord` with `processing_errors`
-- Cursor stays at **page start** until entire page’s batches complete — then advance cursor
+- Failed/skipped rows never enter the write; they are logged on `ImportRecord` with `processing_errors`
+- Good rows on that page commit together
+- Cursor stays at **page start** until the page write (and after-page linking/recalc) complete — then advance cursor
+- Crash mid-page: cursor unchanged; re-import page; last-wins + natural keys prevent duplicates (D24)
 
 **Invoice ordering on re-import:** always re-sort page rows before import (`invoice_date` asc, `invoice_number` asc) so credit-insurance FIFO stays correct even on retry.
 
@@ -1047,7 +1095,7 @@ Re-pulling the same ERP page after crash must not create duplicates:
 
 - Crash after page 3 of 10: cursor at page 4 start; resume imports pages 4–10; no duplicate customers/invoices
 - Stale `RUNNING` older than timeout: sweeper marks `TIMEOUT`; new run starts
-- Crash mid-batch within page: cursor unchanged; re-import page; idempotent upsert
+- Crash mid-page: cursor unchanged; re-import page; last-wins + idempotent upsert; no duplicate customers/invoices
 - Incremental crash: `last_max_updated_at` unchanged; overlap re-pull succeeds
 
 ---
@@ -1295,6 +1343,7 @@ flowchart LR
 | **ImportCustomerService** | Customer upsert by `(account_id, customer_number)` |
 | **ImportContactService** | Contact upsert by natural key; `customer_number` linkage required |
 | **ImportInvoiceService** | Sorts before createMany; file + connector share same path |
+| **Bulk import writes (D17–D25)** | Page of N rows → few findMany + createMany + batched update (not N find/create); last-wins collapse; bad rows isolated; payments bulk then one recalc per invoice; file `importLeaf` passes the full batch; cancel finishes the current page |
 | **ImportPaymentService** | Payment upsert by reference/composite key; invoice + customer linkage |
 | **Watermark + overlap** | Advance on max `updated_at` only; overlap re-pull upserts not duplicates |
 | **Error classification** | Auth → circuit breaker; 5xx → retry; validation → partial |

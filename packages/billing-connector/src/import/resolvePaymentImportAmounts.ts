@@ -19,6 +19,11 @@ export type PaymentImportResolutionResult =
       }
     | { ok: false; errorKey: string };
 
+export type PaymentImportResolutionOptions = {
+    /** Canonicalize codes before comparing payment vs invoice currency. */
+    normalizeCurrency?: (currency: string | null | undefined) => string;
+};
+
 function normalizeCurrencyCode(currency: string | null | undefined): string {
     return (currency ?? "").trim().toUpperCase();
 }
@@ -41,7 +46,8 @@ function isInvalidInvoiceRatio(
  */
 export function resolvePaymentImportAmounts(
     row: PaymentImportResolutionInput,
-    invoice: InvoiceAmountContext
+    invoice: InvoiceAmountContext,
+    options?: PaymentImportResolutionOptions
 ): PaymentImportResolutionResult {
     const customer_amount = row.customer_amount;
     const customer_currency = row.customer_currency.trim();
@@ -53,8 +59,9 @@ export function resolvePaymentImportAmounts(
         };
     }
 
-    const rowCurrency = normalizeCurrencyCode(customer_currency);
-    const invoiceCurrency = normalizeCurrencyCode(invoice.customer_currency);
+    const normalize = options?.normalizeCurrency ?? normalizeCurrencyCode;
+    const rowCurrency = normalize(customer_currency);
+    const invoiceCurrency = normalize(invoice.customer_currency);
 
     if (invoiceCurrency && rowCurrency !== invoiceCurrency) {
         return {

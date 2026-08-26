@@ -1,5 +1,13 @@
 import type { PrismaClient } from "@prisma/client";
 export type ImportEntityType = "Customer" | "Contact" | "Invoice" | "Payment";
+export interface EntityImportRowResult {
+    index: number;
+    success: boolean;
+    skipped?: boolean;
+    error?: string;
+    entityId?: number;
+    customerId?: number;
+}
 export interface EntityImportBatchResult {
     success: number;
     failed: number;
@@ -7,9 +15,13 @@ export interface EntityImportBatchResult {
     affectedCustomerIds: number[];
     entityIds: number[];
     errors: string[];
+    cancelled?: boolean;
+    rowResults?: EntityImportRowResult[];
 }
 export interface EntityImportBatchOptions {
     skipReportingBreach?: boolean;
+    onLog?: (message: string) => void;
+    shouldCancel?: () => boolean;
 }
 export declare function shouldSkipReportingBreachOnConnectorWrite(params: {
     syncMode: "BACKFILL" | "INCREMENTAL" | "backfill" | "incremental";

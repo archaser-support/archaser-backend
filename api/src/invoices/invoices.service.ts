@@ -156,6 +156,7 @@ export class InvoicesService {
         delete data.DisputeInvoice;
         delete data.created_at;
         delete data.created_by;
+        data.modified_at = new Date();
 
         if ("account_id" in body || "customer_id" in body) {
             throw new ForbiddenException({
@@ -297,6 +298,7 @@ export class InvoicesService {
                     data: {
                         credit_for_invoice_id: targetInvoiceId,
                         credit_for_invoice_number: target.invoice_number || null,
+                        modified_at: new Date(),
                     },
                 });
                 const targetInvoice = await tx.invoice.update({
@@ -306,6 +308,7 @@ export class InvoicesService {
                         customer_net_amount: newCustomerNetAmount,
                         outstanding_debt: newOutstandingDebt,
                         customer_outstanding_debt: newCustomerOutstandingDebt,
+                        modified_at: new Date(),
                     },
                 });
                 return { creditInvoice, targetInvoice };

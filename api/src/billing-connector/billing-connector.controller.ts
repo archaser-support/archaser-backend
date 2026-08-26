@@ -59,7 +59,8 @@ export class BillingConnectorController {
 
     @Post("sync")
     @ApiOperation({
-        summary: "Run preview, backfill, or incremental sync (awaits completion)",
+        summary:
+            "Run preview (awaits), or start backfill/incremental sync in-process",
     })
     async sync(
         @CurrentUser() user: JwtPayload,

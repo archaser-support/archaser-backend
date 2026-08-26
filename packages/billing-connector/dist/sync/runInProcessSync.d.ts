@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
+import { type ConnectorEntityStats } from "./connectorSyncRuntime";
 import { type ImportBatchFn } from "./stagedExtensionSync";
 export interface RunInProcessSyncOptions {
     prisma: PrismaClient;
@@ -22,6 +23,10 @@ export interface RunInProcessSyncOptions {
     resolveExtension?: (key: string) => BillingAccountExtension | undefined;
     /** Override importer (tests / dry-run verification). */
     importBatch?: ImportBatchFn;
+    /** Progress lines for the host process terminal (Nest Logger, tests). */
+    onLog?: (message: string) => void;
+    /** Live pulled/imported counts for GET /sync-runs polling. */
+    onProgress?: (entityStats: ConnectorEntityStats) => void;
 }
 export interface RunInProcessSyncResult {
     ok: boolean;
