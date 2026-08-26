@@ -26,7 +26,7 @@ import {
 const ADMIN_ACCOUNT_ID = 10013;
 const CREDIT_PRODUCT = "credit_insurance" as const;
 
-const GENERIC_ENTITIES = ["customer", "contact", "invoice", "payment"] as const;
+const GENERIC_ENTITIES = ["customer", "contact", "invoice"] as const;
 const GENERIC_FIELDS = [
     "text1",
     "text2",
@@ -70,7 +70,6 @@ function mergeWithDefaults(
         customer: defaultEntityConfig(),
         contact: defaultEntityConfig(),
         invoice: defaultEntityConfig(),
-        payment: defaultEntityConfig(),
     };
     if (!raw || typeof raw !== "object") return base;
     for (const entity of GENERIC_ENTITIES) {

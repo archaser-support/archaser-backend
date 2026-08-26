@@ -27,7 +27,6 @@ async function deleteCustomerSubtree(
         where: { customer_id: customerId },
     });
     await tx.invoicePayment.deleteMany({ where: { customer_id: customerId } });
-    await tx.payment.deleteMany({ where: { customer_id: customerId } });
     await tx.invoice.deleteMany({ where: { customer_id: customerId } });
     await tx.customerCollectionPeriod.deleteMany({
         where: { customer_id: customerId },

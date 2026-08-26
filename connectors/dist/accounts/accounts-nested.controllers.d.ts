@@ -63,6 +63,7 @@ export declare class AccountsController {
             sso_providers: string | null;
             has_collection: boolean;
             has_credit_insurance: boolean;
+            has_file_import: boolean;
             enable_customer_checkpoints: boolean;
             credit_limit_warning_threshold_pct: number | null;
             credit_score_validity_warning_days: number | null;
@@ -199,7 +200,7 @@ export declare class AccountsController {
     }>;
     genericFieldConfig(user: JwtPayload, accountId: number, body: Record<string, unknown>): Promise<{
         success: boolean;
-        generic_field_config: Record<"contact" | "customer" | "invoice" | "payment", {
+        generic_field_config: Record<"contact" | "customer" | "invoice", {
             text1: {
                 enabled: boolean;
                 label: string;
@@ -279,6 +280,8 @@ export declare class BillingConnectorController {
             include_older_open_invoices: boolean;
             skip_reporting_breach_on_backfill: boolean;
             backfill_options_locked: boolean;
+            extension_key: string | null;
+            extension_config: Record<string, unknown> | null;
             last_connection_test_at: string | null;
             last_connection_error: string | null;
             created_at: string;
@@ -310,6 +313,8 @@ export declare class BillingConnectorController {
             include_older_open_invoices: boolean;
             skip_reporting_breach_on_backfill: boolean;
             backfill_options_locked: boolean;
+            extension_key: string | null;
+            extension_config: Record<string, unknown> | null;
             last_connection_test_at: string | null;
             last_connection_error: string | null;
             created_at: string;
@@ -349,8 +354,26 @@ export declare class BillingConnectorController {
         };
         message: string;
         error?: string;
+        cancelled?: boolean;
+        entity_stats?: Record<string, {
+            pulled: number;
+            success: number;
+            failed: number;
+            skipped: number;
+        }>;
+        extension_key?: string | null;
+        dry_run?: boolean;
+        preview_batch?: Partial<Record<import("@archaser/billing-connector").ExtensionEntityType, Record<string, unknown>[]>> | undefined;
+        window_outcomes?: Array<{
+            start: Date | null;
+            end: Date | null;
+            ok: boolean;
+            error?: string;
+            imported: number;
+        }>;
         queued: boolean;
         inProcess: boolean;
+        result: import("@archaser/billing-connector").RunInProcessSyncResult;
         success?: undefined;
         reset?: undefined;
         runs?: undefined;
@@ -367,7 +390,7 @@ export declare class BillingConnectorController {
         error?: undefined;
         reset?: undefined;
     }>;
-    sync(user: JwtPayload, accountId: number, body: Record<string, unknown>): Promise<{
+    sync(user: JwtPayload, accountId: number, body: Record<string, unknown>, mode?: string): Promise<{
         ok: boolean;
         success: boolean;
         error: string;
@@ -396,8 +419,26 @@ export declare class BillingConnectorController {
         };
         message: string;
         error?: string;
+        cancelled?: boolean;
+        entity_stats?: Record<string, {
+            pulled: number;
+            success: number;
+            failed: number;
+            skipped: number;
+        }>;
+        extension_key?: string | null;
+        dry_run?: boolean;
+        preview_batch?: Partial<Record<import("@archaser/billing-connector").ExtensionEntityType, Record<string, unknown>[]>> | undefined;
+        window_outcomes?: Array<{
+            start: Date | null;
+            end: Date | null;
+            ok: boolean;
+            error?: string;
+            imported: number;
+        }>;
         queued: boolean;
         inProcess: boolean;
+        result: import("@archaser/billing-connector").RunInProcessSyncResult;
         success?: undefined;
         reset?: undefined;
         runs?: undefined;
@@ -443,8 +484,26 @@ export declare class BillingConnectorController {
         };
         message: string;
         error?: string;
+        cancelled?: boolean;
+        entity_stats?: Record<string, {
+            pulled: number;
+            success: number;
+            failed: number;
+            skipped: number;
+        }>;
+        extension_key?: string | null;
+        dry_run?: boolean;
+        preview_batch?: Partial<Record<import("@archaser/billing-connector").ExtensionEntityType, Record<string, unknown>[]>> | undefined;
+        window_outcomes?: Array<{
+            start: Date | null;
+            end: Date | null;
+            ok: boolean;
+            error?: string;
+            imported: number;
+        }>;
         queued: boolean;
         inProcess: boolean;
+        result: import("@archaser/billing-connector").RunInProcessSyncResult;
         success?: undefined;
         reset?: undefined;
         runs?: undefined;
@@ -490,8 +549,26 @@ export declare class BillingConnectorController {
         };
         message: string;
         error?: string;
+        cancelled?: boolean;
+        entity_stats?: Record<string, {
+            pulled: number;
+            success: number;
+            failed: number;
+            skipped: number;
+        }>;
+        extension_key?: string | null;
+        dry_run?: boolean;
+        preview_batch?: Partial<Record<import("@archaser/billing-connector").ExtensionEntityType, Record<string, unknown>[]>> | undefined;
+        window_outcomes?: Array<{
+            start: Date | null;
+            end: Date | null;
+            ok: boolean;
+            error?: string;
+            imported: number;
+        }>;
         queued: boolean;
         inProcess: boolean;
+        result: import("@archaser/billing-connector").RunInProcessSyncResult;
         success?: undefined;
         reset?: undefined;
         runs?: undefined;
@@ -517,6 +594,11 @@ export declare class BillingConnectorController {
             import_type: import(".prisma/client").$Enums.ImportType;
             mapping: import("@prisma/client/runtime/library").JsonValue;
             is_complete: boolean;
+            pull_date_field: string | null;
+            discovered_headers: import("@prisma/client/runtime/library").JsonValue | null;
+            discovered_example_values: import("@prisma/client/runtime/library").JsonValue | null;
+            discovered_sample_count: number | null;
+            discovered_at: Date | null;
         } | null;
     }>;
     putMappings(user: JwtPayload, accountId: number, importType: string, body: Record<string, unknown>): Promise<{
@@ -528,6 +610,11 @@ export declare class BillingConnectorController {
             import_type: import(".prisma/client").$Enums.ImportType;
             mapping: import("@prisma/client/runtime/library").JsonValue;
             is_complete: boolean;
+            pull_date_field: string | null;
+            discovered_headers: import("@prisma/client/runtime/library").JsonValue | null;
+            discovered_example_values: import("@prisma/client/runtime/library").JsonValue | null;
+            discovered_sample_count: number | null;
+            discovered_at: Date | null;
         };
     }>;
     discover(user: JwtPayload, accountId: number, importType: string): Promise<{

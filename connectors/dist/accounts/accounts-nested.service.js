@@ -18,7 +18,7 @@ const database_service_1 = require("../database/database.service");
 const billing_connector_backfill_options_1 = require("./billing-connector-backfill-options");
 const ADMIN_ACCOUNT_ID = 10013;
 const CREDIT_PRODUCT = "credit_insurance";
-const GENERIC_ENTITIES = ["customer", "contact", "invoice", "payment"];
+const GENERIC_ENTITIES = ["customer", "contact", "invoice"];
 const GENERIC_FIELDS = [
     "text1",
     "text2",
@@ -53,7 +53,6 @@ function mergeWithDefaults(raw) {
         customer: defaultEntityConfig(),
         contact: defaultEntityConfig(),
         invoice: defaultEntityConfig(),
-        payment: defaultEntityConfig(),
     };
     if (!raw || typeof raw !== "object")
         return base;
@@ -338,6 +337,14 @@ let AccountsNestedService = class AccountsNestedService {
             include_older_open_invoices: connector.include_older_open_invoices ?? true,
             skip_reporting_breach_on_backfill: connector.skip_reporting_breach_on_backfill ?? false,
             backfill_options_locked: (0, billing_connector_backfill_options_1.areBackfillOptionsLocked)(connector.backfill_started_at),
+            extension_key: connector.extension_key ?? null,
+            extension_config: connector.extension_config &&
+                typeof connector.extension_config === "object" &&
+                !Array.isArray(connector.extension_config)
+                ? connector.extension_config
+                : connector.extension_key
+                    ? {}
+                    : null,
             last_connection_test_at: connector.last_connection_test_at?.toISOString() ?? null,
             last_connection_error: connector.last_connection_error,
             created_at: connector.created_at.toISOString(),
@@ -467,6 +474,38 @@ let AccountsNestedService = class AccountsNestedService {
         if (skipBreachChange.value !== undefined) {
             data.skip_reporting_breach_on_backfill = skipBreachChange.value;
         }
+        let extensionPatch;
+        try {
+            extensionPatch = (0, billing_connector_1.resolveExtensionAttachmentInput)({
+                extension_key: body.extension_key === undefined
+                    ? undefined
+                    : body.extension_key,
+                extension_config: body.extension_config === undefined
+                    ? undefined
+                    : body.extension_config,
+                existingKey: existing?.extension_key ?? null,
+            });
+        }
+        catch (error) {
+            const err = error;
+            if (err?.code === "UNKNOWN_EXTENSION_KEY" ||
+                err?.code === "INVALID_EXTENSION_CONFIG" ||
+                err?.code === "EXTENSION_KEY_REQUIRED") {
+                throw new common_1.BadRequestException({
+                    error: err.message ?? "Invalid extension attachment",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (extensionPatch) {
+            if (extensionPatch.extension_key !== undefined) {
+                data.extension_key = extensionPatch.extension_key;
+            }
+            if (extensionPatch.extension_config !== undefined) {
+                data.extension_config = extensionPatch.extension_config;
+            }
+        }
         const connector = existing
             ? await this.db.billingConnector.update({
                 where: { account_id: accountId },
@@ -525,6 +564,7 @@ let AccountsNestedService = class AccountsNestedService {
                         last_connection_error: result.ok
                             ? null
                             : result.error || "Connection failed",
+                        modified_at: new Date(),
                     },
                 });
                 if (!result.ok) {
@@ -543,22 +583,32 @@ let AccountsNestedService = class AccountsNestedService {
                     data: {
                         last_connection_test_at: new Date(),
                         last_connection_error: message,
+                        modified_at: new Date(),
                     },
                 });
                 return { ok: false, success: false, error: message };
             }
         }
         if (action === "sync") {
+            const mode = typeof body?.mode === "string" ? body.mode : undefined;
+            const dryRun = mode === "preview";
+            const trigger = typeof body?.trigger === "string"
+                ? body.trigger
+                : dryRun
+                    ? "preview"
+                    : mode === "backfill"
+                        ? "backfill"
+                        : "manual";
             const result = await (0, billing_connector_1.runInProcessSync)({
                 prisma: this.db,
                 accountId,
-                trigger: typeof body?.trigger === "string"
-                    ? body.trigger
-                    : "manual",
+                trigger,
+                dryRun,
             });
             return {
                 queued: false,
                 inProcess: true,
+                result,
                 ...result,
             };
         }
