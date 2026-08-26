@@ -2,6 +2,9 @@
 # First-time staging reverse-proxy setup: remove Apache, install nginx + TLS,
 # enable api.staging.archaser.com and grafana.staging.archaser.com.
 #
+# UI is on Amplify (staging.archaser.com) — this EC2 is Nest API + Grafana only.
+# Do not enable nginx/archaser-staging.conf (legacy Next-on-EC2).
+#
 # Run on the staging API EC2 as ubuntu (uses sudo):
 #   cd /home/ubuntu/api   # or your checkout
 #   bash scripts/deployment/setup-staging-nginx.sh
@@ -68,10 +71,12 @@ require_sudo() {
 }
 
 run() {
+    # Always go through env so VAR=value prefixes work under both root and sudo.
+    # (Bare `run FOO=bar cmd` would try to exec a command named "FOO=bar".)
     if [[ "$(id -u)" -eq 0 ]]; then
-        "$@"
+        env "$@"
     else
-        sudo "$@"
+        sudo env "$@"
     fi
 }
 
@@ -196,17 +201,17 @@ else
 fi
 
 # --- 2) Install nginx + certbot ---------------------------------------------
-log "Installing nginx and certbot"
+log "Installing nginx and certbot (API + Grafana only; UI stays on Amplify)"
 run apt-get update -y
 run DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot python3-certbot-nginx
 
+# Ensure legacy Next-on-EC2 site is not enabled (Amplify owns staging.archaser.com).
+run rm -f /etc/nginx/sites-enabled/archaser-staging \
+    /etc/nginx/sites-enabled/default \
+    /etc/nginx/sites-enabled/000-default 2>/dev/null || true
+
 run mkdir -p /var/www/html/.well-known/acme-challenge
 run chown -R www-data:www-data /var/www/html
-
-# Disable default site if it fights for default_server
-if [[ -L /etc/nginx/sites-enabled/default ]]; then
-    run rm -f /etc/nginx/sites-enabled/default
-fi
 
 # --- 3) Bootstrap HTTP (so nginx starts before certs exist) -----------------
 log "Installing HTTP bootstrap vhosts for ACME"
@@ -318,8 +323,9 @@ if [[ "$WITH_MONITORING" == "true" ]]; then
 fi
 
 log "Done"
-echo "  API:     https://$API_DOMAIN"
-echo "  Grafana: https://$GRAFANA_DOMAIN  (needs containers on 127.0.0.1:3200)"
+echo "  API:     https://$API_DOMAIN   (Nest on this EC2)"
+echo "  Grafana: https://$GRAFANA_DOMAIN  (containers on 127.0.0.1:3200)"
+echo "  UI:      Amplify — staging.archaser.com (not proxied here)"
 echo
 echo "If Grafana containers conflicted earlier:"
 echo "  sudo docker rm -f archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail"
