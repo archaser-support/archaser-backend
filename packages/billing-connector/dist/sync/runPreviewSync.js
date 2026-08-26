@@ -151,7 +151,10 @@ async function runPreviewSync(params) {
     const nextPasses = (0, billingConnectorPreviewPasses_1.setPreviewPasses)(connector.preview_passes, entityPasses, new Date());
     await params.prisma.billingConnector.update({
         where: { id: connector.id },
-        data: { preview_passes: (0, billingConnectorPreviewPasses_1.previewPassesToPrismaJson)(nextPasses) },
+        data: {
+            preview_passes: (0, billingConnectorPreviewPasses_1.previewPassesToPrismaJson)(nextPasses),
+            modified_at: new Date(),
+        },
     });
     const completedAt = new Date();
     return {
@@ -252,6 +255,7 @@ async function discoverConnectorFields(params) {
             discovered_example_values: discovered.exampleValues,
             discovered_sample_count: discovered.sampleCount,
             discovered_at: discoveredAt,
+            modified_at: discoveredAt,
             ...(params.userId ? { modified_by: params.userId } : {}),
         },
     });

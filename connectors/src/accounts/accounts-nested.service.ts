@@ -723,6 +723,7 @@ export class AccountsNestedService {
                         last_connection_error: result.ok
                             ? null
                             : result.error || "Connection failed",
+                        modified_at: new Date(),
                     },
                 });
                 if (!result.ok) {
@@ -741,6 +742,7 @@ export class AccountsNestedService {
                     data: {
                         last_connection_test_at: new Date(),
                         last_connection_error: message,
+                        modified_at: new Date(),
                     },
                 });
                 return { ok: false, success: false, error: message };

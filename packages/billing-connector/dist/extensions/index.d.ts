@@ -1,4 +1,5 @@
 import type { BillingAccountExtension, ExtensionAttachmentUpsertInput, ExtensionAttachmentUpsertPatch } from "./types";
+export { ACCOUNT_10149_EXTENSION_KEY } from "./account_10149";
 export { SAMPLE_NOOP_EXTENSION_KEY } from "./sample_noop";
 export type { BillingAccountExtension, ExtensionAttachmentUpsertInput, ExtensionAttachmentUpsertPatch, ExtensionEntityType, ExtensionMappedBatch, ExtensionSyncWindow, ExtensionTransformContext, } from "./types";
 export declare function listRegisteredExtensionKeys(): string[];

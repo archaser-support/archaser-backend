@@ -3,4 +3,4 @@ export interface MaturityResult {
     matured: number;
     deferredRemaining: number;
 }
-export declare function applyMaturedDeferredPayments(prisma: PrismaClient, accountId: number, asOf: Date): Promise<MaturityResult>;
+export declare function applyMaturedDeferredPayments(prisma: PrismaClient, accountId: number, asOf: Date, invoiceNumbers?: string[]): Promise<MaturityResult>;

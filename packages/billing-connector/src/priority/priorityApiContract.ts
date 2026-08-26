@@ -289,7 +289,6 @@ export const PRIORITY_ENTITY_ENDPOINTS: Record<
             "ADDRESS2",
             "ZIP",
             "WTAXNUM",
-            "UDATE",
             "IDG_COMPANYNAME",
             "MCUSTNAME",
         ],

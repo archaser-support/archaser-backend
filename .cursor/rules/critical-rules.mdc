@@ -21,6 +21,7 @@ These rules take precedence over all other guidelines. Always follow the pre-com
 - ❌ NEVER create .md files, READMEs, or run commands without approval (except plans/PRDs under `.cursor/plans/` and `/to-issues` slices under `.scratch/`)
 - ❌ NEVER modify translation files without explicit permission
 - ❌ NEVER add new styles without explicit user approval (see Styling below)
+- ❌ NEVER add, expand, or update tests unless the user explicitly asks for tests
 - ❌ NEVER run `npx prisma db push --force-reset` or `npx prisma migrate dev`
 - ❌ NEVER run `npm run dev` or any development server commands automatically
 - ✅ Use `search_replace` with 3-5 lines context, `read_file`, `grep_search`
@@ -45,7 +46,8 @@ These rules take precedence over all other guidelines. Always follow the pre-com
 
 - Use TypeScript, proper error handling, React Query
 - Use NextAuth.js with role-based access control
-- Create feature branches, write tests, review before merging
+- Create feature branches, review before merging
+- Write or update tests only when the user explicitly asks
 - **When generating plans**: Always include a Testing Strategy section with test units mapped to business requirements (see Testing Guidelines)
 
 ### Database Guidelines
