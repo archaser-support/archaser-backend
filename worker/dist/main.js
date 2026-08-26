@@ -91,15 +91,53 @@ let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
                 cron_expression: true,
                 active: true,
                 last_run_at: true,
+                timeout_period_seconds: true,
+                last_execution_duration_seconds: true,
+                average_execution_duration_seconds: true,
+                min_execution_duration_seconds: true,
+                max_execution_duration_seconds: true,
+                success_count_30d: true,
+                failure_count_30d: true,
+                timeout_count_30d: true,
             },
         });
         if (!job) {
             return { ok: false, reason: "CronJob not found", cronJobId };
         }
         this.logger.log(`Executing CronJob ${job.id} (${job.name}) via ${source}`);
-        const result = await (0, cron_jobs_1.executeNamedCronJob)(this.prisma, job.name, {
-            lastRunAt: job.last_run_at,
-        });
+        const started = Date.now();
+        let result;
+        try {
+            result = await (0, cron_jobs_1.executeNamedCronJob)(this.prisma, job.name, {
+                lastRunAt: job.last_run_at,
+            });
+        }
+        catch (error) {
+            const durationMs = typeof error === "object" &&
+                error !== null &&
+                "durationMs" in error &&
+                typeof error.durationMs ===
+                    "number"
+                ? error.durationMs
+                : Date.now() - started;
+            result = {
+                success: false,
+                message: error instanceof Error
+                    ? error.message
+                    : `CronJob ${job.name} failed`,
+                durationMs,
+            };
+            this.logger.error(`CronJob ${job.id} (${job.name}) failed: ${result.message}`);
+        }
+        try {
+            await (0, cron_jobs_1.recordCronJobRun)(this.prisma, job, {
+                success: result.success,
+                durationMs: result.durationMs,
+            });
+        }
+        catch (error) {
+            this.logger.warn(`Failed to persist CronJob ${job.id} run stats: ${error instanceof Error ? error.message : String(error)}`);
+        }
         return {
             ok: result.success,
             cronJobId: job.id,
@@ -133,6 +171,13 @@ let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
                     removeOnComplete: 50,
                     removeOnFail: 50,
                 });
+                const nextRunAt = (0, cron_jobs_1.computeNextRunAt)(pattern);
+                if (nextRunAt) {
+                    await this.prisma.cronJob.update({
+                        where: { id: job.id },
+                        data: { next_run_at: nextRunAt },
+                    });
+                }
                 synced += 1;
             }
             catch (error) {

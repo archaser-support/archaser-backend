@@ -9,35 +9,59 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-- job_name: pm2_logs
-  static_configs:
-  - targets:
-      - localhost
-    labels:
-      job: pm2
-      service: archaser-core
-      host: production
-      environment: production
-      source: pm2-logs
-      customer_id: system
-      __path__: /var/log/pm2/*.log
+  # Production PM2 app logs (path may be empty on staging — scrape is harmless)
+  - job_name: pm2_logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: pm2
+          service: archaser-core
+          host: production
+          environment: production
+          source: pm2-logs
+          customer_id: system
+          __path__: /var/log/pm2/*.log
 
-  pipeline_stages:
-  - multiline:
-      firstline: '^\d{4}-\d{2}-\d{2}'
-      max_wait_time: 3s
-  - regex:
-      source: filename
-      expression: '(?P<app_name>archaser-[^/-]+)-(?P<log_type>out|error)\.log'
-  - regex:
-      # Try to extract level from log line like "[ERROR]" or "level=error"
-      expression: '(?i)\[(?P<extracted_level>error|err|warn|warning|info|debug)\]|level=(?P<level_val>\w+)'
-  - labels:
-      app_name:
-      log_type:
-  # Map extracted level OR log_type (error log file) to the 'level' label
-  - template:
-      source: level
-      template: '{{ if .extracted_level }}{{ .extracted_level }}{{ else if eq .log_type "error" }}error{{ else }}info{{ end }}'
-  - labels:
-      level:
+    pipeline_stages:
+      - multiline:
+          firstline: '^\d{4}-\d{2}-\d{2}'
+          max_wait_time: 3s
+      - regex:
+          source: filename
+          expression: '(?P<app_name>archaser-[^/-]+)-(?P<log_type>out|error)\.log'
+      - regex:
+          expression: '(?i)\[(?P<extracted_level>error|err|warn|warning|info|debug)\]|level=(?P<level_val>\w+)'
+      - labels:
+          app_name:
+          log_type:
+      - template:
+          source: level
+          template: '{{ if .extracted_level }}{{ .extracted_level }}{{ else if eq .log_type "error" }}error{{ else }}info{{ end }}'
+      - labels:
+          level:
+
+  # Staging Nest compose containers (api / worker / peels)
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/?(.*)"
+        target_label: container
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: stream
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: compose_service
+      - source_labels: ["__meta_docker_container_name"]
+        regex: ".*(api|worker|sms|connectors|reports|loki|grafana|prometheus|promtail|redis).*"
+        action: keep
+      - target_label: job
+        replacement: nest-docker
+      - target_label: environment
+        replacement: staging
+      - target_label: source
+        replacement: docker
+    pipeline_stages:
+      - docker: {}
