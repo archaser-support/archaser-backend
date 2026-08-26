@@ -23,6 +23,7 @@ import {
     reconstructDashboardFromCache,
     type EntityAmount,
 } from "./financial-dashboard.builder";
+import { followUpTimeWhere } from "./agents-follow-up-date-range";
 
 const COLLECTION_ROLES = [
     "Collection_Agent",
@@ -2378,31 +2379,131 @@ export class SystemService {
         });
     }
 
-    async getAgentsFollowUp(user: JwtPayload) {
+    async getAgentsFollowUp(user: JwtPayload, query: SystemListQuery = {}) {
         const { accountId } = await this.scope(user);
         const currency = await this.accountCurrency(accountId);
-        const now = new Date();
-        const periods = await this.db.customerCollectionPeriod.findMany({
-            where: {
-                follow_up_time: { lte: now },
-                period_end_date: null,
-                Customer: {
-                    account_id: accountId,
-                    collection_status: "Active",
-                },
+        const page = Math.max(1, parseInt(query.page || "1", 10) || 1);
+        const limit = Math.min(
+            100,
+            Math.max(1, parseInt(query.limit || "10", 10) || 10)
+        );
+        const skip = (page - 1) * limit;
+        const search = (query.search || "").trim();
+        const businessUnitId = query.businessUnitId
+            ? parseInt(String(query.businessUnitId), 10)
+            : NaN;
+        const sortDirection =
+            String(query.sortDirection || "asc").toLowerCase() === "desc"
+                ? "desc"
+                : "asc";
+
+        const reminderWindowMinutes = query.reminderWindowMinutes
+            ? parseInt(String(query.reminderWindowMinutes), 10)
+            : NaN;
+        const reminderOverdueMinutes = query.reminderOverdueMinutes
+            ? parseInt(String(query.reminderOverdueMinutes), 10)
+            : NaN;
+        const isReminderPoll =
+            Number.isFinite(reminderWindowMinutes) ||
+            Number.isFinite(reminderOverdueMinutes);
+
+        let followUpTimeFilter: ReturnType<typeof followUpTimeWhere> | {
+            not: null;
+            gte: Date;
+            lte: Date;
+        };
+        if (isReminderPoll) {
+            const now = new Date();
+            const overdueMs =
+                (Number.isFinite(reminderOverdueMinutes)
+                    ? reminderOverdueMinutes
+                    : 24 * 60) *
+                60 *
+                1000;
+            const windowMs =
+                (Number.isFinite(reminderWindowMinutes)
+                    ? reminderWindowMinutes
+                    : 10) *
+                60 *
+                1000;
+            followUpTimeFilter = {
+                not: null,
+                gte: new Date(now.getTime() - overdueMs),
+                lte: new Date(now.getTime() + windowMs),
+            };
+        } else {
+            followUpTimeFilter = followUpTimeWhere(query.followUpDateRange);
+        }
+
+        const where = {
+            follow_up_time: followUpTimeFilter,
+            period_end_date: null,
+            Customer: {
+                account_id: accountId,
+                collection_status: "Active" as const,
+                ...(Number.isFinite(businessUnitId)
+                    ? { business_unit_id: businessUnitId }
+                    : {}),
+                ...(search
+                    ? {
+                          OR: [
+                              {
+                                  customer_number: {
+                                      contains: search,
+                                      mode: "insensitive" as const,
+                                  },
+                              },
+                              {
+                                  Company: {
+                                      name: {
+                                          contains: search,
+                                          mode: "insensitive" as const,
+                                      },
+                                  },
+                              },
+                              {
+                                  Person: {
+                                      first_name: {
+                                          contains: search,
+                                          mode: "insensitive" as const,
+                                      },
+                                  },
+                              },
+                              {
+                                  Person: {
+                                      last_name: {
+                                          contains: search,
+                                          mode: "insensitive" as const,
+                                      },
+                                  },
+                              },
+                          ],
+                      }
+                    : {}),
             },
-            include: {
-                Customer: {
-                    select: this.agentsCustomerSelect(),
+        };
+
+        const [periods, totalRecords] = await Promise.all([
+            this.db.customerCollectionPeriod.findMany({
+                where,
+                include: {
+                    Customer: {
+                        select: this.agentsCustomerSelect(),
+                    },
                 },
-            },
-            take: 100,
-            orderBy: { follow_up_time: "asc" },
-        });
+                skip,
+                take: limit,
+                orderBy: { follow_up_time: sortDirection },
+            }),
+            this.db.customerCollectionPeriod.count({ where }),
+        ]);
+
         return serializeBigInt({
             agents: periods,
             followUps: periods,
-            totalRecords: periods.length,
+            totalRecords,
+            currentPage: page,
+            totalPages: Math.ceil(totalRecords / limit) || 0,
             currency,
         });
     }
