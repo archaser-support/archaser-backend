@@ -20,6 +20,7 @@
     "@archaser/sms-send": "*",
     "@prisma/client": "^6.4.1",
     "countries-and-timezones": "^3.10.0",
+    "cron-parser": "^4.9.0",
     "ioredis": "^5.11.1",
     "moment-timezone": "^0.5.47",
     "nodemailer": "^7.0.13"

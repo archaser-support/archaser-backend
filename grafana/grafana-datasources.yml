@@ -6,7 +6,9 @@ datasources:
     access: proxy
     url: http://loki:3100
     uid: Loki
+    editable: false
     jsonData:
+      maxLines: 1000
       derivedFields:
         - datasourceUid: Loki
           matcherRegex: "trace_id=(\\w+)"
@@ -18,9 +20,11 @@ datasources:
     url: http://prometheus:9090
     uid: Prometheus
     isDefault: true
+    editable: false
     jsonData:
       httpMethod: POST
       manageAlerts: true
+      timeInterval: 15s
   - name: Postgres
     type: postgres
     uid: Postgres
@@ -28,6 +32,7 @@ datasources:
     database: ${GRAFANA_DB_NAME}
     user: ${GRAFANA_DB_USER}
     isDefault: false
+    editable: false
     jsonData:
       sslmode: ${GRAFANA_DB_SSLMODE}
       database: ${GRAFANA_DB_NAME}

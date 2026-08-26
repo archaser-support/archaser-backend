@@ -1,6 +1,7 @@
 export { fetchAndStoreCurrencyRates, } from "./currencyRateService";
 export { bindCreditDomain, requireCreditDomainModule, } from "./creditDomain";
 export { executeNamedCronJob, isCronJobPorted, NOT_PORTED_CRON_JOB_NAMES, type CronJobResult, type CronJobContext, } from "./handlers";
+export { recordCronJobRun, buildCronJobRunUpdate, computeNextRunAt, type CronJobRunStatsRow, type CronJobRunOutcome, } from "./recordCronJobRun";
 export { computeCustomerOverdueMetrics } from "./computeCustomerOverdueMetrics";
 export { closeZeroOutstandingDebtInvoices } from "./closeZeroOutstandingDebtInvoices";
 export { fixClosedCollectionData } from "./fixClosedCollectionData";
