@@ -6,7 +6,6 @@ import { mergeActiveCustomerPolicySelect } from "./report-customer-policy-fields
 const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
     Customer: "Customer",
     Invoice: "Invoice",
-    Payment: "Payment",
     InvoicePayment: "InvoicePayment",
     Contact: "Contact",
     Activity: "Activity",

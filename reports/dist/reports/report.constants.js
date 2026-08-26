@@ -6,7 +6,6 @@ exports.getFieldOutputKey = getFieldOutputKey;
 exports.MODEL_NAME_MAP = {
     Customer: "customer",
     Invoice: "invoice",
-    Payment: "payment",
     InvoicePayment: "invoicePayment",
     Contact: "contact",
     Activity: "activity",
@@ -28,7 +27,6 @@ exports.CONTEXT_PRIMARY_TABLE = {
     customer_banks: "CustomerBanks",
     customer_unpaid_invoices: "Invoice",
     disputes: "Dispute",
-    payments: "Payment",
     activities: "Activity",
     "customer-collection-period": "CustomerCollectionPeriod",
     dashboard_customers: "Customer",
@@ -52,7 +50,6 @@ exports.ENTITY_LIST_REPORT_CONTEXTS = new Set([
     "customer_banks",
     "customer_unpaid_invoices",
     "disputes",
-    "payments",
     "activities",
     "customer-collection-period",
 ]);
@@ -125,13 +122,8 @@ exports.RELATION_FROM_PRIMARY = {
     CustomerCollectionPeriod: {
         Customer: "Customer",
     },
-    Payment: {
-        Customer: "Customer",
-        Invoice: "Invoice",
-    },
     InvoicePayment: {
         Invoice: "Invoice",
-        Payment: "Payment",
         Customer: "Customer",
     },
 };
