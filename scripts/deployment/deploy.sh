@@ -166,7 +166,7 @@ if [ "$ENVIRONMENT" = "production" ]; then
             echo "Starting/Updating Grafana, Loki, and Prometheus containers..."
             sudo docker compose -f backend/grafana/docker-compose.logging.yml up -d --remove-orphans
             echo "✅ Monitoring stack started successfully."
-            echo "   Grafana URL: https://grafana.archaser.com"
+            echo "   Grafana URL: https://grafana.staging.archaser.com (override GRAFANA_ROOT_URL for production)"
             echo "   Prometheus Management: http://localhost:9090"
         else
             echo "⚠️  backend/grafana/docker-compose.logging.yml not found. Skipping monitoring setup."
