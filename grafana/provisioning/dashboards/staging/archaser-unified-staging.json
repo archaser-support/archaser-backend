@@ -435,7 +435,8 @@
     "style": "dark",
     "tags": [
         "archaser",
-        "dashboard"
+        "home",
+        "staging"
     ],
     "templating": {
         "list": [
@@ -457,7 +458,7 @@
         "to": "now"
     },
     "timezone": "browser",
-    "title": "ARChaser Home - Staging",
+    "title": "Home / Glance - Staging",
     "uid": "archaser-unified-v1-staging",
     "version": 4
 }

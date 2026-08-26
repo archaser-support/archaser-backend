@@ -435,7 +435,8 @@
     "style": "dark",
     "tags": [
         "archaser",
-        "dashboard"
+        "home",
+        "production"
     ],
     "templating": {
         "list": [
@@ -457,7 +458,7 @@
         "to": "now"
     },
     "timezone": "browser",
-    "title": "ARChaser Home - Production",
+    "title": "Home / Glance - Production",
     "uid": "archaser-unified-v1-prod",
     "version": 4
 }
