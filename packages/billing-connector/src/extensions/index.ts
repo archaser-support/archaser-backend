@@ -1,3 +1,4 @@
+import { account10149Extension } from "./account_10149";
 import { sampleNoopExtension } from "./sample_noop";
 import type {
     BillingAccountExtension,
@@ -5,19 +6,25 @@ import type {
     ExtensionAttachmentUpsertPatch,
 } from "./types";
 
+export { ACCOUNT_10149_EXTENSION_KEY } from "./account_10149";
 export { SAMPLE_NOOP_EXTENSION_KEY } from "./sample_noop";
 export type {
     BillingAccountExtension,
     ExtensionAttachmentUpsertInput,
     ExtensionAttachmentUpsertPatch,
+    ExtensionCreditPaymentCloseInput,
     ExtensionEntityType,
+    ExtensionLinkedPayment,
     ExtensionMappedBatch,
     ExtensionSyncWindow,
     ExtensionTransformContext,
 } from "./types";
 
 const EXTENSION_REGISTRY: ReadonlyMap<string, BillingAccountExtension> =
-    new Map([[sampleNoopExtension.key, sampleNoopExtension]]);
+    new Map([
+        [sampleNoopExtension.key, sampleNoopExtension],
+        [account10149Extension.key, account10149Extension],
+    ]);
 
 export function listRegisteredExtensionKeys(): string[] {
     return Array.from(EXTENSION_REGISTRY.keys()).sort();
@@ -31,6 +38,39 @@ export function getRegisteredExtension(
 
 export function isRegisteredExtensionKey(key: string): boolean {
     return EXTENSION_REGISTRY.has(key);
+}
+
+type ConnectorExtensionLookup = {
+    billingConnector?: {
+        findFirst: (args: {
+            where: { account_id: number };
+            select: { extension_key: true };
+        }) => Promise<{ extension_key: string | null } | null>;
+    };
+};
+
+/**
+ * Load the registered billing extension attached to the account's connector.
+ * Returns undefined when the prisma client has no connector delegate (tests)
+ * or the connector has no known extension_key.
+ */
+export async function resolveAccountBillingExtension(
+    prisma: ConnectorExtensionLookup,
+    accountId: number
+): Promise<BillingAccountExtension | undefined> {
+    const findFirst = prisma.billingConnector?.findFirst;
+    if (typeof findFirst !== "function") {
+        return undefined;
+    }
+    const connector = await findFirst({
+        where: { account_id: accountId },
+        select: { extension_key: true },
+    });
+    const key = connector?.extension_key?.trim();
+    if (!key) {
+        return undefined;
+    }
+    return getRegisteredExtension(key);
 }
 
 function normalizeExtensionKey(

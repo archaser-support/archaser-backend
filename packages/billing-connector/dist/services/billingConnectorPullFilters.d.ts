@@ -28,3 +28,14 @@ export declare function toPublicPullFilters(raw: unknown): {
     effective_pull_filters: Partial<Record<ImportType, string | null>>;
 };
 export declare function resolveEntityPullFilterOData(raw: unknown, importType: ImportType): string | null;
+/**
+ * Customer $filter that is safe to AND onto Invoice / Payment / Contact.
+ * Those entities share CUSTNAME; customer-only fields (CDES, …) would 400.
+ */
+export declare function resolveRelatedCustomerPullFilterOData(raw: unknown): string | null;
+/**
+ * OData $filter for a live import pull: the entity's own pull filter, plus a
+ * CUSTNAME-only Customer filter on related entities so invoices/payments/
+ * contacts stay inside the same customer subset.
+ */
+export declare function resolveImportPullFilterOData(raw: unknown, importType: ImportType): string | null;

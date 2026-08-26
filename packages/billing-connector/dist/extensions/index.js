@@ -1,14 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SAMPLE_NOOP_EXTENSION_KEY = void 0;
+exports.SAMPLE_NOOP_EXTENSION_KEY = exports.ACCOUNT_10149_EXTENSION_KEY = void 0;
 exports.listRegisteredExtensionKeys = listRegisteredExtensionKeys;
 exports.getRegisteredExtension = getRegisteredExtension;
 exports.isRegisteredExtensionKey = isRegisteredExtensionKey;
 exports.resolveExtensionAttachmentInput = resolveExtensionAttachmentInput;
+const account_10149_1 = require("./account_10149");
 const sample_noop_1 = require("./sample_noop");
+var account_10149_2 = require("./account_10149");
+Object.defineProperty(exports, "ACCOUNT_10149_EXTENSION_KEY", { enumerable: true, get: function () { return account_10149_2.ACCOUNT_10149_EXTENSION_KEY; } });
 var sample_noop_2 = require("./sample_noop");
 Object.defineProperty(exports, "SAMPLE_NOOP_EXTENSION_KEY", { enumerable: true, get: function () { return sample_noop_2.SAMPLE_NOOP_EXTENSION_KEY; } });
-const EXTENSION_REGISTRY = new Map([[sample_noop_1.sampleNoopExtension.key, sample_noop_1.sampleNoopExtension]]);
+const EXTENSION_REGISTRY = new Map([
+    [sample_noop_1.sampleNoopExtension.key, sample_noop_1.sampleNoopExtension],
+    [account_10149_1.account10149Extension.key, account_10149_1.account10149Extension],
+]);
 function listRegisteredExtensionKeys() {
     return Array.from(EXTENSION_REGISTRY.keys()).sort();
 }

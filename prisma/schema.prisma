@@ -1632,13 +1632,13 @@ model Invoice {
   id                             Int                       @id @unique @default(autoincrement())
   created_at                     DateTime                  @default(now()) @db.Timestamptz(6)
   promise_to_pay                 Int?                      @db.SmallInt
-  modified_at                    DateTime                  @default(now()) @db.Timestamptz(6)
+  modified_at                    DateTime                  @default(now()) @updatedAt @db.Timestamptz(6)
   customer_id                    Int?
   /// Insurance policy linked at invoice create/import (active customer policy).
   policy_id                      Int?
   invoice_number                 String?
-  /// Priority ERP debit flag from import (`C` credit / `D` debit).
-  priority_erp_debit             String?                   @db.VarChar(10)
+  /// Account-specific billing code from import (custom_code1).
+  custom_code1                   String?                   @db.VarChar(10)
   amount                         Float?
   due_date                       DateTime?                 @db.Date
   oldest_overdue_invoice_date    DateTime?                 @db.Date
@@ -2678,7 +2678,7 @@ model BillingConnector {
   last_connection_test_at       DateTime?              @db.Timestamptz(6)
   last_connection_error         String?                @db.VarChar(500)
   created_at                    DateTime               @default(now()) @db.Timestamptz(6)
-  modified_at                   DateTime               @default(now()) @db.Timestamptz(6)
+  modified_at                   DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
   created_by                    String?                @db.VarChar
   modified_by                   String?                @db.VarChar
   Account                       Account                @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -2693,9 +2693,11 @@ model ConnectorFieldMapping {
   id           Int              @id @default(autoincrement())
   connector_id Int
   import_type  ImportType
-  mapping      Json
-  is_complete  Boolean          @default(false)
-  discovered_headers            Json?
+    mapping      Json
+    is_complete  Boolean          @default(false)
+    /// Optional OData date column for backfill/incremental window filters.
+    pull_date_field             String?           @db.VarChar(100)
+    discovered_headers            Json?
   discovered_example_values     Json?
   discovered_sample_count       Int?
   discovered_at                 DateTime?         @db.Timestamptz(6)

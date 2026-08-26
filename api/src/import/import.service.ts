@@ -83,10 +83,10 @@ export class ImportService {
         let failCount = 0;
         let skipCount = 0;
 
-        for (let i = 0; i < rows.length; i++) {
-            const row = rows[i] || {};
-            const rowIndex = globalStartIndex + i;
-            if (leaf === "policy") {
+        if (leaf === "policy") {
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i] || {};
+                const rowIndex = globalStartIndex + i;
                 const policyResult = await this.importPolicy.importPolicyRow(row, {
                     accountId,
                     userId: this.accessScope.getEffectiveUserId(userInfo),
@@ -155,56 +155,69 @@ export class ImportService {
                         message: policyResult.message,
                     });
                 }
-                continue;
             }
+        } else {
             const entityImport = await importMappedEntityBatch(
                 this.db,
                 importType as "Customer" | "Contact" | "Invoice" | "Payment",
-                [row],
+                rows,
                 accountId,
                 null,
                 userInfo.userId
             );
+            const recordRows: Array<Record<string, unknown>> = [];
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i] || {};
+                const rowIndex = globalStartIndex + i;
+                const rowResult = entityImport.rowResults?.[i];
+                const success = Boolean(rowResult?.success);
+                const skipped = Boolean(rowResult?.skipped);
+                const error = rowResult?.error;
+                if (success && !skipped) successCount += 1;
+                else if (skipped) skipCount += 1;
+                else failCount += 1;
+                if (rowResult?.customerId != null) {
+                    affectedCustomerIds.add(rowResult.customerId);
+                }
+                if (rowResult?.entityId != null) {
+                    importedEntityIds.add(rowResult.entityId);
+                }
+                recordRows.push({
+                    id: `${jobId}-${rowIndex}-${Date.now()}-${i}`,
+                    import_job_id: jobId,
+                    row_index: rowIndex,
+                    status: success ? "Success" : skipped ? "Skipped" : "Failed",
+                    original_data: row,
+                    processed_data: row,
+                    result_message: error || null,
+                    processing_errors: error ? { message: error } : undefined,
+                    entity_id: rowResult?.entityId ?? null,
+                    created_by: userInfo.userId,
+                    modified_by: userInfo.userId,
+                });
+                results.push({
+                    index: rowIndex,
+                    batchIndex,
+                    success,
+                    skipped,
+                    error,
+                });
+            }
+            if (recordRows.length > 0) {
+                try {
+                    await this.db.importRecord.createMany({
+                        data: recordRows as never,
+                    });
+                } catch {
+                    // Import rows must continue when audit record persistence fails.
+                }
+            }
             for (const id of entityImport.affectedCustomerIds) {
                 affectedCustomerIds.add(id);
             }
             for (const id of entityImport.entityIds) {
                 importedEntityIds.add(id);
             }
-            const success = entityImport.success > 0;
-            const skipped = entityImport.skipped > 0 && entityImport.success === 0;
-            const error = entityImport.errors[0];
-            if (success) successCount += 1;
-            else if (skipped) skipCount += 1;
-            else failCount += 1;
-
-            try {
-                await this.db.importRecord.create({
-                    data: {
-                        id: `${jobId}-${rowIndex}-${Date.now()}-${i}`,
-                        import_job_id: jobId,
-                        row_index: rowIndex,
-                        status: success ? "Success" : skipped ? "Skipped" : "Failed",
-                        original_data: row as never,
-                        processed_data: row as never,
-                        result_message: error || null,
-                        processing_errors: error
-                            ? ({ message: error } as never)
-                            : undefined,
-                        created_by: userInfo.userId,
-                        modified_by: userInfo.userId,
-                    } as never,
-                });
-            } catch {
-                // continue
-            }
-            results.push({
-                index: rowIndex,
-                batchIndex,
-                success,
-                skipped,
-                error,
-            });
         }
 
         await this.db.importJob.update({

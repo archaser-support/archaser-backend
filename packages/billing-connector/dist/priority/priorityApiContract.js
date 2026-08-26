@@ -128,7 +128,6 @@ exports.PRIORITY_ENTITY_ENDPOINTS = {
             "ADDRESS2",
             "ZIP",
             "WTAXNUM",
-            "UDATE",
             "IDG_COMPANYNAME",
             "MCUSTNAME",
         ],
