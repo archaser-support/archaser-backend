@@ -43,19 +43,24 @@ services:
     image: postgres:16-alpine
     container_name: archaser-grafana-db
     environment:
+      # Only applied on first init of the volume. If you change these later,
+      # wipe the volume: docker volume rm <project>_grafana-db-data-v2
       - POSTGRES_USER=${GRAFANA_INTERNAL_DB_USER:-postgres}
       - POSTGRES_PASSWORD=${GRAFANA_INTERNAL_DB_PASSWORD:-postgres}
-      - POSTGRES_DB=${GRAFANA_INTERNAL_DB_NAME:-grafana}
+      - POSTGRES_DB=${GRAFANA_INTERNAL_DB_NAME:-grafana_internal}
     volumes:
       - grafana-db-data-v2:/var/lib/postgresql/data
     networks:
       - archaser-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
+      # Do not pass -d $POSTGRES_DB: an older volume may have been created with a
+      # different DB name; server readiness is enough for depends_on.
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-postgres}\" -h 127.0.0.1 || exit 1"]
+      interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 40s
 
   grafana:
     image: grafana/grafana:11.5.2
@@ -88,7 +93,7 @@ services:
       # Grafana metadata DB
       - GF_DATABASE_TYPE=postgres
       - GF_DATABASE_HOST=grafana-db:5432
-      - GF_DATABASE_NAME=${GRAFANA_INTERNAL_DB_NAME:-grafana}
+      - GF_DATABASE_NAME=${GRAFANA_INTERNAL_DB_NAME:-grafana_internal}
       - GF_DATABASE_USER=${GRAFANA_INTERNAL_DB_USER:-postgres}
       - GF_DATABASE_PASSWORD=${GRAFANA_INTERNAL_DB_PASSWORD:-postgres}
       - GF_DATABASE_SSL_MODE=disable
