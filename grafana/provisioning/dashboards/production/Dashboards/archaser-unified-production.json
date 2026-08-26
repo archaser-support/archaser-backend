@@ -32,7 +32,7 @@
             "id": 10,
             "options": {
                 "mode": "markdown",
-                "content": "**Domain dashboards:** [Cron Health](/d/archaser-cron-v1-staging/cron-health-staging) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-staging/communications-staging) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-staging/infrastructure-staging) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-staging/alert-drilldown-staging)"
+                "content": "**Dashboards:** [Cron Health](/d/archaser-cron-v1-prod/cron-health-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-prod/alert-drilldown-production) &nbsp;|&nbsp; [Postgres Logs](/d/archaser-postgres-logs-prod/postgres-logs-production) &nbsp;|&nbsp; [Nest API](/d/archaser-api-v1-prod/nest-api-health-production) &nbsp;|&nbsp; [Nest Worker](/d/archaser-worker-v1-prod/nest-worker-health-production)"
             },
             "title": "",
             "type": "text",
@@ -106,7 +106,7 @@
             },
             "targets": [
                 {
-                    "expr": "max(archaser_db_postgres_connected{instance=\"Staging\"})",
+                    "expr": "max(archaser_db_postgres_connected{instance=\"Production\"})",
                     "refId": "A"
                 }
             ],
@@ -170,7 +170,7 @@
             },
             "targets": [
                 {
-                    "expr": "max(archaser_db_mongodb_connected{instance=\"Staging\"})",
+                    "expr": "max(archaser_db_mongodb_connected{instance=\"Production\"})",
                     "refId": "A"
                 }
             ],
@@ -201,7 +201,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_errors_1h{instance=\"Staging\"}",
+                    "expr": "archaser_errors_1h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -232,7 +232,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_errors_24h{instance=\"Staging\"}",
+                    "expr": "archaser_errors_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -271,7 +271,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_total{instance=\"Staging\"}",
+                    "expr": "archaser_cron_jobs_total{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -299,7 +299,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_overdue{instance=\"Staging\"}",
+                    "expr": "archaser_cron_jobs_overdue{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -327,7 +327,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_not_run_24h{instance=\"Staging\"}",
+                    "expr": "archaser_cron_jobs_not_run_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -366,7 +366,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_emails_failed_24h{instance=\"Staging\"}",
+                    "expr": "archaser_emails_failed_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -394,7 +394,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_emails_bounced_24h{instance=\"Staging\"}",
+                    "expr": "archaser_emails_bounced_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -422,7 +422,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_sms_failed_24h{instance=\"Staging\"}",
+                    "expr": "archaser_sms_failed_24h{instance=\"Production\"}",
                     "refId": "A"
                 }
             ],
@@ -457,7 +457,7 @@
         "to": "now"
     },
     "timezone": "browser",
-    "title": "ARChaser Home - Staging",
-    "uid": "archaser-unified-v1-staging",
+    "title": "ARChaser Home - Production",
+    "uid": "archaser-unified-v1-prod",
     "version": 4
 }
