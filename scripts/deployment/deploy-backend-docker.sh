@@ -323,8 +323,8 @@ fi
 
 log "Deployment complete"
 if [[ "$ENVIRONMENT" == "staging" ]]; then
-    log "Staging API host: install nginx/archaser-staging-api.conf for api.staging.archaser.com"
-    log "Grafana: install nginx/archaser-staging-grafana.conf + certbot for grafana.staging.archaser.com"
-    log "Grafana URL: https://grafana.staging.archaser.com"
+    log "Staging API host: reverse-proxy api.staging.archaser.com → Nest :3010"
+    log "Grafana (Apache): install apache/archaser-staging-grafana.conf + certbot --apache -d grafana.staging.archaser.com"
+    log "Grafana URL: https://grafana.staging.archaser.com (containers on 127.0.0.1:3002)"
     log "Do not run deploy-staging.sh (Next UI) on this box"
 fi
