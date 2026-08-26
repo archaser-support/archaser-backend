@@ -2,59 +2,59 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Scrapes Nest via the backend compose network (see docker-compose.logging.yml
+# networks.backend → archaser-backend-staging_default). Service names: api, worker, …
 scrape_configs:
   - job_name: "prometheus"
     static_configs:
       - targets: ["localhost:9090"]
 
-  # Nest API — nest_* process metrics + archaser_* business gauges
-  # (ported from the old Next /api/metrics collector).
   - job_name: "archaser-api"
     metrics_path: "/metrics"
     static_configs:
-      - targets: ["host.docker.internal:3010"]
+      - targets: ["api:3010"]
     relabel_configs:
       - target_label: instance
         replacement: "Staging"
-      - target_label: service
+      - target_label: nest_service
         replacement: "archaser-api"
 
   - job_name: "archaser-worker"
     metrics_path: "/metrics"
     static_configs:
-      - targets: ["host.docker.internal:3003"]
+      - targets: ["worker:3003"]
     relabel_configs:
       - target_label: instance
         replacement: "Staging"
-      - target_label: service
+      - target_label: nest_service
         replacement: "archaser-worker"
 
   - job_name: "archaser-sms"
     metrics_path: "/metrics"
     static_configs:
-      - targets: ["host.docker.internal:3004"]
+      - targets: ["sms:3004"]
     relabel_configs:
       - target_label: instance
         replacement: "Staging"
-      - target_label: service
+      - target_label: nest_service
         replacement: "archaser-sms"
 
   - job_name: "archaser-connectors"
     metrics_path: "/metrics"
     static_configs:
-      - targets: ["host.docker.internal:3005"]
+      - targets: ["connectors:3005"]
     relabel_configs:
       - target_label: instance
         replacement: "Staging"
-      - target_label: service
+      - target_label: nest_service
         replacement: "archaser-connectors"
 
   - job_name: "archaser-reports"
     metrics_path: "/metrics"
     static_configs:
-      - targets: ["host.docker.internal:3006"]
+      - targets: ["reports:3006"]
     relabel_configs:
       - target_label: instance
         replacement: "Staging"
-      - target_label: service
+      - target_label: nest_service
         replacement: "archaser-reports"
