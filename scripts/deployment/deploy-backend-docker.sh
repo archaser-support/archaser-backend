@@ -279,11 +279,13 @@ if [[ "$NO_GRAFANA" != "true" ]]; then
         log "Monitoring compose not found; skipping"
     else
         # Always `up -d` so compose/config changes (Loki schema, datasources, root URL) apply.
-        # Containers are only recreated when the compose definition or mounts change.
+        # Name conflicts happen when an earlier `docker compose` used a different --project-name.
         log "Starting/updating monitoring stack (Grafana + Loki + Prometheus + Promtail)"
+        for c in archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail; do
+            "${DOCKER[@]}" rm -f "$c" >/dev/null 2>&1 || true
+        done
         MONITORING_ENV_VARS=(MONITORING_ENV="$ENVIRONMENT")
         if [[ "$ENVIRONMENT" == "staging" ]]; then
-            # Defaults match grafana/docker-compose.logging.yml; override via .env.staging if needed.
             MONITORING_ENV_VARS+=(
                 GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
                 GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.staging.archaser.com}"
@@ -323,8 +325,7 @@ fi
 
 log "Deployment complete"
 if [[ "$ENVIRONMENT" == "staging" ]]; then
-    log "Staging API host: reverse-proxy api.staging.archaser.com → Nest :3010"
-    log "Grafana (Apache): install apache/archaser-staging-grafana.conf + certbot --apache -d grafana.staging.archaser.com"
-    log "Grafana URL: https://grafana.staging.archaser.com (containers on 127.0.0.1:3002)"
+    log "Staging reverse proxy: bash scripts/deployment/setup-staging-nginx.sh [--with-monitoring]"
+    log "Grafana URL: https://grafana.staging.archaser.com (containers on 127.0.0.1:3200)"
     log "Do not run deploy-staging.sh (Next UI) on this box"
 fi

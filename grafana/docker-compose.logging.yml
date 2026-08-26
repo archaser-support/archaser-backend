@@ -1,6 +1,16 @@
 # Variable substitution (${GRAFANA_SMTP_HOST}, etc.) uses the Compose env file:
-#   cd backend/grafana
-#   docker compose --env-file ../.env -f docker-compose.logging.yml up -d
+#   cd backend/grafana   # or ~/api/grafana when checkout root is the backend
+#   MONITORING_ENV=staging docker compose --project-name archaser-monitoring-staging \
+#     --env-file ../.env -f docker-compose.logging.yml up -d
+#
+# If you see "container name /archaser-loki is already in use", remove the old
+# containers (they belonged to a different compose project name) then re-up:
+#   docker rm -f archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail
+#
+# Host ports (avoid Nest 3002–3006 / api 3010):
+#   Grafana UI  → 127.0.0.1:3200  (override GRAFANA_HOST_PORT)
+#   Prometheus  → 127.0.0.1:9090
+#   Loki        → 3100 (VPC-private / Lambda push only)
 #
 # Staging domain (default): https://grafana.staging.archaser.com
 # Production override in backend/.env:
@@ -51,7 +61,7 @@ services:
     image: grafana/grafana:11.5.2
     container_name: archaser-grafana
     ports:
-      - "127.0.0.1:3002:3000"
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3200}:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
