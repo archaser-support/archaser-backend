@@ -1,14 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PUBLIC_CORS_ALLOWED_HEADERS = exports.parseCorsOrigins = exports.enablePublicCors = exports.isPublicPagesApiPath = exports.SoftDualAuthGuard = exports.InternalServiceClient = exports.InternalSecretGuard = exports.DualAuthGuard = exports.CurrentUser = exports.CronSecretGuard = exports.ArchaserAuthModule = exports.AccessScopeService = exports.AUTH_DATABASE = void 0;
+exports.PUBLIC_CORS_ALLOWED_HEADERS = exports.parseCorsOrigins = exports.enablePublicCors = exports.isPublicPagesApiPath = exports.SoftDualAuthGuard = exports.InternalServiceClient = exports.InternalSecretGuard = exports.DualAuthGuard = exports.CurrentUser = exports.ArchaserAuthModule = exports.AccessScopeService = exports.AUTH_DATABASE = void 0;
 var auth_database_1 = require("./auth-database");
 Object.defineProperty(exports, "AUTH_DATABASE", { enumerable: true, get: function () { return auth_database_1.AUTH_DATABASE; } });
 var access_scope_service_1 = require("./access-scope.service");
 Object.defineProperty(exports, "AccessScopeService", { enumerable: true, get: function () { return access_scope_service_1.AccessScopeService; } });
 var auth_module_1 = require("./auth.module");
 Object.defineProperty(exports, "ArchaserAuthModule", { enumerable: true, get: function () { return auth_module_1.ArchaserAuthModule; } });
-var cron_secret_guard_1 = require("./cron-secret.guard");
-Object.defineProperty(exports, "CronSecretGuard", { enumerable: true, get: function () { return cron_secret_guard_1.CronSecretGuard; } });
 var current_user_decorator_1 = require("./current-user.decorator");
 Object.defineProperty(exports, "CurrentUser", { enumerable: true, get: function () { return current_user_decorator_1.CurrentUser; } });
 var dual_auth_guard_1 = require("./dual-auth.guard");

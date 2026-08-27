@@ -15,7 +15,6 @@ import {
     ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
 import { CurrentUser } from "../auth/current-user.decorator";
-import { CronSecretGuard } from "../auth/cron-secret.guard";
 import { DualAuthGuard } from "../auth/dual-auth.guard";
 import { JwtPayload } from "../auth/auth.service";
 import { SystemListQuery, SystemService } from "./system.service";
@@ -259,33 +258,6 @@ export class SystemController {
     }
 }
 
-
-@ApiTags("system")
-@UseGuards(CronSecretGuard)
-@Controller("api/system")
-export class SystemCronLambdaController {
-    constructor(private readonly system: SystemService) {}
-
-    @Get("cron")
-    @ApiOperation({
-        summary:
-            "Lambda cron trigger — requires x-cron-secret (no DualAuth JWT)",
-    })
-    @ApiUnauthorizedResponse({ description: "Missing or invalid x-cron-secret" })
-    async cronGet() {
-        return this.system.runCronFromLambda();
-    }
-
-    @Post("cron")
-    @ApiOperation({
-        summary:
-            "Lambda cron trigger (POST) — requires x-cron-secret (no DualAuth JWT)",
-    })
-    @ApiUnauthorizedResponse({ description: "Missing or invalid x-cron-secret" })
-    async cronPost() {
-        return this.system.runCronFromLambda();
-    }
-}
 
 @ApiTags("system")
 @Controller("api/system/cache-invalidation")
