@@ -1,9 +1,16 @@
+import { randomUUID } from "crypto";
 import type { PrismaClient } from "@prisma/client";
 import { isConnectorDue } from "./billingConnectorSchedule";
 import {
     runInProcessSync,
+    type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
 } from "../sync/runInProcessSync";
+import {
+    completeExecution,
+    createRunningExecution,
+    sweepStaleRunning,
+} from "../syncHistory";
 
 const MAX_CONNECTORS_PER_RUN = Number.parseInt(
     process.env.BILLING_CONNECTOR_MAX_CONNECTORS_PER_RUN ?? "5",
@@ -20,18 +27,38 @@ export interface SyncDueBillingConnectorsResult {
     durationMs: number;
 }
 
+export interface SyncDueBillingConnectorsOptions {
+    /** Override in-process sync (unit tests). */
+    runSync?: (
+        options: RunInProcessSyncOptions
+    ) => Promise<RunInProcessSyncResult>;
+    /** Override UUID generation (unit tests). */
+    createExecutionId?: () => string;
+    /** Clock for due checks + stale sweep (unit tests). */
+    now?: Date;
+}
+
 /**
  * Cron entry: sync due Active+enabled billing connectors (Stage 2).
  * Uses in-process Priority sync (D71) until connectors path flip owns schedules (D65/D72).
+ *
+ * Persists each run to Mongo sync history (`trigger: scheduled`) via shared
+ * syncHistory helpers. Requires `MONGODB_URI` in the cron/API process env
+ * (same default as Nest: mongodb://localhost:27017/archaser).
  */
 export async function syncDueBillingConnectors(
-    prisma: PrismaClient
+    prisma: PrismaClient,
+    options?: SyncDueBillingConnectorsOptions
 ): Promise<SyncDueBillingConnectorsResult> {
     const start = Date.now();
     const results: RunInProcessSyncResult[] = [];
     let processed = 0;
     let skipped = 0;
     let failed = 0;
+
+    const runSync = options?.runSync ?? runInProcessSync;
+    const createExecutionId = options?.createExecutionId ?? randomUUID;
+    const now = options?.now ?? new Date();
 
     const connectors = await prisma.billingConnector.findMany({
         where: {
@@ -41,8 +68,6 @@ export async function syncDueBillingConnectors(
         orderBy: [{ sync_mode: "asc" }, { modified_at: "asc" }],
         take: MAX_CONNECTORS_PER_RUN,
     });
-
-    const now = new Date();
 
     for (const connector of connectors) {
         if (connector.sync_mode === "INCREMENTAL") {
@@ -69,19 +94,78 @@ export async function syncDueBillingConnectors(
             }
         }
 
+        const executionId = createExecutionId();
+        const startedAt = new Date();
         try {
-            const result = await runInProcessSync({
+            await createRunningExecution({
+                executionId,
+                accountId: connector.account_id,
+                connectorId: connector.id,
+                provider: connector.provider,
+                trigger: "scheduled",
+                syncMode: connector.sync_mode,
+                startedAt,
+            });
+        } catch {
+            // History write must not block the sync (same as Nest accept path).
+        }
+
+        try {
+            const result = await runSync({
                 prisma,
                 accountId: connector.account_id,
                 trigger: "scheduled",
+                executionId,
             });
             results.push(result);
             processed += 1;
             if (!result.ok) failed += 1;
-        } catch {
+
+            const completedAt = new Date();
+            const status = result.cancelled
+                ? "TIMEOUT"
+                : result.ok
+                  ? "SUCCESS"
+                  : "FAILED";
+            const errorType = result.cancelled
+                ? "cancelled"
+                : result.error ?? null;
+            try {
+                await completeExecution(executionId, {
+                    status,
+                    entityStats: result.entity_stats ?? {},
+                    errorMessage: result.error ?? null,
+                    errorType,
+                    completedAt,
+                });
+            } catch {
+                // Best-effort history complete.
+            }
+        } catch (error) {
             failed += 1;
             processed += 1;
+            const message =
+                error instanceof Error ? error.message : String(error);
+            try {
+                await completeExecution(executionId, {
+                    status: "FAILED",
+                    errorMessage: message,
+                    errorType: "unexpected",
+                    completedAt: new Date(),
+                });
+            } catch {
+                // Best-effort history complete; hard crash leaves RUNNING for sweeper.
+            }
         }
+    }
+
+    try {
+        await sweepStaleRunning({
+            olderThanHours: 2,
+            completedAt: now,
+        });
+    } catch {
+        // Best-effort stale sweep (Nest /sync-history also sweeps on read).
     }
 
     const durationMs = Date.now() - start;

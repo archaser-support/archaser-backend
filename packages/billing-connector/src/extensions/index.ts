@@ -10,12 +10,17 @@ export { ACCOUNT_10149_EXTENSION_KEY } from "./account_10149";
 export { SAMPLE_NOOP_EXTENSION_KEY } from "./sample_noop";
 export type {
     BillingAccountExtension,
+    ExtensionAfterPaymentLinkedContext,
+    ExtensionAfterPaymentLinkedResult,
+    ExtensionAlignPaymentAmountsInput,
+    ExtensionAlignedPaymentAmounts,
     ExtensionAttachmentUpsertInput,
     ExtensionAttachmentUpsertPatch,
     ExtensionCreditPaymentCloseInput,
     ExtensionEntityType,
     ExtensionLinkedPayment,
     ExtensionMappedBatch,
+    ExtensionPaymentLinkedCandidate,
     ExtensionSyncWindow,
     ExtensionTransformContext,
 } from "./types";
