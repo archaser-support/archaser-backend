@@ -78,26 +78,9 @@ async function monitorActiveField() {
             process.exit(0);
         }, 30000);
 
-        // Trigger the cron endpoint
-        console.log("\n🚀 Triggering cron endpoint...");
-        const cronSecret =
-            process.env.CRON_SECRET || "b8638v2eQ7XBL7J3ILNQiFZHVvCAVB3i";
-        const baseUrl =
-            process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-
-        try {
-            const response = await fetch(`${baseUrl}/api/system/cron`, {
-                method: "GET",
-                headers: {
-                    "x-cron-secret": cronSecret,
-                },
-            });
-
-            const result = await response.json();
-            console.log("Cron endpoint response:", result);
-        } catch (error) {
-            console.error("Error triggering cron endpoint:", error);
-        }
+        console.log(
+            "\nWatching DB only (worker owns schedules; no HTTP cron trigger)."
+        );
     } catch (error) {
         console.error("❌ Error monitoring active field:", error);
     } finally {

@@ -28,36 +28,6 @@ function authSecret(config) {
         config.get("JWT_SECRET") ||
         "archaser-stage0-dev-secret");
 }
-function expectedCronSecret(config) {
-    return (config.get("CRON_SECRET") ||
-        process.env.CRON_SECRET ||
-        "b8638v2eQ7XBL7J3ILNQiFZHVvCAVB3i");
-}
-function extractCronSecret(req) {
-    const header = req.headers["x-cron-secret"];
-    if (typeof header === "string" && header.trim()) {
-        return header.trim();
-    }
-    if (Array.isArray(header) && typeof header[0] === "string" && header[0].trim()) {
-        return header[0].trim();
-    }
-    const query = req.query;
-    for (const key of ["secret", "cronSecret"]) {
-        const v = query?.[key];
-        if (typeof v === "string" && v.trim())
-            return v.trim();
-        if (Array.isArray(v) && typeof v[0] === "string" && v[0].trim()) {
-            return v[0].trim();
-        }
-    }
-    return null;
-}
-function isSystemCronPath(req) {
-    const url = (req.originalUrl || req.url || "").split("?")[0];
-    return (url === "/api/system/cron" ||
-        url.endsWith("/api/system/cron") ||
-        url === "/system/cron");
-}
 /**
  * Accept Nest Bearer JWT or existing NextAuth session cookie.
  * When Bearer is used, inject a NextAuth-compatible cookie so legacy
@@ -71,22 +41,6 @@ let DualAuthGuard = class DualAuthGuard {
     async canActivate(context) {
         const req = context.switchToHttp().getRequest();
         const secret = authSecret(this.configService);
-        // Lambda cron tick: allow x-cron-secret (or ?secret=) without JWT.
-        if (isSystemCronPath(req)) {
-            const cronSecret = extractCronSecret(req);
-            if (cronSecret && cronSecret === expectedCronSecret(this.configService)) {
-                req.user = {
-                    sub: "cron-lambda",
-                    username: "cron-lambda",
-                    email: null,
-                    account_id: 10013,
-                    role: "archaser_admin",
-                    name: "Cron Lambda",
-                };
-                req.authSource = "bearer";
-                return true;
-            }
-        }
         const bearer = this.extractBearer(req);
         if (bearer) {
             try {
