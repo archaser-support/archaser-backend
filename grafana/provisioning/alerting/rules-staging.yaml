@@ -819,7 +819,7 @@ groups:
           type: billing_connector
 
       - uid: bc-incr-failed-stag
-        title: Billing Connector Incremental FAILED/TIMEOUT
+        title: Billing Connector Incremental FAILED or TIMEOUT
         condition: C
         data:
           - refId: A
@@ -828,7 +828,7 @@ groups:
               to: 0
             datasourceUid: Prometheus
             model:
-              expr: sum(increase(archaser_billing_connector_sync_total{instance="Staging", sync_mode="INCREMENTAL", status=~"FAILED|TIMEOUT"}[1h])) or vector(0)
+              expr: 'sum(increase(archaser_billing_connector_sync_total{instance="Staging", sync_mode="INCREMENTAL", status=~"FAILED|TIMEOUT"}[1h])) or vector(0)'
               instant: true
               refId: A
           - refId: C
@@ -991,7 +991,7 @@ groups:
           type: billing_connector
 
       - uid: bc-rate-limit-5xx-stag
-        title: Billing Connector rate_limit / 5xx Spike
+        title: Billing Connector rate_limit or 5xx Spike
         condition: C
         data:
           - refId: A
@@ -1000,7 +1000,7 @@ groups:
               to: 0
             datasourceUid: Prometheus
             model:
-              expr: sum(increase(archaser_billing_connector_errors_total{instance="Staging", error_type=~"rate_limit|5xx"}[1h])) or vector(0)
+              expr: 'sum(increase(archaser_billing_connector_errors_total{instance="Staging", error_type=~"rate_limit|5xx"}[1h])) or vector(0)'
               instant: true
               refId: A
           - refId: C
