@@ -365,17 +365,17 @@
             },
             "targets": [
                 {
-                    "expr": "sum(increase(archaser_cron_job_executions_total{status=\"SUCCESS\", instance=\"Staging\"}[24h]))",
+                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Staging\"})",
                     "legendFormat": "SUCCESS",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(increase(archaser_cron_job_executions_total{status=\"FAILED\", instance=\"Staging\"}[24h]))",
+                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Staging\"})",
                     "legendFormat": "FAILED",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum(increase(archaser_cron_job_executions_total{status=\"TIMEOUT\", instance=\"Staging\"}[24h]))",
+                    "expr": "sum(archaser_cron_job_timeout_count_30d{instance=\"Staging\"})",
                     "legendFormat": "TIMEOUT",
                     "refId": "C"
                 }
@@ -410,21 +410,21 @@
             "type": "table",
             "targets": [
                 {
-                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Staging\"}[24h]))",
+                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Staging\"} + archaser_cron_job_failure_count_30d{instance=\"Staging\"} + archaser_cron_job_timeout_count_30d{instance=\"Staging\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Total Executions",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Staging\", status=\"SUCCESS\"}[24h]))",
+                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Staging\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Success Count",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Staging\", status=\"FAILED\"}[24h]))",
+                    "expr": "sum by(job_name) (archaser_cron_job_failure_count_30d{instance=\"Staging\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Failure Count",
@@ -633,12 +633,12 @@
             },
             "targets": [
                 {
-                    "expr": "sum(rate(archaser_cron_job_executions_total{instance=\"Staging\", status=\"SUCCESS\"}[1h])) * 3600",
+                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Staging\"})",
                     "legendFormat": "Success",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(rate(archaser_cron_job_executions_total{instance=\"Staging\", status=\"FAILED\"}[1h])) * 3600",
+                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Staging\"})",
                     "legendFormat": "Failed",
                     "refId": "B"
                 }
@@ -753,9 +753,9 @@
             },
             "targets": [
                 {
-                    "expr": "sum by(source) (count_over_time({service=\"archaser-core\", host=\"staging\"} |~ \"cron_\" [$__interval]))",
+                    "expr": "sum by(compose_service) (count_over_time({job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)cron|bullmq|repeatable\" [$__interval]))",
                     "format": "heatmap",
-                    "legendFormat": "{{source}}",
+                    "legendFormat": "{{compose_service}}",
                     "refId": "A"
                 }
             ],
@@ -781,7 +781,7 @@
             },
             "targets": [
                 {
-                    "expr": "{service=\"archaser-core\", host=\"staging\"} |~ \"cron_\"",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)cron|bullmq|repeatable\"",
                     "refId": "A"
                 }
             ],
@@ -790,7 +790,7 @@
         }
     ],
     "schemaVersion": 38,
-    "title": "Cron Health - Staging",
+    "title": "Cron Jobs - Staging",
     "tags": [
         "cron",
         "jobs",

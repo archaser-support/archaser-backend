@@ -19,7 +19,12 @@ import {
     PrismaClient,
 } from "@archaser/database";
 import type { Response } from "express";
-import { executeNamedCronJob } from "@archaser/cron-jobs";
+import {
+    computeNextRunAt,
+    executeNamedCronJob,
+    recordCronJobRun,
+    type CronJobResult,
+} from "@archaser/cron-jobs";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
 
@@ -124,6 +129,14 @@ class WorkerRuntimeService implements OnModuleDestroy {
                 cron_expression: true,
                 active: true,
                 last_run_at: true,
+                timeout_period_seconds: true,
+                last_execution_duration_seconds: true,
+                average_execution_duration_seconds: true,
+                min_execution_duration_seconds: true,
+                max_execution_duration_seconds: true,
+                success_count_30d: true,
+                failure_count_30d: true,
+                timeout_count_30d: true,
             },
         });
         if (!job) {
@@ -134,9 +147,47 @@ class WorkerRuntimeService implements OnModuleDestroy {
             `Executing CronJob ${job.id} (${job.name}) via ${source}`
         );
 
-        const result = await executeNamedCronJob(this.prisma, job.name, {
-            lastRunAt: job.last_run_at,
-        });
+        const started = Date.now();
+        let result: CronJobResult;
+        try {
+            result = await executeNamedCronJob(this.prisma, job.name, {
+                lastRunAt: job.last_run_at,
+            });
+        } catch (error: unknown) {
+            const durationMs =
+                typeof error === "object" &&
+                error !== null &&
+                "durationMs" in error &&
+                typeof (error as { durationMs: unknown }).durationMs ===
+                    "number"
+                    ? (error as { durationMs: number }).durationMs
+                    : Date.now() - started;
+            result = {
+                success: false,
+                message:
+                    error instanceof Error
+                        ? error.message
+                        : `CronJob ${job.name} failed`,
+                durationMs,
+            };
+            this.logger.error(
+                `CronJob ${job.id} (${job.name}) failed: ${result.message}`
+            );
+        }
+
+        try {
+            await recordCronJobRun(this.prisma, job, {
+                success: result.success,
+                durationMs: result.durationMs,
+            });
+        } catch (error: unknown) {
+            this.logger.warn(
+                `Failed to persist CronJob ${job.id} run stats: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+        }
+
         return {
             ok: result.success,
             cronJobId: job.id,
@@ -182,6 +233,13 @@ class WorkerRuntimeService implements OnModuleDestroy {
                         removeOnFail: 50,
                     }
                 );
+                const nextRunAt = computeNextRunAt(pattern);
+                if (nextRunAt) {
+                    await this.prisma.cronJob.update({
+                        where: { id: job.id },
+                        data: { next_run_at: nextRunAt },
+                    });
+                }
                 synced += 1;
             } catch (error) {
                 this.logger.warn(

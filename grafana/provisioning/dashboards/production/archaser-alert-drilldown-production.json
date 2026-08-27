@@ -627,7 +627,7 @@
                     "refId": "A"
                 }
             ],
-            "title": "Overdue — open period category N/A",
+            "title": "Overdue \u2014 open period category N/A",
             "type": "table",
             "description": "Customers with overdue exposure while the open collection period has no current_category (shown as N/A in the app)."
         }

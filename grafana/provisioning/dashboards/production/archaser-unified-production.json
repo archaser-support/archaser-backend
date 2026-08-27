@@ -32,7 +32,7 @@
             "id": 10,
             "options": {
                 "mode": "markdown",
-                "content": "**Domain dashboards:** [Cron Health](/d/archaser-cron-v1-prod/cron-health-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-prod/alert-drilldown-production)"
+                "content": "**Dashboards:** [Cron Health](/d/archaser-cron-v1-prod/cron-health-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-prod/alert-drilldown-production) &nbsp;|&nbsp; [Postgres Logs](/d/archaser-postgres-logs-prod/postgres-logs-production) &nbsp;|&nbsp; [Nest API](/d/archaser-api-v1-prod/nest-api-health-production) &nbsp;|&nbsp; [Nest Worker](/d/archaser-worker-v1-prod/nest-worker-health-production)"
             },
             "title": "",
             "type": "text",
@@ -435,7 +435,8 @@
     "style": "dark",
     "tags": [
         "archaser",
-        "dashboard"
+        "home",
+        "production"
     ],
     "templating": {
         "list": [
@@ -457,7 +458,7 @@
         "to": "now"
     },
     "timezone": "browser",
-    "title": "ARChaser Home - Production",
+    "title": "Home / Glance - Production",
     "uid": "archaser-unified-v1-prod",
     "version": 4
 }

@@ -37,7 +37,7 @@ export function buildAccountScopeWhere(
     if (primaryTable === "InvoicePayment") {
         return { Invoice: { account_id: accountId } };
     }
-    // Customer, Invoice, Payment, Activity, and other account-owned models
+    // Customer, Invoice, Activity, and other account-owned models
     return { account_id: accountId };
 }
 
@@ -70,7 +70,7 @@ export function nestOwnerScopeWhere(
     ) {
         return { Customer: ownerFilter };
     }
-    if (primaryTable === "Activity" || primaryTable === "Payment") {
+    if (primaryTable === "Activity") {
         return { Customer: ownerFilter };
     }
     if (primaryTable === "CustomerBanks") {
@@ -103,7 +103,6 @@ export function nestBusinessUnitScopeWhere(
         primaryTable === "Dispute" ||
         primaryTable === "CustomerCollectionPeriod" ||
         primaryTable === "Activity" ||
-        primaryTable === "Payment" ||
         primaryTable === "CustomerBanks"
     ) {
         return { Customer: buFilter };

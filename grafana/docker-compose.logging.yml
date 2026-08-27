@@ -1,112 +1,146 @@
 # Variable substitution (${GRAFANA_SMTP_HOST}, etc.) uses the Compose env file:
-#   docker compose --env-file ../.env -f docker-compose.logging.yml …
-# (from backend/grafana) or from repo root:
-#   docker compose --env-file backend/.env -f backend/grafana/docker-compose.logging.yml …
+#   cd backend/grafana   # or ~/api/grafana when checkout root is the backend
+#   MONITORING_ENV=staging docker compose --project-name archaser-monitoring-staging \
+#     --env-file ../.env -f docker-compose.logging.yml up -d
+#
+# Prometheus joins the Nest compose network so it can scrape api:3010 etc.
+# Override if your backend project name differs:
+#   BACKEND_DOCKER_NETWORK=archaser-backend-staging_default
+#
+# Host ports (avoid Nest 3002–3006 / api 3010):
+#   Grafana UI  → 127.0.0.1:3200  (override GRAFANA_HOST_PORT)
+#   Prometheus  → 127.0.0.1:9090
+#   Loki        → 3100 (VPC-private / Lambda push only)
 
 services:
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.4.2
     container_name: archaser-loki
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
-      - ./loki-config.yaml:/etc/loki/local-config.yaml
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
     networks:
       - archaser-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   grafana-db:
-    image: postgres:latest
+    image: postgres:16-alpine
     container_name: archaser-grafana-db
     environment:
       - POSTGRES_USER=${GRAFANA_INTERNAL_DB_USER:-postgres}
       - POSTGRES_PASSWORD=${GRAFANA_INTERNAL_DB_PASSWORD:-postgres}
-      - POSTGRES_DB=${GRAFANA_INTERNAL_DB_NAME:-grafana}
+      - POSTGRES_DB=${GRAFANA_INTERNAL_DB_NAME:-grafana_internal}
     volumes:
-      - grafana-db-data-v2:/var/lib/postgresql
+      - grafana-db-data-v2:/var/lib/postgresql/data
     networks:
       - archaser-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-postgres}\" -h 127.0.0.1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.5.2
     container_name: archaser-grafana
     ports:
-      - "3002:3000"
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3200}:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}
-      - GF_SERVER_DOMAIN=${GRAFANA_DOMAIN:-grafana.portal.archaser.com}
-      # SMTP Configuration
-      - GF_SMTP_ENABLED=true
-      - GF_SMTP_HOST=${GRAFANA_SMTP_HOST}
-      - GF_SMTP_USER=${GRAFANA_SMTP_USER}
-      - GF_SMTP_PASSWORD=${GRAFANA_SMTP_PASSWORD}
-      - GF_SMTP_FROM_ADDRESS=${GRAFANA_SMTP_FROM}
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}
+      - GF_SERVER_DOMAIN=${GRAFANA_DOMAIN:-grafana.staging.archaser.com}
+      - GF_SERVER_HTTP_PORT=3000
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SMTP_ENABLED=${GF_SMTP_ENABLED:-true}
+      - GF_SMTP_HOST=${GRAFANA_SMTP_HOST:-}
+      - GF_SMTP_USER=${GRAFANA_SMTP_USER:-}
+      - GF_SMTP_PASSWORD=${GRAFANA_SMTP_PASSWORD:-}
+      - GF_SMTP_FROM_ADDRESS=${GRAFANA_SMTP_FROM:-}
       - GF_SMTP_FROM_NAME=ARChaser Grafana
-      # AWS SNS Webhook URL for alert notifications (set after CloudFormation deployment)
       - GRAFANA_SNS_WEBHOOK_URL=${GRAFANA_SNS_WEBHOOK_URL:-}
-      # Database connection for Postgres Datasource
       - GRAFANA_DB_HOST=${GRAFANA_DB_HOST:-host.docker.internal}
       - GRAFANA_DB_PORT=${GRAFANA_DB_PORT:-5432}
       - GRAFANA_DB_NAME=${GRAFANA_DB_NAME:-archaser_local}
       - GRAFANA_DB_USER=${GRAFANA_DB_USER:-postgres}
       - GRAFANA_DB_PASSWORD=${GRAFANA_DB_PASSWORD:-postgres}
       - GRAFANA_DB_SSLMODE=${GRAFANA_DB_SSLMODE:-disable}
-      # Internal Database Configuration (pointing to grafana-db container)
       - GF_DATABASE_TYPE=postgres
       - GF_DATABASE_HOST=grafana-db:5432
-      - GF_DATABASE_NAME=${GRAFANA_INTERNAL_DB_NAME:-grafana}
+      - GF_DATABASE_NAME=${GRAFANA_INTERNAL_DB_NAME:-grafana_internal}
       - GF_DATABASE_USER=${GRAFANA_INTERNAL_DB_USER:-postgres}
       - GF_DATABASE_PASSWORD=${GRAFANA_INTERNAL_DB_PASSWORD:-postgres}
       - GF_DATABASE_SSL_MODE=disable
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasource.yaml
-      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboard.yaml
-      - ./provisioning/dashboards/${MONITORING_ENV:-staging}:/etc/grafana/provisioning/dashboards_files/current_env
-      - ./provisioning/alerting/rules-${MONITORING_ENV:-staging}.yaml:/etc/grafana/provisioning/alerting/rules.yaml
-      - ./provisioning/alerting/contact-points.yaml:/etc/grafana/provisioning/alerting/contact-points.yaml
-      - ./provisioning/alerting/mute-timings.yaml:/etc/grafana/provisioning/alerting/mute-timings.yaml
-      - ./provisioning/alerting/notification-policies.yaml:/etc/grafana/provisioning/alerting/notification-policies.yaml
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasource.yaml:ro
+      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboard.yaml:ro
+      - ./provisioning/dashboards/${MONITORING_ENV:-staging}:/etc/grafana/provisioning/dashboards_files/current_env:ro
+      - ./provisioning/alerting/rules-${MONITORING_ENV:-staging}.yaml:/etc/grafana/provisioning/alerting/rules.yaml:ro
+      - ./provisioning/alerting/contact-points.yaml:/etc/grafana/provisioning/alerting/contact-points.yaml:ro
+      - ./provisioning/alerting/mute-timings.yaml:/etc/grafana/provisioning/alerting/mute-timings.yaml:ro
+      - ./provisioning/alerting/notification-policies.yaml:/etc/grafana/provisioning/alerting/notification-policies.yaml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - loki
-      - grafana-db
+      loki:
+        condition: service_healthy
+      grafana-db:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
     networks:
       - archaser-network
+    restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.55.1
     container_name: archaser-prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - archaser-network
+      # Same network as docker-compose.backend.staging.yml services (api, worker, …)
+      - backend
+    restart: unless-stopped
 
   promtail:
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.4.2
     container_name: archaser-promtail
     volumes:
-      - ./promtail-config.yaml:/etc/promtail/config.yml
-      # PM2 logs on production EC2 (ubuntu); override with PM2_LOGS_HOST_PATH if needed
+      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
       - ${PM2_LOGS_HOST_PATH:-/home/ubuntu/logs}:/var/log/pm2:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     command: -config.file=/etc/promtail/config.yml
     depends_on:
-      - loki
+      loki:
+        condition: service_healthy
     networks:
       - archaser-network
+    restart: unless-stopped
 
 volumes:
   loki-data:
@@ -117,3 +151,6 @@ volumes:
 networks:
   archaser-network:
     driver: bridge
+  backend:
+    external: true
+    name: ${BACKEND_DOCKER_NETWORK:-archaser-backend-staging_default}
