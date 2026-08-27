@@ -15,6 +15,13 @@ export declare function isConnectorFieldTransform(value: unknown): value is Conn
 export declare function parseMappingRules(raw: unknown): MappingRule[];
 export declare function isEmptyMappedValue(value: unknown): boolean;
 export declare function extractNestedValue(obj: Record<string, unknown>, path: string): unknown;
+/**
+ * Take only the calendar date from an ERP datetime (YYYY-MM-DD as received).
+ * Avoids timezone day-shifts from converting via toISOString().
+ */
+export declare function toErpDateOnly(value: unknown): string;
+/** Parse ERP date/datetime to UTC midnight for Prisma `@db.Date` columns. */
+export declare function parseErpDateOnly(value: unknown): Date | null;
 export declare function applyConnectorTransform(value: unknown, transform?: ConnectorFieldTransform): unknown;
 export declare function mapErpRecord(erpRecord: Record<string, unknown>, rules: MappingRule[]): Record<string, unknown>;
 export declare function flattenObjectPaths(obj: Record<string, unknown>, prefix?: string, maxDepth?: number): {

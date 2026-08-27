@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizePaymentInput = normalizePaymentInput;
 exports.toPaymentInput = toPaymentInput;
+const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 function excelSerialDateToISODate(serial) {
     const utcDays = Math.floor(serial - 25569);
     const date = new Date(utcDays * 86400 * 1000);
@@ -19,17 +20,8 @@ function normalizePaymentInput(record) {
     if (typeof record.payment_date === "number") {
         paymentDateStr = excelSerialDateToISODate(record.payment_date);
     }
-    else if (record.payment_date instanceof Date) {
-        paymentDateStr = record.payment_date.toISOString().split("T")[0];
-    }
-    else if (typeof record.payment_date === "string") {
-        const dateObj = new Date(record.payment_date);
-        if (!Number.isNaN(dateObj.getTime())) {
-            paymentDateStr = dateObj.toISOString().split("T")[0];
-        }
-        else {
-            paymentDateStr = record.payment_date;
-        }
+    else {
+        paymentDateStr = (0, connectorFieldUtils_1.toErpDateOnly)(record.payment_date);
     }
     return {
         account_id: Number(record.account_id),
