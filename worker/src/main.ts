@@ -13,7 +13,7 @@ import {
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { Queue, Worker, type Job } from "bullmq";
 import IORedis from "ioredis";
-import { collectDefaultMetrics, Registry } from "prom-client";
+import { collectDefaultMetrics, Counter, Gauge, Registry } from "prom-client";
 import {
     createPrismaClient,
     PrismaClient,
@@ -27,6 +27,22 @@ import {
 } from "@archaser/cron-jobs";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
+
+/** Same names as API business metrics so Grafana `{instance="Staging"}` scrapes worker runs. */
+const cronJobExecutionsTotal = new Counter({
+    name: "archaser_cron_job_executions_total",
+    help: "Total cron job executions",
+    labelNames: ["job_name", "status"],
+    registers: [],
+});
+
+const cronJobDurationSeconds = new Gauge({
+    name: "archaser_cron_job_duration_seconds",
+    help: "Last execution duration of cron jobs in seconds",
+    labelNames: ["job_name"],
+    registers: [],
+});
+
 
 type RunNowData = {
     cronJobId: number;
@@ -46,6 +62,9 @@ class WorkerRuntimeService implements OnModuleDestroy {
     constructor(private readonly config: ConfigService) {}
 
     async start(): Promise<void> {
+        this.register.setDefaultLabels({ service: "archaser-worker" });
+        this.register.registerMetric(cronJobExecutionsTotal);
+        this.register.registerMetric(cronJobDurationSeconds);
         collectDefaultMetrics({
             register: this.register,
             prefix: "archaser_worker_",
@@ -183,6 +202,30 @@ class WorkerRuntimeService implements OnModuleDestroy {
         } catch (error: unknown) {
             this.logger.warn(
                 `Failed to persist CronJob ${job.id} run stats: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+        }
+
+        const timedOut =
+            !result.success &&
+            Math.round((result.durationMs || 0) / 1000) >=
+                (job.timeout_period_seconds || 1800);
+        const status = timedOut
+            ? "TIMEOUT"
+            : result.success
+              ? "SUCCESS"
+              : "FAILED";
+        const durationSeconds = Math.max(
+            0,
+            Math.round((result.durationMs || 0) / 1000)
+        );
+        try {
+            cronJobExecutionsTotal.inc({ job_name: job.name, status });
+            cronJobDurationSeconds.set({ job_name: job.name }, durationSeconds);
+        } catch (error: unknown) {
+            this.logger.warn(
+                `Failed to record Prometheus metrics for CronJob ${job.id}: ${
                     error instanceof Error ? error.message : String(error)
                 }`
             );

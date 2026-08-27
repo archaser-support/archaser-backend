@@ -93,7 +93,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_total{instance=\"Staging\"}",
+                    "expr": "(archaser_cron_jobs_total{instance=\"Staging\"}) or vector(0)",
                     "refId": "A"
                 }
             ],
@@ -203,7 +203,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_overdue{instance=\"Staging\"}",
+                    "expr": "(archaser_cron_jobs_overdue{instance=\"Staging\"}) or vector(0)",
                     "refId": "A"
                 }
             ],
@@ -365,17 +365,17 @@
             },
             "targets": [
                 {
-                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Staging\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Staging\",status=\"SUCCESS\"}[24h])) or vector(0)",
                     "legendFormat": "SUCCESS",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Staging\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Staging\",status=\"FAILED\"}[24h])) or vector(0)",
                     "legendFormat": "FAILED",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum(archaser_cron_job_timeout_count_30d{instance=\"Staging\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Staging\",status=\"TIMEOUT\"}[24h])) or vector(0)",
                     "legendFormat": "TIMEOUT",
                     "refId": "C"
                 }
@@ -410,21 +410,21 @@
             "type": "table",
             "targets": [
                 {
-                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Staging\"} + archaser_cron_job_failure_count_30d{instance=\"Staging\"} + archaser_cron_job_timeout_count_30d{instance=\"Staging\"})",
+                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Staging\"}[24h]))",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Total Executions",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Staging\"})",
+                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Staging\",status=\"SUCCESS\"}[24h]))",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Success Count",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum by(job_name) (archaser_cron_job_failure_count_30d{instance=\"Staging\"})",
+                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Staging\",status=\"FAILED\"}[24h]))",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Failure Count",
@@ -633,12 +633,12 @@
             },
             "targets": [
                 {
-                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Staging\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Staging\",status=\"SUCCESS\"}[1h])) or vector(0)",
                     "legendFormat": "Success",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Staging\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Staging\",status=\"FAILED\"}[1h])) or vector(0)",
                     "legendFormat": "Failed",
                     "refId": "B"
                 }
