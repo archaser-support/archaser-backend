@@ -489,6 +489,18 @@ async function getInvoiceNumbersWithPayments(prisma, accountId, invoiceNumbers) 
         .map((r) => r.invoice_number)
         .filter((n) => Boolean(n)));
 }
+/**
+ * Archaser open-AR statuses are Due/Overdue. Import defaults missing/Open to Due
+ * (including credit notes with negative outstanding). Explicit non-Open mapped
+ * statuses are preserved.
+ */
+function resolveImportedInvoiceStatus(mappedStatus) {
+    const trimmed = mappedStatus?.trim();
+    if (!trimmed || trimmed === "Open") {
+        return "Due";
+    }
+    return trimmed;
+}
 async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
     const result = emptyBatchResult();
     const rowResults = rows.map((_, index) => ({
@@ -536,7 +548,7 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
                     account_id: accountId,
                     invoice_number: { in: invoiceNumbers },
                 },
-                select: { id: true, invoice_number: true },
+                select: { id: true, invoice_number: true, status: true },
             }),
         getInvoiceNumbersWithPayments(prisma, accountId, invoiceNumbers),
     ]);
@@ -547,9 +559,11 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
         }
     }
     const existingByNumber = new Map();
+    const existingStatusByNumber = new Map();
     for (const invoice of existingInvoices) {
         if (invoice.invoice_number) {
             existingByNumber.set(invoice.invoice_number, invoice.id);
+            existingStatusByNumber.set(invoice.invoice_number, String(invoice.status));
         }
     }
     const now = new Date();
@@ -589,6 +603,7 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
         const outstanding = netAmount - totalPaid;
         const customerOutstanding = customerNetAmount - customerTotalPaid;
         const existingId = existingByNumber.get(invoiceNumber) ?? null;
+        const importStatus = resolveImportedInvoiceStatus(invoice.status);
         const data = {
             invoice_number: invoiceNumber,
             account_id: accountId,
@@ -607,21 +622,24 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
             ...(options?.skipReportingBreach === true
                 ? { reporting_breach: false }
                 : {}),
-            invoice_date: invoice.invoice_date
-                ? new Date(invoice.invoice_date)
-                : now,
-            due_date: invoice.due_date ? new Date(invoice.due_date) : null,
+            invoice_date: (0, connectorFieldUtils_1.parseErpDateOnly)(invoice.invoice_date) ?? now,
+            due_date: (0, connectorFieldUtils_1.parseErpDateOnly)(invoice.due_date),
             modified_by: userId || null,
             modified_at: now,
         };
         if (existingId != null) {
+            const existingStatus = existingStatusByNumber.get(invoiceNumber);
+            // Promote Open (legacy import default) to Due; never overwrite Paid/Overdue/etc.
+            if (!existingStatus || existingStatus === "Open") {
+                data.status = importStatus;
+            }
             updates.push({ id: existingId, data });
         }
         else {
             inserts.push({
                 ...data,
                 created_by: userId || null,
-                status: invoice.status ?? "Open",
+                status: importStatus,
             });
         }
         prepared.push({ invoiceNumber, customerId, existingId });
@@ -675,19 +693,23 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
     const followUpNumbers = sorted.flatMap((invoice) => [invoice.invoice_number, invoice.credit_for_invoice_number].filter((n) => Boolean(n)));
     if (followUpNumbers.length > 0) {
         try {
-            await (0, linkOrphanedCreditNotes_1.linkOrphanedCreditNotes)(prisma, {
+            const creditStarted = Date.now();
+            const creditResult = await (0, linkOrphanedCreditNotes_1.linkOrphanedCreditNotes)(prisma, {
                 accountId,
                 targetInvoiceNumbers: followUpNumbers,
             });
+            options?.onLog?.(`Invoice follow-up credit-link: ${creditResult.linkedCount} linked in ${Date.now() - creditStarted}ms`);
         }
         catch (error) {
             console.error("Failed to link orphaned credit notes:", error);
         }
     }
-    const importedNumbers = prepared.map((item) => item.invoiceNumber);
-    if (importedNumbers.length > 0) {
+    if (options?.skipDeferredPaymentMaturity !== true &&
+        prepared.length > 0) {
         try {
-            await (0, applyMaturedDeferredPayments_1.applyMaturedDeferredPayments)(prisma, accountId, new Date(), importedNumbers);
+            const maturityStarted = Date.now();
+            const maturityResult = await (0, applyMaturedDeferredPayments_1.applyMaturedDeferredPayments)(prisma, accountId, new Date(), prepared.map((item) => item.invoiceNumber), { userId });
+            options?.onLog?.(`Invoice follow-up maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`);
         }
         catch (error) {
             console.error("Failed to apply matured deferred payments:", error);
@@ -721,7 +743,7 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
         return importInvoiceBatch(prisma, rows, accountId, userId, options);
     }
     const payments = rows.map((row) => (0, normalizePaymentInput_1.toPaymentInput)(row, accountId));
-    const paymentResults = await (0, importPaymentService_1.importPayments)(prisma, payments, accountId, userId);
+    const paymentResults = await (0, importPaymentService_1.importPayments)(prisma, payments, accountId, userId, { extension: options?.extension });
     result.rowResults = paymentResults.map((paymentResult) => ({
         index: paymentResult.index,
         success: paymentResult.success,
