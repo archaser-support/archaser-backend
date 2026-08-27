@@ -27,7 +27,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 0
+                "y": 2
             },
             "id": 700,
             "title": "Nest services",
@@ -75,7 +75,7 @@
                 "h": 4,
                 "w": 4,
                 "x": 0,
-                "y": 1
+                "y": 3
             },
             "id": 701,
             "options": {
@@ -143,7 +143,7 @@
                 "h": 4,
                 "w": 4,
                 "x": 4,
-                "y": 1
+                "y": 3
             },
             "id": 702,
             "options": {
@@ -211,7 +211,7 @@
                 "h": 4,
                 "w": 4,
                 "x": 8,
-                "y": 1
+                "y": 3
             },
             "id": 703,
             "options": {
@@ -279,7 +279,7 @@
                 "h": 4,
                 "w": 4,
                 "x": 12,
-                "y": 1
+                "y": 3
             },
             "id": 704,
             "options": {
@@ -347,7 +347,7 @@
                 "h": 4,
                 "w": 8,
                 "x": 16,
-                "y": 1
+                "y": 3
             },
             "id": 705,
             "options": {
@@ -388,7 +388,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 5
+                "y": 7
             },
             "id": 710,
             "options": {
@@ -402,7 +402,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(rate(nest_http_requests_total{service=\"archaser-api\"}[5m])) by (status_code)",
+                    "expr": "sum(rate(nest_http_requests_total{instance=\"Production\",service=\"archaser-api\"}[5m])) by (status_code)",
                     "legendFormat": "{{status_code}}",
                     "refId": "A"
                 }
@@ -419,14 +419,15 @@
                 "defaults": {
                     "unit": "percentunit",
                     "min": 0,
-                    "max": 1
+                    "max": 1,
+                    "noValue": "0"
                 }
             },
             "gridPos": {
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 5
+                "y": 7
             },
             "id": 711,
             "options": {
@@ -440,7 +441,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(rate(nest_http_requests_total{service=\"archaser-api\",status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(nest_http_requests_total{service=\"archaser-api\"}[5m])), 1e-9)",
+                    "expr": "(sum(rate(nest_http_requests_total{instance=\"Production\",service=\"archaser-api\",status_code=~\"5..\"}[5m])) or vector(0)) / clamp_min((sum(rate(nest_http_requests_total{instance=\"Production\",service=\"archaser-api\"}[5m])) or vector(0)), 1e-9)",
                     "legendFormat": "5xx rate",
                     "refId": "A"
                 }
@@ -462,7 +463,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 13
+                "y": 15
             },
             "id": 712,
             "options": {
@@ -498,7 +499,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 13
+                "y": 15
             },
             "id": 713,
             "options": {
@@ -530,12 +531,12 @@
                 "h": 2,
                 "w": 24,
                 "x": 0,
-                "y": 22
+                "y": 0
             },
             "id": 10,
             "options": {
                 "mode": "markdown",
-                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-prod/archaser-home-production) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-prod/cron-health-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-prod/alert-drilldown-production)"
+                "content": "**Dashboards:** [Home](/d/archaser-unified-v1-prod/archaser-home-production) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-prod/cron-health-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-prod/alert-drilldown-production) &nbsp;|&nbsp; [Postgres Logs](/d/archaser-postgres-logs-prod/postgres-logs-production)"
             },
             "title": "",
             "type": "text",
@@ -591,7 +592,7 @@
             },
             "gridPos": {
                 "h": 4,
-                "w": 6,
+                "w": 12,
                 "x": 0,
                 "y": 25
             },
@@ -1217,27 +1218,70 @@
                         },
                         "inspect": false
                     },
-                    "mappings": [
-                        {
-                            "options": {
-                                "0": {
-                                    "index": 0,
-                                    "text": "Disconnected"
-                                },
-                                "1": {
-                                    "index": 1,
-                                    "text": "Misconfigured"
-                                },
-                                "2": {
-                                    "index": 2,
-                                    "text": "Connected"
-                                }
-                            },
-                            "type": "value"
-                        }
-                    ]
+                    "mappings": []
                 },
-                "overrides": []
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Status"
+                        },
+                        "properties": [
+                            {
+                                "id": "mappings",
+                                "value": [
+                                    {
+                                        "type": "value",
+                                        "options": {
+                                            "0": {
+                                                "index": 0,
+                                                "text": "Disconnected"
+                                            },
+                                            "1": {
+                                                "index": 1,
+                                                "text": "Misconfigured"
+                                            },
+                                            "2": {
+                                                "index": 2,
+                                                "text": "Connected"
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Value"
+                        },
+                        "properties": [
+                            {
+                                "id": "mappings",
+                                "value": [
+                                    {
+                                        "type": "value",
+                                        "options": {
+                                            "0": {
+                                                "index": 0,
+                                                "text": "Disconnected"
+                                            },
+                                            "1": {
+                                                "index": 1,
+                                                "text": "Misconfigured"
+                                            },
+                                            "2": {
+                                                "index": 2,
+                                                "text": "Connected"
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
             },
             "gridPos": {
                 "h": 8,
