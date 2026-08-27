@@ -13,7 +13,6 @@ const config_1 = require("@nestjs/config");
 const jwt_1 = require("@nestjs/jwt");
 const auth_database_1 = require("./auth-database");
 const access_scope_service_1 = require("./access-scope.service");
-const cron_secret_guard_1 = require("./cron-secret.guard");
 const dual_auth_guard_1 = require("./dual-auth.guard");
 const internal_secret_guard_1 = require("./internal-secret.guard");
 const internal_service_client_1 = require("./internal-service.client");
@@ -53,7 +52,6 @@ let ArchaserAuthModule = ArchaserAuthModule_1 = class ArchaserAuthModule {
                 access_scope_service_1.AccessScopeService,
                 dual_auth_guard_1.DualAuthGuard,
                 soft_dual_auth_guard_1.SoftDualAuthGuard,
-                cron_secret_guard_1.CronSecretGuard,
                 internal_secret_guard_1.InternalSecretGuard,
                 internal_service_client_1.InternalServiceClient,
             ],
@@ -61,7 +59,6 @@ let ArchaserAuthModule = ArchaserAuthModule_1 = class ArchaserAuthModule {
                 access_scope_service_1.AccessScopeService,
                 dual_auth_guard_1.DualAuthGuard,
                 soft_dual_auth_guard_1.SoftDualAuthGuard,
-                cron_secret_guard_1.CronSecretGuard,
                 internal_secret_guard_1.InternalSecretGuard,
                 internal_service_client_1.InternalServiceClient,
                 jwt_1.JwtModule,

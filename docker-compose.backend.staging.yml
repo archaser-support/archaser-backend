@@ -31,8 +31,7 @@ services:
       SMS_SERVICE_URL: http://sms:3004
       CONNECTORS_SERVICE_URL: http://connectors:3005
       REPORTS_SERVICE_URL: http://reports:3006
-      # Worker owns CronJob schedules after Stage 2 soak (D15).
-      ENABLE_CRON_JOBS: "false"
+      # Worker owns CronJob schedules via BullMQ (Lambda /api/system/cron removed).
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
       CONNECTION_LIMIT_API: "10"
       ENABLE_LOKI_LOGGING: "true"
