@@ -3,8 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.importPayments = importPayments;
 const connectorPaymentSynthetics_1 = require("../payment/connectorPaymentSynthetics");
 const linkDeferredPaymentAndRecalc_1 = require("../invoice/linkDeferredPaymentAndRecalc");
+const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 const bulkWrite_1 = require("./bulkWrite");
-const account_10149_1 = require("../extensions/account_10149");
+const extensions_1 = require("../extensions");
 const resolvePaymentImportAmounts_1 = require("./resolvePaymentImportAmounts");
 function resolveDeferredPaymentAmounts(record) {
     const customer_amount = record.customer_amount;
@@ -43,14 +44,6 @@ function asNonEmptyString(value) {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
 }
-function isIdigitalPaymentRow(raw) {
-    const fncnum = asNonEmptyString(raw.FNCNUM);
-    const fnciref1 = asNonEmptyString(raw.FNCIREF1);
-    const freconnum = raw.FRECONNUM;
-    const hasFreconnum = (typeof freconnum === "string" && freconnum.trim().length > 0) ||
-        typeof freconnum === "number";
-    return (fncnum != null && fnciref1 != null) || hasFreconnum;
-}
 function matchExistingPayment(rows, uniqueAliases, rawReference, targetInvoiceNumber, effectiveReference) {
     const exact = rows.find((row) => row.reference === effectiveReference);
     if (exact)
@@ -71,11 +64,13 @@ function matchExistingPayment(rows, uniqueAliases, rawReference, targetInvoiceNu
     const aliasSet = new Set(uniqueAliases);
     return rows.find((row) => aliasSet.has(row.reference)) ?? null;
 }
-async function importPayments(prisma, paymentRecords, accountId, userId) {
+async function importPayments(prisma, paymentRecords, accountId, userId, options) {
     const results = paymentRecords.map((_, index) => ({
         index,
         success: false,
     }));
+    const extension = options?.extension ??
+        (await (0, extensions_1.resolveAccountBillingExtension)(prisma, accountId));
     const customerNumbers = [
         ...new Set(paymentRecords.map((p) => p.customer_number)),
     ];
@@ -124,6 +119,16 @@ async function importPayments(prisma, paymentRecords, accountId, userId) {
             : rawReference;
         record.reference = effectiveReference;
         const aliases = (0, connectorPaymentSynthetics_1.collectPaymentReferenceAliases)(erpRowFromRecord(record), effectiveReference, targetInvoiceNumber);
+        const paymentDate = (0, connectorFieldUtils_1.parseErpDateOnly)(record.payment_date) ??
+            (0, connectorFieldUtils_1.parseErpDateOnly)(String(record.payment_date ?? "").slice(0, 10));
+        if (!paymentDate) {
+            results[i] = {
+                index: i,
+                success: false,
+                message: "import.validation.paymentDateRequired",
+            };
+            continue;
+        }
         prepared.push({
             index: i,
             record,
@@ -132,7 +137,7 @@ async function importPayments(prisma, paymentRecords, accountId, userId) {
             effectiveReference,
             uniqueAliases: aliases.length > 0 ? aliases : [effectiveReference],
             targetInvoiceNumber,
-            paymentDate: new Date(record.payment_date),
+            paymentDate,
             paymentMethod: record.payment_method ?? "",
         });
     }
@@ -219,6 +224,22 @@ async function importPayments(prisma, paymentRecords, accountId, userId) {
         invoiceIdsToRecalc.set(invoiceId, {
             normalizeNegativePaymentsForCreditClose: prev.normalizeNegativePaymentsForCreditClose === true ||
                 normalizeNegative === true,
+            isForcePaidClose: extension?.isForcePaidClose,
+        });
+    };
+    const afterLinkCandidates = [];
+    const queueAfterPaymentLinked = (winner, invoiceId) => {
+        if (invoiceId == null ||
+            !winner.targetInvoiceNumber ||
+            !extension?.afterPaymentLinked) {
+            return;
+        }
+        afterLinkCandidates.push({
+            invoiceId,
+            customerId: winner.customerId,
+            invoiceNumber: winner.targetInvoiceNumber,
+            paymentDate: winner.paymentDate,
+            rawErpRow: erpRowFromRecord(winner.record),
         });
     };
     for (const winner of winners) {
@@ -291,18 +312,59 @@ async function importPayments(prisma, paymentRecords, accountId, userId) {
             });
             continue;
         }
-        const amountResolution = (0, resolvePaymentImportAmounts_1.resolvePaymentImportAmounts)({
-            amount: winner.record.amount,
-            customer_amount: winner.record.customer_amount,
-            customer_currency: winner.record.customer_currency,
-        }, {
+        const currencyOptions = extension?.normalizePaymentCurrency
+            ? { normalizeCurrency: extension.normalizePaymentCurrency }
+            : undefined;
+        const invoiceAmountContext = {
             amount: invoice.amount,
             customer_amount: invoice.customer_amount,
             customer_currency: invoice.customer_currency,
-        }, accountId === account_10149_1.ACCOUNT_10149_ID
-            ? { normalizeCurrency: account_10149_1.normalizeAccount10149PaymentCurrency }
-            : undefined);
+        };
+        const rawErpRow = erpRowFromRecord(winner.record);
+        const paymentAmountRow = {
+            amount: winner.record.amount,
+            customer_amount: winner.record.customer_amount,
+            customer_currency: winner.record.customer_currency,
+        };
+        const alignedRow = extension?.alignPaymentAmountsForInvoice?.({
+            ...paymentAmountRow,
+            invoiceCustomerCurrency: invoice.customer_currency,
+            rawErpRow,
+        }) ?? paymentAmountRow;
+        const amountResolution = (0, resolvePaymentImportAmounts_1.resolvePaymentImportAmounts)(alignedRow, invoiceAmountContext, currencyOptions);
         if (!amountResolution.ok) {
+            console.warn("[importPayments] payment amount resolution failed", {
+                errorKey: amountResolution.errorKey,
+                accountId,
+                extensionKey: extension?.key ?? null,
+                paymentIndex: winner.index,
+                customerNumber: winner.record.customer_number,
+                customerId: winner.customerId,
+                invoiceNumber: winner.targetInvoiceNumber,
+                invoiceId: invoice.id,
+                paymentReference: winner.effectiveReference,
+                invoiceCustomerCurrency: invoice.customer_currency,
+                invoiceAmount: invoice.amount,
+                invoiceCustomerAmount: invoice.customer_amount,
+                mappedAmount: paymentAmountRow.amount,
+                mappedCustomerAmount: paymentAmountRow.customer_amount,
+                mappedCustomerCurrency: paymentAmountRow.customer_currency,
+                alignedAmount: alignedRow.amount,
+                alignedCustomerAmount: alignedRow.customer_amount,
+                alignedCustomerCurrency: alignedRow.customer_currency,
+                alignmentChanged: alignedRow.amount !== paymentAmountRow.amount ||
+                    alignedRow.customer_amount !==
+                        paymentAmountRow.customer_amount ||
+                    alignedRow.customer_currency !==
+                        paymentAmountRow.customer_currency,
+                rawCODE: rawErpRow.CODE ?? null,
+                rawCODE5: rawErpRow.CODE5 ?? null,
+                rawCREDIT1: rawErpRow.CREDIT1 ?? null,
+                rawCREDIT5: rawErpRow.CREDIT5 ?? null,
+                rawDEBIT1: rawErpRow.DEBIT1 ?? null,
+                rawDEBIT5: rawErpRow.DEBIT5 ?? null,
+                rawCURDATE: rawErpRow.CURDATE ?? null,
+            });
             failedIds.set(key, {
                 index: winner.index,
                 success: false,
@@ -310,10 +372,11 @@ async function importPayments(prisma, paymentRecords, accountId, userId) {
             });
             continue;
         }
-        const rawErpRow = erpRowFromRecord(winner.record);
-        const normalizeNegative = isIdigitalPaymentRow(rawErpRow) &&
-            invoice.custom_code1 === "C" &&
-            amountResolution.customer_amount < 0;
+        const normalizeNegative = extension?.shouldNormalizeNegativeCreditPayments?.({
+            rawErpRow,
+            invoiceCustomCode1: invoice.custom_code1,
+            customerAmount: amountResolution.customer_amount,
+        }) === true;
         const nextSnapshot = {
             amount: amountResolution.amount,
             customer_amount: amountResolution.customer_amount,
@@ -334,6 +397,7 @@ async function importPayments(prisma, paymentRecords, accountId, userId) {
                     customerId: winner.customerId,
                     message: "import.results.paymentSkipped",
                 });
+                queueAfterPaymentLinked(winner, invoice.id);
                 continue;
             }
             updates.push({
@@ -356,6 +420,7 @@ async function importPayments(prisma, paymentRecords, accountId, userId) {
                     modified_at: new Date(),
                 },
             });
+            queueAfterPaymentLinked(winner, invoice.id);
             continue;
         }
         inserts.push({
@@ -378,6 +443,7 @@ async function importPayments(prisma, paymentRecords, accountId, userId) {
             invoiceId: invoice.id,
             normalizeNegative,
         });
+        queueAfterPaymentLinked(winner, invoice.id);
     }
     if (inserts.length > 0) {
         await prisma.invoicePayment.createMany({ data: inserts });
@@ -436,6 +502,18 @@ async function importPayments(prisma, paymentRecords, accountId, userId) {
         });
         markRecalc(row.previousInvoiceId, row.normalizeNegative);
         markRecalc(row.newInvoiceId, row.normalizeNegative);
+    }
+    if (extension?.afterPaymentLinked &&
+        afterLinkCandidates.length > 0) {
+        const { invoiceIdsToRecalc: extensionRecalcIds } = await extension.afterPaymentLinked({
+            prisma,
+            accountId,
+            userId,
+            candidates: afterLinkCandidates,
+        });
+        for (const invoiceId of extensionRecalcIds) {
+            markRecalc(invoiceId);
+        }
     }
     await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoicesFromLinkedPayments)(prisma, invoiceIdsToRecalc);
     for (const row of prepared) {

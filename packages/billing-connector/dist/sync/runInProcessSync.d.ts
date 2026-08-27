@@ -27,6 +27,11 @@ export interface RunInProcessSyncOptions {
     onLog?: (message: string) => void;
     /** Live pulled/imported counts for GET /sync-runs polling. */
     onProgress?: (entityStats: ConnectorEntityStats) => void;
+    /**
+     * After Payment/Invoice ingest (and deferred maturity), refresh denormalized
+     * customer due/overdue amounts. Nest wires recalculateCustomerAmounts.
+     */
+    onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
 }
 export interface RunInProcessSyncResult {
     ok: boolean;

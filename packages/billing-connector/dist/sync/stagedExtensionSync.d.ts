@@ -33,6 +33,12 @@ export interface RunStagedExtensionSyncOptions {
     /** Cooperative cancel — checked between pages and after each import. */
     shouldCancel?: () => boolean;
     /**
+     * After Payment/Invoice ingest + deferred maturity, refresh denormalized
+     * customer due/overdue rollups for these customers (Nest wires
+     * recalculateCustomerAmounts).
+     */
+    onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
+    /**
      * Backfill cutover: Invoice/Payment $filter by created date (IVDATE/PAYDATE).
      * Customers and contacts still pull full history.
      */
@@ -61,14 +67,20 @@ export interface RunStagedExtensionSyncResult {
         invoicesImported: number;
         paymentsImported: number;
         importErrors: number;
+        paymentLinkStatus?: "running" | "done" | "failed";
+        paymentsLinked?: number;
+        paymentsStillDeferred?: number;
+        paymentsLinkTotal?: number;
+        paymentLinkError?: string;
     };
     cancelled?: boolean;
     error?: string;
 }
 /**
  * Staged path: for each window and entity, pull one page, run the extension
- * plugin on that page, then upsert immediately. Prior pages stay imported if
- * a later page or window fails. Never falls back to importing pre-plugin rows.
+ * plugin on that page, then upsert immediately. Row-level import failures are
+ * counted and checkpointed (`last_error`) but do not abort remaining pages,
+ * entities, or windows. Never falls back to importing pre-plugin rows.
  */
 export declare function runStagedExtensionSync(options: RunStagedExtensionSyncOptions): Promise<RunStagedExtensionSyncResult>;
 /**

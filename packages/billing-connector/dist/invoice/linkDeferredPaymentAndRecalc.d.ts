@@ -1,14 +1,14 @@
 import type { Invoice, InvoicePayment, PrismaClient } from "@prisma/client";
+import type { ExtensionLinkedPayment } from "../extensions/types";
 export type LinkDeferredPaymentAndRecalcResult = {
     invoicePayment: InvoicePayment;
     updatedInvoice: Invoice;
     alreadyLinked: boolean;
 };
-export declare const INVOICE_PAID_TOLERANCE = 0.2;
-/** Exact FNCPATNAME close code stored on InvoicePayment.payment_method. */
-export declare const IDIGITAL_HELAM_PAYMENT_METHOD = "\u05D7\u05DC\u05DE";
+export { INVOICE_PAID_TOLERANCE } from "./invoicePaidTolerance";
 export type InvoicePaidRecalcOptions = {
     normalizeNegativePaymentsForCreditClose?: boolean;
+    isForcePaidClose?: (payment: ExtensionLinkedPayment) => boolean;
 };
 export declare function recalculateInvoiceFromLinkedPayments(tx: Pick<PrismaClient, "invoice" | "invoicePayment">, invoiceId: number, options?: InvoicePaidRecalcOptions): Promise<Invoice>;
 /**
