@@ -202,7 +202,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 12
+                "y": 20
             },
             "id": 4,
             "options": {
@@ -218,7 +218,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "{job=\"rds-postgres\", environment=\"staging\", error_severity=~\"FATAL|PANIC\"}",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} |~ \"(?i)\\\\b(FATAL|PANIC):\"",
                     "queryType": "range",
                     "refId": "A"
                 }
@@ -235,7 +235,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 12
+                "y": 20
             },
             "id": 5,
             "options": {
@@ -283,7 +283,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 20
+                "y": 28
             },
             "id": 6,
             "options": {
@@ -334,7 +334,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 20
+                "y": 28
             },
             "id": 7,
             "options": {
@@ -350,12 +350,45 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "{job=\"rds-postgres\", environment=\"staging\", error_severity=\"ERROR\"}",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} |~ \"(?i)\\\\b(ERROR|WARNING):\"",
                     "queryType": "range",
                     "refId": "A"
                 }
             ],
-            "title": "Top recent ERROR messages",
+            "title": "Top recent ERROR / WARNING",
+            "type": "logs"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "Loki"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 12
+            },
+            "id": 9,
+            "options": {
+                "showTime": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending",
+                "wrapLogMessage": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "Loki"
+                    },
+                    "editorMode": "code",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\"}",
+                    "queryType": "range",
+                    "refId": "A"
+                }
+            ],
+            "title": "All recent postgres logs",
             "type": "logs"
         }
     ],
