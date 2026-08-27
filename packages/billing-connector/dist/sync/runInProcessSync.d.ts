@@ -3,6 +3,7 @@ import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
 import { type ConnectorEntityStats } from "./connectorSyncRuntime";
 import { type ImportBatchFn } from "./stagedExtensionSync";
+import { type BillingConnectorObservabilityOptions } from "../observability";
 export interface RunInProcessSyncOptions {
     prisma: PrismaClient;
     accountId: number;
@@ -32,6 +33,8 @@ export interface RunInProcessSyncOptions {
      * customer due/overdue amounts. Nest wires recalculateCustomerAmounts.
      */
     onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
+    /** Structured Loki JSON + Prometheus counters (start / finish / errors). */
+    observability?: BillingConnectorObservabilityOptions;
 }
 export interface RunInProcessSyncResult {
     ok: boolean;
