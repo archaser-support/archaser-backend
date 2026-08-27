@@ -3,7 +3,6 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { JwtModule } from "@nestjs/jwt";
 import { AUTH_DATABASE } from "./auth-database";
 import { AccessScopeService } from "./access-scope.service";
-import { CronSecretGuard } from "./cron-secret.guard";
 import { DualAuthGuard } from "./dual-auth.guard";
 import { InternalSecretGuard } from "./internal-secret.guard";
 import { InternalServiceClient } from "./internal-service.client";
@@ -54,7 +53,6 @@ export class ArchaserAuthModule {
                 AccessScopeService,
                 DualAuthGuard,
                 SoftDualAuthGuard,
-                CronSecretGuard,
                 InternalSecretGuard,
                 InternalServiceClient,
             ],
@@ -62,7 +60,6 @@ export class ArchaserAuthModule {
                 AccessScopeService,
                 DualAuthGuard,
                 SoftDualAuthGuard,
-                CronSecretGuard,
                 InternalSecretGuard,
                 InternalServiceClient,
                 JwtModule,

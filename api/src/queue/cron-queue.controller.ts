@@ -28,8 +28,7 @@ export class CronQueueController {
 
     @Post(":jobId/run-now")
     @ApiOperation({
-        summary:
-            "Enqueue CronJob run-now on BullMQ (worker executes; set ENABLE_CRON_JOBS=false on API after cutover)",
+        summary: "Enqueue CronJob run-now on BullMQ (worker executes)",
     })
     @ApiUnauthorizedResponse({ description: "Missing auth" })
     async runNow(
