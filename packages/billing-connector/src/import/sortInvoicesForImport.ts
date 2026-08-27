@@ -1,3 +1,5 @@
+import { toErpDateOnly } from "../utils/connectorFieldUtils";
+
 export interface SortableInvoiceRow {
     customer_number: string;
     invoice_number: string;
@@ -5,14 +7,7 @@ export interface SortableInvoiceRow {
 }
 
 function normalizeInvoiceDate(date: string): string {
-    if (!date) {
-        return "";
-    }
-    const parsed = new Date(date);
-    if (Number.isNaN(parsed.getTime())) {
-        return String(date);
-    }
-    return parsed.toISOString().slice(0, 10);
+    return toErpDateOnly(date);
 }
 
 /**

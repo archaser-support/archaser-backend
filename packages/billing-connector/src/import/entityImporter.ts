@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import {
     mapErpRecord,
+    parseErpDateOnly,
     parseMappingRules,
     type MappingRule,
 } from "../utils/connectorFieldUtils";
@@ -37,6 +38,12 @@ export interface EntityImportBatchResult {
 
 export interface EntityImportBatchOptions {
     skipReportingBreach?: boolean;
+    /**
+     * When true, skip deferred-payment maturity after this invoice batch.
+     * Connector staged sync sets this and runs maturity once after all
+     * Invoice pages instead.
+     */
+    skipDeferredPaymentMaturity?: boolean;
     onLog?: (message: string) => void;
     shouldCancel?: () => boolean;
     extension?: BillingAccountExtension;
@@ -639,6 +646,21 @@ async function getInvoiceNumbersWithPayments(
     );
 }
 
+/**
+ * Archaser open-AR statuses are Due/Overdue. Import defaults missing/Open to Due
+ * (including credit notes with negative outstanding). Explicit non-Open mapped
+ * statuses are preserved.
+ */
+function resolveImportedInvoiceStatus(
+    mappedStatus: string | null | undefined
+): string {
+    const trimmed = mappedStatus?.trim();
+    if (!trimmed || trimmed === "Open") {
+        return "Due";
+    }
+    return trimmed;
+}
+
 async function importInvoiceBatch(
     prisma: PrismaClient,
     rows: Record<string, unknown>[],
@@ -703,7 +725,7 @@ async function importInvoiceBatch(
                           account_id: accountId,
                           invoice_number: { in: invoiceNumbers },
                       },
-                      select: { id: true, invoice_number: true },
+                      select: { id: true, invoice_number: true, status: true },
                   }),
             getInvoiceNumbersWithPayments(prisma, accountId, invoiceNumbers),
         ]);
@@ -715,9 +737,14 @@ async function importInvoiceBatch(
         }
     }
     const existingByNumber = new Map<string, number>();
+    const existingStatusByNumber = new Map<string, string>();
     for (const invoice of existingInvoices) {
         if (invoice.invoice_number) {
             existingByNumber.set(invoice.invoice_number, invoice.id);
+            existingStatusByNumber.set(
+                invoice.invoice_number,
+                String(invoice.status)
+            );
         }
     }
 
@@ -764,8 +791,9 @@ async function importInvoiceBatch(
         const outstanding = netAmount - totalPaid;
         const customerOutstanding = customerNetAmount - customerTotalPaid;
         const existingId = existingByNumber.get(invoiceNumber) ?? null;
+        const importStatus = resolveImportedInvoiceStatus(invoice.status);
 
-        const data = {
+        const data: Record<string, unknown> = {
             invoice_number: invoiceNumber,
             account_id: accountId,
             customer_id: customerId,
@@ -784,21 +812,24 @@ async function importInvoiceBatch(
             ...(options?.skipReportingBreach === true
                 ? { reporting_breach: false }
                 : {}),
-            invoice_date: invoice.invoice_date
-                ? new Date(invoice.invoice_date)
-                : now,
-            due_date: invoice.due_date ? new Date(invoice.due_date) : null,
+            invoice_date: parseErpDateOnly(invoice.invoice_date) ?? now,
+            due_date: parseErpDateOnly(invoice.due_date),
             modified_by: userId || null,
             modified_at: now,
         };
 
         if (existingId != null) {
+            const existingStatus = existingStatusByNumber.get(invoiceNumber);
+            // Promote Open (legacy import default) to Due; never overwrite Paid/Overdue/etc.
+            if (!existingStatus || existingStatus === "Open") {
+                data.status = importStatus;
+            }
             updates.push({ id: existingId, data });
         } else {
             inserts.push({
                 ...data,
                 created_by: userId || null,
-                status: (invoice.status as never) ?? "Open",
+                status: importStatus,
             });
         }
         prepared.push({ invoiceNumber, customerId, existingId });
@@ -870,22 +901,34 @@ async function importInvoiceBatch(
     );
     if (followUpNumbers.length > 0) {
         try {
-            await linkOrphanedCreditNotes(prisma, {
+            const creditStarted = Date.now();
+            const creditResult = await linkOrphanedCreditNotes(prisma, {
                 accountId,
                 targetInvoiceNumbers: followUpNumbers,
             });
+            options?.onLog?.(
+                `Invoice follow-up credit-link: ${creditResult.linkedCount} linked in ${Date.now() - creditStarted}ms`
+            );
         } catch (error) {
             console.error("Failed to link orphaned credit notes:", error);
         }
     }
-    const importedNumbers = prepared.map((item) => item.invoiceNumber);
-    if (importedNumbers.length > 0) {
+
+    if (
+        options?.skipDeferredPaymentMaturity !== true &&
+        prepared.length > 0
+    ) {
         try {
-            await applyMaturedDeferredPayments(
+            const maturityStarted = Date.now();
+            const maturityResult = await applyMaturedDeferredPayments(
                 prisma,
                 accountId,
                 new Date(),
-                importedNumbers
+                prepared.map((item) => item.invoiceNumber),
+                { userId }
+            );
+            options?.onLog?.(
+                `Invoice follow-up maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
             );
         } catch (error) {
             console.error("Failed to apply matured deferred payments:", error);
