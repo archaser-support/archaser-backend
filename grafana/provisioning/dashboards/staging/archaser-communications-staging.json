@@ -1202,12 +1202,12 @@
             "id": 107,
             "targets": [
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", host=\"staging\"} |~ \"Delivery\" [$__interval]))",
+                    "expr": "sum(count_over_time({job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)ses|delivery|delivered\" [$__interval]))",
                     "legendFormat": "Sent / Delivered",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", host=\"staging\"} |~ \"Open\" [$__interval]))",
+                    "expr": "sum(count_over_time({job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)open|opened|tracking\" [$__interval]))",
                     "legendFormat": "Opened",
                     "refId": "B"
                 }
@@ -1229,7 +1229,7 @@
             "id": 108,
             "targets": [
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"InforuStatusChecker\", host=\"staging\"} [$__interval]))",
+                    "expr": "sum(count_over_time({job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)inforu|sms\" [$__interval]))",
                     "legendFormat": "SMS Checks",
                     "refId": "A"
                 }

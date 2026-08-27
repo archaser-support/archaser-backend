@@ -4,7 +4,7 @@
  * Report Builder Test Script
  *
  * Tests the report builder by creating numerous reports with:
- * - Different tables (Customer, Invoice, Payment, Contact, Activity)
+ * - Different tables (Customer, Invoice, InvoicePayment, Contact, Activity)
  * - Different fields, some with aggregations (SUM, AVG, COUNT, MIN, MAX)
  * - Various filters on different field types with all supported operators:
  *   * String operators: equals, not_equals, contains
@@ -340,13 +340,13 @@ function getTestReports(): TestReport[] {
             name: "Test 7: Payment Aggregations",
             description: "Payment report with multiple aggregations",
             config: {
-                tables: ["Payment"],
+                tables: ["InvoicePayment"],
                 fields: [
-                    { table: "Payment", field: "amount", aggregation: "SUM" },
-                    { table: "Payment", field: "amount", aggregation: "AVG" },
-                    { table: "Payment", field: "amount", aggregation: "MIN" },
-                    { table: "Payment", field: "amount", aggregation: "MAX" },
-                    { table: "Payment", field: "payment_date" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "SUM" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "AVG" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "MIN" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "MAX" },
+                    { table: "InvoicePayment", field: "payment_date" },
                 ],
             },
         },
@@ -356,13 +356,13 @@ function getTestReports(): TestReport[] {
             name: "Test 8: Payment Grouped by Method",
             description: "Payment report grouped by payment method",
             config: {
-                tables: ["Payment"],
+                tables: ["InvoicePayment"],
                 fields: [
-                    { table: "Payment", field: "payment_method" },
-                    { table: "Payment", field: "amount", aggregation: "SUM" },
-                    { table: "Payment", field: "amount", aggregation: "COUNT" },
+                    { table: "InvoicePayment", field: "payment_method" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "SUM" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "COUNT" },
                 ],
-                grouping: ["Payment.payment_method"],
+                grouping: ["InvoicePayment.payment_method"],
             },
         },
 
@@ -529,12 +529,12 @@ function getTestReports(): TestReport[] {
             name: "Test 17: Payment Grouped by Date",
             description: "Payment report grouped by payment date",
             config: {
-                tables: ["Payment"],
+                tables: ["InvoicePayment"],
                 fields: [
-                    { table: "Payment", field: "payment_date" },
-                    { table: "Payment", field: "amount", aggregation: "SUM" },
+                    { table: "InvoicePayment", field: "payment_date" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "SUM" },
                 ],
-                grouping: ["Payment.payment_date"],
+                grouping: ["InvoicePayment.payment_date"],
                 // No filters - will show all payments grouped by date
             },
         },
@@ -930,14 +930,14 @@ function getTestReports(): TestReport[] {
             name: "Test 36: Payment Date Between",
             description: "Payment report with between operator on date field",
             config: {
-                tables: ["Payment"],
+                tables: ["InvoicePayment"],
                 fields: [
-                    { table: "Payment", field: "payment_date" },
-                    { table: "Payment", field: "amount" },
+                    { table: "InvoicePayment", field: "payment_date" },
+                    { table: "InvoicePayment", field: "amount" },
                 ],
                 filters: [
                     {
-                        table: "Payment",
+                        table: "InvoicePayment",
                         field: "payment_date",
                         operator: "greater_or_equal",
                         value: new Date(
@@ -1158,10 +1158,10 @@ function getTestReports(): TestReport[] {
             description:
                 "Payment report testing all number comparison operators",
             config: {
-                tables: ["Payment"],
+                tables: ["InvoicePayment"],
                 fields: [
-                    { table: "Payment", field: "amount" },
-                    { table: "Payment", field: "payment_date" },
+                    { table: "InvoicePayment", field: "amount" },
+                    { table: "InvoicePayment", field: "payment_date" },
                 ],
                 // No filters - show all payments to ensure we get results
             },
@@ -1210,13 +1210,13 @@ function getTestReports(): TestReport[] {
             name: "Test 48: Payment Table Only",
             description: "Payment table with all basic fields",
             config: {
-                tables: ["Payment"],
+                tables: ["InvoicePayment"],
                 fields: [
-                    { table: "Payment", field: "amount" },
-                    { table: "Payment", field: "payment_date" },
-                    { table: "Payment", field: "payment_method" },
-                    { table: "Payment", field: "reference" },
-                    { table: "Payment", field: "created_at" },
+                    { table: "InvoicePayment", field: "amount" },
+                    { table: "InvoicePayment", field: "payment_date" },
+                    { table: "InvoicePayment", field: "payment_method" },
+                    { table: "InvoicePayment", field: "reference" },
+                    { table: "InvoicePayment", field: "created_at" },
                 ],
             },
         },
@@ -1300,12 +1300,12 @@ function getTestReports(): TestReport[] {
             name: "Test 54: Customer + Payment Join",
             description: "Customer and Payment tables joined",
             config: {
-                tables: ["Customer", "Payment"],
+                tables: ["Customer", "InvoicePayment"],
                 fields: [
                     { table: "Customer", field: "customer_number" },
-                    { table: "Payment", field: "amount" },
-                    { table: "Payment", field: "payment_date" },
-                    { table: "Payment", field: "payment_method" },
+                    { table: "InvoicePayment", field: "amount" },
+                    { table: "InvoicePayment", field: "payment_date" },
+                    { table: "InvoicePayment", field: "payment_method" },
                 ],
             },
         },
@@ -1345,12 +1345,12 @@ function getTestReports(): TestReport[] {
             name: "Test 57: Invoice + Payment Join",
             description: "Invoice and Payment tables joined via InvoicePayment",
             config: {
-                tables: ["Invoice", "Payment"],
+                tables: ["Invoice", "InvoicePayment"],
                 fields: [
                     { table: "Invoice", field: "invoice_number" },
                     { table: "Invoice", field: "amount" },
-                    { table: "Payment", field: "amount" },
-                    { table: "Payment", field: "payment_date" },
+                    { table: "InvoicePayment", field: "amount" },
+                    { table: "InvoicePayment", field: "payment_date" },
                 ],
             },
         },
@@ -1392,11 +1392,11 @@ function getTestReports(): TestReport[] {
             name: "Test 60: Customer + Payment with Aggregations",
             description: "Customer and Payment joined with amount aggregations",
             config: {
-                tables: ["Customer", "Payment"],
+                tables: ["Customer", "InvoicePayment"],
                 fields: [
                     { table: "Customer", field: "customer_number" },
-                    { table: "Payment", field: "amount", aggregation: "SUM" },
-                    { table: "Payment", field: "amount", aggregation: "COUNT" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "SUM" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "COUNT" },
                 ],
                 grouping: ["Customer.customer_number"],
             },
@@ -1429,15 +1429,15 @@ function getTestReports(): TestReport[] {
             name: "Test 62: Payment + Customer with Date Filter",
             description: "Payment and Customer joined with date filter",
             config: {
-                tables: ["Payment", "Customer"],
+                tables: ["InvoicePayment", "Customer"],
                 fields: [
                     { table: "Customer", field: "customer_number" },
-                    { table: "Payment", field: "amount" },
-                    { table: "Payment", field: "payment_date" },
+                    { table: "InvoicePayment", field: "amount" },
+                    { table: "InvoicePayment", field: "payment_date" },
                 ],
                 filters: [
                     {
-                        table: "Payment",
+                        table: "InvoicePayment",
                         field: "payment_date",
                         operator: "greater_or_equal",
                         value: new Date(
@@ -1545,14 +1545,14 @@ function getTestReports(): TestReport[] {
             description:
                 "Customer and Payment joined with all aggregation types",
             config: {
-                tables: ["Customer", "Payment"],
+                tables: ["Customer", "InvoicePayment"],
                 fields: [
                     { table: "Customer", field: "customer_number" },
-                    { table: "Payment", field: "amount", aggregation: "SUM" },
-                    { table: "Payment", field: "amount", aggregation: "AVG" },
-                    { table: "Payment", field: "amount", aggregation: "COUNT" },
-                    { table: "Payment", field: "amount", aggregation: "MIN" },
-                    { table: "Payment", field: "amount", aggregation: "MAX" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "SUM" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "AVG" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "COUNT" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "MIN" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "MAX" },
                 ],
                 grouping: ["Customer.customer_number"],
             },
@@ -1625,12 +1625,12 @@ function getTestReports(): TestReport[] {
             description:
                 "Payment as primary table with Customer joined and amount aggregation",
             config: {
-                tables: ["Payment", "Customer"],
+                tables: ["InvoicePayment", "Customer"],
                 fields: [
-                    { table: "Payment", field: "payment_date" },
+                    { table: "InvoicePayment", field: "payment_date" },
                     { table: "Customer", field: "customer_number" },
-                    { table: "Payment", field: "amount", aggregation: "SUM" },
-                    { table: "Payment", field: "amount", aggregation: "AVG" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "SUM" },
+                    { table: "InvoicePayment", field: "amount", aggregation: "AVG" },
                 ],
                 grouping: ["Customer.customer_number"],
             },
