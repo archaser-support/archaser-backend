@@ -689,7 +689,7 @@ groups:
     folder: Staging
     interval: 1m
     rules:
-      - uid: billing-connector-auth-failures-stag
+      - uid: bc-auth-failures-stag
         title: Billing Connector Auth Failures
         condition: C
         data:
@@ -732,7 +732,7 @@ groups:
           severity: critical
           type: billing_connector
 
-      - uid: billing-connector-in-error-stag
+      - uid: bc-in-error-stag
         title: Billing Connectors In Error State
         condition: C
         data:
@@ -775,7 +775,7 @@ groups:
           severity: critical
           type: billing_connector
 
-      - uid: billing-connector-stale-incremental-stag
+      - uid: bc-stale-incremental-stag
         title: Billing Connector No Incremental Success 24h
         condition: C
         data:
@@ -818,7 +818,7 @@ groups:
           severity: high
           type: billing_connector
 
-      - uid: billing-connector-incremental-failed-stag
+      - uid: bc-incr-failed-stag
         title: Billing Connector Incremental FAILED/TIMEOUT
         condition: C
         data:
@@ -861,7 +861,7 @@ groups:
           severity: high
           type: billing_connector
 
-      - uid: billing-connector-backfill-stale-stag
+      - uid: bc-backfill-stale-stag
         title: Billing Connector Backfill Checkpoint Stale
         condition: C
         data:
@@ -904,7 +904,7 @@ groups:
           severity: warning
           type: billing_connector
 
-      - uid: billing-connector-stale-running-stag
+      - uid: bc-stale-running-stag
         title: Billing Connector Stale RUNNING
         condition: C
         data:
@@ -947,7 +947,7 @@ groups:
           severity: warning
           type: billing_connector
 
-      - uid: billing-connector-partial-storm-stag
+      - uid: bc-partial-storm-stag
         title: Billing Connector Incremental PARTIAL Storm
         condition: C
         data:
@@ -990,7 +990,7 @@ groups:
           severity: warning
           type: billing_connector
 
-      - uid: billing-connector-rate-limit-5xx-stag
+      - uid: bc-rate-limit-5xx-stag
         title: Billing Connector rate_limit / 5xx Spike
         condition: C
         data:
@@ -1033,7 +1033,7 @@ groups:
           severity: warning
           type: billing_connector
 
-      - uid: billing-connector-import-validation-stag
+      - uid: bc-import-validation-stag
         title: Billing Connector import_validation Spike
         condition: C
         data:
@@ -1076,7 +1076,7 @@ groups:
           severity: warning
           type: billing_connector
 
-      - uid: billing-connector-import-jobs-stuck-stag
+      - uid: bc-import-jobs-stuck-stag
         title: Billing Connector Import Jobs Stuck
         condition: C
         data:
@@ -1119,7 +1119,7 @@ groups:
           severity: warning
           type: billing_connector
 
-      - uid: billing-connector-sync-enabled-unmapped-stag
+      - uid: bc-sync-unmapped-stag
         title: Billing Connector Sync Enabled Unmapped
         condition: C
         data:
