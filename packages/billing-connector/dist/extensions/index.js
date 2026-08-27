@@ -4,6 +4,7 @@ exports.SAMPLE_NOOP_EXTENSION_KEY = exports.ACCOUNT_10149_EXTENSION_KEY = void 0
 exports.listRegisteredExtensionKeys = listRegisteredExtensionKeys;
 exports.getRegisteredExtension = getRegisteredExtension;
 exports.isRegisteredExtensionKey = isRegisteredExtensionKey;
+exports.resolveAccountBillingExtension = resolveAccountBillingExtension;
 exports.resolveExtensionAttachmentInput = resolveExtensionAttachmentInput;
 const account_10149_1 = require("./account_10149");
 const sample_noop_1 = require("./sample_noop");
@@ -23,6 +24,26 @@ function getRegisteredExtension(key) {
 }
 function isRegisteredExtensionKey(key) {
     return EXTENSION_REGISTRY.has(key);
+}
+/**
+ * Load the registered billing extension attached to the account's connector.
+ * Returns undefined when the prisma client has no connector delegate (tests)
+ * or the connector has no known extension_key.
+ */
+async function resolveAccountBillingExtension(prisma, accountId) {
+    const findFirst = prisma.billingConnector?.findFirst;
+    if (typeof findFirst !== "function") {
+        return undefined;
+    }
+    const connector = await findFirst({
+        where: { account_id: accountId },
+        select: { extension_key: true },
+    });
+    const key = connector?.extension_key?.trim();
+    if (!key) {
+        return undefined;
+    }
+    return getRegisteredExtension(key);
 }
 function normalizeExtensionKey(input) {
     if (input === undefined) {

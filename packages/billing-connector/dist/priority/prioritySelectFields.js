@@ -18,6 +18,24 @@ const SYNTHETIC_SOURCE_FIELDS = {
     PAYDES: ["PAYDES", "FNCPATNAME"],
 };
 /**
+ * Always request on Payment pulls when the table exposes them.
+ * FRECONNUM / BAL drive recon virtual-close; PAY_REFERENCE sources are needed
+ * even when the connector maps `reference` to IVNUM/PAYNUM instead of PAY_REFERENCE.
+ * CREDIT5/DEBIT5/CODE5/CURDATE are Priority dual-currency / rate-date fields on
+ * IDG_ARFNCITEMS4 (discovered for account 10149) — needed for FX diagnosis/conversion.
+ */
+const PAYMENT_ALWAYS_SELECT_SOURCES = [
+    "BAL",
+    "CODE",
+    "CODE5",
+    "CREDIT1",
+    "CREDIT5",
+    "DEBIT1",
+    "DEBIT5",
+    "CURDATE",
+    ...SYNTHETIC_SOURCE_FIELDS.PAY_REFERENCE,
+];
+/**
  * Not on CINVOICES for this Priority OData form. PIVNUM/CREDITFOR are subform
  * (or absent). PAYDATE is a payment column that invoice mappings sometimes include.
  */
@@ -69,6 +87,11 @@ function odataSelectFieldsFromMapping(options) {
     const fields = new Set();
     for (const extra of options.extraFields ?? []) {
         addField(fields, extra, omit);
+    }
+    if (options.entityType === "Payment") {
+        for (const source of PAYMENT_ALWAYS_SELECT_SOURCES) {
+            addField(fields, source, omit);
+        }
     }
     for (const rule of options.mappingRules) {
         const name = topLevelODataField(rule.erpField);

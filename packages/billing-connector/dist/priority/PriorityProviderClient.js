@@ -59,20 +59,24 @@ function andODataFilters(...parts) {
     }
     return cleaned.map((part) => `(${part})`).join(" and ");
 }
-function odataLiteral(value) {
-    const trimmed = value.trim();
-    // Keyset order-by fields (CUSTNAME, IVNUM, PAYNUM, FNCNUM) are Edm.String
-    // even when the value looks numeric. Unquoted 10700194 is Edm.Int32 and
-    // Priority rejects `CUSTNAME gt 10700194`.
-    return `'${trimmed.replace(/'/g, "''")}'`;
-}
-function recordOrderByValue(record, orderBy) {
-    const raw = record[orderBy];
+function recordFieldValue(record, field) {
+    const raw = record[field];
     if (raw == null) {
         return null;
     }
     const text = String(raw).trim();
     return text.length > 0 ? text : null;
+}
+function recordKeysetCursor(record, orderBy, tieBreaker) {
+    const primary = recordFieldValue(record, orderBy);
+    if (primary == null) {
+        return null;
+    }
+    if (!tieBreaker) {
+        return primary;
+    }
+    const secondary = recordFieldValue(record, tieBreaker);
+    return (0, resolveTablePullShape_1.encodeKeysetCursor)(primary, secondary);
 }
 function dateGeIso(date, overlapMinutes) {
     const ms = date.getTime() - overlapMinutes * 60 * 1000;
@@ -129,6 +133,7 @@ class PriorityProviderClient {
         const columns = (0, resolveTablePullShape_1.columnNameSet)(await this.columnsForTable(entity, options.entitySet));
         const endpoint = (0, priorityApiContract_1.getPriorityEntityEndpoint)(entity);
         const orderBy = (0, resolveTablePullShape_1.pickOrderByField)(endpoint.defaultOrderBy, columns);
+        const tieBreaker = (0, resolveTablePullShape_1.pickKeysetTieBreaker)(columns, orderBy);
         const needsDate = options.createdOnOrAfter != null || options.since != null;
         const dateField = (0, resolveTablePullShape_1.pickDateField)(options.preferredDateField, columns);
         if (needsDate && !dateField) {
@@ -136,9 +141,14 @@ class PriorityProviderClient {
         }
         const selectFields = (0, resolveTablePullShape_1.intersectSelectFields)([
             orderBy,
+            ...(tieBreaker ? [tieBreaker] : []),
             ...(dateField ? [dateField] : []),
             ...(options.select ?? []),
-        ], columns, [orderBy, ...(dateField ? [dateField] : [])]);
+        ], columns, [
+            orderBy,
+            ...(tieBreaker ? [tieBreaker] : []),
+            ...(dateField ? [dateField] : []),
+        ]);
         const params = { $top: String(pageSize) };
         // Do not $expand CINVOICESCONT_SUBFORM on list pulls. Priority/idigital
         // returns HTTP 502 (HTML gateway page) after ~2 minutes on that query.
@@ -147,13 +157,13 @@ class PriorityProviderClient {
         if (!useKeyset && safeSkip > 0) {
             params.$skip = String(safeSkip);
         }
-        params.$orderby = orderBy;
+        params.$orderby = (0, resolveTablePullShape_1.formatOrderByClause)(orderBy, tieBreaker);
         if (options.select != null && selectFields.length > 0) {
             params.$select = selectFields.join(",");
         }
         const afterKey = options.afterKey?.trim();
         const keysetFilter = useKeyset && afterKey
-            ? `${orderBy} gt ${odataLiteral(afterKey)}`
+            ? (0, resolveTablePullShape_1.buildKeysetFilter)(orderBy, afterKey, tieBreaker)
             : null;
         const dateBound = options.createdOnOrAfter ?? options.since;
         const overlapMinutes = options.createdOnOrAfter == null && options.since
@@ -179,7 +189,7 @@ class PriorityProviderClient {
             : rawRecords;
         const hasMore = records.length === pageSize;
         const lastKey = records.length
-            ? recordOrderByValue(records[records.length - 1], orderBy)
+            ? recordKeysetCursor(records[records.length - 1], orderBy, tieBreaker)
             : null;
         const nextCursor = useKeyset
             ? hasMore

@@ -1,15 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sortInvoicesForImport = sortInvoicesForImport;
+const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 function normalizeInvoiceDate(date) {
-    if (!date) {
-        return "";
-    }
-    const parsed = new Date(date);
-    if (Number.isNaN(parsed.getTime())) {
-        return String(date);
-    }
-    return parsed.toISOString().slice(0, 10);
+    return (0, connectorFieldUtils_1.toErpDateOnly)(date);
 }
 /**
  * Sort invoices for import: invoice_date ascending, then invoice_number ascending,

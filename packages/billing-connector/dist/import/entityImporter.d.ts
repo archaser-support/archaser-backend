@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import type { BillingAccountExtension } from "../extensions/types";
 export type ImportEntityType = "Customer" | "Contact" | "Invoice" | "Payment";
 export interface EntityImportRowResult {
     index: number;
@@ -20,8 +21,15 @@ export interface EntityImportBatchResult {
 }
 export interface EntityImportBatchOptions {
     skipReportingBreach?: boolean;
+    /**
+     * When true, skip deferred-payment maturity after this invoice batch.
+     * Connector staged sync sets this and runs maturity once after all
+     * Invoice pages instead.
+     */
+    skipDeferredPaymentMaturity?: boolean;
     onLog?: (message: string) => void;
     shouldCancel?: () => boolean;
+    extension?: BillingAccountExtension;
 }
 export declare function shouldSkipReportingBreachOnConnectorWrite(params: {
     syncMode: "BACKFILL" | "INCREMENTAL" | "backfill" | "incremental";

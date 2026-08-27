@@ -1,0 +1,3 @@
+export { ensureMongoConnection } from "./mongooseConnection";
+export { createRunningExecution, completeExecution, markExecutionCancelled, listExecutionsForAccount, sweepStaleRunning, syncHistoryExecutionToSummary, useMemorySyncHistoryStoreForTests, resetSyncHistoryStoreForTests, HISTORY_WINDOW_DAYS, STALE_RUNNING_HOURS, defaultSinceDate, } from "./syncHistoryService";
+export type { CompleteExecutionInput, CreateRunningExecutionInput, ListExecutionsOptions, MarkExecutionCancelledInput, SweepStaleRunningOptions, SyncHistoryExecution, ConnectorExecutionStatus, ConnectorSyncTrigger, SyncHistoryEntityStats, } from "./types";
