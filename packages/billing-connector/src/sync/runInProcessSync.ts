@@ -35,6 +35,7 @@ import {
     STAGED_ENTITY_ORDER,
     type ImportBatchFn,
 } from "./stagedExtensionSync";
+import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
 
 export interface RunInProcessSyncOptions {
     prisma: PrismaClient;
@@ -62,6 +63,11 @@ export interface RunInProcessSyncOptions {
     onLog?: (message: string) => void;
     /** Live pulled/imported counts for GET /sync-runs polling. */
     onProgress?: (entityStats: ConnectorEntityStats) => void;
+    /**
+     * After Payment/Invoice ingest (and deferred maturity), refresh denormalized
+     * customer due/overdue amounts. Nest wires recalculateCustomerAmounts.
+     */
+    onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
 }
 
 export interface RunInProcessSyncResult {
@@ -126,6 +132,36 @@ function emptyStats() {
         paymentsImported: 0,
         importErrors: 0,
     };
+}
+
+async function finalizeLegacyCustomerBalances(
+    customerIds: Set<number>,
+    prisma: PrismaClient,
+    onCustomerBalancesFinal:
+        | ((customerIds: number[]) => Promise<void>)
+        | undefined,
+    log: (message: string) => void
+): Promise<void> {
+    if (customerIds.size === 0) {
+        return;
+    }
+    const ids = Array.from(customerIds);
+    const run =
+        onCustomerBalancesFinal ??
+        ((customerIdsToRecalc: number[]) =>
+            recalculateCustomerAmountsViaHost(customerIdsToRecalc, prisma));
+    try {
+        await run(ids);
+        log(
+            `Recalculated customer due/overdue amounts for ${ids.length} customer(s)`
+        );
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? error.message
+                : "Customer amount recalculation failed";
+        log(`Customer amount recalculation failed: ${message}`);
+    }
 }
 
 function emitProgress(
@@ -431,6 +467,7 @@ async function runInProcessSyncBody(
                 onProgress: (liveStats) =>
                     emitProgress(options.onProgress, liveStats),
                 shouldCancel: () => isCancelRequested(options),
+                onCustomerBalancesFinal: options.onCustomerBalancesFinal,
                 pullCreatedOnOrAfter:
                     !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,
@@ -494,9 +531,15 @@ async function runInProcessSyncBody(
                         entity_type: entityType,
                     },
                 });
+                const usesDatePull =
+                    entityType === "Invoice" || entityType === "Payment";
                 const pullResult = await client.pull(entityType, {
-                    since: syncState?.last_max_updated_at ?? null,
-                    preferredDateField: dateFieldByType.get(entityType) ?? null,
+                    since: usesDatePull
+                        ? syncState?.last_max_updated_at ?? null
+                        : null,
+                    preferredDateField: usesDatePull
+                        ? dateFieldByType.get(entityType) ?? null
+                        : null,
                     overlapMinutes: connector.sync_overlap_minutes,
                     pageSize: PRIORITY_RATE_LIMITS.recommendedPageSize,
                     entitySet: entitySets[entityType] ?? null,
@@ -527,9 +570,16 @@ async function runInProcessSyncBody(
         }
 
         log("Using standard entity-by-entity path (no extension)");
+        const arAffectedCustomerIds = new Set<number>();
         for (const entityType of ENTITY_ORDER) {
             if (isCancelRequested(options)) {
                 log("Stopped by operator");
+                await finalizeLegacyCustomerBalances(
+                    arAffectedCustomerIds,
+                    prisma,
+                    options.onCustomerBalancesFinal,
+                    log
+                );
                 return {
                     ok: true,
                     cancelled: true,
@@ -554,9 +604,15 @@ async function runInProcessSyncBody(
                     },
                 });
 
+                const usesDatePull =
+                    entityType === "Invoice" || entityType === "Payment";
                 const pullResult = await client.pull(entityType, {
-                    since: syncState?.last_max_updated_at ?? null,
-                    preferredDateField: dateFieldByType.get(entityType) ?? null,
+                    since: usesDatePull
+                        ? syncState?.last_max_updated_at ?? null
+                        : null,
+                    preferredDateField: usesDatePull
+                        ? dateFieldByType.get(entityType) ?? null
+                        : null,
                     overlapMinutes: connector.sync_overlap_minutes,
                     pageSize: PRIORITY_RATE_LIMITS.recommendedPageSize,
                     entitySet: entitySets[entityType] ?? null,
@@ -597,6 +653,11 @@ async function runInProcessSyncBody(
                 (stats as Record<string, number>)[importedKey] =
                     importResult.success;
                 stats.importErrors += importResult.failed;
+                if (entityType === "Payment" || entityType === "Invoice") {
+                    for (const id of importResult.affectedCustomerIds) {
+                        arAffectedCustomerIds.add(id);
+                    }
+                }
                 log(
                     `Imported ${entityType}: ${importResult.success} success, ${importResult.failed} failed`
                 );
@@ -662,6 +723,13 @@ async function runInProcessSyncBody(
                 });
             }
         }
+
+        await finalizeLegacyCustomerBalances(
+            arAffectedCustomerIds,
+            prisma,
+            options.onCustomerBalancesFinal,
+            log
+        );
 
         await updateAccountLastSyncDate(prisma, accountId);
 

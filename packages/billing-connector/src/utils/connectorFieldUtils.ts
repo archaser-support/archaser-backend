@@ -330,6 +330,42 @@ export function extractNestedValue(
     return current;
 }
 
+/**
+ * Take only the calendar date from an ERP datetime (YYYY-MM-DD as received).
+ * Avoids timezone day-shifts from converting via toISOString().
+ */
+export function toErpDateOnly(value: unknown): string {
+    if (value === null || value === undefined || value === "") {
+        return "";
+    }
+    if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) {
+            return "";
+        }
+        return value.toISOString().slice(0, 10);
+    }
+    const s = String(value).trim();
+    const match = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+    if (match) {
+        return match[1];
+    }
+    const parsed = new Date(s);
+    if (!Number.isNaN(parsed.getTime())) {
+        return parsed.toISOString().slice(0, 10);
+    }
+    return s;
+}
+
+/** Parse ERP date/datetime to UTC midnight for Prisma `@db.Date` columns. */
+export function parseErpDateOnly(value: unknown): Date | null {
+    const ymd = toErpDateOnly(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+        return null;
+    }
+    const parsed = new Date(`${ymd}T00:00:00.000Z`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export function applyConnectorTransform(
     value: unknown,
     transform?: ConnectorFieldTransform
@@ -357,14 +393,8 @@ export function applyConnectorTransform(
             return value;
         }
         case "date": {
-            if (value instanceof Date) {
-                return value.toISOString().slice(0, 10);
-            }
-            const parsed = new Date(String(value));
-            if (Number.isNaN(parsed.getTime())) {
-                return String(value).trim();
-            }
-            return parsed.toISOString().slice(0, 10);
+            const dateOnly = toErpDateOnly(value);
+            return dateOnly || String(value).trim();
         }
         default:
             return value;

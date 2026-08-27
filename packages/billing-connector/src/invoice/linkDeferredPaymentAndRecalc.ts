@@ -1,4 +1,5 @@
 import type { Invoice, InvoicePayment, Prisma, PrismaClient } from "@prisma/client";
+import { INVOICE_PAID_TOLERANCE } from "./invoicePaidTolerance";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
 import { commitOps } from "../import/bulkWrite";
@@ -9,7 +10,7 @@ export type LinkDeferredPaymentAndRecalcResult = {
     alreadyLinked: boolean;
 };
 
-export const INVOICE_PAID_TOLERANCE = 0.2;
+export { INVOICE_PAID_TOLERANCE } from "./invoicePaidTolerance";
 
 export type InvoicePaidRecalcOptions = {
     normalizeNegativePaymentsForCreditClose?: boolean;
