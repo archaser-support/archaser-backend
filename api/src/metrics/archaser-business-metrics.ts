@@ -218,6 +218,7 @@ export function createArchaserBusinessMetrics(register: Registry) {
     const importJobsStuck = new Gauge({
     name: "archaser_import_jobs_stuck",
     help: "Number of stuck import jobs (pending > 1 hour)",
+    labelNames: ["source"],
     registers: [register],
 });
 
@@ -462,6 +463,18 @@ export function createArchaserBusinessMetrics(register: Registry) {
     registers: [register],
 });
 
+    const billingConnectorStaleIncrementalCount = new Gauge({
+    name: "archaser_billing_connector_stale_incremental_count",
+    help: "Incremental connectors with no successful sync in the last 24 hours",
+    registers: [register],
+});
+
+    const billingConnectorSyncEnabledUnmappedCount = new Gauge({
+    name: "archaser_billing_connector_sync_enabled_unmapped_count",
+    help: "Sync-enabled connectors with incomplete field mappings",
+    registers: [register],
+});
+
     return {
         cronJobsTotal,
         cronJobsRunning,
@@ -530,5 +543,7 @@ export function createArchaserBusinessMetrics(register: Registry) {
         billingConnectorConnectorsInError,
         billingConnectorLastCheckpointTimestamp,
         billingConnectorStaleRunningCount,
+        billingConnectorStaleIncrementalCount,
+        billingConnectorSyncEnabledUnmappedCount,
     };
 }

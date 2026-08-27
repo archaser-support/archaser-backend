@@ -36,6 +36,12 @@ import {
     type ImportBatchFn,
 } from "./stagedExtensionSync";
 import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
+import {
+    emitBillingConnectorSyncFinish,
+    emitBillingConnectorSyncStart,
+    getDefaultBillingConnectorMetricsSink,
+    type BillingConnectorObservabilityOptions,
+} from "../observability";
 
 export interface RunInProcessSyncOptions {
     prisma: PrismaClient;
@@ -68,7 +74,17 @@ export interface RunInProcessSyncOptions {
      * customer due/overdue amounts. Nest wires recalculateCustomerAmounts.
      */
     onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
+    /** Structured Loki JSON + Prometheus counters (start / finish / errors). */
+    observability?: BillingConnectorObservabilityOptions;
 }
+
+type SyncObsRuntime = {
+    connectorId: number | null;
+    provider: string;
+    syncMode: string;
+    startedAtMs: number;
+    startEmitted: boolean;
+};
 
 export interface RunInProcessSyncResult {
     ok: boolean;
@@ -215,6 +231,12 @@ function enabledEntitiesFromConnector(
     );
 }
 
+function resolveInitialSyncMode(options: RunInProcessSyncOptions): string {
+    if (options.mode === "incremental") return "INCREMENTAL";
+    if (options.mode === "backfill") return "BACKFILL";
+    return "UNKNOWN";
+}
+
 /**
  * In-process Priority sync for main API / worker (D71).
  * Accounts with extension_key use staged windowed plugin path;
@@ -223,11 +245,47 @@ function enabledEntitiesFromConnector(
 export async function runInProcessSync(
     options: RunInProcessSyncOptions
 ): Promise<RunInProcessSyncResult> {
-    return attachSyncMeta(await runInProcessSyncBody(options), options);
+    const obsRuntime: SyncObsRuntime = {
+        connectorId: null,
+        provider: "UNKNOWN",
+        syncMode: resolveInitialSyncMode(options),
+        startedAtMs: Date.now(),
+        startEmitted: false,
+    };
+    const result = attachSyncMeta(
+        await runInProcessSyncBody(options, obsRuntime),
+        options
+    );
+    const structuredLogs = options.observability?.structuredLogs !== false;
+    const metrics =
+        options.observability?.metrics ??
+        getDefaultBillingConnectorMetricsSink();
+    // Skip dry-run / preview noise on Prometheus (still allow Loki if host wants).
+    const emitMetrics = metrics && !options.dryRun ? metrics : null;
+    emitBillingConnectorSyncFinish(
+        {
+            accountId: options.accountId,
+            connectorId: obsRuntime.connectorId,
+            provider: result.provider || obsRuntime.provider,
+            syncMode: obsRuntime.syncMode,
+            trigger: options.trigger ?? "manual",
+            executionId: options.executionId,
+            correlationId: options.observability?.correlationId,
+            startedAtMs: obsRuntime.startedAtMs,
+            result,
+        },
+        {
+            onLog: options.onLog,
+            metrics: emitMetrics,
+            structuredLogs,
+        }
+    );
+    return result;
 }
 
 async function runInProcessSyncBody(
-    options: RunInProcessSyncOptions
+    options: RunInProcessSyncOptions,
+    obsRuntime: SyncObsRuntime
 ): Promise<RunInProcessSyncResult> {
     const {
         prisma,
@@ -242,6 +300,7 @@ async function runInProcessSyncBody(
         options.resolveExtension ?? getRegisteredExtension;
     const importBatch = options.importBatch ?? importMappedEntityBatch;
     const log = (message: string) => emitSyncLog(onLog, message);
+    const structuredLogs = options.observability?.structuredLogs !== false;
 
     try {
         const connector = await prisma.billingConnector.findUnique({
@@ -258,6 +317,28 @@ async function runInProcessSyncBody(
                 message: "No billing connector configured for this account",
                 error: "CONNECTOR_NOT_FOUND",
             };
+        }
+
+        obsRuntime.connectorId = connector.id;
+        obsRuntime.provider = connector.provider;
+        if (obsRuntime.syncMode === "UNKNOWN") {
+            obsRuntime.syncMode = connector.sync_mode;
+        }
+        if (!obsRuntime.startEmitted) {
+            obsRuntime.startEmitted = true;
+            emitBillingConnectorSyncStart(
+                {
+                    accountId,
+                    connectorId: connector.id,
+                    provider: connector.provider,
+                    syncMode: obsRuntime.syncMode,
+                    trigger,
+                    executionId: options.executionId,
+                    correlationId: options.observability?.correlationId,
+                },
+                onLog,
+                structuredLogs
+            );
         }
 
         const extensionKey =

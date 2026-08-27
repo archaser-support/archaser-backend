@@ -3,6 +3,7 @@ import {
     ConflictException,
     ForbiddenException,
     Injectable,
+    Logger,
     NotFoundException,
 } from "@nestjs/common";
 import { AccessScopeService } from "../auth/access-scope.service";
@@ -123,6 +124,8 @@ const SMS_PREF_INCLUDE = {
 
 @Injectable()
 export class AccountsNestedService {
+    private readonly logger = new Logger(AccountsNestedService.name);
+
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService
@@ -764,6 +767,8 @@ export class AccountsNestedService {
                 accountId,
                 trigger,
                 dryRun,
+                onLog: (message) =>
+                    this.logger.log(`[account ${accountId}] ${message}`),
             });
             return {
                 queued: false,

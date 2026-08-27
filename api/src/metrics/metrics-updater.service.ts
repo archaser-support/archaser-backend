@@ -430,7 +430,8 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                 // ============================================================
                 // Import Metrics
                 // ============================================================
-                const [importsPending, importsStuck, imports24h] = await Promise.all([
+                const [importsPending, importsStuckTotal, importsStuckBilling, imports24h] =
+                    await Promise.all([
                     this.db.importJob.count({
                         where: { status: { in: ["Pending", "Processing"] } },
                     }),
@@ -441,12 +442,29 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                         },
                     }),
                     this.db.importJob.count({
+                        where: {
+                            status: { in: ["Pending", "Processing"] },
+                            created_at: { lt: oneHourAgo },
+                            metadata: {
+                                path: ["source"],
+                                equals: "billing_connector",
+                            },
+                        },
+                    }),
+                    this.db.importJob.count({
                         where: { created_at: { gte: twentyFourHoursAgo } },
                     }),
                 ]);
 
                 this.m.importJobsPending.set(importsPending);
-                this.m.importJobsStuck.set(importsStuck);
+                this.m.importJobsStuck.set(
+                    { source: "file" },
+                    Math.max(0, importsStuckTotal - importsStuckBilling)
+                );
+                this.m.importJobsStuck.set(
+                    { source: "billing_connector" },
+                    importsStuckBilling
+                );
                 this.m.importJobsSuccess24h.set(imports24h);
 
                 // ============================================================
@@ -657,15 +675,100 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                         );
                     }
 
-                    const latestCheckpoint = await this.db.connectorSyncState.aggregate({
-                        _max: { backfill_last_checkpoint_at: true },
-                    });
-                    const checkpointTs =
-                        latestCheckpoint._max.backfill_last_checkpoint_at?.getTime() ??
-                        0;
+                    // Checkpoint age for active backfills only (alert 5).
+                    const activeBackfillStates =
+                        await this.db.connectorSyncState.findMany({
+                            where: {
+                                backfill_completed: false,
+                                BillingConnector: {
+                                    sync_mode: "BACKFILL",
+                                    sync_enabled: true,
+                                    status: "Active",
+                                },
+                            },
+                            select: {
+                                backfill_last_checkpoint_at: true,
+                                last_attempt_at: true,
+                            },
+                        });
+                    let checkpointMs = 0;
+                    for (const row of activeBackfillStates) {
+                        const ts =
+                            row.backfill_last_checkpoint_at?.getTime() ??
+                            row.last_attempt_at?.getTime() ??
+                            0;
+                        if (ts > checkpointMs) {
+                            checkpointMs = ts;
+                        }
+                    }
+                    // No active backfill → set "now" so age alert does not false-fire on 0.
+                    const checkpointUnix =
+                        checkpointMs > 0
+                            ? checkpointMs / 1000
+                            : Date.now() / 1000;
                     this.m.billingConnectorLastCheckpointTimestamp.set(
                         { provider: "PRIORITY" },
-                        checkpointTs / 1000
+                        checkpointUnix
+                    );
+
+                    const staleIncremental = await this.db.billingConnector.count({
+                        where: {
+                            sync_enabled: true,
+                            status: "Active",
+                            sync_mode: "INCREMENTAL",
+                            OR: [
+                                {
+                                    ConnectorSyncState: {
+                                        none: {
+                                            last_successful_run_at: {
+                                                gte: twentyFourHoursAgo,
+                                            },
+                                        },
+                                    },
+                                },
+                            ],
+                        },
+                    });
+                    this.m.billingConnectorStaleIncrementalCount.set(
+                        staleIncremental
+                    );
+
+                    const syncEnabledConnectors =
+                        await this.db.billingConnector.findMany({
+                            where: { sync_enabled: true },
+                            select: {
+                                id: true,
+                                enabled_entities: true,
+                                ConnectorFieldMapping: {
+                                    select: {
+                                        import_type: true,
+                                        is_complete: true,
+                                    },
+                                },
+                            },
+                        });
+                    let syncEnabledUnmapped = 0;
+                    for (const connector of syncEnabledConnectors) {
+                        const enabled = Array.isArray(connector.enabled_entities)
+                            ? connector.enabled_entities.filter(
+                                  (e): e is string => typeof e === "string"
+                              )
+                            : ["Customer", "Contact", "Invoice", "Payment"];
+                        const completeByType = new Map(
+                            connector.ConnectorFieldMapping.map((m) => [
+                                m.import_type,
+                                m.is_complete,
+                            ])
+                        );
+                        const incomplete = enabled.some(
+                            (entity) => completeByType.get(entity as never) !== true
+                        );
+                        if (incomplete) {
+                            syncEnabledUnmapped += 1;
+                        }
+                    }
+                    this.m.billingConnectorSyncEnabledUnmappedCount.set(
+                        syncEnabledUnmapped
                     );
 
                     if (process.env.NODE_ENV !== "development") {
@@ -673,7 +776,7 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                         const staleCutoff = new Date(Date.now() - 15 * 60 * 1000);
                         const staleRunning =
                             (await mongoose.connection.db
-                                ?.collection("connectorsyncexecutions")
+                                ?.collection("connector_sync_executions")
                                 .countDocuments({
                                     status: "RUNNING",
                                     started_at: { $lt: staleCutoff },

@@ -22,6 +22,7 @@ export { PriorityProviderClient } from "./priority/PriorityProviderClient";
 export { odataSelectFieldsFromMapping } from "./priority/prioritySelectFields";
 export { ConnectorFeature, type BillingProviderClient, type SourceField, type PullPage, type PullOptions, } from "./billing/BillingProviderClient";
 export { runInProcessSync, type RunInProcessSyncOptions, type RunInProcessSyncResult, } from "./sync/runInProcessSync";
+export { BILLING_CONNECTOR_SYNC_SOURCE, createBillingConnectorMetricsSinkFromProm, emitBillingConnectorSyncFinish, emitBillingConnectorSyncStart, getDefaultBillingConnectorMetricsSink, resolveSyncErrorType, resolveSyncExecutionStatus, setDefaultBillingConnectorMetricsSink, type BillingConnectorObservabilityOptions, type BillingConnectorSyncMetricsSink, type BillingConnectorSyncStatus, } from "./observability";
 export { runPreviewSync, discoverConnectorFields, } from "./sync/runPreviewSync";
 export { fetchPriorityEntitySetCatalog } from "./priority/PriorityClient";
 export { getImportEntityFieldCatalog } from "./utils/connectorFieldUtils";
