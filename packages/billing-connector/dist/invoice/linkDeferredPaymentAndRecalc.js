@@ -1,13 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IDIGITAL_HELAM_PAYMENT_METHOD = exports.INVOICE_PAID_TOLERANCE = void 0;
+exports.INVOICE_PAID_TOLERANCE = void 0;
 exports.recalculateInvoiceFromLinkedPayments = recalculateInvoiceFromLinkedPayments;
 exports.recalculateInvoicesFromLinkedPayments = recalculateInvoicesFromLinkedPayments;
 exports.linkDeferredPaymentAndRecalc = linkDeferredPaymentAndRecalc;
+const invoicePaidTolerance_1 = require("./invoicePaidTolerance");
+const extensions_1 = require("../extensions");
 const bulkWrite_1 = require("../import/bulkWrite");
-exports.INVOICE_PAID_TOLERANCE = 0.2;
-/** Exact FNCPATNAME close code stored on InvoicePayment.payment_method. */
-exports.IDIGITAL_HELAM_PAYMENT_METHOD = "חלמ";
+var invoicePaidTolerance_2 = require("./invoicePaidTolerance");
+Object.defineProperty(exports, "INVOICE_PAID_TOLERANCE", { enumerable: true, get: function () { return invoicePaidTolerance_2.INVOICE_PAID_TOLERANCE; } });
 const LINKED_PAYMENT_RECALC_SELECT = {
     id: true,
     payment_date: true,
@@ -15,14 +16,19 @@ const LINKED_PAYMENT_RECALC_SELECT = {
     customer_amount: true,
     payment_method: true,
 };
-function isConnectorHelamPayment(payment) {
-    return (payment.payment_method ?? "").trim() === exports.IDIGITAL_HELAM_PAYMENT_METHOD;
+function hasForcePaidClose(payments, isForcePaidClose) {
+    if (!isForcePaidClose)
+        return false;
+    return payments.some((payment) => isForcePaidClose(payment));
 }
-function hasConnectorHelamClose(payments) {
-    return payments.some(isConnectorHelamPayment);
+async function resolveForcePaidClose(prisma, accountId, existing) {
+    if (existing)
+        return existing;
+    const extension = await (0, extensions_1.resolveAccountBillingExtension)(prisma, accountId);
+    return extension?.isForcePaidClose;
 }
 function buildInvoicePaidUpdate(invoice, linkedPayments, options, modifiedAt) {
-    if (hasConnectorHelamClose(linkedPayments)) {
+    if (hasForcePaidClose(linkedPayments, options?.isForcePaidClose)) {
         const totalPaid = invoice.net_amount ?? 0;
         const totalCustomerPaid = invoice.customer_net_amount ?? 0;
         return {
@@ -54,7 +60,7 @@ function buildInvoicePaidUpdate(invoice, linkedPayments, options, modifiedAt) {
     }
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;
     const newCustomerOutstanding = (invoice.customer_net_amount ?? 0) - totalCustomerPaid;
-    const becomesPaid = newCustomerOutstanding <= exports.INVOICE_PAID_TOLERANCE;
+    const becomesPaid = newCustomerOutstanding <= invoicePaidTolerance_1.INVOICE_PAID_TOLERANCE;
     return {
         total_paid: totalPaid,
         customer_total_paid: totalCustomerPaid,
@@ -79,9 +85,10 @@ async function recalculateInvoiceFromLinkedPayments(tx, invoiceId, options) {
         where: { invoice_id: invoiceId },
         select: LINKED_PAYMENT_RECALC_SELECT,
     });
+    const isForcePaidClose = await resolveForcePaidClose(tx, invoice.account_id, options?.isForcePaidClose);
     return tx.invoice.update({
         where: { id: invoiceId },
-        data: buildInvoicePaidUpdate(invoice, linkedPayments, options, new Date()),
+        data: buildInvoicePaidUpdate(invoice, linkedPayments, { ...options, isForcePaidClose }, new Date()),
     });
 }
 /**
@@ -97,6 +104,7 @@ async function recalculateInvoicesFromLinkedPayments(prisma, targets) {
             where: { id: { in: invoiceIds } },
             select: {
                 id: true,
+                account_id: true,
                 net_amount: true,
                 customer_net_amount: true,
                 custom_code1: true,
@@ -119,10 +127,20 @@ async function recalculateInvoicesFromLinkedPayments(prisma, targets) {
         list.push(payment);
         paymentsByInvoiceId.set(payment.invoice_id, list);
     }
+    const forcePaidByAccount = new Map();
+    for (const invoice of invoices) {
+        if (forcePaidByAccount.has(invoice.account_id))
+            continue;
+        const target = targets.get(invoice.id);
+        forcePaidByAccount.set(invoice.account_id, await resolveForcePaidClose(prisma, invoice.account_id, target?.isForcePaidClose));
+    }
     const modifiedAt = new Date();
     await (0, bulkWrite_1.commitOps)(prisma, invoices.map((invoice) => prisma.invoice.update({
         where: { id: invoice.id },
-        data: buildInvoicePaidUpdate(invoice, paymentsByInvoiceId.get(invoice.id) ?? [], targets.get(invoice.id), modifiedAt),
+        data: buildInvoicePaidUpdate(invoice, paymentsByInvoiceId.get(invoice.id) ?? [], {
+            ...targets.get(invoice.id),
+            isForcePaidClose: forcePaidByAccount.get(invoice.account_id),
+        }, modifiedAt),
     })));
 }
 async function linkDeferredPaymentAndRecalc(prisma, params) {

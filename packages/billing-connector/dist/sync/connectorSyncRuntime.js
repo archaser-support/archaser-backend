@@ -4,6 +4,7 @@
  * plus a short history of completed runs for GET /sync-runs polling.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.MATURITY_ENTITY_STATS_KEY = void 0;
 exports.entityStatsFromCounts = entityStatsFromCounts;
 exports.registerRunningSync = registerRunningSync;
 exports.getRunningSync = getRunningSync;
@@ -12,8 +13,10 @@ exports.upsertSyncRun = upsertSyncRun;
 exports.patchSyncRunEntityStats = patchSyncRunEntityStats;
 exports.listSyncRuns = listSyncRuns;
 exports.resetConnectorSyncRuntimeForTests = resetConnectorSyncRuntimeForTests;
+/** Orchestration step after Invoice — links deferred payments to invoices. */
+exports.MATURITY_ENTITY_STATS_KEY = "_maturity";
 function entityStatsFromCounts(stats) {
-    return {
+    const entityStats = {
         Customer: {
             pulled: stats.customersProcessed,
             success: stats.customersImported,
@@ -39,6 +42,23 @@ function entityStatsFromCounts(stats) {
             skipped: 0,
         },
     };
+    if (stats.paymentLinkStatus) {
+        const linked = stats.paymentsLinked ?? 0;
+        const deferred = stats.paymentsStillDeferred ?? 0;
+        const total = stats.paymentsLinkTotal ??
+            (linked + deferred > 0 ? linked + deferred : linked);
+        entityStats[exports.MATURITY_ENTITY_STATS_KEY] = {
+            pulled: total,
+            success: linked,
+            failed: stats.paymentLinkStatus === "failed" ? 1 : 0,
+            skipped: Math.max(0, total - linked),
+            status: stats.paymentLinkStatus,
+            ...(stats.paymentLinkError
+                ? { sample_errors: [stats.paymentLinkError] }
+                : {}),
+        };
+    }
+    return entityStats;
 }
 const runningByAccount = new Map();
 const historyByAccount = new Map();

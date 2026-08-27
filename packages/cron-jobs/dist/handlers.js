@@ -116,6 +116,7 @@ const customerPolicyTrendDailySnapshot = (prisma) => timed("Customer Policy Tren
         summary: todayResult,
     };
 });
+/** Requires `MONGODB_URI` so scheduled sync history can persist (shared syncHistory). */
 const syncBillingConnectors = async (prisma) => {
     const start = Date.now();
     const result = await (0, billing_connector_1.syncDueBillingConnectors)(prisma);
