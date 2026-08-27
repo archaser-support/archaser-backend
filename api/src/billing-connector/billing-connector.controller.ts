@@ -89,13 +89,27 @@ export class BillingConnectorController {
     }
 
     @Get("sync-runs")
-    @ApiOperation({ summary: "List recent billing connector sync runs" })
+    @ApiOperation({
+        summary: "List in-memory billing connector sync runs (live progress)",
+    })
     async syncRuns(
         @CurrentUser() user: JwtPayload,
         @Param("accountId", ParseIntPipe) accountId: number,
         @Query("limit") limit?: string
     ) {
         return this.service.listSyncRuns(user, accountId, limit);
+    }
+
+    @Get("sync-history")
+    @ApiOperation({
+        summary:
+            "List durable billing connector sync history from Mongo (last 90 days)",
+    })
+    async syncHistory(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number
+    ) {
+        return this.service.listSyncHistory(user, accountId);
     }
 
     @Post("backfill/reset")

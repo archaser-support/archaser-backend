@@ -3,6 +3,19 @@
  * plus a short history of completed runs for GET /sync-runs polling.
  */
 
+/** Orchestration step after Invoice — links deferred payments to invoices. */
+export const MATURITY_ENTITY_STATS_KEY = "_maturity";
+
+export type ConnectorEntityStatSlice = {
+    pulled: number;
+    success: number;
+    failed: number;
+    skipped: number;
+    sample_errors?: string[];
+    /** Present for `_maturity` while linking / after it finishes. */
+    status?: "running" | "done" | "failed";
+};
+
 export interface ConnectorSyncRunSummary {
     id: string;
     trigger: string;
@@ -11,10 +24,7 @@ export interface ConnectorSyncRunSummary {
     started_at: string;
     completed_at: string | null;
     duration_seconds: number | null;
-    entity_stats: Record<
-        string,
-        { pulled: number; success: number; failed: number; skipped: number }
-    >;
+    entity_stats: Record<string, ConnectorEntityStatSlice>;
     error_message: string | null;
     error_type: string | null;
     cutover_options?: {
@@ -37,12 +47,19 @@ export interface ConnectorSyncCounts {
     invoicesImported: number;
     paymentsImported: number;
     importErrors: number;
+    /** Deferred payment → invoice linking (after Invoice ingest). */
+    paymentLinkStatus?: "running" | "done" | "failed";
+    paymentsLinked?: number;
+    paymentsStillDeferred?: number;
+    /** Eligible deferred payments at the start of the linking pass. */
+    paymentsLinkTotal?: number;
+    paymentLinkError?: string;
 }
 
 export function entityStatsFromCounts(
     stats: ConnectorSyncCounts
 ): ConnectorEntityStats {
-    return {
+    const entityStats: ConnectorEntityStats = {
         Customer: {
             pulled: stats.customersProcessed,
             success: stats.customersImported,
@@ -68,6 +85,26 @@ export function entityStatsFromCounts(
             skipped: 0,
         },
     };
+
+    if (stats.paymentLinkStatus) {
+        const linked = stats.paymentsLinked ?? 0;
+        const deferred = stats.paymentsStillDeferred ?? 0;
+        const total =
+            stats.paymentsLinkTotal ??
+            (linked + deferred > 0 ? linked + deferred : linked);
+        entityStats[MATURITY_ENTITY_STATS_KEY] = {
+            pulled: total,
+            success: linked,
+            failed: stats.paymentLinkStatus === "failed" ? 1 : 0,
+            skipped: Math.max(0, total - linked),
+            status: stats.paymentLinkStatus,
+            ...(stats.paymentLinkError
+                ? { sample_errors: [stats.paymentLinkError] }
+                : {}),
+        };
+    }
+
+    return entityStats;
 }
 
 export interface RunningConnectorSync {
