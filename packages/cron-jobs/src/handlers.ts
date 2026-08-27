@@ -192,6 +192,7 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
         };
     });
 
+/** Requires `MONGODB_URI` so scheduled sync history can persist (shared syncHistory). */
 const syncBillingConnectors: Handler = async (prisma) => {
     const start = Date.now();
     const result = await syncDueBillingConnectors(prisma);

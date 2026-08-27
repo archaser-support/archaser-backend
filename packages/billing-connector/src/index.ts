@@ -20,12 +20,15 @@ export {
     resolveExtensionAttachmentInput,
     resolveAccountBillingExtension,
     type BillingAccountExtension,
+    type ExtensionAfterPaymentLinkedContext,
+    type ExtensionAfterPaymentLinkedResult,
     type ExtensionAttachmentUpsertInput,
     type ExtensionAttachmentUpsertPatch,
     type ExtensionCreditPaymentCloseInput,
     type ExtensionEntityType,
     type ExtensionLinkedPayment,
     type ExtensionMappedBatch,
+    type ExtensionPaymentLinkedCandidate,
     type ExtensionSyncWindow,
     type ExtensionTransformContext,
 } from "./extensions";
@@ -89,6 +92,8 @@ export {
     parseMappingRules,
     extractNestedValue,
     applyConnectorTransform,
+    toErpDateOnly,
+    parseErpDateOnly,
     mapErpRecord,
     flattenObjectPaths,
     discoverFieldPathsFromRecords,
@@ -187,6 +192,7 @@ export {
     upsertSyncRun,
     patchSyncRunEntityStats,
     entityStatsFromCounts,
+    MATURITY_ENTITY_STATS_KEY,
     type ConnectorSyncRunSummary,
 } from "./sync/connectorSyncRuntime";
 
@@ -206,8 +212,36 @@ export {
 
 export {
     syncDueBillingConnectors,
+    type SyncDueBillingConnectorsOptions,
     type SyncDueBillingConnectorsResult,
 } from "./services/syncDueBillingConnectors";
+
+// ==============================
+// Sync history (Mongo)
+// ==============================
+export {
+    ensureMongoConnection,
+    createRunningExecution,
+    completeExecution,
+    markExecutionCancelled,
+    listExecutionsForAccount,
+    sweepStaleRunning,
+    syncHistoryExecutionToSummary,
+    useMemorySyncHistoryStoreForTests,
+    resetSyncHistoryStoreForTests,
+    HISTORY_WINDOW_DAYS,
+    STALE_RUNNING_HOURS,
+    defaultSinceDate,
+    type CompleteExecutionInput,
+    type CreateRunningExecutionInput,
+    type ListExecutionsOptions,
+    type MarkExecutionCancelledInput,
+    type SweepStaleRunningOptions,
+    type SyncHistoryExecution,
+    type ConnectorExecutionStatus,
+    type ConnectorSyncTrigger,
+    type SyncHistoryEntityStats,
+} from "./syncHistory";
 
 export {
     importMappedEntityBatch,
