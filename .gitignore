@@ -38,6 +38,9 @@ yarn-error.log*
 .env
 .env.staging
 .env*
+# Filled AWS params for postgres-logs pipeline (keep examples tracked)
+infrastructure/postgres-logs/params.staging.env
+infrastructure/postgres-logs/params.production.env
 # vercel
 .vercel
 

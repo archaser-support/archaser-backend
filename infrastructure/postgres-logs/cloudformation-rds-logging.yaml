@@ -32,10 +32,11 @@ Parameters:
 
   LogLinePrefix:
     Type: String
-    Default: '%m [%p] %u@%d,%e,%c:%l:%x:%v:%a '
+    Default: '%t:%r:%u@%d:[%p]:'
     Description: >
-      Used only when LogDestination=stderr. Include %e (SQLSTATE/severity
-      context) so lambda-promtail regex stages can extract error_severity.
+      RDS only allows a fixed set of log_line_prefix values. Default matches
+      the current instance. Include severity in the line body (SEVERITY:) so
+      lambda-promtail regex stages can extract error_severity.
 
   SlowQueryMs:
     Type: Number
@@ -50,7 +51,7 @@ Resources:
   PostgresLoggingParameterGroup:
     Type: AWS::RDS::DBParameterGroup
     Properties:
-      Description: !Sub 'ARChaser Postgres logging profile (${Environment}) — errors, slow ${SlowQueryMs}ms, connections, lock waits; no log_statement=all'
+      Description: !Sub 'ARChaser Postgres logging profile (${Environment}) - errors, slow ${SlowQueryMs}ms, connections, lock waits; no log_statement=all'
       Family: !Ref Family
       Tags:
         - Key: Environment
@@ -60,12 +61,10 @@ Resources:
         - Key: Purpose
           Value: postgres-logs-to-grafana
       Parameters:
-        # Format — jsonlog when supported; otherwise stderr + explicit prefix
+        # Format — jsonlog when supported; otherwise stderr + RDS-allowed prefix
         log_destination: !Ref LogDestination
-        log_line_prefix: !If
-          - UseJsonLog
-          - '%m [%p] '
-          - !Ref LogLinePrefix
+        # RDS rejects arbitrary prefixes; always use an allowlisted value
+        log_line_prefix: !Ref LogLinePrefix
         # Content profile (production-safe)
         log_min_messages: warning
         log_min_error_statement: error
@@ -83,12 +82,6 @@ Outputs:
     Value: !Ref PostgresLoggingParameterGroup
     Export:
       Name: !Sub '${AWS::StackName}-ParameterGroupName'
-
-  ParameterGroupArn:
-    Description: ARN of the custom DB parameter group
-    Value: !GetAtt PostgresLoggingParameterGroup.Arn
-    Export:
-      Name: !Sub '${AWS::StackName}-ParameterGroupArn'
 
   LogDestinationChosen:
     Description: log_destination applied in this stack

@@ -601,7 +601,7 @@ groups:
             datasourceUid: Loki
             model:
               editorMode: code
-              expr: sum(count_over_time({job="rds-postgres", environment="staging"} | json | error_severity=~"FATAL|PANIC" [5m]))
+              expr: sum(count_over_time({job="rds-postgres", environment="staging", error_severity=~"FATAL|PANIC"}[5m]))
               queryType: instant
               refId: A
           - refId: C
@@ -646,7 +646,7 @@ groups:
             datasourceUid: Loki
             model:
               editorMode: code
-              expr: sum(count_over_time({job="rds-postgres", environment="staging"} | json | error_severity="ERROR" [10m]))
+              expr: sum(count_over_time({job="rds-postgres", environment="staging", error_severity="ERROR"}[10m]))
               queryType: instant
               refId: A
           - refId: C
