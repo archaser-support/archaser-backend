@@ -283,7 +283,11 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                         }
                     }
                 });
+            } catch (error) {
+                this.logger.error("Cron job metrics update failed:", error);
+            }
 
+            try {
                 // ============================================================
                 // Activity Metrics
                 // ============================================================

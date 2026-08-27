@@ -2,9 +2,8 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
-# Deprecated: prefer prometheus-staging.yml / prometheus-production.yml
-# (docker-compose.logging.yml mounts prometheus-${MONITORING_ENV}.yml).
-# Kept as a Staging alias for older docs/scripts.
+# Scrapes Nest via the backend compose network (see docker-compose.logging.yml
+# networks.backend → archaser-backend-staging_default). Service names: api, worker, …
 scrape_configs:
   - job_name: "prometheus"
     static_configs:
