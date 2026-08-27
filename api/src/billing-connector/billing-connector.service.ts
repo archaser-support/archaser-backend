@@ -58,12 +58,14 @@ import {
     markExecutionCancelled,
     listExecutionsForAccount,
     sweepStaleRunning,
-    createBillingConnectorMetricsSinkFromProm,
-    type BillingConnectorSyncMetricsSink,
     syncHistoryExecutionToSummary,
+    createBillingConnectorMetricsSinkFromProm,
+    resolveSyncExecutionStatus,
+    resolveSyncErrorType,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
     type PullFiltersMap,
+    type BillingConnectorSyncMetricsSink,
 } from "@archaser/billing-connector";
 import {
     areBackfillOptionsLocked,
@@ -862,14 +864,14 @@ export class BillingConnectorApiService {
                 },
             });
             const completedAt = new Date();
-            const status = result.cancelled
-                ? "TIMEOUT"
-                : result.ok
-                  ? "SUCCESS"
-                  : "FAILED";
-            const errorType = result.cancelled
-                ? "cancelled"
-                : result.error ?? null;
+            const status = resolveSyncExecutionStatus(result) as
+                | "SUCCESS"
+                | "FAILED"
+                | "PARTIAL"
+                | "TIMEOUT";
+            const errorType =
+                resolveSyncErrorType(result, status) ??
+                (result.error ?? null);
             onLog(
                 `Finished ${mode}: ${status}${
                     result.error ? ` — ${result.error}` : ""
