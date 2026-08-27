@@ -61,7 +61,7 @@
             "id": 1,
             "options": {
                 "mode": "markdown",
-                "content": "**RDS Postgres server logs** (staging). Explore: job=rds-postgres, environment=staging. Alerts are visible in Grafana only (no production SNS)."
+                "content": "**RDS Postgres server logs** (staging) via CloudWatch \u2192 lambda-promtail \u2192 Loki. Explore: `{job=\"rds-postgres\", environment=\"staging\"}`. Currently **stderr** lines (severity extracted by lambda-promtail); switch to jsonlog after parameter-group reboot. Alerts are Grafana-only (no production SNS)."
             },
             "title": "",
             "type": "text",
@@ -119,7 +119,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "sum by (error_severity) (count_over_time({job=\"rds-postgres\", environment=\"staging\"} | json [$__interval]))",
+                    "expr": "sum by (error_severity) (count_over_time({job=\"rds-postgres\", environment=\"staging\"}[$__interval]))",
                     "legendFormat": "{{error_severity}}",
                     "queryType": "range",
                     "refId": "A"
@@ -184,7 +184,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "sum by (error_severity) (count_over_time({job=\"rds-postgres\", environment=\"staging\"} | json [$__range]))",
+                    "expr": "sum by (error_severity) (count_over_time({job=\"rds-postgres\", environment=\"staging\"}[$__range]))",
                     "legendFormat": "{{error_severity}}",
                     "queryType": "instant",
                     "refId": "A"
@@ -218,7 +218,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} | json | error_severity=~\"FATAL|PANIC\"",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\", error_severity=~\"FATAL|PANIC\"}",
                     "queryType": "range",
                     "refId": "A"
                 }
@@ -251,7 +251,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} | json | duration > 1000 or message =~ \"(?i)duration:\"",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} |~ \"(?i)duration:\"",
                     "queryType": "range",
                     "refId": "A"
                 }
@@ -350,7 +350,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} | json | error_severity=\"ERROR\"",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\", error_severity=\"ERROR\"}",
                     "queryType": "range",
                     "refId": "A"
                 }

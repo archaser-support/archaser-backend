@@ -110,6 +110,13 @@ set -a && source params.staging.env && set +a
 ./deploy-lambda-promtail.sh
 ```
 
+Staging notes (current eu-north-1 layout):
+
+- Shared RDS `archaser-db-encrypted` already exports `postgresql` to CloudWatch (often **stderr**, not jsonlog).
+- Use `LOG_DESTINATION=stderr` and the stderr `LOKI_STAGE_CONFIGS` in `params.staging.example.env` until a maintenance-window reboot applies jsonlog.
+- Default VPC has no private subnets / NAT — deploy Lambda in the existing subnets and add a **CloudWatch Logs VPC interface endpoint** so the function can write its own logs without NAT.
+- Loki on staging EC2 must listen on host `:3100` (compose publishes `3100:3100`); the stack opens SG ingress from the Lambda SG only.
+
 Staging Grafana assets:
 
 - `grafana/provisioning/dashboards/staging/archaser-postgres-logs-staging.json`
