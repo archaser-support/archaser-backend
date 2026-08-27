@@ -2,6 +2,17 @@
  * In-process registry of the connector sync currently running in this process,
  * plus a short history of completed runs for GET /sync-runs polling.
  */
+/** Orchestration step after Invoice — links deferred payments to invoices. */
+export declare const MATURITY_ENTITY_STATS_KEY = "_maturity";
+export type ConnectorEntityStatSlice = {
+    pulled: number;
+    success: number;
+    failed: number;
+    skipped: number;
+    sample_errors?: string[];
+    /** Present for `_maturity` while linking / after it finishes. */
+    status?: "running" | "done" | "failed";
+};
 export interface ConnectorSyncRunSummary {
     id: string;
     trigger: string;
@@ -10,12 +21,7 @@ export interface ConnectorSyncRunSummary {
     started_at: string;
     completed_at: string | null;
     duration_seconds: number | null;
-    entity_stats: Record<string, {
-        pulled: number;
-        success: number;
-        failed: number;
-        skipped: number;
-    }>;
+    entity_stats: Record<string, ConnectorEntityStatSlice>;
     error_message: string | null;
     error_type: string | null;
     cutover_options?: {
@@ -36,6 +42,13 @@ export interface ConnectorSyncCounts {
     invoicesImported: number;
     paymentsImported: number;
     importErrors: number;
+    /** Deferred payment → invoice linking (after Invoice ingest). */
+    paymentLinkStatus?: "running" | "done" | "failed";
+    paymentsLinked?: number;
+    paymentsStillDeferred?: number;
+    /** Eligible deferred payments at the start of the linking pass. */
+    paymentsLinkTotal?: number;
+    paymentLinkError?: string;
 }
 export declare function entityStatsFromCounts(stats: ConnectorSyncCounts): ConnectorEntityStats;
 export interface RunningConnectorSync {
