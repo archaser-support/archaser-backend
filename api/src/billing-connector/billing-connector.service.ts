@@ -58,6 +58,8 @@ import {
     markExecutionCancelled,
     listExecutionsForAccount,
     sweepStaleRunning,
+    createBillingConnectorMetricsSinkFromProm,
+    type BillingConnectorSyncMetricsSink,
     syncHistoryExecutionToSummary,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
@@ -71,6 +73,7 @@ import {
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
+import { MetricsService } from "../metrics/metrics.service";
 
 const ADMIN_ACCOUNT_ID = 10013;
 
@@ -142,11 +145,20 @@ function rethrowCoded(error: unknown): never {
 @Injectable()
 export class BillingConnectorApiService {
     private readonly logger = new Logger(BillingConnectorApiService.name);
+    private readonly syncMetrics: BillingConnectorSyncMetricsSink;
 
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
-    ) {}
+        private readonly accessScope: AccessScopeService,
+        metrics: MetricsService
+    ) {
+        this.syncMetrics = createBillingConnectorMetricsSinkFromProm({
+            syncTotal: metrics.business.billingConnectorSyncTotal,
+            syncDuration: metrics.business.billingConnectorSyncDuration,
+            errorsTotal: metrics.business.billingConnectorErrorsTotal,
+            recordsProcessed: metrics.business.billingConnectorRecordsProcessed,
+        });
+    }
 
     async assertAccess(
         user: JwtPayload,
@@ -834,6 +846,9 @@ export class BillingConnectorApiService {
                 executionId,
                 mode,
                 onLog,
+                observability: {
+                    metrics: this.syncMetrics,
+                },
                 onProgress: (entityStats) => {
                     patchSyncRunEntityStats(
                         accountId,

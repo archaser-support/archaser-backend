@@ -147,6 +147,20 @@ export {
 } from "./sync/runInProcessSync";
 
 export {
+    BILLING_CONNECTOR_SYNC_SOURCE,
+    createBillingConnectorMetricsSinkFromProm,
+    emitBillingConnectorSyncFinish,
+    emitBillingConnectorSyncStart,
+    getDefaultBillingConnectorMetricsSink,
+    resolveSyncErrorType,
+    resolveSyncExecutionStatus,
+    setDefaultBillingConnectorMetricsSink,
+    type BillingConnectorObservabilityOptions,
+    type BillingConnectorSyncMetricsSink,
+    type BillingConnectorSyncStatus,
+} from "./observability";
+
+export {
     runPreviewSync,
     discoverConnectorFields,
 } from "./sync/runPreviewSync";

@@ -25,6 +25,11 @@ import {
     recordCronJobRun,
     type CronJobResult,
 } from "@archaser/cron-jobs";
+import {
+    createBillingConnectorMetricsSinkFromProm,
+    setDefaultBillingConnectorMetricsSink,
+} from "@archaser/billing-connector";
+import { registerBillingConnectorSyncCounters } from "./billing-connector-sync-counters";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
 
@@ -65,6 +70,18 @@ class WorkerRuntimeService implements OnModuleDestroy {
         this.register.setDefaultLabels({ service: "archaser-worker" });
         this.register.registerMetric(cronJobExecutionsTotal);
         this.register.registerMetric(cronJobDurationSeconds);
+        const billingCounters = registerBillingConnectorSyncCounters(
+            this.register
+        );
+        setDefaultBillingConnectorMetricsSink(
+            createBillingConnectorMetricsSinkFromProm({
+                syncTotal: billingCounters.billingConnectorSyncTotal,
+                syncDuration: billingCounters.billingConnectorSyncDuration,
+                errorsTotal: billingCounters.billingConnectorErrorsTotal,
+                recordsProcessed:
+                    billingCounters.billingConnectorRecordsProcessed,
+            })
+        );
         collectDefaultMetrics({
             register: this.register,
             prefix: "archaser_worker_",

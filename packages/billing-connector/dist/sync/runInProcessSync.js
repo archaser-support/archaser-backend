@@ -16,6 +16,7 @@ const connectorSyncCancelRegistry_1 = require("./connectorSyncCancelRegistry");
 const connectorSyncRuntime_1 = require("./connectorSyncRuntime");
 const stagedExtensionSync_1 = require("./stagedExtensionSync");
 const recalculateCustomerAmountsHost_1 = require("../customers/recalculateCustomerAmountsHost");
+const observability_1 = require("../observability");
 const ENTITY_ORDER = [
     "Customer",
     "Payment",
@@ -88,20 +89,56 @@ function enabledEntitiesFromConnector(raw) {
     return raw.filter((e) => typeof e === "string" &&
         stagedExtensionSync_1.STAGED_ENTITY_ORDER.includes(e));
 }
+function resolveInitialSyncMode(options) {
+    if (options.mode === "incremental")
+        return "INCREMENTAL";
+    if (options.mode === "backfill")
+        return "BACKFILL";
+    return "UNKNOWN";
+}
 /**
  * In-process Priority sync for main API / worker (D71).
  * Accounts with extension_key use staged windowed plugin path;
  * accounts without a key keep entity-by-entity pull/map/import.
  */
 async function runInProcessSync(options) {
-    return attachSyncMeta(await runInProcessSyncBody(options), options);
+    const obsRuntime = {
+        connectorId: null,
+        provider: "UNKNOWN",
+        syncMode: resolveInitialSyncMode(options),
+        startedAtMs: Date.now(),
+        startEmitted: false,
+    };
+    const result = attachSyncMeta(await runInProcessSyncBody(options, obsRuntime), options);
+    const structuredLogs = options.observability?.structuredLogs !== false;
+    const metrics = options.observability?.metrics ??
+        (0, observability_1.getDefaultBillingConnectorMetricsSink)();
+    // Skip dry-run / preview noise on Prometheus (still allow Loki if host wants).
+    const emitMetrics = metrics && !options.dryRun ? metrics : null;
+    (0, observability_1.emitBillingConnectorSyncFinish)({
+        accountId: options.accountId,
+        connectorId: obsRuntime.connectorId,
+        provider: result.provider || obsRuntime.provider,
+        syncMode: obsRuntime.syncMode,
+        trigger: options.trigger ?? "manual",
+        executionId: options.executionId,
+        correlationId: options.observability?.correlationId,
+        startedAtMs: obsRuntime.startedAtMs,
+        result,
+    }, {
+        onLog: options.onLog,
+        metrics: emitMetrics,
+        structuredLogs,
+    });
+    return result;
 }
-async function runInProcessSyncBody(options) {
+async function runInProcessSyncBody(options, obsRuntime) {
     const { prisma, accountId, trigger = "manual", userId, dryRun = false, onLog, } = options;
     const stats = emptyStats();
     const resolveExtension = options.resolveExtension ?? extensions_1.getRegisteredExtension;
     const importBatch = options.importBatch ?? entityImporter_1.importMappedEntityBatch;
     const log = (message) => emitSyncLog(onLog, message);
+    const structuredLogs = options.observability?.structuredLogs !== false;
     try {
         const connector = await prisma.billingConnector.findUnique({
             where: { account_id: accountId },
@@ -116,6 +153,23 @@ async function runInProcessSyncBody(options) {
                 message: "No billing connector configured for this account",
                 error: "CONNECTOR_NOT_FOUND",
             };
+        }
+        obsRuntime.connectorId = connector.id;
+        obsRuntime.provider = connector.provider;
+        if (obsRuntime.syncMode === "UNKNOWN") {
+            obsRuntime.syncMode = connector.sync_mode;
+        }
+        if (!obsRuntime.startEmitted) {
+            obsRuntime.startEmitted = true;
+            (0, observability_1.emitBillingConnectorSyncStart)({
+                accountId,
+                connectorId: connector.id,
+                provider: connector.provider,
+                syncMode: obsRuntime.syncMode,
+                trigger,
+                executionId: options.executionId,
+                correlationId: options.observability?.correlationId,
+            }, onLog, structuredLogs);
         }
         const extensionKey = typeof connector.extension_key === "string"
             ? connector.extension_key.trim() || null

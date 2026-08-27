@@ -1,4 +1,4 @@
-import { Body, Controller, Param, ParseIntPipe, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Logger, Param, ParseIntPipe, Post, UseGuards } from "@nestjs/common";
 import { InternalSecretGuard } from "../auth/internal-secret.guard";
 import { SyncQueueService } from "../sync/sync-queue.service";
 import { runInProcessSync } from "@archaser/billing-connector";
@@ -7,6 +7,8 @@ import { DatabaseService } from "../database/database.service";
 @Controller("internal")
 @UseGuards(InternalSecretGuard)
 export class InternalConnectorsController {
+    private readonly logger = new Logger(InternalConnectorsController.name);
+
     constructor(
         private readonly syncQueue: SyncQueueService,
         private readonly db: DatabaseService
@@ -23,6 +25,8 @@ export class InternalConnectorsController {
                 prisma: this.db,
                 accountId,
                 trigger: String(body?.trigger || "internal-inline"),
+                onLog: (message) =>
+                    this.logger.log(`[account ${accountId}] ${message}`),
             });
             return result;
         }
