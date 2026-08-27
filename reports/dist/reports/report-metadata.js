@@ -766,63 +766,8 @@ exports.REPORT_METADATA = {
             ],
         },
         {
-            name: "Payment",
-            label: "Payments",
-            fields: [
-                {
-                    name: "id",
-                    type: "number",
-                    label: "ID",
-                    translationKey: "id",
-                    translationNamespace: "common",
-                },
-                {
-                    name: "amount",
-                    type: "number",
-                    label: "Amount",
-                    translationKey: "amount",
-                    translationNamespace: "invoices",
-                },
-                {
-                    name: "payment_date",
-                    type: "date",
-                    label: "Payment Date",
-                    translationKey: "payment_date",
-                    translationNamespace: "invoices",
-                },
-                {
-                    name: "payment_method",
-                    type: "string",
-                    label: "Payment Method",
-                    translationKey: "payment_method",
-                    translationNamespace: "invoices",
-                },
-                {
-                    name: "created_at",
-                    type: "datetime",
-                    label: "Created At",
-                    translationKey: "created_at",
-                    translationNamespace: "common",
-                },
-                {
-                    name: "modified_at",
-                    type: "datetime",
-                    label: "Modified At",
-                    translationKey: "modified_at",
-                    translationNamespace: "common",
-                },
-                {
-                    name: "reference",
-                    type: "string",
-                    label: "Reference",
-                    translationKey: "reference",
-                    translationNamespace: "invoices",
-                },
-            ],
-        },
-        {
             name: "InvoicePayment",
-            label: "Invoice Payments",
+            label: "Payments",
             fields: [
                 {
                     name: "id",

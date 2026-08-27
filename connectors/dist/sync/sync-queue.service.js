@@ -53,6 +53,7 @@ let SyncQueueService = SyncQueueService_1 = class SyncQueueService {
                 prisma: this.db,
                 accountId,
                 trigger: String(job.data.trigger || "queue"),
+                onLog: (message) => this.logger.log(`[account ${accountId}] ${message}`),
             });
         }, { connection: this.connection });
         this.logger.log("Connectors sync worker started");

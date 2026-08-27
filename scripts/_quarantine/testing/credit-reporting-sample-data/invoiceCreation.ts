@@ -3,13 +3,12 @@ import type { invoice_status } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { CustomerService } from "@/server/services/CustomerService";
 import { stampInvoiceInsuranceFieldsAsOf } from "@/server/services/creditInsurance/stampInvoiceInsuranceFieldsAsOf";
-import { PaymentService } from "@/server/services/PaymentService";
 
 import {
     convertCustomerAmountToAccountCurrency,
     upsertFxRateForDay,
 } from "./fxRates";
-import { ACCOUNT_CURRENCY, CUSTOMER_NUMBER_PREFIX } from "./constants";
+import { ACCOUNT_CURRENCY } from "./constants";
 import { restampLimitAssessmentForCustomers } from "./limitAssessment";
 import type {
     AccountBootstrapResult,
@@ -31,9 +30,6 @@ export type PaymentCreationResult = {
     customerId: number;
     paymentId: number;
 };
-
-const paymentService = new PaymentService();
-
 function resolveOpenStatus(
     dueDate: Date,
     asOfDay: Date
@@ -186,17 +182,23 @@ export async function createScheduledPaymentsForDay(args: {
             usdToIls,
         });
 
-        const payment = await paymentService.createInvoicePayment({
-            invoice_id: invoiceId,
-            customer_id: customerId,
-            account_id: args.bootstrap.accountId,
-            amount: accountAmount,
-            customer_amount: customerAmount,
-            customer_currency: scheduled.invoiceCurrency,
-            payment_date: args.day,
-            payment_method: "Bank Transfer",
-            reference: `CRD-RPT-PAY-${scheduled.invoiceNumber}`,
-            customer_number: `${CUSTOMER_NUMBER_PREFIX}-${String(scheduled.customerIndex + 1).padStart(3, "0")}`,
+        const invoice = await prisma.invoice.findUnique({
+            where: { id: invoiceId },
+            select: { invoice_number: true },
+        });
+        const invoicePayment = await prisma.invoicePayment.create({
+            data: {
+                invoice_id: invoiceId,
+                customer_id: customerId,
+                account_id: args.bootstrap.accountId,
+                amount: accountAmount,
+                customer_amount: customerAmount,
+                customer_currency: scheduled.invoiceCurrency,
+                payment_date: args.day,
+                payment_method: "Bank Transfer",
+                reference: `CRD-RPT-PAY-${scheduled.invoiceNumber}`,
+                invoice_number: invoice?.invoice_number ?? scheduled.invoiceNumber,
+            },
         });
 
         await stampInvoiceInsuranceFieldsAsOf(invoiceId, args.day);
@@ -204,9 +206,8 @@ export async function createScheduledPaymentsForDay(args: {
         results.push({
             invoiceId,
             customerId,
-            paymentId: payment.invoicePayment.id,
-        });
-    }
+            paymentId: invoicePayment.id,
+        });    }
 
     const affectedCustomerIds = [
         ...new Set(results.map((result) => result.customerId)),

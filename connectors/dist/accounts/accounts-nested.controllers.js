@@ -167,8 +167,11 @@ let BillingConnectorController = class BillingConnectorController {
     async test(user, accountId, body) {
         return this.service.billingConnectorAction(user, accountId, "test", body);
     }
-    async sync(user, accountId, body) {
-        return this.service.billingConnectorAction(user, accountId, "sync", body);
+    async sync(user, accountId, body, mode) {
+        return this.service.billingConnectorAction(user, accountId, "sync", {
+            ...(body ?? {}),
+            ...(mode ? { mode } : {}),
+        });
     }
     async syncRuns(user, accountId) {
         return this.service.billingConnectorAction(user, accountId, "sync-runs");
@@ -222,8 +225,9 @@ __decorate([
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)("accountId", common_1.ParseIntPipe)),
     __param(2, (0, common_1.Body)()),
+    __param(3, (0, common_1.Query)("mode")),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, Number, Object]),
+    __metadata("design:paramtypes", [Object, Number, Object, String]),
     __metadata("design:returntype", Promise)
 ], BillingConnectorController.prototype, "sync", null);
 __decorate([

@@ -1305,7 +1305,11 @@ export class AccountAdminEntitiesService {
         id: number | string,
         body: Record<string, unknown>
     ) {
-        await this.getById(entityType, user, id);
+        const existing = (await this.getById(
+            entityType,
+            user,
+            id
+        )) as Record<string, unknown>;
 
         if (entityType === "business-units") {
             const userInfo = await this.accessScope.resolveUserInfo(user);
@@ -1345,7 +1349,62 @@ export class AccountAdminEntitiesService {
 
         const delegate = this.delegate(entityType);
         const updated = await delegate.update({ where: { id }, data });
-        return serializeBigInt(updated);
+        const serialized = serializeBigInt(updated) as Record<string, unknown>;
+
+        if (entityType === "users") {
+            const userInfo = await this.accessScope.resolveUserInfo(user);
+            if (String(id) === String(userInfo.userId)) {
+                const sessionPatch = this.ownUserSessionUpdatePatch(
+                    existing,
+                    serialized,
+                    body
+                );
+                if (sessionPatch) {
+                    return { ...serialized, ...sessionPatch };
+                }
+            }
+        }
+
+        return serialized;
+    }
+
+    /**
+     * When a user updates their own profile, tell the UI to refresh the
+     * NextAuth session (and reload for language/RTL). Only set when a
+     * session-relevant field actually changed.
+     */
+    private ownUserSessionUpdatePatch(
+        existing: Record<string, unknown>,
+        updated: Record<string, unknown>,
+        body: Record<string, unknown>
+    ): Record<string, unknown> | null {
+        const patch: Record<string, unknown> = {};
+        let required = false;
+
+        if ("language" in body && updated.language !== existing.language) {
+            required = true;
+            patch.newLanguage = updated.language;
+        }
+        if ("locale" in body && updated.locale !== existing.locale) {
+            required = true;
+            patch.newLocale = updated.locale;
+        }
+        if ("name" in body && updated.name !== existing.name) {
+            required = true;
+            patch.newName = updated.name;
+        }
+        if (
+            ("time_zone" in body || "timezone" in body) &&
+            updated.time_zone !== existing.time_zone
+        ) {
+            required = true;
+            patch.newTimezone = updated.time_zone;
+        }
+
+        if (!required) {
+            return null;
+        }
+        return { sessionUpdateRequired: true, ...patch };
     }
 
     /**

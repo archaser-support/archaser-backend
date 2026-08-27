@@ -39,7 +39,7 @@ exports.REPORT_RELATIONSHIPS = [
     },
     {
         from: "Customer",
-        to: "Payment",
+        to: "InvoicePayment",
         fromField: "id",
         toField: "customer_id",
         type: "one-to-many",
@@ -108,23 +108,9 @@ exports.REPORT_RELATIONSHIPS = [
         type: "many-to-one",
     },
     {
-        from: "Payment",
-        to: "Customer",
-        fromField: "customer_id",
-        toField: "id",
-        type: "many-to-one",
-    },
-    {
         from: "InvoicePayment",
         to: "Invoice",
         fromField: "invoice_id",
-        toField: "id",
-        type: "many-to-one",
-    },
-    {
-        from: "InvoicePayment",
-        to: "Payment",
-        fromField: "payment_id",
         toField: "id",
         type: "many-to-one",
     },

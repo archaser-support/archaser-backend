@@ -365,17 +365,17 @@
             },
             "targets": [
                 {
-                    "expr": "sum(increase(archaser_cron_job_executions_total{status=\"SUCCESS\", instance=\"Production\"}[24h]))",
+                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Production\"})",
                     "legendFormat": "SUCCESS",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(increase(archaser_cron_job_executions_total{status=\"FAILED\", instance=\"Production\"}[24h]))",
+                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Production\"})",
                     "legendFormat": "FAILED",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum(increase(archaser_cron_job_executions_total{status=\"TIMEOUT\", instance=\"Production\"}[24h]))",
+                    "expr": "sum(archaser_cron_job_timeout_count_30d{instance=\"Production\"})",
                     "legendFormat": "TIMEOUT",
                     "refId": "C"
                 }
@@ -410,21 +410,21 @@
             "type": "table",
             "targets": [
                 {
-                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Production\"}[24h]))",
+                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Production\"} + archaser_cron_job_failure_count_30d{instance=\"Production\"} + archaser_cron_job_timeout_count_30d{instance=\"Production\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Total Executions",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Production\", status=\"SUCCESS\"}[24h]))",
+                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Production\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Success Count",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Production\", status=\"FAILED\"}[24h]))",
+                    "expr": "sum by(job_name) (archaser_cron_job_failure_count_30d{instance=\"Production\"})",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Failure Count",
@@ -633,12 +633,12 @@
             },
             "targets": [
                 {
-                    "expr": "sum(rate(archaser_cron_job_executions_total{instance=\"Production\", status=\"SUCCESS\"}[1h])) * 3600",
+                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Production\"})",
                     "legendFormat": "Success",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(rate(archaser_cron_job_executions_total{instance=\"Production\", status=\"FAILED\"}[1h])) * 3600",
+                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Production\"})",
                     "legendFormat": "Failed",
                     "refId": "B"
                 }
@@ -790,7 +790,7 @@
         }
     ],
     "schemaVersion": 38,
-    "title": "Cron Health - Production",
+    "title": "Cron Jobs - Production",
     "tags": [
         "cron",
         "jobs",

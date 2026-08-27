@@ -17,7 +17,6 @@ const report_customer_policy_fields_util_2 = require("./report-customer-policy-f
 const REPORT_TABLE_TO_PRISMA_MODEL = {
     Customer: "Customer",
     Invoice: "Invoice",
-    Payment: "Payment",
     InvoicePayment: "InvoicePayment",
     Contact: "Contact",
     Activity: "Activity",

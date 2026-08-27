@@ -35,10 +35,14 @@ services:
       ENABLE_CRON_JOBS: "false"
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
       CONNECTION_LIMIT_API: "10"
+      ENABLE_LOKI_LOGGING: "true"
+      LOKI_HOST: http://host.docker.internal:3100
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:3010:3010"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
@@ -62,10 +66,14 @@ services:
       CONNECTORS_SERVICE_URL: http://connectors:3005
       REPORTS_SERVICE_URL: http://reports:3006
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
+      ENABLE_LOKI_LOGGING: "true"
+      LOKI_HOST: http://host.docker.internal:3100
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:3003:3003"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy

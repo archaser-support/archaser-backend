@@ -1202,12 +1202,12 @@
             "id": 107,
             "targets": [
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", host=\"production\"} |~ \"Delivery\" [$__interval]))",
+                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", environment=\"production\"} |~ \"Delivery\" [$__interval]))",
                     "legendFormat": "Sent / Delivered",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", host=\"production\"} |~ \"Open\" [$__interval]))",
+                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"SES Webhook\", environment=\"production\"} |~ \"Open\" [$__interval]))",
                     "legendFormat": "Opened",
                     "refId": "B"
                 }
@@ -1229,7 +1229,7 @@
             "id": 108,
             "targets": [
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"InforuStatusChecker\", host=\"production\"} [$__interval]))",
+                    "expr": "sum(count_over_time({service=\"archaser-core\", source=\"InforuStatusChecker\", environment=\"production\"} [$__interval]))",
                     "legendFormat": "SMS Checks",
                     "refId": "A"
                 }

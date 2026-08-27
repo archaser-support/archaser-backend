@@ -47,7 +47,7 @@ export const REPORT_RELATIONSHIPS: ReportRelationship[] = [
     },
     {
         from: "Customer",
-        to: "Payment",
+        to: "InvoicePayment",
         fromField: "id",
         toField: "customer_id",
         type: "one-to-many",
@@ -116,23 +116,9 @@ export const REPORT_RELATIONSHIPS: ReportRelationship[] = [
         type: "many-to-one",
     },
     {
-        from: "Payment",
-        to: "Customer",
-        fromField: "customer_id",
-        toField: "id",
-        type: "many-to-one",
-    },
-    {
         from: "InvoicePayment",
         to: "Invoice",
         fromField: "invoice_id",
-        toField: "id",
-        type: "many-to-one",
-    },
-    {
-        from: "InvoicePayment",
-        to: "Payment",
-        fromField: "payment_id",
         toField: "id",
         type: "many-to-one",
     },

@@ -277,17 +277,34 @@ BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
 if [[ "$NO_GRAFANA" != "true" ]]; then
     if [[ ! -f "$COMPOSE_MONITORING" ]]; then
         log "Monitoring compose not found; skipping"
-    elif monitoring_stack_exists; then
-        log "Monitoring already running as archaser-loki (and siblings) — skipping compose up"
-        log "To replace it: sudo docker rm -f archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail"
     else
-        log "Starting monitoring stack (Grafana + Loki + Prometheus + Promtail)"
-        if ! MONITORING_ENV="$ENVIRONMENT" docker_compose \
+        # Always `up -d` so compose/config changes (Loki schema, datasources, root URL) apply.
+        # Name conflicts happen when an earlier `docker compose` used a different --project-name.
+        log "Starting/updating monitoring stack (Grafana + Loki + Prometheus + Promtail)"
+        for c in archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail; do
+            "${DOCKER[@]}" rm -f "$c" >/dev/null 2>&1 || true
+        done
+        MONITORING_ENV_VARS=(MONITORING_ENV="$ENVIRONMENT")
+        if [[ "$ENVIRONMENT" == "staging" ]]; then
+            MONITORING_ENV_VARS+=(
+                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
+                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.staging.archaser.com}"
+            )
+        elif [[ "$ENVIRONMENT" == "production" ]]; then
+            MONITORING_ENV_VARS+=(
+                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}"
+                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.portal.archaser.com}"
+            )
+        fi
+        if ! env "${MONITORING_ENV_VARS[@]}" docker_compose \
             --project-name "$MONITORING_PROJECT" \
             --env-file "$ENV_TARGET" \
             -f "$COMPOSE_MONITORING" \
             up -d --remove-orphans; then
             echo "Warning: monitoring stack failed to start; Nest stack is already up."
+            if monitoring_stack_exists; then
+                log "Partial monitoring containers still present — check: docker logs archaser-loki"
+            fi
         fi
     fi
 else
@@ -308,6 +325,7 @@ fi
 
 log "Deployment complete"
 if [[ "$ENVIRONMENT" == "staging" ]]; then
-    log "Staging API host: install nginx/archaser-staging-api.conf for api.staging.archaser.com"
+    log "Staging reverse proxy: bash scripts/deployment/setup-staging-nginx.sh [--with-monitoring]"
+    log "Grafana URL: https://grafana.staging.archaser.com (containers on 127.0.0.1:3200)"
     log "Do not run deploy-staging.sh (Next UI) on this box"
 fi

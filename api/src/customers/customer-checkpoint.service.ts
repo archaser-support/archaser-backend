@@ -29,7 +29,6 @@ const RESTORE_TRANSACTION_MAX_WAIT_MS = 15_000;
 export type CustomerCheckpointRowCounts = {
     invoices: number;
     invoicePayments: number;
-    payments: number;
     collectionPeriods: number;
     activities: number;
     activityContacts: number;
@@ -112,12 +111,6 @@ const SNAPSHOT_TABLES: SnapshotTable[] = [
         key: "invoices",
         model: Prisma.ModelName.Invoice,
         client: "invoice",
-        where: (s) => ({ customer_id: s.customerId }),
-    },
-    {
-        key: "payments",
-        model: Prisma.ModelName.Payment,
-        client: "payment",
         where: (s) => ({ customer_id: s.customerId }),
     },
     {
@@ -278,7 +271,6 @@ function countsFor(payload: CheckpointPayload): CustomerCheckpointRowCounts {
     return {
         invoices: rowsFor(payload, "invoices").length,
         invoicePayments: rowsFor(payload, "invoicePayments").length,
-        payments: rowsFor(payload, "payments").length,
         collectionPeriods: rowsFor(payload, "collectionPeriods").length,
         activities: rowsFor(payload, "activities").length,
         activityContacts: rowsFor(payload, "activityContacts").length,
@@ -478,6 +470,14 @@ export class CustomerCheckpointService implements OnModuleInit {
         }
 
         const payload = checkpoint.payload as unknown as CheckpointPayload;
+
+        const legacyPaymentsSkipped = rowsFor(payload, "payments").length;
+        if (legacyPaymentsSkipped > 0) {
+            // Legacy Payment-table bucket — table removed; InvoicePayment is restored separately.
+            console.warn(
+                `[CustomerCheckpoint] skipping ${legacyPaymentsSkipped} legacy payments row(s) for customer ${customerId}`
+            );
+        }
 
         await this.db.$transaction(
             async (tx) => {
