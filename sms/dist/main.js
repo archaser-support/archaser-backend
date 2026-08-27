@@ -7,10 +7,12 @@ require("reflect-metadata");
 const core_1 = require("@nestjs/core");
 const swagger_1 = require("@nestjs/swagger");
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
+const auth_1 = require("@archaser/auth");
 const app_module_1 = require("./app.module");
 async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule);
     app.use((0, cookie_parser_1.default)());
+    (0, auth_1.enablePublicCors)(app);
     const config = new swagger_1.DocumentBuilder()
         .setTitle("Archaser SMS")
         .setDescription("SMS Nest microservice (public /api/sms + /internal)")
