@@ -53,6 +53,12 @@ import {
     toPublicPullFilters,
     upsertSyncRun,
     patchSyncRunEntityStats,
+    createRunningExecution,
+    completeExecution,
+    markExecutionCancelled,
+    listExecutionsForAccount,
+    sweepStaleRunning,
+    syncHistoryExecutionToSummary,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
     type PullFiltersMap,
@@ -64,6 +70,7 @@ import {
     resolveIncludeOlderOpenInvoicesChange,
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
+import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 
 const ADMIN_ACCOUNT_ID = 10013;
 
@@ -753,6 +760,23 @@ export class BillingConnectorApiService {
             trigger,
         });
         upsertSyncRun(accountId, runningSummary);
+        try {
+            await createRunningExecution({
+                executionId,
+                accountId,
+                connectorId: connector.id,
+                provider: connector.provider,
+                trigger: trigger as "backfill" | "manual",
+                syncMode,
+                startedAt,
+            });
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] Failed to create sync history stub ${executionId}: ${message}`
+            );
+        }
         const onLog = (message: string) => {
             this.logger.log(`[account ${accountId}] ${message}`);
         };
@@ -818,6 +842,9 @@ export class BillingConnectorApiService {
                         runningSummary
                     );
                 },
+                onCustomerBalancesFinal: async (customerIds) => {
+                    await recalculateCustomerAmounts(customerIds, this.db);
+                },
             });
             const completedAt = new Date();
             const status = result.cancelled
@@ -825,6 +852,9 @@ export class BillingConnectorApiService {
                 : result.ok
                   ? "SUCCESS"
                   : "FAILED";
+            const errorType = result.cancelled
+                ? "cancelled"
+                : result.error ?? null;
             onLog(
                 `Finished ${mode}: ${status}${
                     result.error ? ` — ${result.error}` : ""
@@ -844,24 +874,40 @@ export class BillingConnectorApiService {
                 ),
                 entity_stats: result.entity_stats ?? {},
                 error_message: result.error ?? null,
-                error_type: result.cancelled
-                    ? "cancelled"
-                    : result.error ?? null,
+                error_type: errorType,
             });
+            try {
+                await completeExecution(executionId, {
+                    status,
+                    entityStats: result.entity_stats ?? {},
+                    errorMessage: result.error ?? null,
+                    errorType,
+                    completedAt,
+                });
+            } catch (historyError) {
+                const historyMessage =
+                    historyError instanceof Error
+                        ? historyError.message
+                        : String(historyError);
+                this.logger.error(
+                    `[account ${accountId}] Failed to complete sync history ${executionId}: ${historyMessage}`
+                );
+            }
         } catch (error) {
             const message =
                 error instanceof Error ? error.message : String(error);
             this.logger.error(
                 `[account ${accountId}] ${mode} crashed: ${message}`
             );
+            const completedAt = new Date();
             upsertSyncRun(accountId, {
                 ...runningSummary,
                 status: "FAILED",
-                completed_at: new Date().toISOString(),
+                completed_at: completedAt.toISOString(),
                 duration_seconds: Math.max(
                     1,
                     Math.round(
-                        (Date.now() -
+                        (completedAt.getTime() -
                             new Date(runningSummary.started_at).getTime()) /
                             1000
                     )
@@ -869,6 +915,22 @@ export class BillingConnectorApiService {
                 error_message: message,
                 error_type: "unexpected",
             });
+            try {
+                await completeExecution(executionId, {
+                    status: "FAILED",
+                    errorMessage: message,
+                    errorType: "unexpected",
+                    completedAt,
+                });
+            } catch (historyError) {
+                const historyMessage =
+                    historyError instanceof Error
+                        ? historyError.message
+                        : String(historyError);
+                this.logger.error(
+                    `[account ${accountId}] Failed to complete sync history ${executionId}: ${historyMessage}`
+                );
+            }
         } finally {
             clearRunningSync(accountId);
         }
@@ -892,6 +954,17 @@ export class BillingConnectorApiService {
                 error_type: "cancelled",
             });
         }
+        try {
+            await markExecutionCancelled(running.executionId, {
+                errorMessage: "Sync stopped by operator",
+            });
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] Failed to mark sync history cancelled ${running.executionId}: ${message}`
+            );
+        }
         return {
             result: { cancelled: true, execution_id: running.executionId },
         };
@@ -901,6 +974,24 @@ export class BillingConnectorApiService {
         await this.assertAccess(user, accountId, "view_billing_connector");
         const limit = Number.parseInt(String(limitRaw ?? "25"), 10);
         return { runs: listSyncRuns(accountId, Number.isFinite(limit) ? limit : 25) };
+    }
+
+    async listSyncHistory(user: JwtPayload, accountId: number) {
+        await this.assertAccess(user, accountId, "view_billing_connector");
+        try {
+            await sweepStaleRunning({ accountId, olderThanHours: 2 });
+            const docs = await listExecutionsForAccount(accountId);
+            return {
+                runs: docs.map(syncHistoryExecutionToSummary),
+            };
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] Failed to list sync history: ${message}`
+            );
+            throw error;
+        }
     }
 
     async resetBackfill(

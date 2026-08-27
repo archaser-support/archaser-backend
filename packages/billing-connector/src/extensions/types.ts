@@ -3,6 +3,8 @@
  * Transform runs after field mapping and before entity import.
  * Optional payment-close hooks run during payment import and invoice recalc.
  */
+import type { PrismaClient } from "@prisma/client";
+
 export type ExtensionEntityType =
     | "Customer"
     | "Payment"
@@ -36,6 +38,42 @@ export type ExtensionCreditPaymentCloseInput = {
     customerAmount: number;
 };
 
+/** Map payment amounts onto the linked invoice's currency using ERP dual-currency fields. */
+export type ExtensionAlignPaymentAmountsInput = {
+    amount?: number;
+    customer_amount: number;
+    customer_currency: string;
+    invoiceCustomerCurrency: string | null | undefined;
+    rawErpRow: Record<string, unknown>;
+};
+
+export type ExtensionAlignedPaymentAmounts = {
+    amount?: number;
+    customer_amount: number;
+    customer_currency: string;
+};
+
+/** One payment that was linked (or re-confirmed linked) during import. */
+export type ExtensionPaymentLinkedCandidate = {
+    invoiceId: number;
+    customerId: number;
+    invoiceNumber: string;
+    paymentDate: Date;
+    rawErpRow: Record<string, unknown>;
+};
+
+export type ExtensionAfterPaymentLinkedContext = {
+    prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">;
+    accountId: number;
+    userId?: string;
+    candidates: ExtensionPaymentLinkedCandidate[];
+};
+
+export type ExtensionAfterPaymentLinkedResult = {
+    /** Invoice ids that need paid-total recalc after the extension ran. */
+    invoiceIdsToRecalc: number[];
+};
+
 export interface BillingAccountExtension {
     key: string;
     /** Human-readable label for admin UI / docs. */
@@ -53,6 +91,15 @@ export interface BillingAccountExtension {
      */
     isForcePaidClose?(payment: ExtensionLinkedPayment): boolean;
     /**
+     * After payments are linked to invoices (including unchanged re-sync skips),
+     * run account-specific close behavior (e.g. virtual gap payments).
+     */
+    afterPaymentLinked?(
+        ctx: ExtensionAfterPaymentLinkedContext
+    ):
+        | ExtensionAfterPaymentLinkedResult
+        | Promise<ExtensionAfterPaymentLinkedResult>;
+    /**
      * Use absolute payment amounts when closing a credit invoice.
      */
     shouldNormalizeNegativeCreditPayments?(
@@ -60,6 +107,13 @@ export interface BillingAccountExtension {
     ): boolean;
     /** Canonicalize payment vs invoice currency before attach. */
     normalizePaymentCurrency?(currency: string | null | undefined): string;
+    /**
+     * Optional dual-currency / FX alignment before amount resolution
+     * (e.g. Priority CODE/CREDIT1 vs CODE5/CREDIT5).
+     */
+    alignPaymentAmountsForInvoice?(
+        input: ExtensionAlignPaymentAmountsInput
+    ): ExtensionAlignedPaymentAmounts;
 }
 
 export type ExtensionAttachmentUpsertInput = {

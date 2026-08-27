@@ -16,9 +16,13 @@ import {
 import { applyPaymentSyntheticsToRecords } from "../payment/connectorPaymentSynthetics";
 import {
     assertFilterFieldsExist,
+    buildKeysetFilter,
     columnNameSet,
+    encodeKeysetCursor,
+    formatOrderByClause,
     intersectSelectFields,
     pickDateField,
+    pickKeysetTieBreaker,
     pickOrderByField,
 } from "./resolveTablePullShape";
 import {
@@ -96,24 +100,32 @@ function andODataFilters(
     return cleaned.map((part) => `(${part})`).join(" and ");
 }
 
-function odataLiteral(value: string): string {
-    const trimmed = value.trim();
-    // Keyset order-by fields (CUSTNAME, IVNUM, PAYNUM, FNCNUM) are Edm.String
-    // even when the value looks numeric. Unquoted 10700194 is Edm.Int32 and
-    // Priority rejects `CUSTNAME gt 10700194`.
-    return `'${trimmed.replace(/'/g, "''")}'`;
-}
-
-function recordOrderByValue(
+function recordFieldValue(
     record: Record<string, unknown>,
-    orderBy: string
+    field: string
 ): string | null {
-    const raw = record[orderBy];
+    const raw = record[field];
     if (raw == null) {
         return null;
     }
     const text = String(raw).trim();
     return text.length > 0 ? text : null;
+}
+
+function recordKeysetCursor(
+    record: Record<string, unknown>,
+    orderBy: string,
+    tieBreaker: string | null
+): string | null {
+    const primary = recordFieldValue(record, orderBy);
+    if (primary == null) {
+        return null;
+    }
+    if (!tieBreaker) {
+        return primary;
+    }
+    const secondary = recordFieldValue(record, tieBreaker);
+    return encodeKeysetCursor(primary, secondary);
 }
 
 function dateGeIso(date: Date, overlapMinutes: number): string {
@@ -192,6 +204,7 @@ export class PriorityProviderClient implements BillingProviderClient {
         );
         const endpoint = getPriorityEntityEndpoint(entity);
         const orderBy = pickOrderByField(endpoint.defaultOrderBy, columns);
+        const tieBreaker = pickKeysetTieBreaker(columns, orderBy);
         const needsDate =
             options.createdOnOrAfter != null || options.since != null;
         const dateField = pickDateField(options.preferredDateField, columns);
@@ -202,11 +215,16 @@ export class PriorityProviderClient implements BillingProviderClient {
         const selectFields = intersectSelectFields(
             [
                 orderBy,
+                ...(tieBreaker ? [tieBreaker] : []),
                 ...(dateField ? [dateField] : []),
                 ...(options.select ?? []),
             ],
             columns,
-            [orderBy, ...(dateField ? [dateField] : [])]
+            [
+                orderBy,
+                ...(tieBreaker ? [tieBreaker] : []),
+                ...(dateField ? [dateField] : []),
+            ]
         );
 
         const params: Record<string, string> = { $top: String(pageSize) };
@@ -219,7 +237,7 @@ export class PriorityProviderClient implements BillingProviderClient {
             params.$skip = String(safeSkip);
         }
 
-        params.$orderby = orderBy;
+        params.$orderby = formatOrderByClause(orderBy, tieBreaker);
         if (options.select != null && selectFields.length > 0) {
             params.$select = selectFields.join(",");
         }
@@ -227,7 +245,7 @@ export class PriorityProviderClient implements BillingProviderClient {
         const afterKey = options.afterKey?.trim();
         const keysetFilter =
             useKeyset && afterKey
-                ? `${orderBy} gt ${odataLiteral(afterKey)}`
+                ? buildKeysetFilter(orderBy, afterKey, tieBreaker)
                 : null;
         const dateBound = options.createdOnOrAfter ?? options.since;
         const overlapMinutes =
@@ -267,7 +285,11 @@ export class PriorityProviderClient implements BillingProviderClient {
 
         const hasMore = records.length === pageSize;
         const lastKey = records.length
-            ? recordOrderByValue(records[records.length - 1], orderBy)
+            ? recordKeysetCursor(
+                  records[records.length - 1],
+                  orderBy,
+                  tieBreaker
+              )
             : null;
         const nextCursor = useKeyset
             ? hasMore

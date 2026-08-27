@@ -20,6 +20,11 @@ jest.mock("@archaser/billing-connector", () => {
         isBillingConnectorEncryptionConfigured: jest.fn(() => true),
         testBillingConnectorConnection: jest.fn(),
         discoverConnectorFields: jest.fn(),
+        createRunningExecution: jest.fn().mockResolvedValue(null),
+        completeExecution: jest.fn().mockResolvedValue(null),
+        markExecutionCancelled: jest.fn().mockResolvedValue(null),
+        listExecutionsForAccount: jest.fn().mockResolvedValue([]),
+        sweepStaleRunning: jest.fn().mockResolvedValue(0),
     };
 });
 

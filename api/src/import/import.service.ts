@@ -6,6 +6,7 @@ import { serializeBigInt } from "../common/serialize-bigint";
 import { importMappedEntityBatch } from "@archaser/billing-connector";
 import { DatabaseService } from "../database/database.service";
 import { enqueueRewriteForImport } from "../credit-insurance/domain/asOfRewriteQueue";
+import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 import { ImportPolicyService } from "./import-policy.service";
 
 const IMPORT_TYPE_MAP: Record<string, string> = {
@@ -305,6 +306,10 @@ export class ImportService {
             existing.import_type === "Invoice" ||
             existing.import_type === "Payment"
         ) {
+            const customerIds = readNumberArray(
+                existing.metadata,
+                "asOfRewriteCustomerIds"
+            );
             await enqueueRewriteForImport({
                 accountId,
                 importType: existing.import_type,
@@ -312,11 +317,15 @@ export class ImportService {
                     existing.metadata,
                     "asOfRewriteEntityIds"
                 ),
-                customerIds: readNumberArray(
-                    existing.metadata,
-                    "asOfRewriteCustomerIds"
-                ),
+                customerIds,
             });
+            if (customerIds.length > 0) {
+                try {
+                    await recalculateCustomerAmounts(customerIds, this.db);
+                } catch {
+                    // Import completion should not fail if rollup refresh fails.
+                }
+            }
         }
 
         return serializeBigInt(job);

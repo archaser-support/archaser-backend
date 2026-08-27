@@ -1,3 +1,5 @@
+import { toErpDateOnly } from "../utils/connectorFieldUtils";
+
 export interface NormalizedInvoiceInput {
     account_id: number;
     customer_number: string;
@@ -75,14 +77,15 @@ export function normalizeInvoiceImportInput(
         account_id: accountId,
         customer_number: String(row.customer_number ?? ""),
         invoice_number: String(row.invoice_number ?? ""),
-        invoice_date: String(row.invoice_date ?? ""),
+        // ERP sends DateTimeOffset; persist calendar date only (no TZ day-shift).
+        invoice_date: toErpDateOnly(row.invoice_date),
         amount,
         customer_amount: customerAmount,
         customer_currency: customerCurrency,
         ...(customCode1 ? { custom_code1: customCode1 } : {}),
     };
 
-    const dueDate = toOptionalString(row.due_date);
+    const dueDate = toErpDateOnly(row.due_date);
     if (dueDate) {
         normalized.due_date = dueDate;
     }
