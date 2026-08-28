@@ -17,6 +17,7 @@ async function stampInvoiceInsuranceFieldsAsOf(invoiceId, asOf, db = domain_db_1
         select: {
             id: true,
             status: true,
+            amount: true,
             invoice_date: true,
             due_date: true,
             payment_term: true,
@@ -50,6 +51,7 @@ async function stampInvoiceInsuranceFieldsAsOf(invoiceId, asOf, db = domain_db_1
         status: inv.status,
         invoice_date: inv.invoice_date,
         due_date: inv.due_date,
+        amount: inv.amount,
         actual_reporting_date: inv.actual_reporting_date,
         customer: insuranceCtx,
         explicitPaymentTerm: inv.payment_term !== null && inv.payment_term !== undefined

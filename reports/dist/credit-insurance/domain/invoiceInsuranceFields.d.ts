@@ -56,10 +56,18 @@ export declare function startOfUtcDay(d: Date): Date;
  */
 export declare function isTargetReportingDateBeforeToday(targetReportingDate: Date, today?: Date): boolean;
 /**
+ * Credit notes are stored as invoices with amount &lt; 0.
+ * Used to skip MEP / reporting target dates and reporting-breach promotion.
+ */
+export declare function isNegativeInvoiceAmount(amount: number | null | undefined): boolean;
+/** Credit notes do not drive customer oldest-overdue / overdue_block (MEP). */
+export declare function isEligibleForCustomerMepOverdue(amount: number | null | undefined): boolean;
+/**
  * Whether reporting_breach should be true for an open Due/Overdue invoice
  * (evaluation only; persistence in sync helper).
+ * Negative-amount invoices (credit notes) never promote reporting breach.
  */
-export declare function shouldSetReportingBreach(status: invoice_status, targetReportingDate: Date | null | undefined, actualReportingDate: Date | null | undefined, today?: Date): boolean;
+export declare function shouldSetReportingBreach(status: invoice_status, targetReportingDate: Date | null | undefined, actualReportingDate: Date | null | undefined, today?: Date, amount?: number | null): boolean;
 export declare function computeCustomerTotalAr(customer: {
     total_due_amount?: number | null;
     total_overdue_amount?: number | null;
@@ -127,6 +135,27 @@ export declare function computeCreatedTermsViolationSnapshot(args: {
         dcl_customer_since_months?: number | null;
     } | null;
 }): CreatedTermsViolationSnapshot;
+export type InsuranceTargetDateCustomerInput = {
+    reporting_days: number | null;
+    max_allowed_mep: number | null;
+    mep_cutoff_day_of_month?: number | null;
+    mep_substitute_day_of_month?: number | null;
+    reporting_cutoff_day_of_month?: number | null;
+    reporting_substitute_day_of_month?: number | null;
+};
+/**
+ * Shared MEP / reporting target-date rule for create, import, refresh, and as-of.
+ * When {@link amount} &lt; 0 (credit note), both targets are null.
+ */
+export declare function computeInsuranceTargetDates(args: {
+    amount?: number | null;
+    due_date: Date | null | undefined;
+    invoice_date: Date | null | undefined;
+    customer: InsuranceTargetDateCustomerInput;
+}): {
+    target_reporting_date: Date | null;
+    target_mep_date: Date | null;
+};
 /**
  * Compute persisted insurance-related invoice fields from customer + dates + status.
  *
@@ -134,6 +163,7 @@ export declare function computeCreatedTermsViolationSnapshot(args: {
  *   or due_date + reporting_days + diff when invoice month-end cutoff applies
  * - `target_mep_date` = due_date + `customer.max_allowed_mep` (calendar days),
  *   or due_date + max_allowed_mep + diff when invoice month-end cutoff applies
+ * - When `amount` &lt; 0, both target dates are null and reporting_breach is false
  * - `ctv_payment_term` = credit days (due − issue) > `customer.max_payment_term`
  *   (or > max_payment_term + diff when payment-term month-end cutoff applies)
  */
@@ -142,6 +172,8 @@ export declare function computeInvoiceInsuranceRowData(args: {
     invoice_date: Date | null | undefined;
     due_date: Date | null | undefined;
     actual_reporting_date?: Date | null | undefined;
+    /** Invoice amount; negatives (credit notes) skip MEP/reporting targets. */
+    amount?: number | null;
     customer: {
         reporting_days: number | null;
         max_allowed_mep: number | null;

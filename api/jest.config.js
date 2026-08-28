@@ -27,6 +27,8 @@ module.exports = {
             "<rootDir>/../packages/auth/src/index.ts",
         "^@archaser/billing-connector$":
             "<rootDir>/../packages/billing-connector/src/index.ts",
+        "^@archaser/cron-jobs$":
+            "<rootDir>/../packages/cron-jobs/src/index.ts",
     },
     testTimeout: 30000,
 };

@@ -118,6 +118,7 @@ export async function computeCustomerOverdueMetrics(
                 actual_reporting_date: null,
                 target_reporting_date: { not: null },
                 reporting_breach: false,
+                OR: [{ amount: null }, { amount: { gte: 0 } }],
                 Customer: {
                     Account: { has_credit_insurance: true },
                 },

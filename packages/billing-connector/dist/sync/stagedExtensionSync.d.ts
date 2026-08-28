@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionEntityType, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
 import { type EntityImportBatchOptions, type EntityImportBatchResult, type ImportEntityType } from "../import/entityImporter";
+import { type ArPostIngestHostFn } from "../credit/arPostIngestHost";
 import { type MappingRule } from "../utils/connectorFieldUtils";
 export declare const STAGED_ENTITY_ORDER: ExtensionEntityType[];
 export type ImportBatchFn = (prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string, options?: EntityImportBatchOptions) => Promise<EntityImportBatchResult>;
@@ -39,6 +40,13 @@ export interface RunStagedExtensionSyncOptions {
      */
     onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
     /**
+     * After Invoice entity completes (all pages + maturity), or as payment-only
+     * fallback when Invoice did not orchestrate, run shared AR post-ingest.
+     * Nest wires the orchestrator; default host-require keeps the package free
+     * of a hard Nest dependency.
+     */
+    onArPostIngest?: ArPostIngestHostFn;
+    /**
      * Backfill cutover: Invoice/Payment $filter by created date (IVDATE/PAYDATE).
      * Customers and contacts still pull full history.
      */
@@ -75,6 +83,12 @@ export interface RunStagedExtensionSyncResult {
     };
     cancelled?: boolean;
     error?: string;
+    /**
+     * True when Invoice entity finished and post-Invoice orchestration was
+     * reached (even with zero customers). Used to skip payment-only fallback
+     * so Payment→Invoice syncs do not double-run post-ingest.
+     */
+    invoicePostIngestRan?: boolean;
 }
 /**
  * Staged path: for each window and entity, pull one page, run the extension

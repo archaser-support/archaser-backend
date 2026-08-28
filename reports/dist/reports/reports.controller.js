@@ -43,8 +43,8 @@ let ReportsController = class ReportsController {
     async clearUserDefault(user, context) {
         return this.reports.clearUserDefault(user, context);
     }
-    async syncSystem(user) {
-        return this.reports.syncSystem(user);
+    async syncSystem(user, body) {
+        return this.reports.syncSystem(user, body);
     }
 };
 exports.ReportsController = ReportsController;
@@ -104,10 +104,13 @@ __decorate([
 ], ReportsController.prototype, "clearUserDefault", null);
 __decorate([
     (0, common_1.Post)("sync-system"),
-    (0, swagger_1.ApiOperation)({ summary: "Sync system reports (admin)" }),
+    (0, swagger_1.ApiOperation)({
+        summary: "Sync selected master system reports to all active accounts",
+    }),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], ReportsController.prototype, "syncSystem", null);
 exports.ReportsController = ReportsController = __decorate([

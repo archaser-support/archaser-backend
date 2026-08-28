@@ -230,15 +230,20 @@ export async function applyMaturedDeferredPayments(
             accountId
         );
         if (extension?.afterPaymentLinked && linkCandidates.length > 0) {
-            const { invoiceIdsToRecalc: extensionRecalcIds } =
-                await extension.afterPaymentLinked({
-                    prisma,
-                    accountId,
-                    userId: options?.userId,
-                    candidates: linkCandidates,
-                });
+            const {
+                invoiceIdsToRecalc: extensionRecalcIds,
+                invoiceIdsSkipRecalc: extensionSkipIds,
+            } = await extension.afterPaymentLinked({
+                prisma,
+                accountId,
+                userId: options?.userId,
+                candidates: linkCandidates,
+            });
             for (const invoiceId of extensionRecalcIds) {
                 invoiceIdsToRecalc.set(invoiceId, {});
+            }
+            for (const invoiceId of extensionSkipIds ?? []) {
+                invoiceIdsToRecalc.delete(invoiceId);
             }
         }
 

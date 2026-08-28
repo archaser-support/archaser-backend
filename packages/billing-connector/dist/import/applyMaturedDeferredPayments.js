@@ -164,7 +164,7 @@ async function applyMaturedDeferredPayments(prisma, accountId, asOf, invoiceNumb
         emitProgress(true);
         const extension = await (0, extensions_1.resolveAccountBillingExtension)(prisma, accountId);
         if (extension?.afterPaymentLinked && linkCandidates.length > 0) {
-            const { invoiceIdsToRecalc: extensionRecalcIds } = await extension.afterPaymentLinked({
+            const { invoiceIdsToRecalc: extensionRecalcIds, invoiceIdsSkipRecalc: extensionSkipIds, } = await extension.afterPaymentLinked({
                 prisma,
                 accountId,
                 userId: options?.userId,
@@ -172,6 +172,9 @@ async function applyMaturedDeferredPayments(prisma, accountId, asOf, invoiceNumb
             });
             for (const invoiceId of extensionRecalcIds) {
                 invoiceIdsToRecalc.set(invoiceId, {});
+            }
+            for (const invoiceId of extensionSkipIds ?? []) {
+                invoiceIdsToRecalc.delete(invoiceId);
             }
         }
         await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoicesFromLinkedPayments)(prisma, invoiceIdsToRecalc);

@@ -3,6 +3,7 @@ import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
 import { type ConnectorEntityStats } from "./connectorSyncRuntime";
 import { type ImportBatchFn } from "./stagedExtensionSync";
+import { type ArPostIngestHostFn } from "../credit/arPostIngestHost";
 export interface RunInProcessSyncOptions {
     prisma: PrismaClient;
     accountId: number;
@@ -32,6 +33,11 @@ export interface RunInProcessSyncOptions {
      * customer due/overdue amounts. Nest wires recalculateCustomerAmounts.
      */
     onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
+    /**
+     * After Invoice entity completion: shared AR post-ingest (replay, live
+     * refresh, as-of enqueue). Nest wires runArPostIngestForCustomers.
+     */
+    onArPostIngest?: ArPostIngestHostFn;
 }
 export interface RunInProcessSyncResult {
     ok: boolean;

@@ -6,6 +6,7 @@ exports.planDefaultSyncWindows = planDefaultSyncWindows;
 const entityImporter_1 = require("../import/entityImporter");
 const applyMaturedDeferredPayments_1 = require("../import/applyMaturedDeferredPayments");
 const recalculateCustomerAmountsHost_1 = require("../customers/recalculateCustomerAmountsHost");
+const arPostIngestHost_1 = require("../credit/arPostIngestHost");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 const priorityApiContract_1 = require("../priority/priorityApiContract");
 const prioritySelectFields_1 = require("../priority/prioritySelectFields");
@@ -168,11 +169,70 @@ async function runStagedExtensionSync(options) {
     const cutover = options.pullCreatedOnOrAfter === true;
     const entitySets = (0, billingConnectorEntitySets_1.parseEntitySetsMap)(options.entitySets);
     const arAffectedCustomerIds = new Set();
+    const arAffectedInvoiceIds = new Set();
+    const arAffectedPaymentIds = new Set();
+    const paymentAffectedCustomerIds = new Set();
+    /** Recon debit IVNUMs queued during Payment transform for virtual close. */
+    const pendingInvoiceCloses = new Set();
+    /** Helam offset-pair invoice numbers (original + cancel) for stamp-close. */
+    const pendingHelamOffsetCloses = new Set();
+    let invoicePostIngestRan = false;
+    const flushExtensionPendingCloses = async (label) => {
+        if ((pendingInvoiceCloses.size === 0 &&
+            pendingHelamOffsetCloses.size === 0) ||
+            !options.extension.flushPendingInvoiceCloses) {
+            return;
+        }
+        try {
+            const pendingNumbers = Array.from(pendingInvoiceCloses);
+            const helamOffsetNumbers = Array.from(pendingHelamOffsetCloses);
+            const flushResult = await options.extension.flushPendingInvoiceCloses({
+                prisma: options.prisma,
+                accountId: options.accountId,
+                userId: options.userId,
+                invoiceNumbers: pendingNumbers,
+                helamOffsetInvoiceNumbers: helamOffsetNumbers,
+            });
+            for (const invoiceId of flushResult.closedIds) {
+                arAffectedInvoiceIds.add(invoiceId);
+            }
+            for (const customerId of flushResult.customerIds ?? []) {
+                arAffectedCustomerIds.add(customerId);
+            }
+            pendingInvoiceCloses.clear();
+            pendingHelamOffsetCloses.clear();
+            log(`Extension pending invoice closes (${label}): ${flushResult.closedIds.length} settled (${pendingNumbers.length} virtual, ${helamOffsetNumbers.length} Helam offset)`);
+        }
+        catch (error) {
+            const message = error instanceof Error
+                ? error.message
+                : "Pending invoice close flush failed";
+            log(`Extension pending invoice closes failed (${label}): ${message}`);
+        }
+    };
     const finishWithBalances = async (result) => {
         if (!dryRun) {
+            await flushExtensionPendingCloses("finalize");
+            // Payment-only (or Invoice-not-orchestrated) fallback: same
+            // orchestrator as post-Invoice, including deferred maturity.
+            // Skip when Invoice already ran post-ingest in this sync.
+            if (!result.cancelled &&
+                !invoicePostIngestRan &&
+                paymentAffectedCustomerIds.size > 0) {
+                await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
+                    accountId: options.accountId,
+                    customerIds: Array.from(paymentAffectedCustomerIds),
+                    invoiceEntityIds: [],
+                    paymentEntityIds: Array.from(arAffectedPaymentIds),
+                    prisma: options.prisma,
+                    onArPostIngest: options.onArPostIngest,
+                    log,
+                    runMaturity: true,
+                });
+            }
             await finalizeCustomerBalances(arAffectedCustomerIds, options.prisma, options.onCustomerBalancesFinal, log);
         }
-        return result;
+        return { ...result, invoicePostIngestRan };
     };
     for (const window of options.windows) {
         log(window.start || window.end
@@ -285,6 +345,11 @@ async function runStagedExtensionSync(options) {
                             window,
                             batch: { [entityType]: mappedPage },
                             extension_config: options.extensionConfig,
+                            prisma: dryRun ? undefined : options.prisma,
+                            userId: options.userId,
+                            dryRun,
+                            pendingInvoiceCloses,
+                            pendingHelamOffsetCloses,
                         });
                         mergeBatch(previewBatch, afterPlugin);
                         mergeBatch(windowBatch, afterPlugin);
@@ -333,6 +398,17 @@ async function runStagedExtensionSync(options) {
                             entityType === "Invoice") {
                             for (const id of importResult.affectedCustomerIds) {
                                 arAffectedCustomerIds.add(id);
+                                if (entityType === "Payment") {
+                                    paymentAffectedCustomerIds.add(id);
+                                }
+                            }
+                            for (const id of importResult.entityIds ?? []) {
+                                if (entityType === "Invoice") {
+                                    arAffectedInvoiceIds.add(id);
+                                }
+                                else {
+                                    arAffectedPaymentIds.add(id);
+                                }
                             }
                         }
                         log(`Imported ${entityType}: ${importResult.success} success, ${importResult.failed} failed`);
@@ -437,6 +513,22 @@ async function runStagedExtensionSync(options) {
                     emitProgress();
                     log(`Invoice entity maturity failed: ${message}`);
                 }
+                if (pendingInvoiceCloses.size > 0 ||
+                    pendingHelamOffsetCloses.size > 0) {
+                    await flushExtensionPendingCloses("after Invoice");
+                }
+                // Once after all Invoice pages + maturity, before Contact.
+                invoicePostIngestRan = true;
+                await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
+                    accountId: options.accountId,
+                    customerIds: Array.from(arAffectedCustomerIds),
+                    invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                    paymentEntityIds: Array.from(arAffectedPaymentIds),
+                    prisma: options.prisma,
+                    onArPostIngest: options.onArPostIngest,
+                    log,
+                    runMaturity: false,
+                });
             }
         }
         windows.push({

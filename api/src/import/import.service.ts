@@ -5,7 +5,9 @@ import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { importMappedEntityBatch } from "@archaser/billing-connector";
 import { DatabaseService } from "../database/database.service";
+import { runArPostIngestForCustomers } from "../credit-insurance/domain/arPostIngestOrchestrator";
 import { enqueueRewriteForImport } from "../credit-insurance/domain/asOfRewriteQueue";
+import { refreshInsuranceTargetDatesForInvoiceIds } from "../credit-insurance/domain/syncInvoiceReportingBreach";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 import { ImportPolicyService } from "./import-policy.service";
 
@@ -166,6 +168,21 @@ export class ImportService {
                 null,
                 userInfo.userId
             );
+            // Amount (and date) upserts must refresh insurance targets immediately
+            // so sign flips are not stuck until job-complete post-ingest.
+            if (
+                importType === "Invoice" &&
+                entityImport.entityIds.length > 0
+            ) {
+                try {
+                    await refreshInsuranceTargetDatesForInvoiceIds(
+                        entityImport.entityIds,
+                        this.db
+                    );
+                } catch {
+                    // Non-fatal: rows imported; post-ingest / stamp can catch up.
+                }
+            }
             const recordRows: Array<Record<string, unknown>> = [];
             for (let i = 0; i < rows.length; i++) {
                 const row = rows[i] || {};
@@ -306,19 +323,49 @@ export class ImportService {
             existing.import_type === "Invoice" ||
             existing.import_type === "Payment"
         ) {
+            const importType = existing.import_type as "Invoice" | "Payment";
             const customerIds = readNumberArray(
                 existing.metadata,
                 "asOfRewriteCustomerIds"
             );
-            await enqueueRewriteForImport({
-                accountId,
-                importType: existing.import_type,
-                entityIds: readNumberArray(
-                    existing.metadata,
-                    "asOfRewriteEntityIds"
-                ),
-                customerIds,
-            });
+            const entityIds = readNumberArray(
+                existing.metadata,
+                "asOfRewriteEntityIds"
+            );
+
+            // Shared AR post-ingest (replay + Process Overdue + live MEP/gap + as-of).
+            // Best-effort: do not fail job status if this throws after rows were imported.
+            let postIngestSkipped = false;
+            try {
+                const result = await runArPostIngestForCustomers({
+                    accountId,
+                    customerIds,
+                    runReplay: true,
+                    runLiveRefresh: true,
+                    enqueueAsOfRewrite: true,
+                    asOfRewrite: { importType, entityIds },
+                });
+                postIngestSkipped = result.skipped;
+            } catch {
+                postIngestSkipped = true;
+            }
+
+            // Collection-only (orchestrator CI gate) and unexpected throws still
+            // keep today's as-of enqueue behavior. Overdue already ran inside
+            // the orchestrator for non-CI accounts before skipped=true.
+            if (postIngestSkipped) {
+                try {
+                    await enqueueRewriteForImport({
+                        accountId,
+                        importType,
+                        entityIds,
+                        customerIds,
+                    });
+                } catch {
+                    // Import completion should not fail if as-of enqueue fails.
+                }
+            }
+
             if (customerIds.length > 0) {
                 try {
                     await recalculateCustomerAmounts(customerIds, this.db);

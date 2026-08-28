@@ -36,6 +36,10 @@ import {
     type ImportBatchFn,
 } from "./stagedExtensionSync";
 import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
+import {
+    invokeConnectorArPostIngest,
+    type ArPostIngestHostFn,
+} from "../credit/arPostIngestHost";
 
 export interface RunInProcessSyncOptions {
     prisma: PrismaClient;
@@ -68,6 +72,11 @@ export interface RunInProcessSyncOptions {
      * customer due/overdue amounts. Nest wires recalculateCustomerAmounts.
      */
     onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
+    /**
+     * After Invoice entity completion: shared AR post-ingest (replay, live
+     * refresh, as-of enqueue). Nest wires runArPostIngestForCustomers.
+     */
+    onArPostIngest?: ArPostIngestHostFn;
 }
 
 export interface RunInProcessSyncResult {
@@ -468,6 +477,7 @@ async function runInProcessSyncBody(
                     emitProgress(options.onProgress, liveStats),
                 shouldCancel: () => isCancelRequested(options),
                 onCustomerBalancesFinal: options.onCustomerBalancesFinal,
+                onArPostIngest: options.onArPostIngest,
                 pullCreatedOnOrAfter:
                     !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,
@@ -571,6 +581,10 @@ async function runInProcessSyncBody(
 
         log("Using standard entity-by-entity path (no extension)");
         const arAffectedCustomerIds = new Set<number>();
+        const arAffectedInvoiceIds = new Set<number>();
+        const arAffectedPaymentIds = new Set<number>();
+        const paymentAffectedCustomerIds = new Set<number>();
+        let invoicePostIngestRan = false;
         for (const entityType of ENTITY_ORDER) {
             if (isCancelRequested(options)) {
                 log("Stopped by operator");
@@ -656,12 +670,36 @@ async function runInProcessSyncBody(
                 if (entityType === "Payment" || entityType === "Invoice") {
                     for (const id of importResult.affectedCustomerIds) {
                         arAffectedCustomerIds.add(id);
+                        if (entityType === "Payment") {
+                            paymentAffectedCustomerIds.add(id);
+                        }
+                    }
+                    for (const id of importResult.entityIds ?? []) {
+                        if (entityType === "Invoice") {
+                            arAffectedInvoiceIds.add(id);
+                        } else {
+                            arAffectedPaymentIds.add(id);
+                        }
                     }
                 }
                 log(
                     `Imported ${entityType}: ${importResult.success} success, ${importResult.failed} failed`
                 );
                 emitProgress(options.onProgress, stats);
+
+                if (entityType === "Invoice") {
+                    invoicePostIngestRan = true;
+                    await invokeConnectorArPostIngest({
+                        accountId,
+                        customerIds: Array.from(arAffectedCustomerIds),
+                        invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                        paymentEntityIds: Array.from(arAffectedPaymentIds),
+                        prisma,
+                        onArPostIngest: options.onArPostIngest,
+                        log,
+                        runMaturity: false,
+                    });
+                }
 
                 const maxUpdated =
                     extractMaxUpdatedAt(
@@ -722,6 +760,22 @@ async function runInProcessSyncBody(
                     },
                 });
             }
+        }
+
+        if (
+            !invoicePostIngestRan &&
+            paymentAffectedCustomerIds.size > 0
+        ) {
+            await invokeConnectorArPostIngest({
+                accountId,
+                customerIds: Array.from(paymentAffectedCustomerIds),
+                invoiceEntityIds: [],
+                paymentEntityIds: Array.from(arAffectedPaymentIds),
+                prisma,
+                onArPostIngest: options.onArPostIngest,
+                log,
+                runMaturity: true,
+            });
         }
 
         await finalizeLegacyCustomerBalances(

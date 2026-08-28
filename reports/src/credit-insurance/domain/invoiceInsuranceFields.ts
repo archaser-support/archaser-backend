@@ -1,4 +1,4 @@
-import { addDays, addMonths, differenceInCalendarDays } from "date-fns";
+import { addDays, differenceInCalendarDays } from "date-fns";
 import { Prisma, type invoice_status } from "@prisma/client";
 
 import { computeOutdatedDclAtEvaluation } from "./customerOutdatedDcl";
@@ -278,15 +278,37 @@ export function isTargetReportingDateBeforeToday(
 }
 
 /**
+ * Credit notes are stored as invoices with amount &lt; 0.
+ * Used to skip MEP / reporting target dates and reporting-breach promotion.
+ */
+export function isNegativeInvoiceAmount(
+    amount: number | null | undefined
+): boolean {
+    return amount != null && Number.isFinite(Number(amount)) && Number(amount) < 0;
+}
+
+/** Credit notes do not drive customer oldest-overdue / overdue_block (MEP). */
+export function isEligibleForCustomerMepOverdue(
+    amount: number | null | undefined
+): boolean {
+    return !isNegativeInvoiceAmount(amount);
+}
+
+/**
  * Whether reporting_breach should be true for an open Due/Overdue invoice
  * (evaluation only; persistence in sync helper).
+ * Negative-amount invoices (credit notes) never promote reporting breach.
  */
 export function shouldSetReportingBreach(
     status: invoice_status,
     targetReportingDate: Date | null | undefined,
     actualReportingDate: Date | null | undefined,
-    today: Date = new Date()
+    today: Date = new Date(),
+    amount?: number | null
 ): boolean {
+    if (isNegativeInvoiceAmount(amount)) {
+        return false;
+    }
     if (status !== "Due" && status !== "Overdue") {
         return false;
     }
@@ -461,6 +483,57 @@ export function computeCreatedTermsViolationSnapshot(args: {
     };
 }
 
+export type InsuranceTargetDateCustomerInput = {
+    reporting_days: number | null;
+    max_allowed_mep: number | null;
+    mep_cutoff_day_of_month?: number | null;
+    mep_substitute_day_of_month?: number | null;
+    reporting_cutoff_day_of_month?: number | null;
+    reporting_substitute_day_of_month?: number | null;
+};
+
+/**
+ * Shared MEP / reporting target-date rule for create, import, refresh, and as-of.
+ * When {@link amount} &lt; 0 (credit note), both targets are null.
+ */
+export function computeInsuranceTargetDates(args: {
+    amount?: number | null;
+    due_date: Date | null | undefined;
+    invoice_date: Date | null | undefined;
+    customer: InsuranceTargetDateCustomerInput;
+}): {
+    target_reporting_date: Date | null;
+    target_mep_date: Date | null;
+} {
+    if (isNegativeInvoiceAmount(args.amount)) {
+        return {
+            target_reporting_date: null,
+            target_mep_date: null,
+        };
+    }
+    return {
+        target_reporting_date: computeTargetReportingDate(
+            args.due_date,
+            args.customer.reporting_days,
+            {
+                invoiceDate: args.invoice_date,
+                cutoffDayOfMonth: args.customer.reporting_cutoff_day_of_month,
+                substituteDayOfMonth:
+                    args.customer.reporting_substitute_day_of_month,
+            }
+        ),
+        target_mep_date: computeTargetMepDate(
+            args.due_date,
+            args.customer.max_allowed_mep,
+            {
+                invoiceDate: args.invoice_date,
+                cutoffDayOfMonth: args.customer.mep_cutoff_day_of_month,
+                substituteDayOfMonth: args.customer.mep_substitute_day_of_month,
+            }
+        ),
+    };
+}
+
 /**
  * Compute persisted insurance-related invoice fields from customer + dates + status.
  *
@@ -468,6 +541,7 @@ export function computeCreatedTermsViolationSnapshot(args: {
  *   or due_date + reporting_days + diff when invoice month-end cutoff applies
  * - `target_mep_date` = due_date + `customer.max_allowed_mep` (calendar days),
  *   or due_date + max_allowed_mep + diff when invoice month-end cutoff applies
+ * - When `amount` &lt; 0, both target dates are null and reporting_breach is false
  * - `ctv_payment_term` = credit days (due − issue) > `customer.max_payment_term`
  *   (or > max_payment_term + diff when payment-term month-end cutoff applies)
  */
@@ -476,6 +550,8 @@ export function computeInvoiceInsuranceRowData(args: {
     invoice_date: Date | null | undefined;
     due_date: Date | null | undefined;
     actual_reporting_date?: Date | null | undefined;
+    /** Invoice amount; negatives (credit notes) skip MEP/reporting targets. */
+    amount?: number | null;
     customer: {
         reporting_days: number | null;
         max_allowed_mep: number | null;
@@ -497,30 +573,20 @@ export function computeInvoiceInsuranceRowData(args: {
             ? args.explicitPaymentTerm
             : computePaymentTermDays(args.invoice_date, args.due_date);
 
-    const target_reporting_date = computeTargetReportingDate(
-        args.due_date,
-        args.customer.reporting_days,
-        {
-            invoiceDate: args.invoice_date,
-            cutoffDayOfMonth: args.customer.reporting_cutoff_day_of_month,
-            substituteDayOfMonth: args.customer.reporting_substitute_day_of_month,
-        }
-    );
-    const target_mep_date = computeTargetMepDate(
-        args.due_date,
-        args.customer.max_allowed_mep,
-        {
-            invoiceDate: args.invoice_date,
-            cutoffDayOfMonth: args.customer.mep_cutoff_day_of_month,
-            substituteDayOfMonth: args.customer.mep_substitute_day_of_month,
-        }
-    );
+    const { target_reporting_date, target_mep_date } =
+        computeInsuranceTargetDates({
+            amount: args.amount,
+            due_date: args.due_date,
+            invoice_date: args.invoice_date,
+            customer: args.customer,
+        });
 
     const reporting_breach = shouldSetReportingBreach(
         args.status,
         target_reporting_date,
         args.actual_reporting_date ?? null,
-        today
+        today,
+        args.amount
     );
 
     const ctv_payment_term = computePaymentTermBreach(

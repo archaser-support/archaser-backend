@@ -17,6 +17,10 @@ import {
 import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
 import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
 import {
+    invokeConnectorArPostIngest,
+    type ArPostIngestHostFn,
+} from "../credit/arPostIngestHost";
+import {
     mapErpRecord,
     type MappingRule,
 } from "../utils/connectorFieldUtils";
@@ -77,6 +81,13 @@ export interface RunStagedExtensionSyncOptions {
      */
     onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
     /**
+     * After Invoice entity completes (all pages + maturity), or as payment-only
+     * fallback when Invoice did not orchestrate, run shared AR post-ingest.
+     * Nest wires the orchestrator; default host-require keeps the package free
+     * of a hard Nest dependency.
+     */
+    onArPostIngest?: ArPostIngestHostFn;
+    /**
      * Backfill cutover: Invoice/Payment $filter by created date (IVDATE/PAYDATE).
      * Customers and contacts still pull full history.
      */
@@ -114,6 +125,12 @@ export interface RunStagedExtensionSyncResult {
     };
     cancelled?: boolean;
     error?: string;
+    /**
+     * True when Invoice entity finished and post-Invoice orchestration was
+     * reached (even with zero customers). Used to skip payment-only fallback
+     * so Payment→Invoice syncs do not double-run post-ingest.
+     */
+    invoicePostIngestRan?: boolean;
 }
 
 function emptyStats() {
@@ -330,11 +347,80 @@ export async function runStagedExtensionSync(
     const cutover = options.pullCreatedOnOrAfter === true;
     const entitySets = parseEntitySetsMap(options.entitySets);
     const arAffectedCustomerIds = new Set<number>();
+    const arAffectedInvoiceIds = new Set<number>();
+    const arAffectedPaymentIds = new Set<number>();
+    const paymentAffectedCustomerIds = new Set<number>();
+    /** Recon debit IVNUMs queued during Payment transform for virtual close. */
+    const pendingInvoiceCloses = new Set<string>();
+    /** Helam offset-pair invoice numbers (original + cancel) for stamp-close. */
+    const pendingHelamOffsetCloses = new Set<string>();
+    let invoicePostIngestRan = false;
+
+    const flushExtensionPendingCloses = async (label: string) => {
+        if (
+            (pendingInvoiceCloses.size === 0 &&
+                pendingHelamOffsetCloses.size === 0) ||
+            !options.extension.flushPendingInvoiceCloses
+        ) {
+            return;
+        }
+        try {
+            const pendingNumbers = Array.from(pendingInvoiceCloses);
+            const helamOffsetNumbers = Array.from(pendingHelamOffsetCloses);
+            const flushResult =
+                await options.extension.flushPendingInvoiceCloses({
+                    prisma: options.prisma,
+                    accountId: options.accountId,
+                    userId: options.userId,
+                    invoiceNumbers: pendingNumbers,
+                    helamOffsetInvoiceNumbers: helamOffsetNumbers,
+                });
+            for (const invoiceId of flushResult.closedIds) {
+                arAffectedInvoiceIds.add(invoiceId);
+            }
+            for (const customerId of flushResult.customerIds ?? []) {
+                arAffectedCustomerIds.add(customerId);
+            }
+            pendingInvoiceCloses.clear();
+            pendingHelamOffsetCloses.clear();
+            log(
+                `Extension pending invoice closes (${label}): ${flushResult.closedIds.length} settled (${pendingNumbers.length} virtual, ${helamOffsetNumbers.length} Helam offset)`
+            );
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Pending invoice close flush failed";
+            log(
+                `Extension pending invoice closes failed (${label}): ${message}`
+            );
+        }
+    };
 
     const finishWithBalances = async (
         result: RunStagedExtensionSyncResult
     ): Promise<RunStagedExtensionSyncResult> => {
         if (!dryRun) {
+            await flushExtensionPendingCloses("finalize");
+            // Payment-only (or Invoice-not-orchestrated) fallback: same
+            // orchestrator as post-Invoice, including deferred maturity.
+            // Skip when Invoice already ran post-ingest in this sync.
+            if (
+                !result.cancelled &&
+                !invoicePostIngestRan &&
+                paymentAffectedCustomerIds.size > 0
+            ) {
+                await invokeConnectorArPostIngest({
+                    accountId: options.accountId,
+                    customerIds: Array.from(paymentAffectedCustomerIds),
+                    invoiceEntityIds: [],
+                    paymentEntityIds: Array.from(arAffectedPaymentIds),
+                    prisma: options.prisma,
+                    onArPostIngest: options.onArPostIngest,
+                    log,
+                    runMaturity: true,
+                });
+            }
             await finalizeCustomerBalances(
                 arAffectedCustomerIds,
                 options.prisma,
@@ -342,7 +428,7 @@ export async function runStagedExtensionSync(
                 log
             );
         }
-        return result;
+        return { ...result, invoicePostIngestRan };
     };
 
     for (const window of options.windows) {
@@ -476,6 +562,11 @@ export async function runStagedExtensionSync(
                             window,
                             batch: { [entityType]: mappedPage },
                             extension_config: options.extensionConfig,
+                            prisma: dryRun ? undefined : options.prisma,
+                            userId: options.userId,
+                            dryRun,
+                            pendingInvoiceCloses,
+                            pendingHelamOffsetCloses,
                         });
                         mergeBatch(previewBatch, afterPlugin);
                         mergeBatch(windowBatch, afterPlugin);
@@ -542,6 +633,16 @@ export async function runStagedExtensionSync(
                         ) {
                             for (const id of importResult.affectedCustomerIds) {
                                 arAffectedCustomerIds.add(id);
+                                if (entityType === "Payment") {
+                                    paymentAffectedCustomerIds.add(id);
+                                }
+                            }
+                            for (const id of importResult.entityIds ?? []) {
+                                if (entityType === "Invoice") {
+                                    arAffectedInvoiceIds.add(id);
+                                } else {
+                                    arAffectedPaymentIds.add(id);
+                                }
                             }
                         }
                         log(
@@ -673,6 +774,26 @@ export async function runStagedExtensionSync(
                     emitProgress();
                     log(`Invoice entity maturity failed: ${message}`);
                 }
+
+                if (
+                    pendingInvoiceCloses.size > 0 ||
+                    pendingHelamOffsetCloses.size > 0
+                ) {
+                    await flushExtensionPendingCloses("after Invoice");
+                }
+
+                // Once after all Invoice pages + maturity, before Contact.
+                invoicePostIngestRan = true;
+                await invokeConnectorArPostIngest({
+                    accountId: options.accountId,
+                    customerIds: Array.from(arAffectedCustomerIds),
+                    invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                    paymentEntityIds: Array.from(arAffectedPaymentIds),
+                    prisma: options.prisma,
+                    onArPostIngest: options.onArPostIngest,
+                    log,
+                    runMaturity: false,
+                });
             }
         }
 

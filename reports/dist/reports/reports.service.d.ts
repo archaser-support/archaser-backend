@@ -256,10 +256,17 @@ export declare class ReportsService {
         last_run_at: Date | null;
         next_run_at: Date | null;
     }>;
-    syncSystem(user: JwtPayload): Promise<{
-        success: boolean;
-        synced: number;
-        message: string;
+    /**
+     * Copy selected system reports from master account 10013 onto every other
+     * active account (match by unique_name). Used by "Sync to all accounts".
+     */
+    syncSystem(user: JwtPayload, body?: {
+        reportIds?: number[];
+    }): Promise<{
+        syncedReports: number;
+        targetAccounts: number;
+        created: number;
+        updated: number;
     }>;
     private resolveDefaultView;
     private assertListPermission;
