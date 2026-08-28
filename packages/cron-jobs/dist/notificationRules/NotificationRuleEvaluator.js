@@ -1,7 +1,18 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotificationRuleEvaluator = exports.PrismaNotificationRuleEvaluatorProvider = void 0;
+exports.actionWindowInvoiceWhere = actionWindowInvoiceWhere;
 const NotificationRuleSetService_1 = require("./NotificationRuleSetService");
+/** Candidate where for reporting action-window notifications (excludes credit notes). */
+function actionWindowInvoiceWhere(accountId) {
+    return {
+        account_id: accountId,
+        status: { in: ["Due", "Overdue"] },
+        target_reporting_date: { not: null },
+        actual_reporting_date: null,
+        amount: { gte: 0 },
+    };
+}
 function utcDateOnly(value) {
     return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
 }
@@ -127,6 +138,7 @@ class PrismaNotificationRuleEvaluatorProvider {
             where: {
                 account_id: accountId,
                 status: { in: ["Due", "Overdue"] },
+                amount: { gte: 0 },
                 OR: [
                     { ctv_payment_term: true },
                     { ctv_customer_overdue_mep: true },
@@ -154,12 +166,7 @@ class PrismaNotificationRuleEvaluatorProvider {
     async getActionWindowInvoices(accountId) {
         return this.prisma.invoice
             .findMany({
-            where: {
-                account_id: accountId,
-                status: { in: ["Due", "Overdue"] },
-                target_reporting_date: { not: null },
-                actual_reporting_date: null,
-            },
+            where: actionWindowInvoiceWhere(accountId),
             select: {
                 id: true,
                 customer_id: true,

@@ -7,6 +7,7 @@ import {
     computeCustomerOverdueBlock,
     computeInvoiceInsuranceRowData,
     computeLimitExcessOverEffective,
+    isNegativeInvoiceAmount,
 } from "./invoiceInsuranceFields";
 import { computeInvoiceLineOpenArInAccountCurrency } from "./openReceivableByCustomerCurrency";
 
@@ -181,6 +182,9 @@ export function asOfCustomerOverdueBlockAt(
         if (classifyAsOfOpenStatus(line.dueDate, atDate) !== "Overdue") {
             continue;
         }
+        if (isNegativeInvoiceAmount(line.amount)) {
+            continue;
+        }
         if (!line.dueDate) {
             continue;
         }
@@ -216,6 +220,7 @@ export function overlayAsOfTermsFlagsOnLine(
         status: asOfStatus as invoice_status,
         invoice_date: line.invoiceDate,
         due_date: line.dueDate,
+        amount: line.amount,
         actual_reporting_date: line.actualReportingDate ?? null,
         customer: {
             reporting_days: terms.reportingDays,
@@ -343,6 +348,9 @@ export function computeAsOfOpenInvoiceLine(
 }
 
 function isTermsBreachLine(line: AsOfOpenInvoiceLine): boolean {
+    if (isNegativeInvoiceAmount(line.amount)) {
+        return false;
+    }
     return (
         line.reportingBreach ||
         line.ctvPaymentTerm ||

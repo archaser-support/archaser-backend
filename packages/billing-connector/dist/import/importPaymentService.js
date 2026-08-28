@@ -398,6 +398,8 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
                     message: "import.results.paymentSkipped",
                 });
                 queueAfterPaymentLinked(winner, invoice.id);
+                // Recon force-paid / virtual close still need a recalc pass.
+                markRecalc(invoice.id, normalizeNegative);
                 continue;
             }
             updates.push({
@@ -505,7 +507,7 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
     }
     if (extension?.afterPaymentLinked &&
         afterLinkCandidates.length > 0) {
-        const { invoiceIdsToRecalc: extensionRecalcIds } = await extension.afterPaymentLinked({
+        const { invoiceIdsToRecalc: extensionRecalcIds, invoiceIdsSkipRecalc: extensionSkipIds, } = await extension.afterPaymentLinked({
             prisma,
             accountId,
             userId,
@@ -513,6 +515,9 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
         });
         for (const invoiceId of extensionRecalcIds) {
             markRecalc(invoiceId);
+        }
+        for (const invoiceId of extensionSkipIds ?? []) {
+            invoiceIdsToRecalc.delete(invoiceId);
         }
     }
     await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoicesFromLinkedPayments)(prisma, invoiceIdsToRecalc);
