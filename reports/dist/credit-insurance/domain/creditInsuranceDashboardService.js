@@ -176,7 +176,7 @@ function overdueOrderBy(sortField, sortDirection) {
 function dashboardCapacityGapFromStored(c) {
     return (0, policyGapAmounts_1.storedCapacityGapAmount)(c);
 }
-function capacityGapForCustomerAtRisk(c, openAr, _useInvoiceSnapshots, _invoiceGapByCustomerPolicy) {
+function capacityGapForCustomerAtRisk(c, _useInvoiceSnapshots, _invoiceGapByCustomerPolicy) {
     return dashboardCapacityGapFromStored(c);
 }
 function creditScoreExpiryOnCalendar(inputDate, months) {
@@ -1094,7 +1094,7 @@ async function getCreditDashboardSummary(accountId, policyId, businessUnitFilter
             grossRiskExposure += ar;
         }
         else {
-            const gap = capacityGapForCustomerAtRisk(c, ar, useInvoiceSnapshotsForAtRisk, invoiceGapByCustomerPolicy);
+            const gap = capacityGapForCustomerAtRisk(c, useInvoiceSnapshotsForAtRisk, invoiceGapByCustomerPolicy);
             const tb = termsBreachForAtRiskByCustomer.get(c.id) ?? 0;
             grossRiskExposure += gap + tb;
             allocated = (0, invoiceInsuranceFields_1.computeCustomerRiskExposure)({
