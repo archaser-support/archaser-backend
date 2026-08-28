@@ -253,7 +253,6 @@ function capacityGapForCustomerAtRisk(
         approved_limit?: Prisma.Decimal | null;
         capacity_gap_amount?: number | null;
     },
-    openAr: number,
     _useInvoiceSnapshots: boolean,
     _invoiceGapByCustomerPolicy: Map<string, number>
 ): number {
@@ -1734,7 +1733,6 @@ export async function getCreditDashboardSummary(
         } else {
             const gap = capacityGapForCustomerAtRisk(
                 c,
-                ar,
                 useInvoiceSnapshotsForAtRisk,
                 invoiceGapByCustomerPolicy
             );
