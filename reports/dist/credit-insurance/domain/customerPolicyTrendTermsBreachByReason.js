@@ -145,6 +145,11 @@ async function getCustomerTermsBreachByReasonSnapshot(accountId, customerId, pol
         });
         const invoices = [];
         for (const line of lines) {
+            if (line.amount != null &&
+                Number.isFinite(Number(line.amount)) &&
+                Number(line.amount) < 0) {
+                continue;
+            }
             const isBreach = line.reportingBreach ||
                 line.ctvPaymentTerm ||
                 line.ctvCustomerOverdueMep ||
@@ -183,6 +188,7 @@ async function getCustomerTermsBreachByReasonSnapshot(accountId, customerId, pol
             account_id: accountId,
             customer_id: customerId,
             status: { in: ["Due", "Overdue"] },
+            amount: { gte: 0 },
             ...(policyId === null
                 ? { policy_id: null }
                 : { policy_id: policyId }),

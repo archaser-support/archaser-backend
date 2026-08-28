@@ -27,6 +27,7 @@ export async function stampInvoiceInsuranceFieldsAsOf(
         select: {
             id: true,
             status: true,
+            amount: true,
             invoice_date: true,
             due_date: true,
             payment_term: true,
@@ -69,6 +70,7 @@ export async function stampInvoiceInsuranceFieldsAsOf(
         status: inv.status as invoice_status,
         invoice_date: inv.invoice_date,
         due_date: inv.due_date,
+        amount: inv.amount,
         actual_reporting_date: inv.actual_reporting_date,
         customer: insuranceCtx,
         explicitPaymentTerm:

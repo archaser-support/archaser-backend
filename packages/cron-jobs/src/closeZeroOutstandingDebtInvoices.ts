@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { INVOICE_PAID_TOLERANCE } from "@archaser/billing-connector";
 import { bindCreditDomain, requireCreditDomainModule } from "./creditDomain";
 import { recalculateCustomerAmountsViaApi } from "./customersDomain";
 
@@ -8,11 +9,11 @@ const INVOICE_STATUS = {
     PAID: "Paid",
 } as const;
 
-const INVOICE_PAID_TOLERANCE = 0.2;
-
 /**
- * Close Due/Overdue invoices with zero (or tolerance) customer outstanding debt,
- * then recalculate customer rollups and refresh credit-insurance fields.
+ * Close Due/Overdue invoices with near-zero customer outstanding debt
+ * (within ±INVOICE_PAID_TOLERANCE), then recalculate customer rollups and
+ * refresh credit-insurance fields. Large negative outstanding (credit notes)
+ * is not treated as Paid.
  */
 export async function closeZeroOutstandingDebtInvoices(
     prisma: PrismaClient
@@ -61,7 +62,10 @@ export async function closeZeroOutstandingDebtInvoices(
 
     const invoices = await prisma.invoice.findMany({
         where: {
-            customer_outstanding_debt: { lte: INVOICE_PAID_TOLERANCE },
+            customer_outstanding_debt: {
+                gte: -INVOICE_PAID_TOLERANCE,
+                lte: INVOICE_PAID_TOLERANCE,
+            },
             status: {
                 in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE],
             },

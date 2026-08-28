@@ -273,6 +273,7 @@ function isLimitExpiringInWindow(c, warnDays) {
 const invoiceTermsBreachWhere = (accountId) => ({
     account_id: accountId,
     status: { in: ["Due", "Overdue"] },
+    amount: { gte: 0 },
     OR: TERMS_BREACH_OR,
 });
 exports.invoiceTermsBreachWhere = invoiceTermsBreachWhere;
@@ -316,6 +317,7 @@ async function getCustomerTermsBreachOutstandingSum(accountId, customerId, optio
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
           AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
           AND (
             i.reporting_breach = true
             OR i.ctv_payment_term = true
@@ -340,11 +342,14 @@ async function getCustomerBreachInvoiceCounts(accountId, customerId, options) {
     const rows = await domain_db_1.prisma.$queryRaw `
         SELECT
             COUNT(*) FILTER (
-                WHERE i.status = 'Overdue' AND i.reporting_breach = true
+                WHERE i.status = 'Overdue'
+                  AND i.reporting_breach = true
+                  AND i.amount >= 0
             )::int AS reporting_breach_count,
             COUNT(*) FILTER (
                 WHERE i.status IN ('Due', 'Overdue')
                   AND i.ctv_customer_overdue_mep = true
+                  AND i.amount >= 0
             )::int AS overdue_block_invoice_count
         FROM "Invoice" i
         WHERE i.account_id = ${accountId}
@@ -375,6 +380,7 @@ async function getCustomerTermsBreachOutstandingSumByCurrency(accountId, custome
           AND i.customer_id = ${customerId}
           AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
           AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
           AND (
             i.reporting_breach = true
             OR i.ctv_payment_term = true
@@ -481,6 +487,7 @@ async function fetchTermsBreachOutstandingByCustomerInAccountCurrency(accountId,
                 collection_status: { in: COLLECTION_LIVE },
             },
             OR: TERMS_BREACH_OR,
+            amount: { gte: 0 },
         }, businessUnitFilter),
         select: {
             customer_id: true,
@@ -536,6 +543,7 @@ async function fetchTermsBreachOutstandingByCustomer(accountId, policyId, exclud
           AND c.collection_status IN ('Active', 'Inactive')
           AND i.policy_id = ${policyId}
           AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
           AND (
             i.reporting_breach = true
             OR i.ctv_payment_term = true
@@ -551,6 +559,7 @@ async function fetchTermsBreachOutstandingByCustomer(accountId, policyId, exclud
         FROM "Invoice" i
         WHERE i.account_id = ${accountId}
           AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
           AND (
             i.reporting_breach = true
             OR i.ctv_payment_term = true
@@ -616,6 +625,7 @@ function reportingCountdownOpenWhere(accountId, windowDays) {
         target_reporting_date: { gte: today, lte: lastInclusive },
         actual_reporting_date: null,
         reporting_breach: false,
+        amount: { gte: 0 },
     };
 }
 async function aggregateTermsBreachForSummary(accountId, policyId, customerScope) {
@@ -624,6 +634,7 @@ async function aggregateTermsBreachForSummary(accountId, policyId, customerScope
             account_id: accountId,
             status: { in: [client_1.invoice_status.Due, client_1.invoice_status.Overdue] },
             OR: TERMS_BREACH_OR,
+            amount: { gte: 0 },
             ...(policyId != null ? { policy_id: policyId } : {}),
         }, customerScope),
         select: {
@@ -742,6 +753,7 @@ async function getCreditDashboardSummary(accountId, policyId, businessUnitFilter
       AND c.collection_status IN ('Active', 'Inactive')
       AND i.policy_id = ${policyId}
       AND i.status IN ('Due', 'Overdue')
+      AND i.amount >= 0
       AND (
         i.reporting_breach = true
         OR i.ctv_payment_term = true
@@ -767,6 +779,7 @@ async function getCreditDashboardSummary(accountId, policyId, businessUnitFilter
      FROM "Invoice" i
     WHERE i.account_id = ${accountId}
       AND i.status IN ('Due', 'Overdue')
+      AND i.amount >= 0
       AND (
         i.reporting_breach = true
         OR i.ctv_payment_term = true
@@ -1019,6 +1032,7 @@ async function getCreditDashboardSummary(accountId, policyId, businessUnitFilter
                 customer_id: { in: insuredCustomerIdsForTermsBreach },
                 status: { in: [client_1.invoice_status.Due, client_1.invoice_status.Overdue] },
                 OR: TERMS_BREACH_OR,
+                amount: { gte: 0 },
                 ...(policyId != null ? { policy_id: policyId } : {}),
             }, businessUnitFilter),
             select: {
@@ -1768,6 +1782,7 @@ function termsBreachReportWhere(accountId, q, scope) {
         account_id: accountId,
         ...statusFilter,
         ...breachFilter,
+        amount: { gte: 0 },
     };
     if (!q?.trim()) {
         return {

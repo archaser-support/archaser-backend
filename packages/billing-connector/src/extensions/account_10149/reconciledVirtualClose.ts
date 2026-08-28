@@ -16,6 +16,12 @@ export type ReconciledVirtualCloseCandidate = {
     paymentDate: Date;
 };
 
+export type ReconciledVirtualCloseByNumbersResult = {
+    touchedIds: number[];
+    customerIds: number[];
+    missingNumbers: string[];
+};
+
 type InvoiceCloseRow = {
     id: number;
     amount: number | null;
@@ -50,8 +56,10 @@ function resolveVirtualAmounts(
 }
 
 /**
- * Account 10149: for reconciled receipts, upsert/delete one virtual payment per
- * invoice so shortfall closes. Callers then recalc paid totals.
+ * Account 10149: for reconciled IDG_ARFNCITEMS4 invoices, upsert/delete one
+ * virtual payment per invoice so remaining (full or partial) closes.
+ * Handles positive AR invoices and credit notes (negative net / remaining).
+ * Callers then recalc paid totals.
  */
 export async function applyReconciledVirtualCloses(
     prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">,
@@ -140,7 +148,13 @@ export async function applyReconciledVirtualCloses(
         const remaining = net - realCustomerPaid;
         touchedInvoiceIds.add(candidate.invoiceId);
 
-        if (remaining > INVOICE_PAID_TOLERANCE) {
+        // Positive invoices: remaining > T. Credit notes (negative net): remaining < -T.
+        // Virtual payment equals remaining so net − (real + virtual) ≈ 0 after recalc.
+        const needsVirtual =
+            remaining > INVOICE_PAID_TOLERANCE ||
+            remaining < -INVOICE_PAID_TOLERANCE;
+
+        if (needsVirtual) {
             const amounts = resolveVirtualAmounts(invoice, remaining);
             if (existingVirtual) {
                 updates.push({
@@ -200,4 +214,75 @@ export async function applyReconciledVirtualCloses(
     }
 
     return touchedInvoiceIds;
+}
+
+/**
+ * Resolve invoice numbers from the payment feed and fill virtual shortfall
+ * (full net when no real payments). Caller must recalc paid totals.
+ */
+export async function applyReconciledVirtualClosesForInvoiceNumbers(
+    prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">,
+    accountId: number,
+    invoiceNumbers: string[],
+    userId?: string,
+    paymentDate: Date = new Date()
+): Promise<ReconciledVirtualCloseByNumbersResult> {
+    const unique = Array.from(
+        new Set(
+            invoiceNumbers
+                .map((value) => value.trim())
+                .filter((value) => value.length > 0)
+        )
+    );
+    if (unique.length === 0) {
+        return { touchedIds: [], customerIds: [], missingNumbers: [] };
+    }
+
+    const invoices = await prisma.invoice.findMany({
+        where: {
+            account_id: accountId,
+            invoice_number: { in: unique },
+        },
+        select: {
+            id: true,
+            invoice_number: true,
+            customer_id: true,
+        },
+    });
+
+    const foundNumbers = new Set(
+        invoices
+            .map((row) => row.invoice_number)
+            .filter((value): value is string => Boolean(value))
+    );
+    const missingNumbers = unique.filter((value) => !foundNumbers.has(value));
+    if (invoices.length === 0) {
+        return { touchedIds: [], customerIds: [], missingNumbers };
+    }
+
+    const candidates: ReconciledVirtualCloseCandidate[] = [];
+    const customerIds = new Set<number>();
+    for (const invoice of invoices) {
+        if (invoice.customer_id == null || !invoice.invoice_number) continue;
+        candidates.push({
+            invoiceId: invoice.id,
+            customerId: invoice.customer_id,
+            invoiceNumber: invoice.invoice_number,
+            paymentDate,
+        });
+        customerIds.add(invoice.customer_id);
+    }
+
+    const touched = await applyReconciledVirtualCloses(
+        prisma,
+        accountId,
+        candidates,
+        userId
+    );
+
+    return {
+        touchedIds: [...touched],
+        customerIds: [...customerIds],
+        missingNumbers,
+    };
 }

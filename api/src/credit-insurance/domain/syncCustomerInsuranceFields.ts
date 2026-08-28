@@ -16,7 +16,10 @@ import {
     computeCustomerOutdatedDcl,
     resolveDclApprovedLimitAfterOutdatedRecompute,
 } from "./customerOutdatedDcl";
-import { computeCustomerOverdueBlock } from "./invoiceInsuranceFields";
+import {
+    computeCustomerOverdueBlock,
+    isEligibleForCustomerMepOverdue,
+} from "./invoiceInsuranceFields";
 import { getActiveCustomerPolicyRow } from "./resolveActiveCustomerPolicy";
 import { syncCreditInsuranceGapPipelineForCustomer } from "./syncCreditInsuranceGapPipeline";
 import { syncZeroLimitAlertFlagsForCustomer } from "./syncZeroLimitAlertFlags";
@@ -51,8 +54,12 @@ async function syncCustomerInsuranceFieldsCore(
 
     const [overdueInvoices, customerRow, activePolicy] = await Promise.all([
         dbClient.invoice.findMany({
-            where: { customer_id: customerId, status: "Overdue" },
-            select: { due_date: true },
+            where: {
+                customer_id: customerId,
+                status: "Overdue",
+                OR: [{ amount: null }, { amount: { gte: 0 } }],
+            },
+            select: { due_date: true, amount: true },
         }),
         dbClient.customer.findUnique({
             where: { id: customerId },
@@ -63,6 +70,9 @@ async function syncCustomerInsuranceFieldsCore(
 
     let oldestDue: Date | null = null;
     for (const invoice of overdueInvoices) {
+        if (!isEligibleForCustomerMepOverdue(invoice.amount)) {
+            continue;
+        }
         if (!invoice.due_date) {
             continue;
         }
@@ -197,15 +207,16 @@ export async function syncCustomerInsuranceFields(
         );
     }
 
+    let coreResult: SyncCoreResult;
     if (dbClient) {
-        await syncCustomerInsuranceFieldsCore(
+        coreResult = await syncCustomerInsuranceFieldsCore(
             customerId,
             dbClient,
             validateZeroLimitDate,
             asOfDate
         );
     } else {
-        await prisma.$transaction(async (tx) =>
+        coreResult = await prisma.$transaction(async (tx) =>
             syncCustomerInsuranceFieldsCore(
                 customerId,
                 tx as DbClient,
@@ -219,7 +230,9 @@ export async function syncCustomerInsuranceFields(
         return;
     }
 
-    if (refreshTermsBreachFlags) {
+    const overdueBlockChanged =
+        coreResult.previousBlock !== coreResult.overdueBlock;
+    if (refreshTermsBreachFlags || overdueBlockChanged) {
         const { refreshTermsBreachFlagsForCustomer } = await import(
             "./syncInvoiceReportingBreach"
         );

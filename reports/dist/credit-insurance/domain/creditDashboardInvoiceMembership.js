@@ -45,6 +45,8 @@ function termsBreachMembershipWhere(accountId, options = {}) {
         account_id: accountId,
         ...statusFilter,
         ...breachFilter,
+        // Credit notes (amount < 0) stay out of terms/reporting-breach lists.
+        amount: { gte: 0 },
         Customer: { isNot: null },
         ...(options.policyId != null ? { policy_id: options.policyId } : {}),
         ...(options.customerId != null
@@ -62,6 +64,8 @@ function reportingCountdownMembershipWhere(accountId, windowDays, options = {}) 
         target_reporting_date: { gte: today, lte: lastInclusive },
         actual_reporting_date: null,
         reporting_breach: false,
+        // Credit notes (amount < 0) stay out of reporting countdown.
+        amount: { gte: 0 },
         ...(options.policyId != null ? { policy_id: options.policyId } : {}),
         ...(options.customerId != null
             ? { customer_id: options.customerId }

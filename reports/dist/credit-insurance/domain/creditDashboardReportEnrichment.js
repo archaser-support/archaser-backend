@@ -82,6 +82,7 @@ async function fetchTermsBreachOutstandingByCustomer(accountId, policyId, exclud
           AND c.collection_status IN ('Active', 'Inactive')
           AND i.policy_id = ${policyId}
           AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
           AND (
             i.reporting_breach = true
             OR i.ctv_payment_term = true
@@ -100,6 +101,7 @@ async function fetchTermsBreachOutstandingByCustomer(accountId, policyId, exclud
           AND c.account_id = ${accountId}
           AND c.collection_status IN ('Active', 'Inactive')
           AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
           AND (
             i.reporting_breach = true
             OR i.ctv_payment_term = true

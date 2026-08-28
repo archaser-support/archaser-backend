@@ -7,6 +7,8 @@ export type CustomerDashboardKpiCards = {
     policyUsagePct: number | null;
     activePolicyCount: number;
     termsBreachOutstanding: number;
+    /** Distinct open Due/Overdue invoices with any terms-breach flag (same membership as outstanding). */
+    termsBreachInvoiceCount: number;
     capacityGapAmount: number;
     /** Uninsured exposure: full open AR when excluded from policy, else stored uninsured (0 when outdated DCL). */
     uninsuredAmount: number;
@@ -58,9 +60,14 @@ export type CustomerDashboardKpisResponse = {
  * healthIndex = (compliantExposure / totalReceivables) × 100
  */
 export declare function computeCustomerHealthIndex(totalAr: number, atRiskExposure: number): number;
-export declare function getCustomerTermsBreachCountByReason(accountId: number, customerId: number, policyId?: number): Promise<TermsBreachCountByReason & {
-    other: number;
-}>;
+export type CustomerTermsBreachCountByReasonResult = {
+    distribution: TermsBreachCountByReason & {
+        other: number;
+    };
+    /** Distinct invoices matching the terms-breach outstanding membership. */
+    invoiceCount: number;
+};
+export declare function getCustomerTermsBreachCountByReason(accountId: number, customerId: number, policyId?: number): Promise<CustomerTermsBreachCountByReasonResult>;
 /** Maps raw breach flag counts to distribution; `other` = invoices not covered by known flags. */
 export declare function applyTermsBreachOtherBucket(row: TermsBreachCountByReason & {
     other?: number;

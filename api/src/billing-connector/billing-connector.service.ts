@@ -71,6 +71,9 @@ import {
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
+import { runArPostIngestForCustomers } from "../credit-insurance/domain/arPostIngestOrchestrator";
+import { enqueueRewriteForImport } from "../credit-insurance/domain/asOfRewriteQueue";
+import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
 
 const ADMIN_ACCOUNT_ID = 10013;
 
@@ -821,7 +824,6 @@ export class BillingConnectorApiService {
             executionId,
             mode,
             trigger,
-            syncMode,
             runningSummary,
             onLog,
         } = params;
@@ -844,6 +846,63 @@ export class BillingConnectorApiService {
                 },
                 onCustomerBalancesFinal: async (customerIds) => {
                     await recalculateCustomerAmounts(customerIds, this.db);
+                },
+                onArPostIngest: async (input) => {
+                    bindCreditInsurancePrisma(this.db);
+                    let skipped = false;
+                    let thrown: unknown;
+                    try {
+                        const result = await runArPostIngestForCustomers({
+                            accountId: input.accountId,
+                            customerIds: input.customerIds,
+                            runReplay: input.runReplay === true,
+                            runMaturity: input.runMaturity === true,
+                            ...(input.runProcessOverdue !== undefined
+                                ? {
+                                      runProcessOverdue:
+                                          input.runProcessOverdue,
+                                  }
+                                : {}),
+                            runLiveRefresh: input.runLiveRefresh === true,
+                            enqueueAsOfRewrite:
+                                input.enqueueAsOfRewrite === true,
+                            dryRun: input.dryRun === true,
+                            asOfRewrite: input.asOfRewrite,
+                        });
+                        skipped = result.skipped;
+                    } catch (error) {
+                        skipped = true;
+                        thrown = error;
+                        const message =
+                            error instanceof Error
+                                ? error.message
+                                : String(error);
+                        this.logger.error(
+                            `[account ${accountId}] AR post-ingest failed: ${message}`
+                        );
+                    }
+                    // Collection-only / unexpected throw: still enqueue as-of
+                    // (same as file import complete). Overdue already ran for
+                    // non-CI when the orchestrator returned skipped.
+                    if (
+                        skipped &&
+                        input.enqueueAsOfRewrite &&
+                        input.asOfRewrite
+                    ) {
+                        try {
+                            await enqueueRewriteForImport({
+                                accountId: input.accountId,
+                                importType: input.asOfRewrite.importType,
+                                entityIds: input.asOfRewrite.entityIds,
+                                customerIds: input.customerIds,
+                            });
+                        } catch {
+                            // Best-effort; do not fail sync for as-of enqueue.
+                        }
+                    }
+                    if (thrown) {
+                        throw thrown;
+                    }
                 },
             });
             const completedAt = new Date();

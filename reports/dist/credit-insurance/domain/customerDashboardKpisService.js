@@ -60,6 +60,7 @@ async function getCustomerTermsBreachCountByReason(accountId, customerId, policy
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
           AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
           AND (
             ${policyId ?? null}::int IS NULL
             OR i.policy_id = ${policyId ?? null}
@@ -73,6 +74,7 @@ async function getCustomerTermsBreachCountByReason(accountId, customerId, policy
           )
     `;
     const row = rows[0];
+    const invoiceCount = Math.max(0, Number(row?.c ?? 0));
     const base = {
         reportingBreach: Number(row?.cnt_reporting ?? 0),
         paymentTerm: Number(row?.cnt_payment_term ?? 0),
@@ -80,7 +82,10 @@ async function getCustomerTermsBreachCountByReason(accountId, customerId, policy
         outdatedDcl: Number(row?.cnt_outdated_dcl ?? 0),
         invoiceAfterPolicyEnd: Number(row?.cnt_after_policy_end ?? 0),
     };
-    return applyTermsBreachOtherBucket(base, Number(row?.c ?? 0));
+    return {
+        distribution: applyTermsBreachOtherBucket(base, invoiceCount),
+        invoiceCount,
+    };
 }
 /** One CustomerPolicy row per insurance policy (active row wins). */
 function pickPolicyRowPerInsurancePolicy(rows) {
@@ -384,23 +389,29 @@ async function getCustomerDashboardKpis(accountId, customerId, options) {
     const topUpUsagePct = usageMetrics.topUpUsagePct;
     const effectiveLimit = usageMetrics.effectiveLimit;
     const effectiveUsagePct = usageMetrics.effectiveUsagePct;
-    const [riskExposureByPolicy, rawTermsBreachReasonDistribution] = await Promise.all([
+    const emptyTermsBreachCounts = {
+        distribution: {
+            reportingBreach: 0,
+            paymentTerm: 0,
+            customerOverdueMep: 0,
+            outdatedDcl: 0,
+            invoiceAfterPolicyEnd: 0,
+            other: 0,
+        },
+        invoiceCount: 0,
+    };
+    const [riskExposureByPolicy, termsBreachCounts] = await Promise.all([
         (0, customerPolicyTrendService_1.getCustomerRiskExposureAmountTrendByPolicy)(accountId, customerId, {
             policyId,
             days: options?.days ?? 90,
             termsBreachOutstanding: termsBreachForAtRisk,
         }),
         uncovered
-            ? Promise.resolve({
-                reportingBreach: 0,
-                paymentTerm: 0,
-                customerOverdueMep: 0,
-                outdatedDcl: 0,
-                invoiceAfterPolicyEnd: 0,
-                other: 0,
-            })
+            ? Promise.resolve(emptyTermsBreachCounts)
             : getCustomerTermsBreachCountByReason(accountId, customerId, policyId),
     ]);
+    const rawTermsBreachReasonDistribution = termsBreachCounts.distribution;
+    const termsBreachInvoiceCount = termsBreachCounts.invoiceCount;
     const termsBreachReasonDistribution = isExcludedFromPolicy
         ? {
             ...rawTermsBreachReasonDistribution,
@@ -500,6 +511,7 @@ async function getCustomerDashboardKpis(accountId, customerId, options) {
             policyUsagePct,
             activePolicyCount,
             termsBreachOutstanding,
+            termsBreachInvoiceCount,
             capacityGapAmount,
             uninsuredAmount,
             isExcludedFromPolicy,

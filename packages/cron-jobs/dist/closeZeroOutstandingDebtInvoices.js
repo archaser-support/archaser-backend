@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.closeZeroOutstandingDebtInvoices = closeZeroOutstandingDebtInvoices;
+const billing_connector_1 = require("@archaser/billing-connector");
 const creditDomain_1 = require("./creditDomain");
 const customersDomain_1 = require("./customersDomain");
 const INVOICE_STATUS = {
@@ -8,10 +9,11 @@ const INVOICE_STATUS = {
     OVERDUE: "Overdue",
     PAID: "Paid",
 };
-const INVOICE_PAID_TOLERANCE = 0.2;
 /**
- * Close Due/Overdue invoices with zero (or tolerance) customer outstanding debt,
- * then recalculate customer rollups and refresh credit-insurance fields.
+ * Close Due/Overdue invoices with near-zero customer outstanding debt
+ * (within ±INVOICE_PAID_TOLERANCE), then recalculate customer rollups and
+ * refresh credit-insurance fields. Large negative outstanding (credit notes)
+ * is not treated as Paid.
  */
 async function closeZeroOutstandingDebtInvoices(prisma) {
     const start = Date.now();
@@ -45,7 +47,10 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
     }
     const invoices = await prisma.invoice.findMany({
         where: {
-            customer_outstanding_debt: { lte: INVOICE_PAID_TOLERANCE },
+            customer_outstanding_debt: {
+                gte: -billing_connector_1.INVOICE_PAID_TOLERANCE,
+                lte: billing_connector_1.INVOICE_PAID_TOLERANCE,
+            },
             status: {
                 in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE],
             },

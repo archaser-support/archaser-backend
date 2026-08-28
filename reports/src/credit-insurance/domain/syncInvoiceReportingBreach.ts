@@ -3,9 +3,8 @@ import { prisma } from "../domain-db";
 import { loadEffectiveInsuranceForCustomers } from "./loadEffectiveInsuranceForCustomers";
 import {
     computeCreatedTermsViolationSnapshot,
+    computeInsuranceTargetDates,
     computePaymentTermBreach,
-    computeTargetMepDate,
-    computeTargetReportingDate,
     shouldSetReportingBreach,
     startOfUtcDay,
 } from "./invoiceInsuranceFields";
@@ -39,6 +38,7 @@ export async function syncInvoiceReportingBreach(
         select: {
             id: true,
             status: true,
+            amount: true,
             target_reporting_date: true,
             actual_reporting_date: true,
             reporting_breach: true,
@@ -68,7 +68,8 @@ export async function syncInvoiceReportingBreach(
         inv.status,
         inv.target_reporting_date,
         inv.actual_reporting_date,
-        today
+        today,
+        inv.amount
     );
 
     if (should && !inv.reporting_breach) {
@@ -121,10 +122,12 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             actual_reporting_date: null,
             target_reporting_date: { not: null },
             reporting_breach: false,
+            OR: [{ amount: null }, { amount: { gte: 0 } }],
         },
         select: {
             id: true,
             status: true,
+            amount: true,
             target_reporting_date: true,
         },
     });
@@ -138,7 +141,8 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             inv.status,
             inv.target_reporting_date,
             null,
-            today
+            today,
+            inv.amount
         );
         if (should) {
             await db.invoice.update({
@@ -166,6 +170,7 @@ export async function refreshInsuranceTargetDatesForInvoiceIds(
         where: { id: { in: invoiceIds } },
         select: {
             id: true,
+            amount: true,
             invoice_date: true,
             due_date: true,
             target_reporting_date: true,
@@ -191,24 +196,23 @@ export async function refreshInsuranceTargetDatesForInvoiceIds(
             continue;
         }
         const c = customerById.get(inv.customer_id);
-        const nextReporting = computeTargetReportingDate(
-            inv.due_date,
-            c?.reporting_days ?? null,
-            {
-                invoiceDate: inv.invoice_date,
-                cutoffDayOfMonth: c?.reporting_cutoff_day_of_month ?? null,
-                substituteDayOfMonth: c?.reporting_substitute_day_of_month ?? null,
-            }
-        );
-        const nextMep = computeTargetMepDate(
-            inv.due_date,
-            c?.max_allowed_mep ?? null,
-            {
-                invoiceDate: inv.invoice_date,
-                cutoffDayOfMonth: c?.mep_cutoff_day_of_month ?? null,
-                substituteDayOfMonth: c?.mep_substitute_day_of_month ?? null,
-            }
-        );
+        const { target_reporting_date: nextReporting, target_mep_date: nextMep } =
+            computeInsuranceTargetDates({
+                amount: inv.amount,
+                due_date: inv.due_date,
+                invoice_date: inv.invoice_date,
+                customer: {
+                    reporting_days: c?.reporting_days ?? null,
+                    max_allowed_mep: c?.max_allowed_mep ?? null,
+                    mep_cutoff_day_of_month: c?.mep_cutoff_day_of_month ?? null,
+                    mep_substitute_day_of_month:
+                        c?.mep_substitute_day_of_month ?? null,
+                    reporting_cutoff_day_of_month:
+                        c?.reporting_cutoff_day_of_month ?? null,
+                    reporting_substitute_day_of_month:
+                        c?.reporting_substitute_day_of_month ?? null,
+                },
+            });
         const reportingChanged = !datesEqualCalendarUtc(
             inv.target_reporting_date,
             nextReporting
@@ -220,6 +224,7 @@ export async function refreshInsuranceTargetDatesForInvoiceIds(
         if (!reportingChanged && !mepChanged) {
             continue;
         }
+        // Date-only refresh: update targets only — do not clear reporting_breach.
         await db.invoice.update({
             where: { id: inv.id },
             data: {

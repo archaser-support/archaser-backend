@@ -57,8 +57,12 @@ async function syncCustomerInsuranceFieldsCore(customerId, dbClient, validateZer
     today.setHours(0, 0, 0, 0);
     const [overdueInvoices, customerRow, activePolicy] = await Promise.all([
         dbClient.invoice.findMany({
-            where: { customer_id: customerId, status: "Overdue" },
-            select: { due_date: true },
+            where: {
+                customer_id: customerId,
+                status: "Overdue",
+                OR: [{ amount: null }, { amount: { gte: 0 } }],
+            },
+            select: { due_date: true, amount: true },
         }),
         dbClient.customer.findUnique({
             where: { id: customerId },
@@ -68,6 +72,9 @@ async function syncCustomerInsuranceFieldsCore(customerId, dbClient, validateZer
     ]);
     let oldestDue = null;
     for (const invoice of overdueInvoices) {
+        if (!(0, invoiceInsuranceFields_1.isEligibleForCustomerMepOverdue)(invoice.amount)) {
+            continue;
+        }
         if (!invoice.due_date) {
             continue;
         }
@@ -172,16 +179,18 @@ async function syncCustomerInsuranceFields(customerId, options = {}) {
     if (dbClient && runFollowUpEffects) {
         throw new Error("syncCustomerInsuranceFields follow-up effects require a committed client");
     }
+    let coreResult;
     if (dbClient) {
-        await syncCustomerInsuranceFieldsCore(customerId, dbClient, validateZeroLimitDate, asOfDate);
+        coreResult = await syncCustomerInsuranceFieldsCore(customerId, dbClient, validateZeroLimitDate, asOfDate);
     }
     else {
-        await domain_db_1.prisma.$transaction(async (tx) => syncCustomerInsuranceFieldsCore(customerId, tx, validateZeroLimitDate, asOfDate));
+        coreResult = await domain_db_1.prisma.$transaction(async (tx) => syncCustomerInsuranceFieldsCore(customerId, tx, validateZeroLimitDate, asOfDate));
     }
     if (!runFollowUpEffects) {
         return;
     }
-    if (refreshTermsBreachFlags) {
+    const overdueBlockChanged = coreResult.previousBlock !== coreResult.overdueBlock;
+    if (refreshTermsBreachFlags || overdueBlockChanged) {
         const { refreshTermsBreachFlagsForCustomer } = await Promise.resolve().then(() => __importStar(require("./syncInvoiceReportingBreach")));
         await refreshTermsBreachFlagsForCustomer(customerId);
     }

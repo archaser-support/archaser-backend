@@ -137,10 +137,13 @@ export declare class ReportsController {
     clearUserDefault(user: JwtPayload, context: string): Promise<{
         success: boolean;
     }>;
-    syncSystem(user: JwtPayload): Promise<{
-        success: boolean;
-        synced: number;
-        message: string;
+    syncSystem(user: JwtPayload, body: {
+        reportIds?: number[];
+    }): Promise<{
+        syncedReports: number;
+        targetAccounts: number;
+        created: number;
+        updated: number;
     }>;
 }
 export declare class ReportsByIdController {

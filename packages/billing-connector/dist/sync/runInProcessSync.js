@@ -16,6 +16,7 @@ const connectorSyncCancelRegistry_1 = require("./connectorSyncCancelRegistry");
 const connectorSyncRuntime_1 = require("./connectorSyncRuntime");
 const stagedExtensionSync_1 = require("./stagedExtensionSync");
 const recalculateCustomerAmountsHost_1 = require("../customers/recalculateCustomerAmountsHost");
+const arPostIngestHost_1 = require("../credit/arPostIngestHost");
 const ENTITY_ORDER = [
     "Customer",
     "Payment",
@@ -289,6 +290,7 @@ async function runInProcessSyncBody(options) {
                 onProgress: (liveStats) => emitProgress(options.onProgress, liveStats),
                 shouldCancel: () => isCancelRequested(options),
                 onCustomerBalancesFinal: options.onCustomerBalancesFinal,
+                onArPostIngest: options.onArPostIngest,
                 pullCreatedOnOrAfter: !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,
                 entitySets: connector.entity_sets,
@@ -379,6 +381,10 @@ async function runInProcessSyncBody(options) {
         }
         log("Using standard entity-by-entity path (no extension)");
         const arAffectedCustomerIds = new Set();
+        const arAffectedInvoiceIds = new Set();
+        const arAffectedPaymentIds = new Set();
+        const paymentAffectedCustomerIds = new Set();
+        let invoicePostIngestRan = false;
         for (const entityType of ENTITY_ORDER) {
             if (isCancelRequested(options)) {
                 log("Stopped by operator");
@@ -439,10 +445,34 @@ async function runInProcessSyncBody(options) {
                 if (entityType === "Payment" || entityType === "Invoice") {
                     for (const id of importResult.affectedCustomerIds) {
                         arAffectedCustomerIds.add(id);
+                        if (entityType === "Payment") {
+                            paymentAffectedCustomerIds.add(id);
+                        }
+                    }
+                    for (const id of importResult.entityIds ?? []) {
+                        if (entityType === "Invoice") {
+                            arAffectedInvoiceIds.add(id);
+                        }
+                        else {
+                            arAffectedPaymentIds.add(id);
+                        }
                     }
                 }
                 log(`Imported ${entityType}: ${importResult.success} success, ${importResult.failed} failed`);
                 emitProgress(options.onProgress, stats);
+                if (entityType === "Invoice") {
+                    invoicePostIngestRan = true;
+                    await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
+                        accountId,
+                        customerIds: Array.from(arAffectedCustomerIds),
+                        invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                        paymentEntityIds: Array.from(arAffectedPaymentIds),
+                        prisma,
+                        onArPostIngest: options.onArPostIngest,
+                        log,
+                        runMaturity: false,
+                    });
+                }
                 const maxUpdated = (0, entityImporter_1.extractMaxUpdatedAt)(pullResult.records) ?? new Date();
                 await prisma.connectorSyncState.upsert({
                     where: {
@@ -496,6 +526,19 @@ async function runInProcessSyncBody(options) {
                     },
                 });
             }
+        }
+        if (!invoicePostIngestRan &&
+            paymentAffectedCustomerIds.size > 0) {
+            await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
+                accountId,
+                customerIds: Array.from(paymentAffectedCustomerIds),
+                invoiceEntityIds: [],
+                paymentEntityIds: Array.from(arAffectedPaymentIds),
+                prisma,
+                onArPostIngest: options.onArPostIngest,
+                log,
+                runMaturity: true,
+            });
         }
         await finalizeLegacyCustomerBalances(arAffectedCustomerIds, prisma, options.onCustomerBalancesFinal, log);
         await (0, entityImporter_1.updateAccountLastSyncDate)(prisma, accountId);

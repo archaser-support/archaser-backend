@@ -131,6 +131,9 @@ function asOfCustomerOverdueBlockAt(customerLines, atDate, maxAllowedMep) {
         if (classifyAsOfOpenStatus(line.dueDate, atDate) !== "Overdue") {
             continue;
         }
+        if ((0, invoiceInsuranceFields_1.isNegativeInvoiceAmount)(line.amount)) {
+            continue;
+        }
         if (!line.dueDate) {
             continue;
         }
@@ -156,6 +159,7 @@ function overlayAsOfTermsFlagsOnLine(line, asOfDate, terms, options) {
         status: asOfStatus,
         invoice_date: line.invoiceDate,
         due_date: line.dueDate,
+        amount: line.amount,
         actual_reporting_date: line.actualReportingDate ?? null,
         customer: {
             reporting_days: terms.reportingDays,
@@ -238,6 +242,9 @@ function computeAsOfOpenInvoiceLine(line, asOfDate) {
     };
 }
 function isTermsBreachLine(line) {
+    if ((0, invoiceInsuranceFields_1.isNegativeInvoiceAmount)(line.amount)) {
+        return false;
+    }
     return (line.reportingBreach ||
         line.ctvPaymentTerm ||
         line.ctvCustomerOverdueMep ||
