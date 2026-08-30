@@ -20,6 +20,14 @@ export type TailStepState = {
     processed?: number;
     total?: number;
     error?: string;
+    /** What the step is doing right now, for a sub-line under the bar. */
+    detail?: TailStepDetail;
+};
+export type TailStepDetail = {
+    /** Machine key; the UI owns the wording. */
+    step: string;
+    processed?: number;
+    total?: number;
 };
 export type ConnectorEntityStatSlice = {
     pulled: number;
@@ -29,6 +37,8 @@ export type ConnectorEntityStatSlice = {
     sample_errors?: string[];
     /** Present for `_maturity` while linking / after it finishes. */
     status?: "running" | "done" | "failed";
+    /** Present for tail steps while running. */
+    detail?: TailStepDetail;
 };
 export interface ConnectorSyncRunSummary {
     id: string;

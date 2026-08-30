@@ -20,10 +20,7 @@ export type ArPostIngestHostInput = {
         entityIds: number[];
     };
     /** Live per-customer progress for the sync progress panel. */
-    onProgress?: (progress: {
-        completed: number;
-        total: number;
-    }) => void;
+    onProgress?: (progress: ArPostIngestProgress) => void;
 };
 export type ArPostIngestHostFn = (input: ArPostIngestHostInput) => Promise<void>;
 /**
@@ -44,6 +41,14 @@ export type ArPostIngestOrchestratorFn = (options: ArPostIngestHostInput) => Pro
 export type ArPostIngestProgress = {
     completed: number;
     total: number;
+    /** Which orchestrator step is running (replay, process_overdue, ...). */
+    step?: string;
+    customerId?: number;
+    /** Progress inside that step, e.g. replay events for one customer. */
+    detail?: {
+        processed: number;
+        total: number;
+    };
 };
 export declare function registerArPostIngestOrchestrator(orchestrator: ArPostIngestOrchestratorFn): void;
 export declare function isArPostIngestOrchestratorRegistered(): boolean;
