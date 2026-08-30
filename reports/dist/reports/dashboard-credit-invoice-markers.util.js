@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CREDIT_DASHBOARD_INVOICE_MEMBERSHIP_FILTER_FIELD = void 0;
 exports.parseCreditDashboardInvoiceMembershipValue = parseCreditDashboardInvoiceMembershipValue;
 exports.prepareDashboardCreditInvoiceMarkers = prepareDashboardCreditInvoiceMarkers;
-const creditDashboardInvoiceMembership_1 = require("../credit-insurance/domain/creditDashboardInvoiceMembership");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 exports.CREDIT_DASHBOARD_INVOICE_MEMBERSHIP_FILTER_FIELD = "__credit_dashboard_invoice_membership";
 function parseCreditDashboardInvoiceMembershipValue(value) {
     const raw = value == null ? "" : String(value);
@@ -79,7 +79,7 @@ async function prepareDashboardCreditInvoiceMarkers(filters, options) {
     if (parsed.type === "terms") {
         return {
             filters: stripScopeFilters(rest),
-            primaryWhereExtras: (0, creditDashboardInvoiceMembership_1.termsBreachMembershipWhere)(options.accountId, {
+            primaryWhereExtras: (0, credit_insurance_domain_1.termsBreachMembershipWhere)(options.accountId, {
                 termsBreachReason: parsed.termsBreachReason,
                 termsOverdueOnly: parsed.termsOverdueOnly,
                 policyId,
@@ -88,15 +88,15 @@ async function prepareDashboardCreditInvoiceMarkers(filters, options) {
         };
     }
     if (parsed.type === "reporting") {
-        const windowDays = await (0, creditDashboardInvoiceMembership_1.resolveReportingCountdownWindowDays)(options.accountId);
+        const windowDays = await (0, credit_insurance_domain_1.resolveReportingCountdownWindowDays)(options.accountId);
         return {
             filters: stripScopeFilters(rest),
-            primaryWhereExtras: (0, creditDashboardInvoiceMembership_1.reportingCountdownMembershipWhere)(options.accountId, windowDays, { policyId, customerId }),
+            primaryWhereExtras: (0, credit_insurance_domain_1.reportingCountdownMembershipWhere)(options.accountId, windowDays, { policyId, customerId }),
         };
     }
     return {
         filters: stripScopeFilters(rest),
-        primaryWhereExtras: (0, creditDashboardInvoiceMembership_1.reportedInvoicesMembershipWhere)(options.accountId, {
+        primaryWhereExtras: (0, credit_insurance_domain_1.reportedInvoicesMembershipWhere)(options.accountId, {
             policyId,
             customerId,
         }),

@@ -23,8 +23,10 @@ import {
     computeNextRunAt,
     executeNamedCronJob,
     recordCronJobRun,
+    runArPostIngestForCustomers,
     type CronJobResult,
 } from "@archaser/cron-jobs";
+import { registerArPostIngestOrchestrator } from "@archaser/billing-connector";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
 
@@ -46,6 +48,14 @@ class WorkerRuntimeService implements OnModuleDestroy {
     constructor(private readonly config: ConfigService) {}
 
     async start(): Promise<void> {
+        // `syncDueBillingConnectors` (billing sync dispatch cron) reaches
+        // billing-connector's no-callback fallback, which calls the registered
+        // orchestrator. Without this it would log "orchestrator is not
+        // registered" and post-ingest AR refresh would stop in this process.
+        registerArPostIngestOrchestrator((options) =>
+            runArPostIngestForCustomers(options)
+        );
+
         collectDefaultMetrics({
             register: this.register,
             prefix: "archaser_worker_",

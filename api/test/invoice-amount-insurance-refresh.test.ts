@@ -1,16 +1,21 @@
 import { InvoicesService } from "../src/invoices/invoices.service";
 import { ImportService } from "../src/import/import.service";
 import { importMappedEntityBatch } from "@archaser/billing-connector";
-import { refreshInsuranceTargetDatesForInvoiceIds } from "../src/credit-insurance/domain/syncInvoiceReportingBreach";
-import { loadEffectiveInsuranceForCustomers } from "../src/credit-insurance/domain/loadEffectiveInsuranceForCustomers";
+import {
+    loadEffectiveInsuranceForCustomers,
+    refreshInsuranceTargetDatesForInvoiceIds,
+} from "@archaser/credit-insurance-domain";
 
 jest.mock("@archaser/billing-connector", () => ({
     importMappedEntityBatch: jest.fn(),
 }));
 
-jest.mock("../src/credit-insurance/domain/syncInvoiceReportingBreach", () => {
+// Mock the shared package's internal modules, not its entry point, so the real
+// implementation under test still resolves the mocked loader through its own
+// relative import.
+jest.mock("../../packages/credit-insurance-domain/src/credit-insurance/domain/syncInvoiceReportingBreach", () => {
     const actual = jest.requireActual(
-        "../src/credit-insurance/domain/syncInvoiceReportingBreach"
+        "../../packages/credit-insurance-domain/src/credit-insurance/domain/syncInvoiceReportingBreach"
     );
     return {
         ...actual,
@@ -18,7 +23,7 @@ jest.mock("../src/credit-insurance/domain/syncInvoiceReportingBreach", () => {
     };
 });
 
-jest.mock("../src/credit-insurance/domain/loadEffectiveInsuranceForCustomers", () => ({
+jest.mock("../../packages/credit-insurance-domain/src/credit-insurance/domain/loadEffectiveInsuranceForCustomers", () => ({
     loadEffectiveInsuranceForCustomers: jest.fn(),
 }));
 
@@ -139,7 +144,7 @@ describe("invoice amount update — insurance target refresh", () => {
 describe("refreshInsuranceTargetDatesForInvoiceIds — amount sign flip", () => {
     const { refreshInsuranceTargetDatesForInvoiceIds: refreshReal } =
         jest.requireActual(
-            "../src/credit-insurance/domain/syncInvoiceReportingBreach"
+            "../../packages/credit-insurance-domain/src/credit-insurance/domain/syncInvoiceReportingBreach"
         ) as {
             refreshInsuranceTargetDatesForInvoiceIds: (
                 ids: number[],

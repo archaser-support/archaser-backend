@@ -1,4 +1,4 @@
-import { isPrimaryPolicyAssignable } from "./insurancePolicyLifecycle";
+import { isPrimaryPolicyAssignable } from "@archaser/credit-insurance-domain";
 
 /** Parent of a TopUp policy must be assignable Primary (Active and in term). */
 export function isEligibleTopUpParentPolicy(

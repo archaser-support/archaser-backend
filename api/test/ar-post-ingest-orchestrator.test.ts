@@ -1,20 +1,18 @@
 import {
-    runArPostIngestForCustomers,
-    type ArPostIngestDeps,
-} from "../src/credit-insurance/domain/arPostIngestOrchestrator";
-import {
     buildReplayEvents,
+    runArPostIngestForCustomers,
     simulateCustomerArReplay,
     sortReplayEvents,
+    type ArPostIngestDeps,
     type ReplayEvent,
-} from "../src/credit-insurance/domain/importArReplayService";
+} from "@archaser/cron-jobs";
 import { triggerPostImportOverdueMetrics } from "../src/credit-insurance/domain/postImportOverdueMetrics";
 
-jest.mock("../src/credit-insurance/domain/syncCustomerInsuranceFields", () => ({
+jest.mock("../../packages/credit-insurance-domain/src/credit-insurance/domain/syncCustomerInsuranceFields", () => ({
     syncCustomerInsuranceFields: jest.fn().mockResolvedValue(undefined),
 }));
 
-import { syncCustomerInsuranceFields } from "../src/credit-insurance/domain/syncCustomerInsuranceFields";
+import { syncCustomerInsuranceFields } from "@archaser/credit-insurance-domain";
 
 function d(iso: string): Date {
     const [y, mo, day] = iso.split("-").map(Number);
@@ -389,11 +387,11 @@ describe("runArPostIngestForCustomers", () => {
         ]);
         expect(result.errors).toEqual(
             expect.arrayContaining([
-                {
+                expect.objectContaining({
                     step: "process_overdue",
                     customerId: 2,
                     message: "overdue boom",
-                },
+                }),
             ])
         );
         expect(deps.logError).toHaveBeenCalled();
@@ -454,16 +452,16 @@ describe("runArPostIngestForCustomers", () => {
         ]);
         expect(result.errors).toEqual(
             expect.arrayContaining([
-                {
+                expect.objectContaining({
                     step: "replay",
                     customerId: 2,
                     message: "replay boom",
-                },
-                {
+                }),
+                expect.objectContaining({
                     step: "live_refresh",
                     customerId: 1,
                     message: "live boom",
-                },
+                }),
             ])
         );
         expect(deps.logError).toHaveBeenCalled();

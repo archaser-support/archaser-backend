@@ -23,15 +23,15 @@ import {
     OPERATION_DASHBOARD_CONTEXTS,
     RELATION_FROM_PRIMARY,
 } from "./report.constants";
-import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
 import {
+    bindCreditInsurancePrisma,
     enrichCreditDashboardCustomerRows,
     fetchTopUpExpiringReportAsCustomerRows,
+    getLimitWarningReport,
     isCreditDashboardEnrichedSortField,
     reportConfigNeedsCreditDashboardEnrichment,
     sortCreditDashboardEnrichedRows,
-} from "../credit-insurance/domain/creditDashboardReportEnrichment";
-import { getLimitWarningReport } from "../credit-insurance/domain/creditInsuranceDashboardService";
+} from "@archaser/credit-insurance-domain";
 import { prepareDashboardActivityMarkers } from "./dashboard-activity-markers.util";
 import { prepareDashboardCreditCustomerMarkers } from "./dashboard-credit-customer-markers.util";
 import { prepareDashboardCreditInvoiceMarkers } from "./dashboard-credit-invoice-markers.util";
@@ -44,7 +44,7 @@ import {
     extractCustomerPolicyReportField,
     isCustomerPolicyBackedReportField,
     mergeActiveCustomerPolicySelect,
-} from "./report-customer-policy-fields.util";
+} from "@archaser/credit-insurance-domain";
 import {
     attachLinkingIds,
     getFieldLinkMetadata,

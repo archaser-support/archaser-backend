@@ -1,5 +1,10 @@
 import { Prisma, activity_status, type PrismaClient } from "@prisma/client";
-import { bindCreditDomain, requireCreditDomainModule } from "./creditDomain";
+import {
+    bindCreditInsurancePrisma,
+    runInsurancePolicyStatusMaintenance,
+    sweepReportingBreachForOverdueInvoiceIds,
+    syncCustomerInsuranceFields,
+} from "@archaser/credit-insurance-domain";
 
 const CUSTOMER_CHUNK = 2000;
 const INVOICE_REPORTING_BREACH_CHUNK = 2000;
@@ -51,26 +56,7 @@ export async function computeCustomerOverdueMetrics(
     durationMs: number;
 }> {
     const start = Date.now();
-    bindCreditDomain(prisma);
-
-    const syncMod = requireCreditDomainModule<{
-        syncCustomerInsuranceFields: (customerId: number) => Promise<unknown>;
-    }>("domain/syncCustomerInsuranceFields.js");
-    const breachMod = requireCreditDomainModule<{
-        sweepReportingBreachForOverdueInvoiceIds: (
-            invoiceIds: number[],
-            db?: PrismaClient
-        ) => Promise<number>;
-    }>("domain/syncInvoiceReportingBreach.js");
-    const statusMod = requireCreditDomainModule<{
-        runInsurancePolicyStatusMaintenance: () => Promise<{
-            policiesDeactivated: number;
-            policiesPrematureDeactivated: number;
-            policiesActivated: number;
-            topUpsDeactivated: number;
-            topUpsActivated: number;
-        }>;
-    }>("domain/insurancePolicyStatusCron.js");
+    bindCreditInsurancePrisma(prisma);
 
     let customersSynced = 0;
     let limitExpirationsProcessed = 0;
@@ -104,7 +90,7 @@ export async function computeCustomerOverdueMetrics(
         lastCustomerId = lastId;
 
         for (const row of chunk) {
-            await syncMod.syncCustomerInsuranceFields(row.id);
+            await syncCustomerInsuranceFields(row.id);
             customersSynced += 1;
         }
     }
@@ -142,7 +128,7 @@ export async function computeCustomerOverdueMetrics(
         lastInvoiceId = lastId;
 
         reportingBreachesPromoted +=
-            await breachMod.sweepReportingBreachForOverdueInvoiceIds(
+            await sweepReportingBreachForOverdueInvoiceIds(
                 invoiceBatch.map((row) => row.id),
                 prisma
             );
@@ -212,7 +198,7 @@ export async function computeCustomerOverdueMetrics(
         limitExpirationsProcessed += 1;
     }
 
-    const policyStatus = await statusMod.runInsurancePolicyStatusMaintenance();
+    const policyStatus = await runInsurancePolicyStatusMaintenance();
     const durationMs = Date.now() - start;
     const summary = {
         customersSynced,

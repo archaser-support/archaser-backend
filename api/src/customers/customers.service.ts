@@ -10,9 +10,11 @@ import {
 } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
-import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
-import { enqueueAsOfRewrite } from "../credit-insurance/domain/asOfRewriteQueue";
-import { resolveCustomerHeaderOpenArAmounts } from "../credit-insurance/domain/openReceivableByCustomerCurrency";
+import {
+    bindCreditInsurancePrisma,
+    enqueueAsOfRewrite,
+    resolveCustomerHeaderOpenArAmounts,
+} from "@archaser/credit-insurance-domain";
 import { DatabaseService } from "../database/database.service";
 
 export type CustomersListQuery = {
