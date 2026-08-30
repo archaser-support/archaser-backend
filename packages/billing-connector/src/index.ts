@@ -214,8 +214,13 @@ export {
     runArPostIngestViaHost,
     invokeConnectorArPostIngest,
     refreshInsuranceTargetDatesViaHost,
+    registerArPostIngestOrchestrator,
+    isArPostIngestOrchestratorRegistered,
+    resetArPostIngestOrchestratorForTests,
     type ArPostIngestHostFn,
     type ArPostIngestHostInput,
+    type ArPostIngestOrchestratorFn,
+    type ArPostIngestOrchestratorResult,
 } from "./credit/arPostIngestHost";
 
 export {

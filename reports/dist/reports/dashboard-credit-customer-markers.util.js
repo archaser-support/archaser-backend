@@ -4,8 +4,7 @@ exports.CREDIT_DASHBOARD_CUSTOMER_MEMBERSHIP_FILTER_FIELD = exports.CREDIT_DASHB
 exports.parseCreditDashboardCustomerScopeValue = parseCreditDashboardCustomerScopeValue;
 exports.parseCreditDashboardCustomerMembershipValue = parseCreditDashboardCustomerMembershipValue;
 exports.prepareDashboardCreditCustomerMarkers = prepareDashboardCreditCustomerMarkers;
-const customerPolicyQueryHelpers_1 = require("../credit-insurance/domain/customerPolicyQueryHelpers");
-const creditDashboardCustomerMembership_1 = require("../credit-insurance/domain/creditDashboardCustomerMembership");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 exports.CREDIT_DASHBOARD_CUSTOMER_SCOPE_FILTER_FIELD = "__credit_dashboard_customer_scope";
 exports.CREDIT_DASHBOARD_CUSTOMER_MEMBERSHIP_FILTER_FIELD = "__credit_dashboard_customer_membership";
 function andWhere(parts) {
@@ -92,7 +91,7 @@ async function prepareDashboardCreditCustomerMarkers(filters, options) {
     if (scopeIndex >= 0) {
         const marker = working[scopeIndex];
         policyId = parseCreditDashboardCustomerScopeValue(marker.value);
-        scopeWhere = (0, customerPolicyQueryHelpers_1.customersScopedForCreditDashboard)(options.accountId, policyId);
+        scopeWhere = (0, credit_insurance_domain_1.customersScopedForCreditDashboard)(options.accountId, policyId);
         working = working.filter((_, i) => i !== scopeIndex);
         const membershipIndex = working.findIndex((f) => f.table === "Customer" &&
             f.field === exports.CREDIT_DASHBOARD_CUSTOMER_MEMBERSHIP_FILTER_FIELD);
@@ -105,7 +104,7 @@ async function prepareDashboardCreditCustomerMarkers(filters, options) {
             }
             working = working.filter((_, i) => i !== membershipIndex);
             if (parsed.type === "zero_limit_warning") {
-                membershipWhere = (0, creditDashboardCustomerMembership_1.zeroLimitWarningMembershipWhere)({
+                membershipWhere = (0, credit_insurance_domain_1.zeroLimitWarningMembershipWhere)({
                     policyId,
                 });
             }
@@ -117,7 +116,7 @@ async function prepareDashboardCreditCustomerMarkers(filters, options) {
                     Number.isFinite(Number(customerIdFilter.value))
                     ? Number(customerIdFilter.value)
                     : undefined;
-                const ids = await (0, creditDashboardCustomerMembership_1.resolveCreditCustomerMembershipIds)(parsed.type, options.accountId, {
+                const ids = await (0, credit_insurance_domain_1.resolveCreditCustomerMembershipIds)(parsed.type, options.accountId, {
                     policyId,
                     customerId,
                     includeNoPolicyExposure: parsed.includeNoPolicyExposure,

@@ -1,5 +1,8 @@
-import { prisma } from "../domain-db";
-import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
+import {
+    creditInsurancePrisma as prisma,
+    resolveMepBreachStartDate,
+    startOfTodayUtc,
+} from "@archaser/credit-insurance-domain";
 
 export type AsOfBackfillStatusValue =
     | "idle"
@@ -204,12 +207,13 @@ async function launchRunner(accountId: number): Promise<void> {
 }
 
 async function runBackfillLoop(accountId: number): Promise<void> {
-    const { syncCustomerPolicyTrendSnapshotForAccount } = await import(
-        "./customerPolicyTrendService"
-    );
-    const { takeCreditDashboardDailySnapshotsForAccount } = await import(
-        "./creditDashboardSnapshotService"
-    );
+    const {
+        syncCustomerPolicyTrendSnapshotForAccount,
+        takeCreditDashboardDailySnapshotsForAccount,
+    } = await import("@archaser/credit-insurance-domain");
+
+    // Resolved once for the whole replay, not per replayed day.
+    const mepBreachStartDate = await resolveMepBreachStartDate(accountId);
 
     for (let guard = 0; guard < 4200; guard += 1) {
         const row = await readRow(accountId);
@@ -235,6 +239,7 @@ async function runBackfillLoop(accountId: number): Promise<void> {
         try {
             await syncCustomerPolicyTrendSnapshotForAccount(accountId, {
                 snapshotDate: day,
+                mepBreachStartDate,
             });
             await takeCreditDashboardDailySnapshotsForAccount(accountId, {
                 snapshotDate: day,

@@ -10,7 +10,10 @@ import {
     PrismaNotificationRuleEvaluatorProvider,
     type NotificationDeliveryIntent,
 } from "./NotificationRuleEvaluator";
-import { requireCreditDomainModule, bindCreditDomain } from "../creditDomain";
+import {
+    bindCreditInsurancePrisma,
+    fetchUncoveredCustomerIdsForAccount,
+} from "@archaser/credit-insurance-domain";
 
 function parseEntityFromDedupKey(
     dedupKey: string
@@ -232,12 +235,7 @@ export class NotificationRuleDeliveryService {
     static async createService(
         prisma: PrismaClient
     ): Promise<NotificationRuleDeliveryService> {
-        bindCreditDomain(prisma);
-        const { fetchUncoveredCustomerIdsForAccount } = requireCreditDomainModule<{
-            fetchUncoveredCustomerIdsForAccount: (
-                accountId: number
-            ) => Promise<Set<number>>;
-        }>("domain/termBreachResolver.js");
+        bindCreditInsurancePrisma(prisma);
 
         return new NotificationRuleDeliveryService(
             prisma,

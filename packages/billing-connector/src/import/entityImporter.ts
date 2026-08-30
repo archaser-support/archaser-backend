@@ -356,9 +356,6 @@ async function importCustomerBatch(
         }
     }
 
-    options?.onLog?.(
-        `Customer import: ${inserts.length} created, ${updates.length} updated, ${result.failed} failed, ${result.skipped} skipped`
-    );
     result.rowResults = rowResults;
     return markCancelled(result, options);
 }
@@ -609,9 +606,6 @@ async function importContactBatch(
         }
     }
 
-    options?.onLog?.(
-        `Contact import: ${inserts.length} created, ${updates.length} updated, ${result.failed} failed, ${result.skipped} skipped`
-    );
     result.rowResults = rowResults;
     return markCancelled(result, options);
 }
@@ -890,10 +884,6 @@ async function importInvoiceBatch(
         }
     }
 
-    options?.onLog?.(
-        `Invoice import: ${inserts.length} created, ${updates.length} updated, ${result.failed} failed, ${result.skipped} skipped`
-    );
-
     const followUpNumbers = sorted.flatMap((invoice) =>
         [invoice.invoice_number, invoice.credit_for_invoice_number].filter(
             (n): n is string => Boolean(n)
@@ -1018,9 +1008,6 @@ export async function importMappedEntityBatch(
         }
     }
 
-    options?.onLog?.(
-        `Payment import: ${result.success} saved, ${result.failed} failed, ${result.skipped} skipped`
-    );
     return markCancelled(result, options);
 }
 

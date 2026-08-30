@@ -10,9 +10,11 @@ import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import { CreditDashboardAccessService } from "./credit-dashboard-access.service";
 import { CreditInsuranceLeavesService } from "./credit-insurance-leaves.service";
-import { bindCreditInsurancePrisma } from "./domain-db";
-import { getCustomerDashboardKpis } from "./domain/customerDashboardKpisService";
-import { getCreditDashboardSummary } from "./domain/creditInsuranceDashboardService";
+import {
+    bindCreditInsurancePrisma,
+    getCreditDashboardSummary,
+    getCustomerDashboardKpis,
+} from "@archaser/credit-insurance-domain";
 
 /**
  * Nest-native credit-insurance KPIs. Returns the UI contract

@@ -6,6 +6,40 @@
 /** Orchestration step after Invoice — links deferred payments to invoices. */
 export const MATURITY_ENTITY_STATS_KEY = "_maturity";
 
+/**
+ * Tail steps after entity ingest. They run while the sync is still RUNNING, so
+ * without their own stat keys the UI froze on the last entity row and gave no
+ * reason for the disabled buttons.
+ */
+export const POST_INGEST_ENTITY_STATS_KEY = "_post_ingest";
+export const PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
+export const BALANCES_ENTITY_STATS_KEY = "_balances";
+
+export const TAIL_STEP_KEYS = [
+    POST_INGEST_ENTITY_STATS_KEY,
+    PENDING_CLOSES_ENTITY_STATS_KEY,
+    BALANCES_ENTITY_STATS_KEY,
+] as const;
+
+export type TailStepKey = (typeof TAIL_STEP_KEYS)[number];
+
+export type TailStepState = {
+    status: "running" | "done" | "failed";
+    /** Customers / rows handled, when the step can count them. */
+    processed?: number;
+    total?: number;
+    error?: string;
+    /** What the step is doing right now, for a sub-line under the bar. */
+    detail?: TailStepDetail;
+};
+
+export type TailStepDetail = {
+    /** Machine key; the UI owns the wording. */
+    step: string;
+    processed?: number;
+    total?: number;
+};
+
 export type ConnectorEntityStatSlice = {
     pulled: number;
     success: number;
@@ -14,6 +48,8 @@ export type ConnectorEntityStatSlice = {
     sample_errors?: string[];
     /** Present for `_maturity` while linking / after it finishes. */
     status?: "running" | "done" | "failed";
+    /** Present for tail steps while running. */
+    detail?: TailStepDetail;
 };
 
 export interface ConnectorSyncRunSummary {
@@ -29,6 +65,7 @@ export interface ConnectorSyncRunSummary {
     error_type: string | null;
     cutover_options?: {
         backfill_start_date: string | null;
+        mep_breach_start_date?: string | null;
         include_older_open_invoices: boolean;
         skip_reporting_breach_on_backfill: boolean;
     } | null;
@@ -54,6 +91,8 @@ export interface ConnectorSyncCounts {
     /** Eligible deferred payments at the start of the linking pass. */
     paymentsLinkTotal?: number;
     paymentLinkError?: string;
+    /** Tail steps (AR post-ingest, pending closes, balance recalculation). */
+    tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
 }
 
 export function entityStatsFromCounts(
@@ -101,6 +140,24 @@ export function entityStatsFromCounts(
             ...(stats.paymentLinkError
                 ? { sample_errors: [stats.paymentLinkError] }
                 : {}),
+        };
+    }
+
+    for (const key of TAIL_STEP_KEYS) {
+        const step = stats.tailSteps?.[key];
+        if (!step) {
+            continue;
+        }
+        const processed = step.processed ?? 0;
+        const total = step.total ?? processed;
+        entityStats[key] = {
+            pulled: total,
+            success: step.status === "done" ? total : processed,
+            failed: step.status === "failed" ? 1 : 0,
+            skipped: 0,
+            status: step.status,
+            ...(step.detail ? { detail: step.detail } : {}),
+            ...(step.error ? { sample_errors: [step.error] } : {}),
         };
     }
 

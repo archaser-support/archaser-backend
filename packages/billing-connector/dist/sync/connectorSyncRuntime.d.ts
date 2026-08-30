@@ -4,6 +4,23 @@
  */
 /** Orchestration step after Invoice — links deferred payments to invoices. */
 export declare const MATURITY_ENTITY_STATS_KEY = "_maturity";
+/**
+ * Tail steps after entity ingest. They run while the sync is still RUNNING, so
+ * without their own stat keys the UI froze on the last entity row and gave no
+ * reason for the disabled buttons.
+ */
+export declare const POST_INGEST_ENTITY_STATS_KEY = "_post_ingest";
+export declare const PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
+export declare const BALANCES_ENTITY_STATS_KEY = "_balances";
+export declare const TAIL_STEP_KEYS: readonly ["_post_ingest", "_pending_closes", "_balances"];
+export type TailStepKey = (typeof TAIL_STEP_KEYS)[number];
+export type TailStepState = {
+    status: "running" | "done" | "failed";
+    /** Customers / rows handled, when the step can count them. */
+    processed?: number;
+    total?: number;
+    error?: string;
+};
 export type ConnectorEntityStatSlice = {
     pulled: number;
     success: number;
@@ -26,6 +43,7 @@ export interface ConnectorSyncRunSummary {
     error_type: string | null;
     cutover_options?: {
         backfill_start_date: string | null;
+        mep_breach_start_date?: string | null;
         include_older_open_invoices: boolean;
         skip_reporting_breach_on_backfill: boolean;
     } | null;
@@ -49,6 +67,8 @@ export interface ConnectorSyncCounts {
     /** Eligible deferred payments at the start of the linking pass. */
     paymentsLinkTotal?: number;
     paymentLinkError?: string;
+    /** Tail steps (AR post-ingest, pending closes, balance recalculation). */
+    tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
 }
 export declare function entityStatsFromCounts(stats: ConnectorSyncCounts): ConnectorEntityStats;
 export interface RunningConnectorSync {

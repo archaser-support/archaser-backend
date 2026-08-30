@@ -265,7 +265,6 @@ async function importCustomerBatch(prisma, rows, accountId, userId, options) {
             }
         }
     }
-    options?.onLog?.(`Customer import: ${inserts.length} created, ${updates.length} updated, ${result.failed} failed, ${result.skipped} skipped`);
     result.rowResults = rowResults;
     return markCancelled(result, options);
 }
@@ -467,7 +466,6 @@ async function importContactBatch(prisma, rows, accountId, userId, options) {
             }
         }
     }
-    options?.onLog?.(`Contact import: ${inserts.length} created, ${updates.length} updated, ${result.failed} failed, ${result.skipped} skipped`);
     result.rowResults = rowResults;
     return markCancelled(result, options);
 }
@@ -689,7 +687,6 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
             }
         }
     }
-    options?.onLog?.(`Invoice import: ${inserts.length} created, ${updates.length} updated, ${result.failed} failed, ${result.skipped} skipped`);
     const followUpNumbers = sorted.flatMap((invoice) => [invoice.invoice_number, invoice.credit_for_invoice_number].filter((n) => Boolean(n)));
     if (followUpNumbers.length > 0) {
         try {
@@ -778,7 +775,6 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
             }
         }
     }
-    options?.onLog?.(`Payment import: ${result.success} saved, ${result.failed} failed, ${result.skipped} skipped`);
     return markCancelled(result, options);
 }
 async function updateAccountLastSyncDate(prisma, accountId, syncedAt = new Date()) {

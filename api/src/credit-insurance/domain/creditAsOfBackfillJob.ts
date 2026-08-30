@@ -1,10 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 
-import { prisma } from "../domain-db";
 import {
+    creditInsurancePrisma as prisma,
     isAdminBackfillBlockingDrain,
+    resolveMepBreachStartDate,
     resolveRewriteDrainStart,
-} from "./asOfRewriteQueue";
+} from "@archaser/credit-insurance-domain";
 
 type PrismaClientLike = PrismaClient;
 
@@ -172,7 +173,8 @@ const runnersInFlight = new Set<number>();
 /** Generate-click only: keep ignore-reporting-late for this process run / retry. */
 const skipReportingBreachByAccount = new Map<number, boolean>();
 
-type AsOfLines = import("./asOfOpenAr").AsOfOpenInvoiceLine[];
+type AsOfLines =
+    import("@archaser/credit-insurance-domain").AsOfOpenInvoiceLine[];
 
 type BackfillWriters = {
     syncCustomerPolicyTrendSnapshotForAccount: (
@@ -181,6 +183,7 @@ type BackfillWriters = {
             snapshotDate: Date;
             asOfLines?: AsOfLines;
             ignoreReportingBreach?: boolean;
+            mepBreachStartDate?: Date | null;
         }
     ) => Promise<unknown>;
     takeCreditDashboardDailySnapshotsForAccount: (
@@ -204,12 +207,12 @@ async function resolveWriters(
     const syncCpt =
         writers?.syncCustomerPolicyTrendSnapshotForAccount ??
         (
-            await import("./customerPolicyTrendService")
+            await import("@archaser/credit-insurance-domain")
         ).syncCustomerPolicyTrendSnapshotForAccount;
     const takeDashboard =
         writers?.takeCreditDashboardDailySnapshotsForAccount ??
         (
-            await import("./creditDashboardSnapshotService")
+            await import("@archaser/credit-insurance-domain")
         ).takeCreditDashboardDailySnapshotsForAccount;
     return {
         syncCustomerPolicyTrendSnapshotForAccount: syncCpt,
@@ -244,7 +247,7 @@ export async function runCreditAsOfBackfillJob(
             options?.loadAsOfLines ??
             (async (id, asOfDate) => {
                 const { loadAsOfOpenInvoiceCandidates } = await import(
-                    "./asOfOpenAr"
+                    "@archaser/credit-insurance-domain"
                 );
                 return loadAsOfOpenInvoiceCandidates(id, asOfDate, {
                     dbClient: options?.dbClient,
@@ -261,6 +264,12 @@ export async function runCreditAsOfBackfillJob(
         const resumeFrom = resolveRewriteDrainStart(
             job.from_date,
             job.checkpoint_date
+        );
+        // Resolved once for the whole run: the value is locked while backfill
+        // runs, so re-reading it per day would only add connector queries.
+        const mepBreachStartDate = await resolveMepBreachStartDate(
+            accountId,
+            options?.dbClient
         );
         const days = enumerateUtcDaysInclusive(resumeFrom, job.to_date);
         const baseDone = Math.max(
@@ -281,7 +290,12 @@ export async function runCreditAsOfBackfillJob(
                     skipReportingBreachByAccount.get(accountId) !== false;
                 await writers.syncCustomerPolicyTrendSnapshotForAccount(
                     accountId,
-                    { snapshotDate: day, asOfLines, ignoreReportingBreach }
+                    {
+                        snapshotDate: day,
+                        asOfLines,
+                        ignoreReportingBreach,
+                        mepBreachStartDate,
+                    }
                 );
                 await writers.takeCreditDashboardDailySnapshotsForAccount(
                     accountId,

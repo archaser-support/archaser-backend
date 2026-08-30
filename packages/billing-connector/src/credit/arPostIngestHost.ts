@@ -1,9 +1,14 @@
-import * as path from "path";
 import type { PrismaClient } from "@prisma/client";
+import {
+    bindCreditInsurancePrisma,
+    enqueueRewriteForImport,
+    refreshInsuranceTargetDatesForInvoiceIds,
+} from "@archaser/credit-insurance-domain";
 
 /**
  * Args for connector post-ingest (mirrors Nest runArPostIngestForCustomers options).
- * Host callback or require — billing-connector must not hard-depend on Nest.
+ * Host callback or registered orchestrator — billing-connector must not
+ * hard-depend on Nest.
  */
 export type ArPostIngestHostInput = {
     accountId: number;
@@ -20,23 +25,70 @@ export type ArPostIngestHostInput = {
         importType: "Invoice" | "Payment";
         entityIds: number[];
     };
+    /** Live per-customer progress for the sync progress panel. */
+    onProgress?: (progress: ArPostIngestProgress) => void;
 };
 
 export type ArPostIngestHostFn = (
     input: ArPostIngestHostInput
 ) => Promise<void>;
 
-function resolveCreditInsuranceDomainRoot(): string {
-    if (process.env.CREDIT_INSURANCE_DOMAIN_ROOT?.trim()) {
-        return path.resolve(process.env.CREDIT_INSURANCE_DOMAIN_ROOT.trim());
-    }
-    // packages/billing-connector/dist/credit → ../../../api/dist/credit-insurance
-    return path.resolve(__dirname, "../../../api/dist/credit-insurance");
+/**
+ * Result contract of the api service's `runArPostIngestForCustomers`. Only the
+ * fields this package acts on are declared; the orchestrator may return more.
+ */
+export type ArPostIngestOrchestratorResult = {
+    skipped: boolean;
+    /** Per-step failures the orchestrator swallowed so ingest could finish. */
+    errors?: Array<{
+        step: string;
+        customerId?: number;
+        message: string;
+        stack?: string;
+    }>;
+};
+
+export type ArPostIngestOrchestratorFn = (
+    options: ArPostIngestHostInput
+) => Promise<ArPostIngestOrchestratorResult>;
+
+export type ArPostIngestProgress = {
+    completed: number;
+    total: number;
+    /** Which orchestrator step is running (replay, process_overdue, ...). */
+    step?: string;
+    customerId?: number;
+    /** Progress inside that step, e.g. replay events for one customer. */
+    detail?: { processed: number; total: number };
+};
+
+/**
+ * Host port for the AR post-ingest orchestrator.
+ *
+ * The orchestrator lives in `@archaser/cron-jobs`, which depends on this
+ * package, so importing it back would create a cycle. Every process that can
+ * reach the no-callback fallback registers it at startup instead: the api
+ * (`CreditInsuranceModule`), connectors (`AppModule`) and worker (runtime start).
+ */
+let registeredOrchestrator: ArPostIngestOrchestratorFn | undefined;
+
+export function registerArPostIngestOrchestrator(
+    orchestrator: ArPostIngestOrchestratorFn
+): void {
+    registeredOrchestrator = orchestrator;
+}
+
+export function isArPostIngestOrchestratorRegistered(): boolean {
+    return registeredOrchestrator !== undefined;
+}
+
+export function resetArPostIngestOrchestratorForTests(): void {
+    registeredOrchestrator = undefined;
 }
 
 /**
  * Recompute invoice insurance target dates after amount/date upserts.
- * Uses the same Nest credit-insurance refresh as API due-date edits.
+ * Uses the same credit-insurance refresh as API due-date edits.
  */
 export async function refreshInsuranceTargetDatesViaHost(
     invoiceIds: number[],
@@ -45,26 +97,8 @@ export async function refreshInsuranceTargetDatesViaHost(
     if (invoiceIds.length === 0) {
         return 0;
     }
-    const root = resolveCreditInsuranceDomainRoot();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const domainDb = require(path.join(root, "domain-db.js")) as {
-        bindCreditInsurancePrisma: (client: PrismaClient) => void;
-    };
-    domainDb.bindCreditInsurancePrisma(prisma);
-
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const breachMod = require(
-        path.join(root, "domain/syncInvoiceReportingBreach.js")
-    ) as {
-        refreshInsuranceTargetDatesForInvoiceIds: (
-            ids: number[],
-            db?: PrismaClient
-        ) => Promise<number>;
-    };
-    return breachMod.refreshInsuranceTargetDatesForInvoiceIds(
-        invoiceIds,
-        prisma
-    );
+    bindCreditInsurancePrisma(prisma);
+    return refreshInsuranceTargetDatesForInvoiceIds(invoiceIds, prisma);
 }
 
 /**
@@ -75,33 +109,15 @@ export async function runArPostIngestViaHost(
     input: ArPostIngestHostInput,
     prisma: PrismaClient
 ): Promise<void> {
-    const root = resolveCreditInsuranceDomainRoot();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const domainDb = require(path.join(root, "domain-db.js")) as {
-        bindCreditInsurancePrisma: (client: PrismaClient) => void;
-    };
-    domainDb.bindCreditInsurancePrisma(prisma);
+    bindCreditInsurancePrisma(prisma);
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const orch = require(
-        path.join(root, "domain/arPostIngestOrchestrator.js")
-    ) as {
-        runArPostIngestForCustomers: (
-            options: ArPostIngestHostInput
-        ) => Promise<{ skipped: boolean }>;
-    };
+    if (!registeredOrchestrator) {
+        throw new Error(
+            "AR post-ingest orchestrator is not registered. Call registerArPostIngestOrchestrator(fn) during service startup, or pass onArPostIngest to the sync options."
+        );
+    }
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const asOfMod = require(path.join(root, "domain/asOfRewriteQueue.js")) as {
-        enqueueRewriteForImport: (args: {
-            accountId: number;
-            importType: "Invoice" | "Payment";
-            entityIds: number[];
-            customerIds: number[];
-        }) => Promise<void>;
-    };
-
-    const result = await orch.runArPostIngestForCustomers({
+    const result = await registeredOrchestrator({
         accountId: input.accountId,
         customerIds: input.customerIds,
         runReplay: input.runReplay === true,
@@ -114,7 +130,18 @@ export async function runArPostIngestViaHost(
         enqueueAsOfRewrite: input.enqueueAsOfRewrite === true,
         dryRun: input.dryRun === true,
         asOfRewrite: input.asOfRewrite,
+        ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     });
+
+    for (const failure of result.errors ?? []) {
+        console.error("[arPostIngestHost] post-ingest step failed", {
+            accountId: input.accountId,
+            step: failure.step,
+            customerId: failure.customerId,
+            message: failure.message,
+            stack: failure.stack,
+        });
+    }
 
     // Match file-import: collection-only still enqueues as-of rewrite.
     if (
@@ -122,7 +149,7 @@ export async function runArPostIngestViaHost(
         input.enqueueAsOfRewrite === true &&
         input.asOfRewrite
     ) {
-        await asOfMod.enqueueRewriteForImport({
+        await enqueueRewriteForImport({
             accountId: input.accountId,
             importType: input.asOfRewrite.importType,
             entityIds: input.asOfRewrite.entityIds,
@@ -145,6 +172,8 @@ export async function invokeConnectorArPostIngest(params: {
     log: (message: string) => void;
     /** When true (payment-only fallback), run deferred-payment maturity. */
     runMaturity?: boolean;
+    /** Live per-customer progress for the sync progress panel. */
+    onProgress?: (progress: ArPostIngestProgress) => void;
 }): Promise<void> {
     const { customerIds, invoiceEntityIds, paymentEntityIds } = params;
     if (customerIds.length === 0) {
@@ -193,6 +222,7 @@ export async function invokeConnectorArPostIngest(params: {
             runLiveRefresh: true,
             enqueueAsOfRewrite: true,
             asOfRewrite,
+            ...(params.onProgress ? { onProgress: params.onProgress } : {}),
         });
         params.log(
             `AR post-ingest finished for ${customerIds.length} customer(s)`

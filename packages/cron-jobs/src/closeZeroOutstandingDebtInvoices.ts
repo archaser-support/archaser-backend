@@ -1,6 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 import { INVOICE_PAID_TOLERANCE } from "@archaser/billing-connector";
-import { bindCreditDomain, requireCreditDomainModule } from "./creditDomain";
+import {
+    bindCreditInsurancePrisma,
+    syncCustomerInsuranceFields,
+} from "@archaser/credit-insurance-domain";
 import { recalculateCustomerAmountsViaApi } from "./customersDomain";
 
 const INVOICE_STATUS = {
@@ -104,12 +107,9 @@ export async function closeZeroOutstandingDebtInvoices(
 
     await recalculateCustomerAmountsViaApi(customerIds, prisma);
 
-    bindCreditDomain(prisma);
-    const syncMod = requireCreditDomainModule<{
-        syncCustomerInsuranceFields: (customerId: number) => Promise<unknown>;
-    }>("domain/syncCustomerInsuranceFields.js");
+    bindCreditInsurancePrisma(prisma);
     for (const customerId of customerIds) {
-        await syncMod.syncCustomerInsuranceFields(customerId);
+        await syncCustomerInsuranceFields(customerId);
     }
 
     return {

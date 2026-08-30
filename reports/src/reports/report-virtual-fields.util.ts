@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
-import { getCustomerPolicyRow } from "./report-customer-policy-fields.util";
-import { mergeActiveCustomerPolicySelect } from "./report-customer-policy-fields.util";
+import { getCustomerPolicyRow } from "@archaser/credit-insurance-domain";
+import { mergeActiveCustomerPolicySelect } from "@archaser/credit-insurance-domain";
 
 /** Report table name → Prisma DMMF model name. */
 const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {

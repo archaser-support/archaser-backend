@@ -1,9 +1,9 @@
 import { ReportFilterDto } from "./dto/execute-report.dto";
-import { customersScopedForCreditDashboard } from "../credit-insurance/domain/customerPolicyQueryHelpers";
 import {
+    customersScopedForCreditDashboard,
     resolveCreditCustomerMembershipIds,
     zeroLimitWarningMembershipWhere,
-} from "../credit-insurance/domain/creditDashboardCustomerMembership";
+} from "@archaser/credit-insurance-domain";
 
 type PrismaWhere = Record<string, unknown>;
 
