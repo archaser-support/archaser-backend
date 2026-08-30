@@ -40,4 +40,3 @@ export declare function extractMaxUpdatedAt(records: Record<string, unknown>[]):
  * Prisma-native entity upsert for connector sync and manual import.
  */
 export declare function importMappedEntityBatch(prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string, options?: EntityImportBatchOptions): Promise<EntityImportBatchResult>;
-export declare function updateAccountLastSyncDate(prisma: PrismaClient, accountId: number, syncedAt?: Date): Promise<void>;

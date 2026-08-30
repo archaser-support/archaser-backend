@@ -87,6 +87,15 @@ function datePresetToPrisma(op, marker) {
     // Reuse the normal date-string handling (full-day range for equals, etc.).
     return operatorToPrisma(op, resolved);
 }
+/** Coerce an `in` / `not_in` value into a Prisma list filter argument. */
+function toFilterList(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => coerceDateTimeBound(item, "start"));
+    }
+    return String(value ?? "")
+        .split(",")
+        .map((item) => coerceDateTimeBound(item.trim(), "start"));
+}
 /** Map a report filter operator to a Prisma scalar filter object. */
 function operatorToPrisma(operator, value) {
     const op = (operator || "equals").toLowerCase();
@@ -127,14 +136,10 @@ function operatorToPrisma(operator, value) {
             return { startsWith: String(v ?? ""), mode: "insensitive" };
         case "ends_with":
             return { endsWith: String(v ?? ""), mode: "insensitive" };
-        case "in": {
-            const arr = Array.isArray(v)
-                ? v.map((item) => coerceDateTimeBound(item, "start"))
-                : String(v ?? "")
-                    .split(",")
-                    .map((s) => coerceDateTimeBound(s.trim(), "start"));
-            return { in: arr };
-        }
+        case "in":
+            return { in: toFilterList(v) };
+        case "not_in":
+            return { notIn: toFilterList(v) };
         case "is_null":
         case "isnull":
         // FilterBuilder's empty operators carry no user value, so the incoming
@@ -171,6 +176,10 @@ function operatorToPrisma(operator, value) {
 function splitFiltersByTable(filters, primaryTable, options = {}) {
     const primary = {};
     const nested = {};
+    // Computed-field clauses are whole where objects (OR/AND), not per-column
+    // entries, so they are collected separately and merged under AND.
+    const primaryExtras = [];
+    const nestedExtras = {};
     const skip = options.skipFields;
     for (const f of filters) {
         if (!f?.table || !f?.field) {
@@ -181,6 +190,21 @@ function splitFiltersByTable(filters, primaryTable, options = {}) {
         }
         // Never send client marker fields to Prisma.
         if (f.field.startsWith("__")) {
+            continue;
+        }
+        // Computed fields have no column, but some operators can still be
+        // expressed against the columns they are derived from.
+        const computedClause = (0, report_virtual_fields_util_1.computedFieldToPrismaWhere)(f.table, f.field, f.operator, f.value);
+        if (computedClause) {
+            if (f.table === primaryTable) {
+                primaryExtras.push(computedClause);
+            }
+            else {
+                nestedExtras[f.table] = [
+                    ...(nestedExtras[f.table] || []),
+                    computedClause,
+                ];
+            }
             continue;
         }
         const clause = operatorToPrisma(f.operator, f.value);
@@ -207,6 +231,21 @@ function splitFiltersByTable(filters, primaryTable, options = {}) {
             }
             nested[f.table][f.field] = clause;
         }
+    }
+    if (primaryExtras.length) {
+        primary.AND = [
+            ...(Array.isArray(primary.AND) ? primary.AND : []),
+            ...primaryExtras,
+        ];
+    }
+    for (const [table, extras] of Object.entries(nestedExtras)) {
+        if (!nested[table]) {
+            nested[table] = {};
+        }
+        nested[table].AND = [
+            ...(Array.isArray(nested[table].AND) ? nested[table].AND : []),
+            ...extras,
+        ];
     }
     return { primary, nested };
 }

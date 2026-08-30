@@ -4,9 +4,72 @@
  * Usage: node scripts/development/diagnose-capacity-gap.js <customerId>
  */
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
+
+function toCsvValue(value) {
+    if (value == null) {
+        return '';
+    }
+    const text = value instanceof Date ? value.toISOString() : String(value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function writeGapInvoicesCsv(customerId, gapInvoices) {
+    const columns = [
+        'invoice_id',
+        'invoice_number',
+        'status',
+        'invoice_date',
+        'due_date',
+        'customer_currency',
+        'outstanding_debt',
+        'customer_outstanding_debt',
+        'policy_id',
+        'in_capacity_gap',
+        'limit_assessed_amount',
+        'limit_assessed_currency',
+        'limit_assessed_at',
+        'capacity_gap_amount',
+        'capacity_gap_amount_limit',
+        'capacity_gap_amount_date',
+    ];
+
+    const rows = gapInvoices.map((inv) => [
+        inv.id,
+        inv.invoice_number,
+        inv.status,
+        inv.invoice_date,
+        inv.due_date,
+        inv.customer_currency,
+        inv.outstanding_debt,
+        inv.customer_outstanding_debt,
+        inv.policy_id,
+        inv.in_capacity_gap,
+        inv.limit_assessed_amount,
+        inv.limit_assessed_currency,
+        inv.limit_assessed_at,
+        inv.capacity_gap_amount,
+        inv.capacity_gap_amount_limit,
+        inv.capacity_gap_amount_date,
+    ]);
+
+    const outputPath = path.resolve(
+        __dirname,
+        '../../.scratch',
+        `capacity-gap-invoices-${customerId}.csv`
+    );
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(
+        outputPath,
+        [columns.join(','), ...rows.map((r) => r.map(toCsvValue).join(','))].join('\n') + '\n',
+        'utf8'
+    );
+    return outputPath;
+}
 
 async function main() {
     const customerId = Number(process.argv[2] || 4036);
@@ -189,6 +252,17 @@ async function main() {
                 : null,
             capacityGapAmountDate: inv.capacity_gap_amount_date,
         });
+    });
+
+    const gapInvoices = open.filter(
+        (inv) => inv.in_capacity_gap === true || Number(inv.capacity_gap_amount_limit ?? 0) > 0
+    );
+    const csvPath = writeGapInvoicesCsv(customerId, gapInvoices);
+    console.log('[diagnose] Capacity-gap invoice export:', {
+        customerId,
+        gapInvoiceCount: gapInvoices.length,
+        sumGapLimit: gapInvoices.reduce((s, i) => s + Number(i.capacity_gap_amount_limit ?? 0), 0),
+        csvPath,
     });
 }
 
