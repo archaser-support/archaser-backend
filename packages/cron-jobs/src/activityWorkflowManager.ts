@@ -937,8 +937,6 @@ async function generateNextActivities(
         errors: string[];
     }
 ) {
-    const now = new Date();
-
     // Find open collection periods needing next activity
     const whereClause: any = {
         create_next_activity: true,

@@ -16,9 +16,26 @@ export interface ExtensionTransformContext {
     window: ExtensionSyncWindow;
     batch: ExtensionMappedBatch;
     extension_config: Record<string, unknown> | null;
+    /** When set, extension may write (e.g. Helam offset invoice settlement). */
+    prisma?: Pick<PrismaClient, "invoice" | "invoicePayment">;
+    userId?: string;
+    /** Preview / dry-run — no DB writes from the extension. */
+    dryRun?: boolean;
+    /**
+     * Sync-scoped invoice numbers to settle after Invoice ingest when they
+     * were not present yet during Payment transform (Payment-first order).
+     */
+    pendingInvoiceCloses?: Set<string>;
+    /**
+     * Helam offset-pair invoice numbers (original + cancel stamp) to stamp
+     * Paid without virtual/cancel payments after Invoice ingest.
+     */
+    pendingHelamOffsetCloses?: Set<string>;
 }
 export type ExtensionLinkedPayment = {
     payment_method: string | null;
+    /** Import identity / Priority recon key when present (e.g. FRECONNUM|FNCNUM|KLINE). */
+    reference?: string | null;
 };
 export type ExtensionCreditPaymentCloseInput = {
     rawErpRow: Record<string, unknown>;
@@ -55,6 +72,11 @@ export type ExtensionAfterPaymentLinkedContext = {
 export type ExtensionAfterPaymentLinkedResult = {
     /** Invoice ids that need paid-total recalc after the extension ran. */
     invoiceIdsToRecalc: number[];
+    /**
+     * Invoice ids already stamped Paid by the extension — exclude from
+     * payment-sum recalc so totals are not overwritten.
+     */
+    invoiceIdsSkipRecalc?: number[];
 };
 export interface BillingAccountExtension {
     key: string;
@@ -75,6 +97,22 @@ export interface BillingAccountExtension {
      * run account-specific close behavior (e.g. virtual gap payments).
      */
     afterPaymentLinked?(ctx: ExtensionAfterPaymentLinkedContext): ExtensionAfterPaymentLinkedResult | Promise<ExtensionAfterPaymentLinkedResult>;
+    /**
+     * Flush invoice numbers queued during Payment transform (dropped recon
+     * debit lines) after Invoice ingest — virtual fill + paid recalc.
+     * Optional helamOffsetInvoiceNumbers stamp Helam cancel pairs Paid with
+     * no virtual / cancel payment import.
+     */
+    flushPendingInvoiceCloses?(ctx: {
+        prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">;
+        accountId: number;
+        userId?: string;
+        invoiceNumbers: string[];
+        helamOffsetInvoiceNumbers?: string[];
+    }): Promise<{
+        closedIds: number[];
+        customerIds?: number[];
+    }>;
     /**
      * Use absolute payment amounts when closing a credit invoice.
      */

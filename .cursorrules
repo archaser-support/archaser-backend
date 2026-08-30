@@ -96,6 +96,13 @@ Before finalizing any implementation plan (initial draft or after user feedback)
 - Flag cross-cutting rules that affect the plan (translations, styling approval, migration safety).
 - If the scan reveals gaps or better approaches, update the plan before asking the user to approve execution.
 
+### 💬 Agent response length (required)
+- ✅ **Keep chat responses short** — lead with the outcome in 1–3 sentences, then stop.
+- ✅ Add detail only when the user asks for it, or when a decision/risk genuinely needs explaining (then keep it to a few bullets).
+- ❌ No restating the request, no step-by-step narration of tool calls, no summarizing code that was already shown in the diff.
+- ❌ No headers/sections for simple answers; plain prose is enough.
+- ✅ Plans, PRDs, and `.scratch/` issue files are exempt — they stay as detailed as the rules above require.
+
 ### Tooltips
 - ✅ **Always place tooltips below the trigger** — use MUI `placement="bottom"` on every `Tooltip` (including shared helpers like `getRTLTooltipProps`). Do not default to `top`, `left`, or `right` unless the user explicitly requests another placement.
 - ✅ Keep other tooltip props per `.cursor/rules/frontend-tooltips.mdc` (`arrow`, delays, RTL text direction in `PopperProps`).

@@ -11,8 +11,8 @@ exports.applyComputedFieldSelect = applyComputedFieldSelect;
 exports.extractComputedFieldValue = extractComputedFieldValue;
 exports.isComputedReportField = isComputedReportField;
 const client_1 = require("@prisma/client");
-const report_customer_policy_fields_util_1 = require("./report-customer-policy-fields.util");
-const report_customer_policy_fields_util_2 = require("./report-customer-policy-fields.util");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
+const credit_insurance_domain_2 = require("@archaser/credit-insurance-domain");
 /** Report table name → Prisma DMMF model name. */
 const REPORT_TABLE_TO_PRISMA_MODEL = {
     Customer: "Customer",
@@ -186,7 +186,7 @@ function applyComputedFieldSelect(primaryTable, field, select) {
             return true;
         }
         if (field === "limit_expires_in_days") {
-            (0, report_customer_policy_fields_util_2.mergeActiveCustomerPolicySelect)(select, [
+            (0, credit_insurance_domain_2.mergeActiveCustomerPolicySelect)(select, [
                 "approved_limit_expiration_date",
             ]);
             return true;
@@ -232,7 +232,7 @@ function extractComputedFieldValue(primaryTable, field, row) {
             return calculateDaysOverdue(row.oldest_invoice_overdue_date);
         }
         if (field === "limit_expires_in_days") {
-            const policy = (0, report_customer_policy_fields_util_1.getCustomerPolicyRow)(row);
+            const policy = (0, credit_insurance_domain_1.getCustomerPolicyRow)(row);
             return calculateDaysLeft(policy?.approved_limit_expiration_date ?? null);
         }
         if (field === "company_number") {

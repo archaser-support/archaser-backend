@@ -1,5 +1,8 @@
 import type { PrismaClient } from "@prisma/client";
-import { bindCreditDomain, requireCreditDomainModule } from "./creditDomain";
+import {
+    bindCreditInsurancePrisma,
+    syncCustomerInsuranceFields,
+} from "@archaser/credit-insurance-domain";
 import { recalculateCustomerAmountsViaApi } from "./customersDomain";
 
 /**
@@ -85,12 +88,9 @@ export async function fixClosedCollectionData(
         },
     });
 
-    bindCreditDomain(prisma);
-    const syncMod = requireCreditDomainModule<{
-        syncCustomerInsuranceFields: (customerId: number) => Promise<unknown>;
-    }>("domain/syncCustomerInsuranceFields.js");
+    bindCreditInsurancePrisma(prisma);
     for (const affectedCustomerId of affectedCustomerIds) {
-        await syncMod.syncCustomerInsuranceFields(affectedCustomerId);
+        await syncCustomerInsuranceFields(affectedCustomerId);
     }
 
     await recalculateCustomerAmountsViaApi(affectedCustomerIds, prisma);

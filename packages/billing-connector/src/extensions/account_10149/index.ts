@@ -8,9 +8,13 @@ import type {
     ExtensionMappedBatch,
     ExtensionTransformContext,
 } from "../types";
-import { applyReconciledVirtualCloses } from "./reconciledVirtualClose";
+import { applyHelamOffsetStampClosesForInvoiceNumbers } from "./helamOffsetClose";
+import {
+    applyReconciledVirtualCloses,
+    applyReconciledVirtualClosesForInvoiceNumbers,
+} from "./reconciledVirtualClose";
 
-/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon close, Helam cancel payments, credit abs payments. */
+/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp, credit abs payments. */
 export const ACCOUNT_10149_EXTENSION_KEY = "account_10149";
 export const ACCOUNT_10149_ID = 10149;
 export const ILS_CURRENCY_CODE = "ILS";
@@ -124,11 +128,11 @@ export function alignAccount10149PaymentAmountsForInvoice(
         input.invoiceCustomerCurrency
     );
     if (!invoiceCurrency) {
-        return {
+        return absAlignedCancelDebitAmounts(raw, {
             amount: input.amount,
             customer_amount: input.customer_amount,
             customer_currency: input.customer_currency,
-        };
+        });
     }
 
     const code = normalizeAccount10149PaymentCurrency(
@@ -143,26 +147,45 @@ export function alignAccount10149PaymentAmountsForInvoice(
         (input.invoiceCustomerCurrency ?? "").trim() ||
         input.customer_currency;
 
-    if (code5 === invoiceCurrency && amount5 !== null) {
-        return {
-            amount: amount1 ?? input.amount,
-            customer_amount: amount5,
-            customer_currency: invoiceCurrencyRaw,
-        };
-    }
+    const aligned: ExtensionAlignedPaymentAmounts =
+        code5 === invoiceCurrency && amount5 !== null
+            ? {
+                  amount: amount1 ?? input.amount,
+                  customer_amount: amount5,
+                  customer_currency: invoiceCurrencyRaw,
+              }
+            : code === invoiceCurrency && amount1 !== null
+              ? {
+                    amount: amount5 ?? input.amount ?? amount1,
+                    customer_amount: amount1,
+                    customer_currency: invoiceCurrencyRaw,
+                }
+              : {
+                    amount: input.amount,
+                    customer_amount: input.customer_amount,
+                    customer_currency: input.customer_currency,
+                };
 
-    if (code === invoiceCurrency && amount1 !== null) {
-        return {
-            amount: amount5 ?? input.amount ?? amount1,
-            customer_amount: amount1,
-            customer_currency: invoiceCurrencyRaw,
-        };
-    }
+    return absAlignedCancelDebitAmounts(raw, aligned);
+}
 
+/** Keep Helam cancel DEBIT1 from reintroducing a negative customer_amount. */
+function absAlignedCancelDebitAmounts(
+    raw: Record<string, unknown>,
+    aligned: ExtensionAlignedPaymentAmounts
+): ExtensionAlignedPaymentAmounts {
+    const credit1 = toFiniteNumber(raw.CREDIT1) ?? 0;
+    const debit1 = toFiniteNumber(raw.DEBIT1) ?? 0;
+    if (!(credit1 === 0 && debit1 < 0)) {
+        return aligned;
+    }
     return {
-        amount: input.amount,
-        customer_amount: input.customer_amount,
-        customer_currency: input.customer_currency,
+        amount:
+            aligned.amount !== undefined
+                ? Math.abs(aligned.amount)
+                : aligned.amount,
+        customer_amount: Math.abs(aligned.customer_amount),
+        customer_currency: aligned.customer_currency,
     };
 }
 
@@ -189,10 +212,23 @@ function isIdigitalPaymentRow(raw: Record<string, unknown>): boolean {
     return (fncnum != null && fnciref1 != null) || hasFreconnum(raw);
 }
 
+function pickInvoiceNumber(
+    raw: Record<string, unknown>,
+    row: Record<string, unknown>
+): string | null {
+    return (
+        asNonEmptyString(raw.IVNUM) ??
+        asNonEmptyString(row.invoice_number) ??
+        asNonEmptyString(raw.FNCIREF1) ??
+        asNonEmptyString(raw.PAY_INVOICE_NUMBER) ??
+        asNonEmptyString(row.PAY_INVOICE_NUMBER)
+    );
+}
+
 /**
  * Invoice-side AR recon debit: positive DEBIT1, zero CREDIT1.
- * Drop these so they do not double-count vs the receipt.
- * Negative DEBIT1 is a Helam cancel line — keep as a closing payment.
+ * Drop these so they do not double-count vs the receipt; queue IVNUM for
+ * virtual close instead (IDG_ARFNCITEMS4 only contains closed lines).
  */
 export function isAccount10149DebitPaymentRow(
     row: Record<string, unknown>
@@ -205,7 +241,8 @@ export function isAccount10149DebitPaymentRow(
 
 /**
  * Helam (or similar) cancel AR line: negative DEBIT1, zero CREDIT1.
- * Import as a positive payment against FNCIREF1 so the original invoice can close.
+ * Single-invoice cancels (IVNUM === FNCIREF1) still import as payments.
+ * Two-invoice offset stamps (IVNUM ≠ FNCIREF1) are dropped and stamp-closed.
  */
 export function isAccount10149CancelDebitPaymentRow(
     row: Record<string, unknown>
@@ -214,6 +251,58 @@ export function isAccount10149CancelDebitPaymentRow(
     const credit1 = toFiniteNumber(raw.CREDIT1 ?? row.CREDIT1) ?? 0;
     const debit1 = toFiniteNumber(raw.DEBIT1 ?? row.DEBIT1) ?? 0;
     return credit1 === 0 && debit1 < 0;
+}
+
+/**
+ * Helam cancel stamp that offsets a different invoice: IVNUM (cancel doc) ≠
+ * FNCIREF1 (original). Both invoices close each other — no payment, no virtual.
+ */
+export function isAccount10149HelamOffsetCancelRow(
+    row: Record<string, unknown>
+): boolean {
+    if (!isAccount10149CancelDebitPaymentRow(row)) {
+        return false;
+    }
+    const raw = rawRecordOf(row);
+    const merged = { ...row, ...raw };
+    if (!isAccount10149ReconciledClose(merged)) {
+        return false;
+    }
+    const cancelInvoice = asNonEmptyString(raw.IVNUM);
+    const originalInvoice = asNonEmptyString(raw.FNCIREF1);
+    return (
+        cancelInvoice != null &&
+        originalInvoice != null &&
+        cancelInvoice !== originalInvoice
+    );
+}
+
+export type HelamOffsetPairTargets = {
+    /** Original invoice numbers (FNCIREF1). */
+    originals: Set<string>;
+    /** Cancel stamp invoice numbers (IVNUM). */
+    cancels: Set<string>;
+};
+
+/** Scan a payment batch for Helam offset cancel stamps (IVNUM ≠ FNCIREF1). */
+export function collectHelamOffsetPairTargets(
+    payments: Record<string, unknown>[]
+): HelamOffsetPairTargets {
+    const originals = new Set<string>();
+    const cancels = new Set<string>();
+    for (const row of payments) {
+        if (!isAccount10149HelamOffsetCancelRow(row)) {
+            continue;
+        }
+        const raw = rawRecordOf(row);
+        const cancelInvoice = asNonEmptyString(raw.IVNUM);
+        const originalInvoice = asNonEmptyString(raw.FNCIREF1);
+        if (cancelInvoice && originalInvoice) {
+            cancels.add(cancelInvoice);
+            originals.add(originalInvoice);
+        }
+    }
+    return { originals, cancels };
 }
 
 const PAYMENT_AMOUNT_FIELDS = ["amount", "customer_amount"] as const;
@@ -248,22 +337,26 @@ function absCancelPaymentAmounts(
 }
 
 /**
- * Reconciled receipt that should close the linked invoice (D2).
+ * Reconciled IDG_ARFNCITEMS4 line that should settle the linked invoice.
+ * Table only returns closed AR lines — FRECONNUM + invoice + BAL=0 is enough
+ * (receipt CREDIT1≠0, Helam cancel, or invoice-side debit with no cash).
  */
-export function isAccount10149ReconciledReceiptClose(
+export function isAccount10149ReconciledClose(
     rawErpRow: Record<string, unknown>
 ): boolean {
-    const fnciref1 =
+    const invoiceNumber =
+        asNonEmptyString(rawErpRow.IVNUM) ??
         asNonEmptyString(rawErpRow.FNCIREF1) ??
         asNonEmptyString(rawErpRow.PAY_INVOICE_NUMBER);
     const bal = toFiniteNumber(rawErpRow.BAL) ?? 0;
-    const credit1 = toFiniteNumber(rawErpRow.CREDIT1) ?? 0;
-    return (
-        hasFreconnum(rawErpRow) &&
-        fnciref1 != null &&
-        bal === 0 &&
-        credit1 !== 0
-    );
+    return hasFreconnum(rawErpRow) && invoiceNumber != null && bal === 0;
+}
+
+/** @deprecated Use {@link isAccount10149ReconciledClose}. */
+export function isAccount10149ReconciledReceiptClose(
+    rawErpRow: Record<string, unknown>
+): boolean {
+    return isAccount10149ReconciledClose(rawErpRow);
 }
 
 export function shouldNormalizeAccount10149NegativeCreditPayments(
@@ -315,8 +408,32 @@ function transformPaymentRow(
     return rewriteRowCurrencies(row);
 }
 
+/**
+ * Priority credit-note invoice numbers (e.g. CR26100000032) — recon lines for
+ * these are not cash receipts; queue virtual close instead of importing payment.
+ */
+export function isAccount10149CreditInvoiceNumber(
+    invoiceNumber: string | null | undefined
+): boolean {
+    const trimmed = invoiceNumber?.trim() ?? "";
+    return trimmed.length > 0 && /^CR/i.test(trimmed);
+}
+
+/**
+ * Drop invoice-side positive debits and reconciled credit-note (CR*) lines;
+ * queue their IVNUMs for virtual close. Keep normal receipts and single-invoice
+ * Helam cancels (IVNUM === FNCIREF1) for payment import + afterPaymentLinked.
+ * Helam offset stamps (IVNUM ≠ FNCIREF1) drop both sides and stamp-close both
+ * invoices with no virtual payment.
+ */
 export function transformAccount10149Batch(
-    batch: ExtensionMappedBatch
+    batch: ExtensionMappedBatch,
+    options?: {
+        /** Invoice numbers from dropped reconciled debit / CR* lines. */
+        onReconciledInvoiceCloseTargets?: (invoiceNumbers: string[]) => void;
+        /** Original + cancel stamp numbers for Helam offset pair stamp-close. */
+        onHelamOffsetCloseTargets?: (invoiceNumbers: string[]) => void;
+    }
 ): ExtensionMappedBatch {
     const invoices = batch.Invoice;
     const payments = batch.Payment;
@@ -326,12 +443,59 @@ export function transformAccount10149Batch(
             : invoices;
     let nextPayments = payments;
     if (payments && payments.length > 0) {
+        const offsetTargets = collectHelamOffsetPairTargets(payments);
+        const offsetStampNumbers = new Set<string>([
+            ...offsetTargets.originals,
+            ...offsetTargets.cancels,
+        ]);
+        if (offsetStampNumbers.size > 0) {
+            options?.onHelamOffsetCloseTargets?.([...offsetStampNumbers]);
+        }
+
+        const queuedCloseNumbers: string[] = [];
         const kept: Record<string, unknown>[] = [];
         for (const row of payments) {
+            const raw = rawRecordOf(row);
+            const reconciled = isAccount10149ReconciledClose({
+                ...row,
+                ...raw,
+            });
+
+            // Two-invoice Helam offset: drop cancel; stamp both (no payment).
+            if (reconciled && isAccount10149HelamOffsetCancelRow(row)) {
+                continue;
+            }
+
+            const ivnum = pickInvoiceNumber(raw, row);
+
+            // Original debit of an offset pair in this batch: drop, no virtual
+            // (stamp-close handles both sides).
+            if (
+                reconciled &&
+                isAccount10149DebitPaymentRow(row) &&
+                ivnum != null &&
+                offsetTargets.originals.has(ivnum)
+            ) {
+                continue;
+            }
+
+            const dropForVirtualClose =
+                reconciled &&
+                (isAccount10149DebitPaymentRow(row) ||
+                    isAccount10149CreditInvoiceNumber(ivnum));
+            if (dropForVirtualClose) {
+                if (ivnum) {
+                    queuedCloseNumbers.push(ivnum);
+                }
+                continue;
+            }
             const transformed = transformPaymentRow(row);
             if (transformed != null) {
                 kept.push(transformed);
             }
+        }
+        if (queuedCloseNumbers.length > 0) {
+            options?.onReconciledInvoiceCloseTargets?.(queuedCloseNumbers);
         }
         nextPayments = kept;
     }
@@ -350,16 +514,16 @@ export function transformAccount10149Batch(
 export async function afterAccount10149PaymentLinked(
     ctx: ExtensionAfterPaymentLinkedContext
 ): Promise<ExtensionAfterPaymentLinkedResult> {
-    const reconciled = ctx.candidates.filter((candidate) =>
-        isAccount10149ReconciledReceiptClose(candidate.rawErpRow)
+    const closeCandidates = ctx.candidates.filter((candidate) =>
+        isAccount10149ReconciledClose(candidate.rawErpRow)
     );
-    if (reconciled.length === 0) {
+    if (closeCandidates.length === 0) {
         return { invoiceIdsToRecalc: [] };
     }
     const touched = await applyReconciledVirtualCloses(
         ctx.prisma,
         ctx.accountId,
-        reconciled.map((candidate) => ({
+        closeCandidates.map((candidate) => ({
             invoiceId: candidate.invoiceId,
             customerId: candidate.customerId,
             invoiceNumber: candidate.invoiceNumber,
@@ -373,10 +537,87 @@ export async function afterAccount10149PaymentLinked(
 export const account10149Extension: BillingAccountExtension = {
     key: ACCOUNT_10149_EXTENSION_KEY,
     label: "Account 10149",
-    transform(ctx: ExtensionTransformContext): ExtensionMappedBatch {
-        return transformAccount10149Batch(ctx.batch);
+    async transform(
+        ctx: ExtensionTransformContext
+    ): Promise<ExtensionMappedBatch> {
+        return transformAccount10149Batch(ctx.batch, {
+            onReconciledInvoiceCloseTargets: (invoiceNumbers) => {
+                if (ctx.pendingInvoiceCloses) {
+                    for (const invoiceNumber of invoiceNumbers) {
+                        ctx.pendingInvoiceCloses.add(invoiceNumber);
+                    }
+                }
+            },
+            onHelamOffsetCloseTargets: (invoiceNumbers) => {
+                if (ctx.pendingHelamOffsetCloses) {
+                    for (const invoiceNumber of invoiceNumbers) {
+                        ctx.pendingHelamOffsetCloses.add(invoiceNumber);
+                    }
+                }
+            },
+        });
     },
     afterPaymentLinked: afterAccount10149PaymentLinked,
+    async flushPendingInvoiceCloses(ctx) {
+        const closedIds = new Set<number>();
+        const customerIds = new Set<number>();
+
+        const offsetNumbers = ctx.helamOffsetInvoiceNumbers ?? [];
+        if (offsetNumbers.length > 0) {
+            const offsetResult =
+                await applyHelamOffsetStampClosesForInvoiceNumbers(
+                    ctx.prisma,
+                    ctx.accountId,
+                    offsetNumbers,
+                    ctx.userId
+                );
+            for (const id of offsetResult.closedIds) {
+                closedIds.add(id);
+            }
+            for (const id of offsetResult.customerIds) {
+                customerIds.add(id);
+            }
+        }
+
+        // Virtual fill only for numbers not already stamp-closed as Helam offset.
+        const offsetSet = new Set(
+            offsetNumbers.map((value) => value.trim()).filter(Boolean)
+        );
+        const virtualNumbers = ctx.invoiceNumbers.filter(
+            (value) => !offsetSet.has(value.trim())
+        );
+        if (virtualNumbers.length > 0) {
+            const result = await applyReconciledVirtualClosesForInvoiceNumbers(
+                ctx.prisma,
+                ctx.accountId,
+                virtualNumbers,
+                ctx.userId
+            );
+            if (result.touchedIds.length > 0) {
+                // Dynamic import avoids account_10149 ↔ extensions ↔ recalc cycle.
+                const { recalculateInvoicesFromLinkedPayments } = await import(
+                    "../../invoice/linkDeferredPaymentAndRecalc"
+                );
+                await recalculateInvoicesFromLinkedPayments(
+                    ctx.prisma,
+                    new Map(
+                        result.touchedIds.map((invoiceId) => [invoiceId, {}])
+                    )
+                );
+            }
+            for (const id of result.touchedIds) {
+                closedIds.add(id);
+            }
+            for (const id of result.customerIds) {
+                customerIds.add(id);
+            }
+        }
+
+        return {
+            closedIds: [...closedIds],
+            customerIds: [...customerIds],
+        };
+    },
     shouldNormalizeNegativeCreditPayments:
         shouldNormalizeAccount10149NegativeCreditPayments,
     normalizePaymentCurrency: normalizeAccount10149PaymentCurrency,

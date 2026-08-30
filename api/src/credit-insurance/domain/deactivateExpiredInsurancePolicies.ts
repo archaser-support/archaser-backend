@@ -1,4 +1,4 @@
 export {
     deactivateExpiredInsurancePolicies,
     runInsurancePolicyStatusMaintenance,
-} from "./insurancePolicyStatusCron";
+} from "@archaser/credit-insurance-domain";

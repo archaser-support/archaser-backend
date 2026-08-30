@@ -4,8 +4,9 @@ exports.NOT_PORTED_CRON_JOB_NAMES = void 0;
 exports.executeNamedCronJob = executeNamedCronJob;
 exports.isCronJobPorted = isCronJobPorted;
 const billing_connector_1 = require("@archaser/billing-connector");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
+const arPostIngestRetryQueue_1 = require("./credit/arPostIngestRetryQueue");
 const currencyRateService_1 = require("./currencyRateService");
-const creditDomain_1 = require("./creditDomain");
 const computeCustomerOverdueMetrics_1 = require("./computeCustomerOverdueMetrics");
 const closeZeroOutstandingDebtInvoices_1 = require("./closeZeroOutstandingDebtInvoices");
 const fixClosedCollectionData_1 = require("./fixClosedCollectionData");
@@ -50,41 +51,36 @@ const fetchCurrencyRates = (prisma) => timed("Fetch Currency Rates", async () =>
     };
 });
 const computeGapInBaseCurrency = (prisma) => timed("Compute Gap In Base Currency", async () => {
-    (0, creditDomain_1.bindCreditDomain)(prisma);
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
     const fxResult = await (0, currencyRateService_1.fetchAndStoreCurrencyRates)(prisma);
-    const gapMod = (0, creditDomain_1.requireCreditDomainModule)("domain/syncCustomerPolicyGapAmounts.js");
-    const gapResult = await gapMod.syncAllCustomerPolicyGapAmounts();
+    const gapResult = await (0, credit_insurance_domain_1.syncAllCustomerPolicyGapAmounts)();
     return {
         message: `FX ${fxResult.ratesStored} rates; base-currency gaps: ${gapResult.customersUpdated} customers updated (missing rates: ${gapResult.missingRates})`,
         summary: { fxResult, gapResult },
     };
 });
 const creditDashboardDailySnapshot = (prisma) => timed("Credit Dashboard Daily Snapshot", async () => {
-    (0, creditDomain_1.bindCreditDomain)(prisma);
-    const mod = (0, creditDomain_1.requireCreditDomainModule)("domain/creditDashboardSnapshotService.js");
-    const result = await mod.takeCreditDashboardDailySnapshots();
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
+    const result = await (0, credit_insurance_domain_1.takeCreditDashboardDailySnapshots)();
     return {
         message: `Credit dashboard daily snapshots completed: ${result.scopesProcessed} scopes`,
         summary: result,
     };
 });
 const insurancePolicyTrendDailySnapshot = (prisma) => timed("Insurance Policy Trend Daily Snapshot", async () => {
-    (0, creditDomain_1.bindCreditDomain)(prisma);
-    const mod = (0, creditDomain_1.requireCreditDomainModule)("domain/insurancePolicyTrendService.js");
-    const result = await mod.takeInsurancePolicyTrendSnapshots();
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
+    const result = await (0, credit_insurance_domain_1.takeInsurancePolicyTrendSnapshots)();
     return {
         message: `Insurance policy trend snapshots: ${result.policyRowsUpserted} policies, ${result.countryRowsUpserted} countries, ${result.namedRowsUpserted} named rows across ${result.accountsProcessed} accounts`,
         summary: result,
     };
 });
 const customerPolicyTrendDailySnapshot = (prisma) => timed("Customer Policy Trend Daily Snapshot", async () => {
-    (0, creditDomain_1.bindCreditDomain)(prisma);
-    const trendMod = (0, creditDomain_1.requireCreditDomainModule)("domain/customerPolicyTrendService.js");
-    const drainMod = (0, creditDomain_1.requireCreditDomainModule)("domain/asOfRewriteQueue.js");
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
     let todayResult;
     let todayError;
     try {
-        todayResult = await trendMod.takeCustomerPolicyTrendSnapshots();
+        todayResult = await (0, credit_insurance_domain_1.takeCustomerPolicyTrendSnapshots)();
     }
     catch (error) {
         todayError =
@@ -94,7 +90,7 @@ const customerPolicyTrendDailySnapshot = (prisma) => timed("Customer Policy Tren
     }
     let drainError;
     try {
-        const drain = await drainMod.drainAsOfRewriteQueue();
+        const drain = await (0, credit_insurance_domain_1.drainAsOfRewriteQueue)();
         if (drain.failures > 0) {
             drainError = new Error(`As-of rewrite drain: ${drain.itemsProcessed} items, ${drain.daysRewritten} days, ${drain.failures} failures, ${drain.skippedForBackfill} skipped for admin backfill`);
         }
@@ -105,14 +101,33 @@ const customerPolicyTrendDailySnapshot = (prisma) => timed("Customer Policy Tren
                 ? error
                 : new Error("As-of rewrite drain failed");
     }
+    // Customers whose post-ingest refresh failed mid-import keep stale
+    // capacity gaps until this runs, so retry before reporting.
+    let retryError;
+    let retryResult;
+    try {
+        retryResult = await (0, arPostIngestRetryQueue_1.drainArPostIngestRetryQueue)();
+        if (retryResult.failures > 0) {
+            retryError = new Error(`AR post-ingest retry drain: ${retryResult.itemsProcessed} retried, ${retryResult.failures} failures, ${retryResult.givenUp} given up`);
+        }
+    }
+    catch (error) {
+        retryError =
+            error instanceof Error
+                ? error
+                : new Error("AR post-ingest retry drain failed");
+    }
     if (todayError) {
         throw todayError;
     }
     if (drainError) {
         throw drainError;
     }
+    if (retryError) {
+        throw retryError;
+    }
     return {
-        message: `Customer policy trend snapshots: ${todayResult.rowsUpserted} rows across ${todayResult.accountsProcessed} accounts`,
+        message: `Customer policy trend snapshots: ${todayResult.rowsUpserted} rows across ${todayResult.accountsProcessed} accounts; AR post-ingest retries: ${retryResult?.itemsProcessed ?? 0}`,
         summary: todayResult,
     };
 });

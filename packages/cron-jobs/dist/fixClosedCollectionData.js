@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fixClosedCollectionData = fixClosedCollectionData;
-const creditDomain_1 = require("./creditDomain");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 const customersDomain_1 = require("./customersDomain");
 /**
  * Safety net: for collection periods closed since last_run_at, mark zero-debt
@@ -60,10 +60,9 @@ async function fixClosedCollectionData(prisma, lastRunAt) {
             zero_limit_alert: false,
         },
     });
-    (0, creditDomain_1.bindCreditDomain)(prisma);
-    const syncMod = (0, creditDomain_1.requireCreditDomainModule)("domain/syncCustomerInsuranceFields.js");
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
     for (const affectedCustomerId of affectedCustomerIds) {
-        await syncMod.syncCustomerInsuranceFields(affectedCustomerId);
+        await (0, credit_insurance_domain_1.syncCustomerInsuranceFields)(affectedCustomerId);
     }
     await (0, customersDomain_1.recalculateCustomerAmountsViaApi)(affectedCustomerIds, prisma);
     return {

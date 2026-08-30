@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@archaser/billing-connector": "*",
+    "@archaser/credit-insurance-domain": "*",
     "@archaser/sms-send": "*",
     "@prisma/client": "^6.4.1",
     "countries-and-timezones": "^3.10.0",

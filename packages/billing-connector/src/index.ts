@@ -225,6 +225,19 @@ export {
 } from "./sync/stagedExtensionSync";
 
 export {
+    runArPostIngestViaHost,
+    invokeConnectorArPostIngest,
+    refreshInsuranceTargetDatesViaHost,
+    registerArPostIngestOrchestrator,
+    isArPostIngestOrchestratorRegistered,
+    resetArPostIngestOrchestratorForTests,
+    type ArPostIngestHostFn,
+    type ArPostIngestHostInput,
+    type ArPostIngestOrchestratorFn,
+    type ArPostIngestOrchestratorResult,
+} from "./credit/arPostIngestHost";
+
+export {
     syncDueBillingConnectors,
     type SyncDueBillingConnectorsOptions,
     type SyncDueBillingConnectorsResult,
@@ -267,3 +280,21 @@ export {
     type EntityImportRowResult,
     type ImportEntityType,
 } from "./import/entityImporter";
+
+export {
+    applyMaturedDeferredPayments,
+    rawErpRowFromMaturedPayment,
+    type MaturityProgress,
+    type MaturityResult,
+} from "./import/applyMaturedDeferredPayments";
+
+export {
+    linkDeferredPaymentAndRecalc,
+    recalculateInvoicesFromLinkedPayments,
+    type LinkDeferredPaymentAndRecalcResult,
+} from "./invoice/linkDeferredPaymentAndRecalc";
+
+export {
+    INVOICE_PAID_TOLERANCE,
+    isWithinPaidTolerance,
+} from "./invoice/invoicePaidTolerance";
