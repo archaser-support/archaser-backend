@@ -84,6 +84,7 @@ function entityStatsFromCounts(stats) {
             failed: step.status === "failed" ? 1 : 0,
             skipped: 0,
             status: step.status,
+            ...(step.detail ? { detail: step.detail } : {}),
             ...(step.error ? { sample_errors: [step.error] } : {}),
         };
     }
