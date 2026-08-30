@@ -4,7 +4,7 @@
  * plus a short history of completed runs for GET /sync-runs polling.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MATURITY_ENTITY_STATS_KEY = void 0;
+exports.TAIL_STEP_KEYS = exports.BALANCES_ENTITY_STATS_KEY = exports.PENDING_CLOSES_ENTITY_STATS_KEY = exports.POST_INGEST_ENTITY_STATS_KEY = exports.MATURITY_ENTITY_STATS_KEY = void 0;
 exports.entityStatsFromCounts = entityStatsFromCounts;
 exports.registerRunningSync = registerRunningSync;
 exports.getRunningSync = getRunningSync;
@@ -15,6 +15,19 @@ exports.listSyncRuns = listSyncRuns;
 exports.resetConnectorSyncRuntimeForTests = resetConnectorSyncRuntimeForTests;
 /** Orchestration step after Invoice — links deferred payments to invoices. */
 exports.MATURITY_ENTITY_STATS_KEY = "_maturity";
+/**
+ * Tail steps after entity ingest. They run while the sync is still RUNNING, so
+ * without their own stat keys the UI froze on the last entity row and gave no
+ * reason for the disabled buttons.
+ */
+exports.POST_INGEST_ENTITY_STATS_KEY = "_post_ingest";
+exports.PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
+exports.BALANCES_ENTITY_STATS_KEY = "_balances";
+exports.TAIL_STEP_KEYS = [
+    exports.POST_INGEST_ENTITY_STATS_KEY,
+    exports.PENDING_CLOSES_ENTITY_STATS_KEY,
+    exports.BALANCES_ENTITY_STATS_KEY,
+];
 function entityStatsFromCounts(stats) {
     const entityStats = {
         Customer: {
@@ -56,6 +69,23 @@ function entityStatsFromCounts(stats) {
             ...(stats.paymentLinkError
                 ? { sample_errors: [stats.paymentLinkError] }
                 : {}),
+        };
+    }
+    for (const key of exports.TAIL_STEP_KEYS) {
+        const step = stats.tailSteps?.[key];
+        if (!step) {
+            continue;
+        }
+        const processed = step.processed ?? 0;
+        const total = step.total ?? processed;
+        entityStats[key] = {
+            pulled: total,
+            success: step.status === "done" ? total : processed,
+            failed: step.status === "failed" ? 1 : 0,
+            skipped: 0,
+            status: step.status,
+            ...(step.detail ? { detail: step.detail } : {}),
+            ...(step.error ? { sample_errors: [step.error] } : {}),
         };
     }
     return entityStats;

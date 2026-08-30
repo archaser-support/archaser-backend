@@ -23,10 +23,12 @@ import {
     computeNextRunAt,
     executeNamedCronJob,
     recordCronJobRun,
+    runArPostIngestForCustomers,
     type CronJobResult,
 } from "@archaser/cron-jobs";
 import {
     createBillingConnectorMetricsSinkFromProm,
+    registerArPostIngestOrchestrator,
     setDefaultBillingConnectorMetricsSink,
 } from "@archaser/billing-connector";
 import { registerBillingConnectorSyncCounters } from "./billing-connector-sync-counters";
@@ -81,6 +83,13 @@ class WorkerRuntimeService implements OnModuleDestroy {
                 recordsProcessed:
                     billingCounters.billingConnectorRecordsProcessed,
             })
+        );
+        // `syncDueBillingConnectors` (billing sync dispatch cron) reaches
+        // billing-connector's no-callback fallback, which calls the registered
+        // orchestrator. Without this it would log "orchestrator is not
+        // registered" and post-ingest AR refresh would stop in this process.
+        registerArPostIngestOrchestrator((options) =>
+            runArPostIngestForCustomers(options)
         );
         collectDefaultMetrics({
             register: this.register,

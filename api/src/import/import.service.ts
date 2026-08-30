@@ -5,7 +5,11 @@ import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { importMappedEntityBatch } from "@archaser/billing-connector";
 import { DatabaseService } from "../database/database.service";
-import { enqueueRewriteForImport } from "../credit-insurance/domain/asOfRewriteQueue";
+import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
+import {
+    enqueueRewriteForImport,
+    refreshInsuranceTargetDatesForInvoiceIds,
+} from "@archaser/credit-insurance-domain";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 import { ImportPolicyService } from "./import-policy.service";
 
@@ -166,6 +170,21 @@ export class ImportService {
                 null,
                 userInfo.userId
             );
+            // Amount (and date) upserts must refresh insurance targets immediately
+            // so sign flips are not stuck until job-complete post-ingest.
+            if (
+                importType === "Invoice" &&
+                entityImport.entityIds.length > 0
+            ) {
+                try {
+                    await refreshInsuranceTargetDatesForInvoiceIds(
+                        entityImport.entityIds,
+                        this.db
+                    );
+                } catch {
+                    // Non-fatal: rows imported; post-ingest / stamp can catch up.
+                }
+            }
             const recordRows: Array<Record<string, unknown>> = [];
             for (let i = 0; i < rows.length; i++) {
                 const row = rows[i] || {};
@@ -306,19 +325,72 @@ export class ImportService {
             existing.import_type === "Invoice" ||
             existing.import_type === "Payment"
         ) {
+            const importType = existing.import_type as "Invoice" | "Payment";
             const customerIds = readNumberArray(
                 existing.metadata,
                 "asOfRewriteCustomerIds"
             );
-            await enqueueRewriteForImport({
-                accountId,
-                importType: existing.import_type,
-                entityIds: readNumberArray(
-                    existing.metadata,
-                    "asOfRewriteEntityIds"
-                ),
-                customerIds,
-            });
+            const entityIds = readNumberArray(
+                existing.metadata,
+                "asOfRewriteEntityIds"
+            );
+
+            // Shared AR post-ingest (replay + Process Overdue + live MEP/gap + as-of).
+            // Best-effort: do not fail job status if this throws after rows were imported.
+            let postIngestSkipped = false;
+            let postIngestErrors: Array<{
+                step: string;
+                customerId?: number;
+                message: string;
+                stack?: string;
+            }> = [];
+            try {
+                const result = await runArPostIngestForCustomers({
+                    accountId,
+                    customerIds,
+                    runReplay: true,
+                    runLiveRefresh: true,
+                    enqueueAsOfRewrite: true,
+                    asOfRewrite: { importType, entityIds },
+                });
+                postIngestSkipped = result.skipped;
+                postIngestErrors = result.errors;
+            } catch (error) {
+                postIngestSkipped = true;
+                postIngestErrors = [
+                    {
+                        step: "orchestrator",
+                        message:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                        ...(error instanceof Error && error.stack
+                            ? { stack: error.stack }
+                            : {}),
+                    },
+                ];
+            }
+
+            if (postIngestErrors.length > 0) {
+                await this.recordPostIngestFailures(jobId, postIngestErrors);
+            }
+
+            // Collection-only (orchestrator CI gate) and unexpected throws still
+            // keep today's as-of enqueue behavior. Overdue already ran inside
+            // the orchestrator for non-CI accounts before skipped=true.
+            if (postIngestSkipped) {
+                try {
+                    await enqueueRewriteForImport({
+                        accountId,
+                        importType,
+                        entityIds,
+                        customerIds,
+                    });
+                } catch {
+                    // Import completion should not fail if as-of enqueue fails.
+                }
+            }
+
             if (customerIds.length > 0) {
                 try {
                     await recalculateCustomerAmounts(customerIds, this.db);
@@ -329,6 +401,57 @@ export class ImportService {
         }
 
         return serializeBigInt(job);
+    }
+
+    /**
+     * Persists post-ingest step failures on the job so a swallowed error is
+     * visible afterwards. Rows are already imported at this point, so the job
+     * stays Completed and this never throws.
+     */
+    private async recordPostIngestFailures(
+        jobId: string,
+        failures: Array<{
+            step: string;
+            customerId?: number;
+            message: string;
+            stack?: string;
+        }>
+    ): Promise<void> {
+        try {
+            const job = await this.db.importJob.findUnique({
+                where: { id: jobId },
+                select: { metadata: true },
+            });
+            const metadata =
+                job?.metadata && typeof job.metadata === "object"
+                    ? (job.metadata as Record<string, unknown>)
+                    : {};
+            const summary = failures
+                .map((failure) =>
+                    failure.customerId != null
+                        ? `${failure.step} (customer ${failure.customerId}): ${failure.message}`
+                        : `${failure.step}: ${failure.message}`
+                )
+                .join("; ");
+
+            await this.db.importJob.update({
+                where: { id: jobId },
+                data: {
+                    error_message: `Post-ingest refresh incomplete — ${summary}`,
+                    metadata: {
+                        ...metadata,
+                        postIngestErrors: failures,
+                        postIngestFailedAt: new Date().toISOString(),
+                    },
+                },
+            });
+        } catch (error) {
+            console.error("[import] failed to record post-ingest errors", {
+                jobId,
+                errorMessage:
+                    error instanceof Error ? error.message : String(error),
+            });
+        }
     }
 
     async getJobById(user: JwtPayload, jobId: string) {

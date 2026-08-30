@@ -345,9 +345,6 @@ export class PriorityProviderClient implements BillingProviderClient {
         );
         const timeoutSeconds = PRIORITY_RATE_LIMITS.requestTimeoutSeconds;
         const startedAt = Date.now();
-        this.config.onLog?.(
-            `Priority GET ${url} (timeout ${timeoutSeconds}s)`
-        );
         const controller = new AbortController();
         const timeout = setTimeout(
             () => controller.abort(),
@@ -394,10 +391,6 @@ export class PriorityProviderClient implements BillingProviderClient {
             throw error;
         }
 
-        const payload = await response.json();
-        this.config.onLog?.(
-            `Priority HTTP ${response.status} after ${elapsedMs}ms`
-        );
-        return payload;
+        return response.json();
     }
 }

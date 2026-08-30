@@ -1,4 +1,4 @@
-import type { PrismaClient, user_role } from "@prisma/client";
+import type { Prisma, PrismaClient, user_role } from "@prisma/client";
 import type { ActiveQualificationKey } from "./NotificationDeliveryLogService";
 type TriggerType = "overdue_block" | "capacity_gap" | "entry_terms_breach" | "action_window" | "limit_warnings";
 type RuleSetView = {
@@ -30,6 +30,8 @@ type InvoiceSignal = {
     reportingBreach?: boolean;
     hasZeroLimitWarning?: boolean;
 };
+/** Candidate where for reporting action-window notifications (excludes credit notes). */
+export declare function actionWindowInvoiceWhere(accountId: number): Prisma.InvoiceWhereInput;
 export type NotificationDeliveryIntent = {
     ruleSetId: number;
     ruleId: number;

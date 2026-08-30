@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleOverdueInvoices = handleOverdueInvoices;
-const creditDomain_1 = require("./creditDomain");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 const customersDomain_1 = require("./customersDomain");
 async function getAllPastDueInvoices(prisma, customerId) {
     const now = new Date();
@@ -30,8 +30,7 @@ async function getAllPastDueInvoices(prisma, customerId) {
 async function createOpenCollectionPeriods(prisma, customerData) {
     let created = 0;
     let skippedCreditOnly = 0;
-    (0, creditDomain_1.bindCreditDomain)(prisma);
-    const syncMod = (0, creditDomain_1.requireCreditDomainModule)("domain/syncCustomerInsuranceFields.js");
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
     for (const data of customerData) {
         const isCreditOnly = data.hasCollection === false && data.hasCreditInsurance === true;
         if (isCreditOnly) {
@@ -68,7 +67,7 @@ async function createOpenCollectionPeriods(prisma, customerData) {
                 create_next_activity: true,
             },
         });
-        await syncMod.syncCustomerInsuranceFields(data.customerId);
+        await (0, credit_insurance_domain_1.syncCustomerInsuranceFields)(data.customerId);
         created += 1;
     }
     return { created, skippedCreditOnly };
@@ -100,14 +99,12 @@ async function handleOverdueInvoices(prisma, customerId) {
             data: { status: "Overdue" },
         });
         processStats.invoicesUpdated = invoiceIds.length;
-        (0, creditDomain_1.bindCreditDomain)(prisma);
-        const breachMod = (0, creditDomain_1.requireCreditDomainModule)("domain/syncInvoiceReportingBreach.js");
-        await breachMod.sweepReportingBreachForOverdueInvoiceIds(invoiceIds, prisma);
+        (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
+        await (0, credit_insurance_domain_1.sweepReportingBreachForOverdueInvoiceIds)(invoiceIds, prisma);
     }
     // Refresh oldest overdue / overdue_block for open periods
     {
-        (0, creditDomain_1.bindCreditDomain)(prisma);
-        const syncMod = (0, creditDomain_1.requireCreditDomainModule)("domain/syncCustomerInsuranceFields.js");
+        (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
         const openPeriods = await prisma.customerCollectionPeriod.findMany({
             where: {
                 period_end_date: null,
@@ -119,7 +116,7 @@ async function handleOverdueInvoices(prisma, customerId) {
         });
         const uniqueCustomerIds = Array.from(new Set(openPeriods.map((p) => p.customer_id)));
         for (const cid of uniqueCustomerIds) {
-            await syncMod.syncCustomerInsuranceFields(cid);
+            await (0, credit_insurance_domain_1.syncCustomerInsuranceFields)(cid);
         }
         processStats.dcpOldestOverdueDateRefreshed = uniqueCustomerIds.length;
     }
@@ -139,8 +136,7 @@ async function handleOverdueInvoices(prisma, customerId) {
             // Continue even if recalc fails (legacy behavior)
         }
     }
-    const outstandingMod = (0, customersDomain_1.requireCustomersDomainModule)("domain/recalculateCustomerAmounts.js");
-    const outstandingMap = await outstandingMod.calculateOutstandingAmountsForCustomers(affectedCustomerIds, prisma);
+    const outstandingMap = await (0, customersDomain_1.calculateOutstandingAmountsForCustomersViaApi)(affectedCustomerIds, prisma);
     const [customers, openPeriodRows] = await Promise.all([
         prisma.customer.findMany({
             where: { id: { in: affectedCustomerIds } },

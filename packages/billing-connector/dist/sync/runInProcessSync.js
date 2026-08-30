@@ -16,6 +16,7 @@ const connectorSyncCancelRegistry_1 = require("./connectorSyncCancelRegistry");
 const connectorSyncRuntime_1 = require("./connectorSyncRuntime");
 const stagedExtensionSync_1 = require("./stagedExtensionSync");
 const recalculateCustomerAmountsHost_1 = require("../customers/recalculateCustomerAmountsHost");
+const arPostIngestHost_1 = require("../credit/arPostIngestHost");
 const observability_1 = require("../observability");
 const ENTITY_ORDER = [
     "Customer",
@@ -39,22 +40,36 @@ function emptyStats() {
         importErrors: 0,
     };
 }
-async function finalizeLegacyCustomerBalances(customerIds, prisma, onCustomerBalancesFinal, log) {
+async function finalizeLegacyCustomerBalances(customerIds, prisma, onCustomerBalancesFinal, log, setStep) {
     if (customerIds.size === 0) {
         return;
     }
     const ids = Array.from(customerIds);
     const run = onCustomerBalancesFinal ??
         ((customerIdsToRecalc) => (0, recalculateCustomerAmountsHost_1.recalculateCustomerAmountsViaHost)(customerIdsToRecalc, prisma));
+    setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
+        status: "running",
+        total: ids.length,
+    });
     try {
         await run(ids);
         log(`Recalculated customer due/overdue amounts for ${ids.length} customer(s)`);
+        setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
+            status: "done",
+            processed: ids.length,
+            total: ids.length,
+        });
     }
     catch (error) {
         const message = error instanceof Error
             ? error.message
             : "Customer amount recalculation failed";
         log(`Customer amount recalculation failed: ${message}`);
+        setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
+            status: "failed",
+            total: ids.length,
+            error: message,
+        });
     }
 }
 function emitProgress(onProgress, stats) {
@@ -89,6 +104,11 @@ function enabledEntitiesFromConnector(raw) {
     return raw.filter((e) => typeof e === "string" &&
         stagedExtensionSync_1.STAGED_ENTITY_ORDER.includes(e));
 }
+/**
+ * In-process Priority sync for main API / worker (D71).
+ * Accounts with extension_key use staged windowed plugin path;
+ * accounts without a key keep entity-by-entity pull/map/import.
+ */
 function resolveInitialSyncMode(options) {
     if (options.mode === "incremental")
         return "INCREMENTAL";
@@ -96,11 +116,6 @@ function resolveInitialSyncMode(options) {
         return "BACKFILL";
     return "UNKNOWN";
 }
-/**
- * In-process Priority sync for main API / worker (D71).
- * Accounts with extension_key use staged windowed plugin path;
- * accounts without a key keep entity-by-entity pull/map/import.
- */
 async function runInProcessSync(options) {
     const obsRuntime = {
         connectorId: null,
@@ -139,6 +154,59 @@ async function runInProcessSyncBody(options, obsRuntime) {
     const importBatch = options.importBatch ?? entityImporter_1.importMappedEntityBatch;
     const log = (message) => emitSyncLog(onLog, message);
     const structuredLogs = options.observability?.structuredLogs !== false;
+    const setTailStep = (key, state) => {
+        // A late `running` update must not resurrect a finished step.
+        const current = stats.tailSteps?.[key];
+        if (state.status === "running" &&
+            (current?.status === "done" || current?.status === "failed")) {
+            return;
+        }
+        stats.tailSteps = { ...(stats.tailSteps ?? {}), [key]: state };
+        emitProgress(options.onProgress, stats);
+    };
+    /** Wraps post-ingest so the UI shows it instead of freezing on the last entity. */
+    const runPostIngestWithProgress = async (args) => {
+        setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
+            status: "running",
+            total: args.customerIds.length,
+        });
+        try {
+            await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
+                accountId,
+                customerIds: args.customerIds,
+                invoiceEntityIds: args.invoiceEntityIds,
+                paymentEntityIds: args.paymentEntityIds,
+                prisma,
+                onArPostIngest: options.onArPostIngest,
+                log,
+                runMaturity: args.runMaturity,
+                onProgress: ({ completed, total, step, detail }) => {
+                    setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
+                        status: "running",
+                        processed: completed,
+                        total,
+                        ...(step
+                            ? { detail: { step, ...(detail ?? {}) } }
+                            : {}),
+                    });
+                },
+            });
+            setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
+                status: "done",
+                processed: args.customerIds.length,
+                total: args.customerIds.length,
+            });
+        }
+        catch (error) {
+            setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
+                status: "failed",
+                total: args.customerIds.length,
+                error: error instanceof Error
+                    ? error.message
+                    : "AR post-ingest failed",
+            });
+        }
+    };
     try {
         const connector = await prisma.billingConnector.findUnique({
             where: { account_id: accountId },
@@ -343,6 +411,7 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 onProgress: (liveStats) => emitProgress(options.onProgress, liveStats),
                 shouldCancel: () => isCancelRequested(options),
                 onCustomerBalancesFinal: options.onCustomerBalancesFinal,
+                onArPostIngest: options.onArPostIngest,
                 pullCreatedOnOrAfter: !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,
                 entitySets: connector.entity_sets,
@@ -433,6 +502,10 @@ async function runInProcessSyncBody(options, obsRuntime) {
         }
         log("Using standard entity-by-entity path (no extension)");
         const arAffectedCustomerIds = new Set();
+        const arAffectedInvoiceIds = new Set();
+        const arAffectedPaymentIds = new Set();
+        const paymentAffectedCustomerIds = new Set();
+        let invoicePostIngestRan = false;
         for (const entityType of ENTITY_ORDER) {
             if (isCancelRequested(options)) {
                 log("Stopped by operator");
@@ -454,7 +527,6 @@ async function runInProcessSyncBody(options, obsRuntime) {
             if (!mapping)
                 continue;
             try {
-                log(`Pulling ${entityType}…`);
                 const syncState = await prisma.connectorSyncState.findFirst({
                     where: {
                         connector_id: connector.id,
@@ -483,9 +555,7 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 const importedKey = `${entityType.toLowerCase()}sImported`;
                 stats[processedKey] =
                     pullResult.records.length;
-                log(`Pulled ${entityType}: ${pullResult.records.length} record(s)`);
                 emitProgress(options.onProgress, stats);
-                log(`Importing ${pullResult.records.length} ${entityType} row(s)…`);
                 const importResult = await importBatch(prisma, entityType, pullResult.records, accountId, mapping.mapping, userId, { skipReportingBreach, onLog, shouldCancel: () => isCancelRequested(options) });
                 stats[importedKey] =
                     importResult.success;
@@ -493,10 +563,29 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 if (entityType === "Payment" || entityType === "Invoice") {
                     for (const id of importResult.affectedCustomerIds) {
                         arAffectedCustomerIds.add(id);
+                        if (entityType === "Payment") {
+                            paymentAffectedCustomerIds.add(id);
+                        }
+                    }
+                    for (const id of importResult.entityIds ?? []) {
+                        if (entityType === "Invoice") {
+                            arAffectedInvoiceIds.add(id);
+                        }
+                        else {
+                            arAffectedPaymentIds.add(id);
+                        }
                     }
                 }
-                log(`Imported ${entityType}: ${importResult.success} success, ${importResult.failed} failed`);
                 emitProgress(options.onProgress, stats);
+                if (entityType === "Invoice") {
+                    invoicePostIngestRan = true;
+                    await runPostIngestWithProgress({
+                        customerIds: Array.from(arAffectedCustomerIds),
+                        invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                        paymentEntityIds: Array.from(arAffectedPaymentIds),
+                        runMaturity: false,
+                    });
+                }
                 const maxUpdated = (0, entityImporter_1.extractMaxUpdatedAt)(pullResult.records) ?? new Date();
                 await prisma.connectorSyncState.upsert({
                     where: {
@@ -551,7 +640,16 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 });
             }
         }
-        await finalizeLegacyCustomerBalances(arAffectedCustomerIds, prisma, options.onCustomerBalancesFinal, log);
+        if (!invoicePostIngestRan &&
+            paymentAffectedCustomerIds.size > 0) {
+            await runPostIngestWithProgress({
+                customerIds: Array.from(paymentAffectedCustomerIds),
+                invoiceEntityIds: [],
+                paymentEntityIds: Array.from(arAffectedPaymentIds),
+                runMaturity: true,
+            });
+        }
+        await finalizeLegacyCustomerBalances(arAffectedCustomerIds, prisma, options.onCustomerBalancesFinal, log, setTailStep);
         await (0, entityImporter_1.updateAccountLastSyncDate)(prisma, accountId);
         const imported = stats.customersImported +
             stats.contactsImported +

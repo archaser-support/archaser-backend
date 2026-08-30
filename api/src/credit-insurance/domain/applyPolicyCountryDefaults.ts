@@ -1,4 +1,4 @@
-import { prisma } from "../domain-db";
+import { creditInsurancePrisma as prisma } from "@archaser/credit-insurance-domain";
 
 /**
  * When policy_id is set/changed, copy InsurancePolicyCountry → CustomerPolicy fields for the customer's country.

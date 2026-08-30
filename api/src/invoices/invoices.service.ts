@@ -7,6 +7,7 @@ import {
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
+import { refreshInsuranceTargetDatesForInvoiceIds } from "@archaser/credit-insurance-domain";
 import { DatabaseService } from "../database/database.service";
 
 export type InvoicesListQuery = {
@@ -168,6 +169,20 @@ export class InvoicesService {
             where: { id },
             data: data as never,
         });
+
+        // Amount sign flips (and due/invoice date edits) must refresh MEP/reporting
+        // targets via the same amount-aware path used for date-only refresh.
+        if (
+            Object.prototype.hasOwnProperty.call(body, "amount") ||
+            Object.prototype.hasOwnProperty.call(body, "due_date") ||
+            Object.prototype.hasOwnProperty.call(body, "invoice_date")
+        ) {
+            try {
+                await refreshInsuranceTargetDatesForInvoiceIds([id], this.db);
+            } catch {
+                // Non-fatal: persist succeeded; targets can catch up on next stamp.
+            }
+        }
 
         return serializeBigInt(updated);
     }

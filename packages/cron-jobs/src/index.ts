@@ -2,10 +2,6 @@ export {
     fetchAndStoreCurrencyRates,
 } from "./currencyRateService";
 export {
-    bindCreditDomain,
-    requireCreditDomainModule,
-} from "./creditDomain";
-export {
     executeNamedCronJob,
     isCronJobPorted,
     NOT_PORTED_CRON_JOB_NAMES,
@@ -36,3 +32,30 @@ export {
 export { processNotificationRules } from "./processNotificationRules";
 export { processDueNotifications } from "./processDueNotifications";
 export { activityWorkflowManager } from "./activityWorkflowManager";
+export {
+    createDefaultArPostIngestDeps,
+    defaultAccountHasCreditInsurance,
+    runArPostIngestForCustomers,
+    type ArPostIngestDeps,
+    type ArPostIngestError,
+    type ArPostIngestResult,
+    type ArPostIngestStep,
+    type RunArPostIngestOptions,
+} from "./credit/arPostIngestOrchestrator";
+export {
+    buildReplayEvents,
+    compareReplayEvents,
+    getInvoiceGap,
+    replayArImportForCustomers,
+    replayCustomerArImport,
+    simulateCustomerArReplay,
+    sortReplayEvents,
+    type ReplayBatchSummary,
+    type ReplayCustomerSummary,
+    type ReplayEvent,
+    type ReplayInvoiceInput,
+    type ReplayPaymentInput,
+    type ReplaySimulationConfig,
+    type ReplaySimulationInvoice,
+    type ReplaySimulationSummary,
+} from "./credit/importArReplayService";

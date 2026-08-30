@@ -6,6 +6,8 @@ exports.planDefaultSyncWindows = planDefaultSyncWindows;
 const entityImporter_1 = require("../import/entityImporter");
 const applyMaturedDeferredPayments_1 = require("../import/applyMaturedDeferredPayments");
 const recalculateCustomerAmountsHost_1 = require("../customers/recalculateCustomerAmountsHost");
+const connectorSyncRuntime_1 = require("./connectorSyncRuntime");
+const arPostIngestHost_1 = require("../credit/arPostIngestHost");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 const priorityApiContract_1 = require("../priority/priorityApiContract");
 const prioritySelectFields_1 = require("../priority/prioritySelectFields");
@@ -125,22 +127,36 @@ function bumpImported(stats, entityType, success, failed) {
         (stats[key] ?? 0) + success;
     stats.importErrors += failed;
 }
-async function finalizeCustomerBalances(customerIds, prisma, onCustomerBalancesFinal, log) {
+async function finalizeCustomerBalances(customerIds, prisma, onCustomerBalancesFinal, log, setStep) {
     if (customerIds.size === 0) {
         return;
     }
     const ids = Array.from(customerIds);
     const run = onCustomerBalancesFinal ??
         ((customerIdsToRecalc) => (0, recalculateCustomerAmountsHost_1.recalculateCustomerAmountsViaHost)(customerIdsToRecalc, prisma));
+    setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
+        status: "running",
+        total: ids.length,
+    });
     try {
         await run(ids);
         log(`Recalculated customer due/overdue amounts for ${ids.length} customer(s)`);
+        setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
+            status: "done",
+            processed: ids.length,
+            total: ids.length,
+        });
     }
     catch (error) {
         const message = error instanceof Error
             ? error.message
             : "Customer amount recalculation failed";
         log(`Customer amount recalculation failed: ${message}`);
+        setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
+            status: "failed",
+            total: ids.length,
+            error: message,
+        });
     }
 }
 /**
@@ -156,23 +172,147 @@ async function runStagedExtensionSync(options) {
     const previewBatch = {};
     const importFn = options.importBatch ?? entityImporter_1.importMappedEntityBatch;
     const dryRun = options.dryRun === true;
+    const tailSteps = {};
     const log = (message) => options.onLog?.(message);
     const emitProgress = () => options.onProgress?.({
         ...stats,
         ...paymentLink,
+        tailSteps: { ...tailSteps },
     });
     const resultStats = () => ({
         ...stats,
         ...paymentLink,
+        tailSteps: { ...tailSteps },
     });
+    const setTailStep = (key, state) => {
+        // A late `running` update must not resurrect a finished step.
+        const current = tailSteps[key];
+        if (state.status === "running" &&
+            (current?.status === "done" || current?.status === "failed")) {
+            return;
+        }
+        tailSteps[key] = state;
+        emitProgress();
+    };
     const cutover = options.pullCreatedOnOrAfter === true;
     const entitySets = (0, billingConnectorEntitySets_1.parseEntitySetsMap)(options.entitySets);
     const arAffectedCustomerIds = new Set();
+    const arAffectedInvoiceIds = new Set();
+    const arAffectedPaymentIds = new Set();
+    const paymentAffectedCustomerIds = new Set();
+    /** Recon debit IVNUMs queued during Payment transform for virtual close. */
+    const pendingInvoiceCloses = new Set();
+    /** Helam offset-pair invoice numbers (original + cancel) for stamp-close. */
+    const pendingHelamOffsetCloses = new Set();
+    let invoicePostIngestRan = false;
+    const flushExtensionPendingCloses = async (label) => {
+        if ((pendingInvoiceCloses.size === 0 &&
+            pendingHelamOffsetCloses.size === 0) ||
+            !options.extension.flushPendingInvoiceCloses) {
+            return;
+        }
+        const pendingTotal = pendingInvoiceCloses.size + pendingHelamOffsetCloses.size;
+        setTailStep(connectorSyncRuntime_1.PENDING_CLOSES_ENTITY_STATS_KEY, {
+            status: "running",
+            total: pendingTotal,
+        });
+        try {
+            const pendingNumbers = Array.from(pendingInvoiceCloses);
+            const helamOffsetNumbers = Array.from(pendingHelamOffsetCloses);
+            const flushResult = await options.extension.flushPendingInvoiceCloses({
+                prisma: options.prisma,
+                accountId: options.accountId,
+                userId: options.userId,
+                invoiceNumbers: pendingNumbers,
+                helamOffsetInvoiceNumbers: helamOffsetNumbers,
+            });
+            for (const invoiceId of flushResult.closedIds) {
+                arAffectedInvoiceIds.add(invoiceId);
+            }
+            for (const customerId of flushResult.customerIds ?? []) {
+                arAffectedCustomerIds.add(customerId);
+            }
+            pendingInvoiceCloses.clear();
+            pendingHelamOffsetCloses.clear();
+            log(`Extension pending invoice closes (${label}): ${flushResult.closedIds.length} settled (${pendingNumbers.length} virtual, ${helamOffsetNumbers.length} Helam offset)`);
+            setTailStep(connectorSyncRuntime_1.PENDING_CLOSES_ENTITY_STATS_KEY, {
+                status: "done",
+                processed: flushResult.closedIds.length,
+                total: pendingTotal,
+            });
+        }
+        catch (error) {
+            const message = error instanceof Error
+                ? error.message
+                : "Pending invoice close flush failed";
+            log(`Extension pending invoice closes failed (${label}): ${message}`);
+            setTailStep(connectorSyncRuntime_1.PENDING_CLOSES_ENTITY_STATS_KEY, {
+                status: "failed",
+                total: pendingTotal,
+                error: message,
+            });
+        }
+    };
+    /** Wraps post-ingest so the UI shows it instead of freezing on the last entity. */
+    const runPostIngestWithProgress = async (args) => {
+        setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
+            status: "running",
+            total: args.customerIds.length,
+        });
+        try {
+            await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
+                accountId: options.accountId,
+                customerIds: args.customerIds,
+                invoiceEntityIds: args.invoiceEntityIds,
+                paymentEntityIds: args.paymentEntityIds,
+                prisma: options.prisma,
+                onArPostIngest: options.onArPostIngest,
+                log,
+                runMaturity: args.runMaturity,
+                onProgress: ({ completed, total }) => {
+                    setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
+                        status: "running",
+                        processed: completed,
+                        total,
+                    });
+                },
+            });
+            setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
+                status: "done",
+                processed: args.customerIds.length,
+                total: args.customerIds.length,
+            });
+        }
+        catch (error) {
+            const message = error instanceof Error
+                ? error.message
+                : "AR post-ingest failed";
+            setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
+                status: "failed",
+                total: args.customerIds.length,
+                error: message,
+            });
+        }
+    };
     const finishWithBalances = async (result) => {
         if (!dryRun) {
-            await finalizeCustomerBalances(arAffectedCustomerIds, options.prisma, options.onCustomerBalancesFinal, log);
+            await flushExtensionPendingCloses("finalize");
+            // Payment-only (or Invoice-not-orchestrated) fallback: same
+            // orchestrator as post-Invoice, including deferred maturity.
+            // Skip when Invoice already ran post-ingest in this sync.
+            if (!result.cancelled &&
+                !invoicePostIngestRan &&
+                paymentAffectedCustomerIds.size > 0) {
+                await runPostIngestWithProgress({
+                    customerIds: Array.from(paymentAffectedCustomerIds),
+                    invoiceEntityIds: [],
+                    paymentEntityIds: Array.from(arAffectedPaymentIds),
+                    runMaturity: true,
+                });
+            }
+            await finalizeCustomerBalances(arAffectedCustomerIds, options.prisma, options.onCustomerBalancesFinal, log, setTailStep);
         }
-        return result;
+        return { ...result, invoicePostIngestRan };
     };
     for (const window of options.windows) {
         log(window.start || window.end
@@ -246,7 +386,6 @@ async function runStagedExtensionSync(options) {
                     });
                 }
                 guard += 1;
-                log(`Pulling ${entityType} page ${guard}…`);
                 const page = await options.provider.pull(entityType, {
                     since: usesDatePull && !applyDateWindow ? window.start : null,
                     createdOnOrAfter: applyDateWindow ? windowCutover : null,
@@ -275,7 +414,6 @@ async function runStagedExtensionSync(options) {
                     mappedPage.push((0, connectorFieldUtils_1.mapErpRecord)(raw, rules));
                 }
                 bumpProcessedPage(stats, entityType, mappedPage.length);
-                log(`Pulled ${entityType} page ${guard}: ${page.records.length} record(s) (${stats[processedKey(entityType)]} in window)`);
                 emitProgress();
                 let pageRows = mappedPage;
                 if (mappedPage.length > 0) {
@@ -285,6 +423,11 @@ async function runStagedExtensionSync(options) {
                             window,
                             batch: { [entityType]: mappedPage },
                             extension_config: options.extensionConfig,
+                            prisma: dryRun ? undefined : options.prisma,
+                            userId: options.userId,
+                            dryRun,
+                            pendingInvoiceCloses,
+                            pendingHelamOffsetCloses,
                         });
                         mergeBatch(previewBatch, afterPlugin);
                         mergeBatch(windowBatch, afterPlugin);
@@ -311,14 +454,8 @@ async function runStagedExtensionSync(options) {
                             error: `Extension plugin failed for window: ${message}`,
                         });
                     }
-                    if (dryRun) {
-                        // Preview accumulates post-plugin rows; no entity writes.
-                    }
-                    else if (pageRows.length === 0) {
-                        log(`No ${entityType} rows to import on page ${guard}`);
-                    }
-                    else {
-                        log(`Importing ${pageRows.length} ${entityType} row(s)…`);
+                    // Preview accumulates post-plugin rows without entity writes.
+                    if (!dryRun && pageRows.length > 0) {
                         const importResult = await importFn(options.prisma, entityType, pageRows, options.accountId, null, options.userId, {
                             skipReportingBreach: options.skipReportingBreach === true,
                             skipDeferredPaymentMaturity: entityType === "Invoice",
@@ -333,9 +470,19 @@ async function runStagedExtensionSync(options) {
                             entityType === "Invoice") {
                             for (const id of importResult.affectedCustomerIds) {
                                 arAffectedCustomerIds.add(id);
+                                if (entityType === "Payment") {
+                                    paymentAffectedCustomerIds.add(id);
+                                }
+                            }
+                            for (const id of importResult.entityIds ?? []) {
+                                if (entityType === "Invoice") {
+                                    arAffectedInvoiceIds.add(id);
+                                }
+                                else {
+                                    arAffectedPaymentIds.add(id);
+                                }
                             }
                         }
-                        log(`Imported ${entityType}: ${importResult.success} success, ${importResult.failed} failed`);
                         if (importResult.failed > 0) {
                             entityLastError =
                                 importResult.errors.slice(0, 3).join("; ") ||
@@ -437,6 +584,18 @@ async function runStagedExtensionSync(options) {
                     emitProgress();
                     log(`Invoice entity maturity failed: ${message}`);
                 }
+                if (pendingInvoiceCloses.size > 0 ||
+                    pendingHelamOffsetCloses.size > 0) {
+                    await flushExtensionPendingCloses("after Invoice");
+                }
+                // Once after all Invoice pages + maturity, before Contact.
+                invoicePostIngestRan = true;
+                await runPostIngestWithProgress({
+                    customerIds: Array.from(arAffectedCustomerIds),
+                    invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                    paymentEntityIds: Array.from(arAffectedPaymentIds),
+                    runMaturity: false,
+                });
             }
         }
         windows.push({

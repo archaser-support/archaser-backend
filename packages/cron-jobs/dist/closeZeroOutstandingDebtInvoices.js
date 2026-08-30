@@ -1,17 +1,19 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.closeZeroOutstandingDebtInvoices = closeZeroOutstandingDebtInvoices;
-const creditDomain_1 = require("./creditDomain");
+const billing_connector_1 = require("@archaser/billing-connector");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 const customersDomain_1 = require("./customersDomain");
 const INVOICE_STATUS = {
     DUE: "Due",
     OVERDUE: "Overdue",
     PAID: "Paid",
 };
-const INVOICE_PAID_TOLERANCE = 0.2;
 /**
- * Close Due/Overdue invoices with zero (or tolerance) customer outstanding debt,
- * then recalculate customer rollups and refresh credit-insurance fields.
+ * Close Due/Overdue invoices with near-zero customer outstanding debt
+ * (within ±INVOICE_PAID_TOLERANCE), then recalculate customer rollups and
+ * refresh credit-insurance fields. Large negative outstanding (credit notes)
+ * is not treated as Paid.
  */
 async function closeZeroOutstandingDebtInvoices(prisma) {
     const start = Date.now();
@@ -45,7 +47,10 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
     }
     const invoices = await prisma.invoice.findMany({
         where: {
-            customer_outstanding_debt: { lte: INVOICE_PAID_TOLERANCE },
+            customer_outstanding_debt: {
+                gte: -billing_connector_1.INVOICE_PAID_TOLERANCE,
+                lte: billing_connector_1.INVOICE_PAID_TOLERANCE,
+            },
             status: {
                 in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE],
             },
@@ -75,10 +80,9 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
         .map((invoice) => invoice.customer_id)
         .filter((id) => id !== null && id !== undefined)));
     await (0, customersDomain_1.recalculateCustomerAmountsViaApi)(customerIds, prisma);
-    (0, creditDomain_1.bindCreditDomain)(prisma);
-    const syncMod = (0, creditDomain_1.requireCreditDomainModule)("domain/syncCustomerInsuranceFields.js");
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
     for (const customerId of customerIds) {
-        await syncMod.syncCustomerInsuranceFields(customerId);
+        await (0, credit_insurance_domain_1.syncCustomerInsuranceFields)(customerId);
     }
     return {
         success: true,

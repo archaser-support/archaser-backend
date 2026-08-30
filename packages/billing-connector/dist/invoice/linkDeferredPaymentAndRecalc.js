@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.INVOICE_PAID_TOLERANCE = void 0;
+exports.isWithinPaidTolerance = exports.INVOICE_PAID_TOLERANCE = void 0;
 exports.recalculateInvoiceFromLinkedPayments = recalculateInvoiceFromLinkedPayments;
 exports.recalculateInvoicesFromLinkedPayments = recalculateInvoicesFromLinkedPayments;
 exports.linkDeferredPaymentAndRecalc = linkDeferredPaymentAndRecalc;
@@ -9,12 +9,14 @@ const extensions_1 = require("../extensions");
 const bulkWrite_1 = require("../import/bulkWrite");
 var invoicePaidTolerance_2 = require("./invoicePaidTolerance");
 Object.defineProperty(exports, "INVOICE_PAID_TOLERANCE", { enumerable: true, get: function () { return invoicePaidTolerance_2.INVOICE_PAID_TOLERANCE; } });
+Object.defineProperty(exports, "isWithinPaidTolerance", { enumerable: true, get: function () { return invoicePaidTolerance_2.isWithinPaidTolerance; } });
 const LINKED_PAYMENT_RECALC_SELECT = {
     id: true,
     payment_date: true,
     amount: true,
     customer_amount: true,
     payment_method: true,
+    reference: true,
 };
 function hasForcePaidClose(payments, isForcePaidClose) {
     if (!isForcePaidClose)
@@ -60,7 +62,7 @@ function buildInvoicePaidUpdate(invoice, linkedPayments, options, modifiedAt) {
     }
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;
     const newCustomerOutstanding = (invoice.customer_net_amount ?? 0) - totalCustomerPaid;
-    const becomesPaid = newCustomerOutstanding <= invoicePaidTolerance_1.INVOICE_PAID_TOLERANCE;
+    const becomesPaid = (0, invoicePaidTolerance_1.isWithinPaidTolerance)(newCustomerOutstanding);
     return {
         total_paid: totalPaid,
         customer_total_paid: totalCustomerPaid,

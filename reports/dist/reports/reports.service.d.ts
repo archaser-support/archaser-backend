@@ -10,33 +10,33 @@ export declare class ReportsService {
             User_Report_created_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
             User_Report_modified_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
         } & {
+            account_id: number;
             id: number;
+            created_by: string | null;
+            name: string;
             created_at: Date;
             modified_at: Date;
-            created_by: string | null;
             modified_by: string | null;
-            name: string;
-            account_id: number;
-            is_default: boolean;
             unique_name: string;
             description: string | null;
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
+            is_default: boolean;
             context: string | null;
         } & {
             created_at_formatted: string | null;
@@ -51,33 +51,33 @@ export declare class ReportsService {
             User_Report_created_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
             User_Report_modified_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
         } & {
+            account_id: number;
             id: number;
+            created_by: string | null;
+            name: string;
             created_at: Date;
             modified_at: Date;
-            created_by: string | null;
             modified_by: string | null;
-            name: string;
-            account_id: number;
-            is_default: boolean;
             unique_name: string;
             description: string | null;
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
+            is_default: boolean;
             context: string | null;
         } & {
             created_at_formatted: string | null;
@@ -89,33 +89,33 @@ export declare class ReportsService {
             User_Report_created_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
             User_Report_modified_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
         } & {
+            account_id: number;
             id: number;
+            created_by: string | null;
+            name: string;
             created_at: Date;
             modified_at: Date;
-            created_by: string | null;
             modified_by: string | null;
-            name: string;
-            account_id: number;
-            is_default: boolean;
             unique_name: string;
             description: string | null;
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
+            is_default: boolean;
             context: string | null;
         } & {
             created_at_formatted: string | null;
@@ -127,33 +127,33 @@ export declare class ReportsService {
             User_Report_created_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
             User_Report_modified_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
         } & {
+            account_id: number;
             id: number;
+            created_by: string | null;
+            name: string;
             created_at: Date;
             modified_at: Date;
-            created_by: string | null;
             modified_by: string | null;
-            name: string;
-            account_id: number;
-            is_default: boolean;
             unique_name: string;
             description: string | null;
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
+            is_default: boolean;
             context: string | null;
         } & {
             created_at_formatted: string | null;
@@ -172,33 +172,33 @@ export declare class ReportsService {
             User_Report_created_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
             User_Report_modified_byToUser: {
                 id: string;
                 name: string | null;
-                email: string;
                 first_name: string | null;
                 last_name: string | null;
+                email: string;
                 username: string;
             } | null;
         } & {
+            account_id: number;
             id: number;
+            created_by: string | null;
+            name: string;
             created_at: Date;
             modified_at: Date;
-            created_by: string | null;
             modified_by: string | null;
-            name: string;
-            account_id: number;
-            is_default: boolean;
             unique_name: string;
             description: string | null;
             report_config: import("@prisma/client/runtime/library").JsonValue;
             is_public: boolean;
             is_system: boolean;
+            is_default: boolean;
             context: string | null;
         } & {
             created_at_formatted: string | null;
@@ -215,8 +215,8 @@ export declare class ReportsService {
     listShares(user: JwtPayload, reportId: number): Promise<{
         shares: {
             id: number;
-            created_at: Date;
             created_by: string | null;
+            created_at: Date;
             report_id: number;
             shared_with_user_id: string | null;
             shared_with_role: import(".prisma/client").$Enums.user_role | null;
@@ -225,8 +225,8 @@ export declare class ReportsService {
     }>;
     upsertShare(user: JwtPayload, reportId: number, body: Record<string, unknown>): Promise<{
         id: number;
-        created_at: Date;
         created_by: string | null;
+        created_at: Date;
         report_id: number;
         shared_with_user_id: string | null;
         shared_with_role: import(".prisma/client").$Enums.user_role | null;
@@ -234,32 +234,39 @@ export declare class ReportsService {
     }>;
     listSchedules(user: JwtPayload, reportId: number): Promise<{
         schedules: {
-            is_active: boolean;
             id: number;
             created_at: Date;
             modified_at: Date;
             report_id: number;
             schedule_type: string;
             schedule_config: import("@prisma/client/runtime/library").JsonValue;
+            is_active: boolean;
             last_run_at: Date | null;
             next_run_at: Date | null;
         }[];
     }>;
     upsertSchedule(user: JwtPayload, reportId: number, body: Record<string, unknown>): Promise<{
-        is_active: boolean;
         id: number;
         created_at: Date;
         modified_at: Date;
         report_id: number;
         schedule_type: string;
         schedule_config: import("@prisma/client/runtime/library").JsonValue;
+        is_active: boolean;
         last_run_at: Date | null;
         next_run_at: Date | null;
     }>;
-    syncSystem(user: JwtPayload): Promise<{
-        success: boolean;
-        synced: number;
-        message: string;
+    /**
+     * Copy selected system reports from master account 10013 onto every other
+     * active account (match by unique_name). Used by "Sync to all accounts".
+     */
+    syncSystem(user: JwtPayload, body?: {
+        reportIds?: number[];
+    }): Promise<{
+        syncedReports: number;
+        targetAccounts: number;
+        created: number;
+        updated: number;
     }>;
     private resolveDefaultView;
     private assertListPermission;

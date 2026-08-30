@@ -237,7 +237,7 @@ async function processDueNotifications(prisma, options) {
                         scheduledTime <= nowTime)
                         continue;
                     try {
-                        const result = await processInvoicesForDueStep(prisma, customerInvoices, step, scheduledTime, options);
+                        const result = await processInvoicesForDueStep(prisma, customerInvoices, step, scheduledTime);
                         stats.processed += customerInvoices.length;
                         stats.sent += result.sentCount;
                         stats.skipped += result.skippedCount;
@@ -278,7 +278,7 @@ async function processDueNotifications(prisma, options) {
  * Process invoices for a due step and create SCHEDULED activities.
  * Activities will be sent later by activityWorkflowManager when schedule_time arrives.
  */
-async function processInvoicesForDueStep(prisma, invoices, step, scheduledTime, options) {
+async function processInvoicesForDueStep(prisma, invoices, step, scheduledTime) {
     const customer = invoices[0]?.Customer;
     if (!customer)
         return { sent: false, sentCount: 0, skippedCount: invoices.length };
@@ -382,7 +382,7 @@ async function processInvoicesForDueStep(prisma, invoices, step, scheduledTime, 
     if (!systemUserId) {
         throw new Error(`No active user found for account ${customer.account_id}`);
     }
-    const activity = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
         const activity = await tx.activity.create({
             data: {
                 customer_id: customer.id,
