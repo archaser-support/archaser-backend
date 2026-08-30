@@ -5,6 +5,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.REPORT_METADATA = void 0;
+const report_virtual_fields_util_1 = require("./report-virtual-fields.util");
 exports.REPORT_METADATA = {
     tables: [
         {
@@ -583,7 +584,10 @@ exports.REPORT_METADATA = {
                 },
                 {
                     name: "terms_breach_reason",
-                    type: "string",
+                    // Computed from boolean columns, so it filters as a
+                    // pick-list of reason codes rather than free text.
+                    type: "enum",
+                    options: (0, report_virtual_fields_util_1.getComputedFieldFilterCodes)("Invoice", "terms_breach_reason"),
                     label: "Terms Breach Reason",
                     translationKey: "terms_breach_reason",
                     translationNamespace: "dashboard",

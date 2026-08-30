@@ -92,6 +92,13 @@ export {
     resolveInvoicePaidTolerance,
 } from "./credit-insurance/domain/resolveInvoicePaidTolerance";
 
+// --- Reporting breach start date gate (imported pre-go-live history) ---
+export { isInvoiceInReportingBreachScope } from "./credit-insurance/domain/shared/reportingBreachScope";
+export {
+    clearReportingBreachStartDateCache,
+    resolveReportingBreachStartDate,
+} from "./credit-insurance/domain/resolveReportingBreachStartDate";
+
 // --- Api service surface ---
 // The api service's dashboards, controllers and its own api-only domain files
 // (as-of backfill, portfolio health, registration fee, top-up parent policy)

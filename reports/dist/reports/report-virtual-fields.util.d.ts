@@ -11,6 +11,14 @@ export declare function extractTermsBreachReasonCodes(row: {
     ctv_outdated_dcl?: boolean | null;
     ctv_invoice_after_policy_end?: boolean | null;
 }): string;
+/**
+ * Prisma where clause for a filter on a computed report field. Returns null
+ * when the field or operator is unsupported, and the caller then drops the
+ * filter as before.
+ */
+export declare function computedFieldToPrismaWhere(table: string, field: string, operator: string, value?: unknown): Record<string, unknown> | null;
+/** Filter value codes offered for a computed field, for report metadata. */
+export declare function getComputedFieldFilterCodes(table: string, field: string): string[];
 export declare function formatTermsBreachReasonForDisplay(codesJoined: string | null | undefined, locale?: string): string;
 /** True when `field` is a scalar column on the Prisma model for `reportTable`. */
 export declare function isPrismaScalarField(reportTable: string, field: string): boolean;

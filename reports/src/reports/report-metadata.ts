@@ -3,6 +3,8 @@
  * This file contains static metadata definitions for report tables and fields
  */
 
+import { getComputedFieldFilterCodes } from "./report-virtual-fields.util";
+
 export interface TableMetadata {
     name: string;
     label: string;
@@ -600,7 +602,13 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
                 },
                 {
                     name: "terms_breach_reason",
-                    type: "string",
+                    // Computed from boolean columns, so it filters as a
+                    // pick-list of reason codes rather than free text.
+                    type: "enum",
+                    options: getComputedFieldFilterCodes(
+                        "Invoice",
+                        "terms_breach_reason"
+                    ),
                     label: "Terms Breach Reason",
                     translationKey: "terms_breach_reason",
                     translationNamespace: "dashboard",

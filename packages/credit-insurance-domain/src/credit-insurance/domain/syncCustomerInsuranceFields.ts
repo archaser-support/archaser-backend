@@ -78,17 +78,23 @@ async function syncCustomerInsuranceFieldsCore(
     );
 
     let oldestDue: Date | null = null;
+    // Ungated twin of oldestDue: powers the displayed days-overdue metric, which
+    // must count invoices issued before the MEP breach start date.
+    let oldestDueAll: Date | null = null;
     for (const invoice of overdueInvoices) {
         if (!isEligibleForCustomerMepOverdue(invoice.amount)) {
-            continue;
-        }
-        if (!isInvoiceInMepBreachScope(invoice.invoice_date, mepBreachStartDate)) {
             continue;
         }
         if (!invoice.due_date) {
             continue;
         }
         const dueDate = new Date(invoice.due_date);
+        if (!oldestDueAll || dueDate < oldestDueAll) {
+            oldestDueAll = dueDate;
+        }
+        if (!isInvoiceInMepBreachScope(invoice.invoice_date, mepBreachStartDate)) {
+            continue;
+        }
         if (!oldestDue || dueDate < oldestDue) {
             oldestDue = dueDate;
         }
@@ -169,6 +175,7 @@ async function syncCustomerInsuranceFieldsCore(
         where: { id: customerId },
         data: {
             oldest_invoice_overdue_date: oldestDue,
+            oldest_invoice_overdue_date_all: oldestDueAll,
             overdue_block: overdueBlock,
         },
     });

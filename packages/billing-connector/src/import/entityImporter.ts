@@ -1010,14 +1010,3 @@ export async function importMappedEntityBatch(
 
     return markCancelled(result, options);
 }
-
-export async function updateAccountLastSyncDate(
-    prisma: PrismaClient,
-    accountId: number,
-    syncedAt: Date = new Date()
-): Promise<void> {
-    await prisma.account.update({
-        where: { id: accountId },
-        data: { last_sync_date: syncedAt },
-    });
-}
