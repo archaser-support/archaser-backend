@@ -230,7 +230,6 @@ class PriorityProviderClient {
         const authorization = buildAuthorizationHeader(this.config.authType, this.config.credentials);
         const timeoutSeconds = priorityApiContract_1.PRIORITY_RATE_LIMITS.requestTimeoutSeconds;
         const startedAt = Date.now();
-        this.config.onLog?.(`Priority GET ${url} (timeout ${timeoutSeconds}s)`);
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
         let response;
@@ -267,9 +266,7 @@ class PriorityProviderClient {
             error.statusCode = response.status;
             throw error;
         }
-        const payload = await response.json();
-        this.config.onLog?.(`Priority HTTP ${response.status} after ${elapsedMs}ms`);
-        return payload;
+        return response.json();
     }
 }
 exports.PriorityProviderClient = PriorityProviderClient;

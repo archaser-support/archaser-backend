@@ -321,8 +321,7 @@ export async function processDueNotifications(
                             prisma,
                             customerInvoices,
                             step,
-                            scheduledTime,
-                            options
+                            scheduledTime
                         );
 
                         stats.processed += customerInvoices.length;
@@ -373,11 +372,7 @@ async function processInvoicesForDueStep(
     prisma: PrismaClient,
     invoices: any[],
     step: any,
-    scheduledTime: Date,
-    options?: {
-        skipSmsSend?: boolean;
-        fastForwardScheduledActivities?: boolean;
-    }
+    scheduledTime: Date
 ): Promise<{ sent: boolean; sentCount: number; skippedCount: number }> {
     const customer = invoices[0]?.Customer;
     if (!customer)
@@ -522,7 +517,7 @@ async function processInvoicesForDueStep(
         );
     }
 
-    const activity = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
         const activity = await tx.activity.create({
             data: {
                 customer_id: customer.id,

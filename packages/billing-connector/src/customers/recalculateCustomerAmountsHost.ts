@@ -4,6 +4,10 @@ import type { PrismaClient } from "@prisma/client";
 /**
  * Resolves api customers domain (same layout as cron-jobs) so connector sync
  * can refresh denormalized due/overdue without a hard package dependency on api.
+ *
+ * Unlike the credit-insurance domain, the customer AR rollups have not been
+ * extracted into a shared leaf package yet, so this loader is retained. See the
+ * slice 04 implementation notes.
  */
 function resolveCustomersDomainRoot(): string {
     if (process.env.CUSTOMERS_DOMAIN_ROOT?.trim()) {

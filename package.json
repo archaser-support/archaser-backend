@@ -13,6 +13,7 @@
     "packages/openapi-client",
     "packages/sms-send",
     "packages/auth",
+    "packages/credit-insurance-domain",
     "packages/billing-connector",
     "packages/cron-jobs"
   ],
@@ -32,6 +33,8 @@
     "build:database": "npm run build -w @archaser/database",
     "build:sms-send": "npm run build -w @archaser/sms-send",
     "build:auth": "npm run build -w @archaser/auth",
+    "build:credit-insurance-domain": "npm run build -w @archaser/credit-insurance-domain",
+    "check:credit-insurance-domain-leaf": "npm run check:leaf -w @archaser/credit-insurance-domain",
     "test:sms-send": "npm run test -w @archaser/sms-send",
     "test:api": "npm run test -w @archaser/api",
     "dev:worker": "npm run start:dev -w @archaser/worker",

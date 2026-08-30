@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
-import type { CustomerPolicyWriteInput } from "./customerPolicyTypes";
+import type { CustomerPolicyWriteInput } from "@archaser/credit-insurance-domain";
 
 export type NamedPolicyMasterFields = {
     customer_number: string;

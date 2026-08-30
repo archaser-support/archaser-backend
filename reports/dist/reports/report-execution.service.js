@@ -16,14 +16,12 @@ const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
 const report_constants_1 = require("./report.constants");
-const domain_db_1 = require("../credit-insurance/domain-db");
-const creditDashboardReportEnrichment_1 = require("../credit-insurance/domain/creditDashboardReportEnrichment");
-const creditInsuranceDashboardService_1 = require("../credit-insurance/domain/creditInsuranceDashboardService");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 const dashboard_activity_markers_util_1 = require("./dashboard-activity-markers.util");
 const dashboard_credit_customer_markers_util_1 = require("./dashboard-credit-customer-markers.util");
 const dashboard_credit_invoice_markers_util_1 = require("./dashboard-credit-invoice-markers.util");
 const report_customer_trend_fields_util_1 = require("./report-customer-trend-fields.util");
-const report_customer_policy_fields_util_1 = require("./report-customer-policy-fields.util");
+const credit_insurance_domain_2 = require("@archaser/credit-insurance-domain");
 const report_link_util_1 = require("./report-link.util");
 const report_filter_util_1 = require("./report-filter.util");
 const report_scope_util_1 = require("./report-scope.util");
@@ -35,7 +33,7 @@ let ReportExecutionService = class ReportExecutionService {
     constructor(db, access) {
         this.db = db;
         this.access = access;
-        (0, domain_db_1.bindCreditInsurancePrisma)(this.db);
+        (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(this.db);
     }
     async execute(user, reportId, body) {
         const userInfo = await this.access.resolveUserInfo(user);
@@ -131,7 +129,7 @@ let ReportExecutionService = class ReportExecutionService {
             const rawSortDir = (body.sortDirection ||
                 config.sorting?.[0]?.direction ||
                 "asc").toString();
-            const topUpResult = await (0, creditDashboardReportEnrichment_1.fetchTopUpExpiringReportAsCustomerRows)({
+            const topUpResult = await (0, credit_insurance_domain_1.fetchTopUpExpiringReportAsCustomerRows)({
                 accountId,
                 page,
                 limit,
@@ -163,8 +161,8 @@ let ReportExecutionService = class ReportExecutionService {
                 : "desc");
         const needsInMemorySort = report.context === "dashboard_credit_customers" &&
             !!effectiveSortField &&
-            ((0, creditDashboardReportEnrichment_1.isCreditDashboardEnrichedSortField)(effectiveSortField) ||
-                (0, report_customer_policy_fields_util_1.isCustomerPolicyBackedReportField)(effectiveSortField));
+            ((0, credit_insurance_domain_1.isCreditDashboardEnrichedSortField)(effectiveSortField) ||
+                (0, credit_insurance_domain_2.isCustomerPolicyBackedReportField)(effectiveSortField));
         const orderBy = needsInMemorySort
             ? []
             : this.buildOrderBy(primaryTable, body.sortField, body.sortDirection, config.sorting);
@@ -181,16 +179,16 @@ let ReportExecutionService = class ReportExecutionService {
         ]);
         if (report.context === "dashboard_credit_customers" &&
             primaryTable === "Customer" &&
-            (0, creditDashboardReportEnrichment_1.reportConfigNeedsCreditDashboardEnrichment)(fields)) {
+            (0, credit_insurance_domain_1.reportConfigNeedsCreditDashboardEnrichment)(fields)) {
             const requestedCustomerFields = fields
                 .filter((f) => f.table === "Customer" && f.field)
                 .map((f) => f.field);
             let limitWarningByCustomerId;
             if (requestedCustomerFields.includes("limit_warning_summary")) {
-                const { rows: warningRows } = await (0, creditInsuranceDashboardService_1.getLimitWarningReport)(accountId, 100_000, 0, { policyId: creditDashboardPolicyId });
+                const { rows: warningRows } = await (0, credit_insurance_domain_1.getLimitWarningReport)(accountId, 100_000, 0, { policyId: creditDashboardPolicyId });
                 limitWarningByCustomerId = new Map(warningRows.map((r) => [r.customerId, r]));
             }
-            rows = await (0, creditDashboardReportEnrichment_1.enrichCreditDashboardCustomerRows)(rows, {
+            rows = await (0, credit_insurance_domain_1.enrichCreditDashboardCustomerRows)(rows, {
                 accountId,
                 policyId: creditDashboardPolicyId,
                 requestedFields: requestedCustomerFields,
@@ -198,7 +196,7 @@ let ReportExecutionService = class ReportExecutionService {
             });
         }
         if (needsInMemorySort && effectiveSortField) {
-            rows = (0, creditDashboardReportEnrichment_1.sortCreditDashboardEnrichedRows)(rows, effectiveSortField, effectiveSortDirection);
+            rows = (0, credit_insurance_domain_1.sortCreditDashboardEnrichedRows)(rows, effectiveSortField, effectiveSortDirection);
             totalRecords = rows.length;
             rows = rows.slice(skip, skip + limit);
         }
@@ -475,7 +473,7 @@ let ReportExecutionService = class ReportExecutionService {
             const customerFields = fields
                 .filter((f) => f.table === "Customer")
                 .map((f) => f.field);
-            (0, report_customer_policy_fields_util_1.mergeActiveCustomerPolicySelect)(select, customerFields);
+            (0, credit_insurance_domain_2.mergeActiveCustomerPolicySelect)(select, customerFields);
             (0, report_customer_trend_fields_util_1.mergeLatestCustomerPolicyTrendSelect)(select, customerFields);
         }
         return select;
@@ -889,8 +887,8 @@ let ReportExecutionService = class ReportExecutionService {
                 }
             }
             if (primaryTable === "Customer" &&
-                (0, report_customer_policy_fields_util_1.isCustomerPolicyBackedReportField)(f.field)) {
-                const policyValue = (0, report_customer_policy_fields_util_1.extractCustomerPolicyReportField)(row, f.field, undefined, scopedPolicyId);
+                (0, credit_insurance_domain_2.isCustomerPolicyBackedReportField)(f.field)) {
+                const policyValue = (0, credit_insurance_domain_2.extractCustomerPolicyReportField)(row, f.field, undefined, scopedPolicyId);
                 if (policyValue !== null && policyValue !== undefined) {
                     return policyValue;
                 }

@@ -5,7 +5,7 @@ const NotificationService_1 = require("./NotificationService");
 const CreditNotificationEmailService_1 = require("./CreditNotificationEmailService");
 const NotificationDeliveryLogService_1 = require("./NotificationDeliveryLogService");
 const NotificationRuleEvaluator_1 = require("./NotificationRuleEvaluator");
-const creditDomain_1 = require("../creditDomain");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 function parseEntityFromDedupKey(dedupKey) {
     const parts = dedupKey.split(":");
     const entityTypeIndex = parts.findIndex((part) => part === "customer" || part === "invoice");
@@ -162,9 +162,8 @@ class NotificationRuleDeliveryService {
         return { accountsProcessed, delivered, skipped, cleared };
     }
     static async createService(prisma) {
-        (0, creditDomain_1.bindCreditDomain)(prisma);
-        const { fetchUncoveredCustomerIdsForAccount } = (0, creditDomain_1.requireCreditDomainModule)("domain/termBreachResolver.js");
-        return new NotificationRuleDeliveryService(prisma, new NotificationDeliveryLogService_1.NotificationDeliveryLogService(prisma), new NotificationService_1.NotificationService(prisma), new CreditNotificationEmailService_1.CreditNotificationEmailService(prisma), fetchUncoveredCustomerIdsForAccount);
+        (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
+        return new NotificationRuleDeliveryService(prisma, new NotificationDeliveryLogService_1.NotificationDeliveryLogService(prisma), new NotificationService_1.NotificationService(prisma), new CreditNotificationEmailService_1.CreditNotificationEmailService(prisma), credit_insurance_domain_1.fetchUncoveredCustomerIdsForAccount);
     }
 }
 exports.NotificationRuleDeliveryService = NotificationRuleDeliveryService;

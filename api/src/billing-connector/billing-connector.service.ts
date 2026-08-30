@@ -72,10 +72,16 @@ import {
     formatBackfillStartDateForApi,
     resolveBackfillStartDateChange,
     resolveIncludeOlderOpenInvoicesChange,
+    resolveMepBreachStartDateChange,
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 import { MetricsService } from "../metrics/metrics.service";
+import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
+import {
+    bindCreditInsurancePrisma,
+    enqueueRewriteForImport,
+} from "@archaser/credit-insurance-domain";
 
 const ADMIN_ACCOUNT_ID = 10013;
 
@@ -205,6 +211,7 @@ export class BillingConnectorApiService {
         consecutive_auth_failures: number;
         backfill_started_at?: Date | null;
         backfill_start_date?: Date | null;
+        mep_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
         skip_reporting_breach_on_backfill?: boolean;
         pull_filters?: unknown;
@@ -261,6 +268,9 @@ export class BillingConnectorApiService {
             consecutive_auth_failures: connector.consecutive_auth_failures,
             backfill_start_date: formatBackfillStartDateForApi(
                 connector.backfill_start_date
+            ),
+            mep_breach_start_date: formatBackfillStartDateForApi(
+                connector.mep_breach_start_date
             ),
             include_older_open_invoices:
                 connector.include_older_open_invoices ?? true,
@@ -439,6 +449,32 @@ export class BillingConnectorApiService {
                 code: startDateChange.code,
             });
         }
+        let mepBreachStartDateChange;
+        try {
+            mepBreachStartDateChange = resolveMepBreachStartDateChange({
+                backfillStartedAt: existing?.backfill_started_at,
+                existingStartDate: existing?.mep_breach_start_date,
+                nextInput:
+                    body.mep_breach_start_date === undefined
+                        ? undefined
+                        : (body.mep_breach_start_date as string | null),
+            });
+        } catch (error: unknown) {
+            const err = error as { code?: string; message?: string };
+            if (err?.code === "INVALID_MEP_BREACH_START_DATE") {
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid mep_breach_start_date",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (!mepBreachStartDateChange.ok) {
+            throw new ConflictException({
+                error: mepBreachStartDateChange.message,
+                code: mepBreachStartDateChange.code,
+            });
+        }
         const includeOlderChange = resolveIncludeOlderOpenInvoicesChange({
             backfillStartedAt: existing?.backfill_started_at,
             existingValue: existing?.include_older_open_invoices,
@@ -469,6 +505,9 @@ export class BillingConnectorApiService {
         }
         if (startDateChange.value !== undefined) {
             data.backfill_start_date = startDateChange.value;
+        }
+        if (mepBreachStartDateChange.value !== undefined) {
+            data.mep_breach_start_date = mepBreachStartDateChange.value;
         }
         if (includeOlderChange.value !== undefined) {
             data.include_older_open_invoices = includeOlderChange.value;
@@ -759,6 +798,9 @@ export class BillingConnectorApiService {
                 backfill_start_date: formatBackfillStartDateForApi(
                     connector.backfill_start_date
                 ),
+                mep_breach_start_date: formatBackfillStartDateForApi(
+                    connector.mep_breach_start_date
+                ),
                 include_older_open_invoices:
                     connector.include_older_open_invoices ?? true,
                 skip_reporting_breach_on_backfill:
@@ -835,7 +877,6 @@ export class BillingConnectorApiService {
             executionId,
             mode,
             trigger,
-            syncMode,
             runningSummary,
             onLog,
         } = params;
@@ -861,6 +902,75 @@ export class BillingConnectorApiService {
                 },
                 onCustomerBalancesFinal: async (customerIds) => {
                     await recalculateCustomerAmounts(customerIds, this.db);
+                },
+                onArPostIngest: async (input) => {
+                    bindCreditInsurancePrisma(this.db);
+                    let skipped = false;
+                    let thrown: unknown;
+                    try {
+                        const result = await runArPostIngestForCustomers({
+                            accountId: input.accountId,
+                            customerIds: input.customerIds,
+                            runReplay: input.runReplay === true,
+                            runMaturity: input.runMaturity === true,
+                            ...(input.runProcessOverdue !== undefined
+                                ? {
+                                      runProcessOverdue:
+                                          input.runProcessOverdue,
+                                  }
+                                : {}),
+                            runLiveRefresh: input.runLiveRefresh === true,
+                            enqueueAsOfRewrite:
+                                input.enqueueAsOfRewrite === true,
+                            dryRun: input.dryRun === true,
+                            asOfRewrite: input.asOfRewrite,
+                            ...(input.onProgress
+                                ? { onProgress: input.onProgress }
+                                : {}),
+                        });
+                        skipped = result.skipped;
+                        for (const failure of result.errors) {
+                            this.logger.error(
+                                `[account ${accountId}] AR post-ingest step "${failure.step}" failed` +
+                                    (failure.customerId != null
+                                        ? ` for customer ${failure.customerId}`
+                                        : "") +
+                                    `: ${failure.message}\n${failure.stack ?? ""}`
+                            );
+                        }
+                    } catch (error) {
+                        skipped = true;
+                        thrown = error;
+                        const message =
+                            error instanceof Error
+                                ? error.message
+                                : String(error);
+                        this.logger.error(
+                            `[account ${accountId}] AR post-ingest failed: ${message}`
+                        );
+                    }
+                    // Collection-only / unexpected throw: still enqueue as-of
+                    // (same as file import complete). Overdue already ran for
+                    // non-CI when the orchestrator returned skipped.
+                    if (
+                        skipped &&
+                        input.enqueueAsOfRewrite &&
+                        input.asOfRewrite
+                    ) {
+                        try {
+                            await enqueueRewriteForImport({
+                                accountId: input.accountId,
+                                importType: input.asOfRewrite.importType,
+                                entityIds: input.asOfRewrite.entityIds,
+                                customerIds: input.customerIds,
+                            });
+                        } catch {
+                            // Best-effort; do not fail sync for as-of enqueue.
+                        }
+                    }
+                    if (thrown) {
+                        throw thrown;
+                    }
                 },
             });
             const completedAt = new Date();

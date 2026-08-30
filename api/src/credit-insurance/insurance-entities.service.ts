@@ -8,7 +8,7 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
-import { enqueueAsOfRewrite } from "./domain/asOfRewriteQueue";
+import { enqueueAsOfRewrite } from "@archaser/credit-insurance-domain";
 import { parseRegistrationFeePercent } from "./domain/registrationFeePercent";
 
 export const INSURANCE_ENTITY_TYPES = [

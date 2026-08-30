@@ -373,18 +373,96 @@ let ReportsService = class ReportsService {
         });
         return (0, serialize_bigint_1.serializeBigInt)(created);
     }
-    async syncSystem(user) {
+    /**
+     * Copy selected system reports from master account 10013 onto every other
+     * active account (match by unique_name). Used by "Sync to all accounts".
+     */
+    async syncSystem(user, body = {}) {
         const userInfo = await this.access.resolveUserInfo(user);
         const role = userInfo.viewAsUserRole || userInfo.role;
         if (role !== "System_Administrator" &&
             role !== "archaser_admin") {
             throw new common_1.ForbiddenException("Admin only");
         }
-        // Nest-native: no seed sync from pages; acknowledge for UI tools
+        const MASTER_ACCOUNT_ID = 10013;
+        const reportIds = Array.isArray(body.reportIds)
+            ? [
+                ...new Set(body.reportIds
+                    .map((id) => Number(id))
+                    .filter((id) => Number.isFinite(id) && id > 0)),
+            ]
+            : [];
+        if (reportIds.length === 0) {
+            throw new common_1.BadRequestException("reportIds is required");
+        }
+        const sources = await this.db.report.findMany({
+            where: {
+                id: { in: reportIds },
+                account_id: MASTER_ACCOUNT_ID,
+                is_system: true,
+            },
+        });
+        if (sources.length === 0) {
+            throw new common_1.BadRequestException("No matching system reports found on the master account");
+        }
+        const targets = await this.db.account.findMany({
+            where: {
+                id: { not: MASTER_ACCOUNT_ID },
+                deleted_at: null,
+            },
+            select: { id: true },
+        });
+        const userId = this.access.getEffectiveUserId(userInfo);
+        const now = new Date();
+        let created = 0;
+        let updated = 0;
+        for (const account of targets) {
+            for (const source of sources) {
+                const existing = await this.db.report.findUnique({
+                    where: {
+                        account_id_unique_name: {
+                            account_id: account.id,
+                            unique_name: source.unique_name,
+                        },
+                    },
+                    select: { id: true },
+                });
+                const shared = {
+                    name: source.name,
+                    description: source.description,
+                    report_config: source.report_config,
+                    is_public: source.is_public,
+                    is_system: true,
+                    is_default: source.is_default,
+                    context: source.context,
+                    modified_by: userId,
+                    modified_at: now,
+                };
+                if (existing) {
+                    await this.db.report.update({
+                        where: { id: existing.id },
+                        data: shared,
+                    });
+                    updated += 1;
+                }
+                else {
+                    await this.db.report.create({
+                        data: {
+                            account_id: account.id,
+                            unique_name: source.unique_name,
+                            created_by: userId,
+                            ...shared,
+                        },
+                    });
+                    created += 1;
+                }
+            }
+        }
         return {
-            success: true,
-            synced: 0,
-            message: "System report sync is managed via Nest seed jobs",
+            syncedReports: sources.length,
+            targetAccounts: targets.length,
+            created,
+            updated,
         };
     }
     async resolveDefaultView(accountId, userId, context, _role, filterCi) {

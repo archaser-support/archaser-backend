@@ -1,5 +1,5 @@
 import type { Invoice, InvoicePayment, Prisma, PrismaClient } from "@prisma/client";
-import { INVOICE_PAID_TOLERANCE } from "./invoicePaidTolerance";
+import { isWithinPaidTolerance } from "./invoicePaidTolerance";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
 import { commitOps } from "../import/bulkWrite";
@@ -10,7 +10,10 @@ export type LinkDeferredPaymentAndRecalcResult = {
     alreadyLinked: boolean;
 };
 
-export { INVOICE_PAID_TOLERANCE } from "./invoicePaidTolerance";
+export {
+    INVOICE_PAID_TOLERANCE,
+    isWithinPaidTolerance,
+} from "./invoicePaidTolerance";
 
 export type InvoicePaidRecalcOptions = {
     normalizeNegativePaymentsForCreditClose?: boolean;
@@ -23,6 +26,7 @@ type LinkedPaymentForRecalc = {
     amount: number | null;
     customer_amount: number | null;
     payment_method: string | null;
+    reference: string | null;
 };
 
 type InvoiceForPaidRecalc = Pick<
@@ -36,6 +40,7 @@ const LINKED_PAYMENT_RECALC_SELECT = {
     amount: true,
     customer_amount: true,
     payment_method: true,
+    reference: true,
 } as const;
 
 function hasForcePaidClose(
@@ -102,7 +107,7 @@ function buildInvoicePaidUpdate(
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;
     const newCustomerOutstanding =
         (invoice.customer_net_amount ?? 0) - totalCustomerPaid;
-    const becomesPaid = newCustomerOutstanding <= INVOICE_PAID_TOLERANCE;
+    const becomesPaid = isWithinPaidTolerance(newCustomerOutstanding);
 
     return {
         total_paid: totalPaid,
