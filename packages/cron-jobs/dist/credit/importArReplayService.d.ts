@@ -78,6 +78,11 @@ export type ReplayCustomerArImportParams = {
     /** Overrides the per-invoice-date top-up resolution when supplied. */
     topUpTotal?: number;
     dbClient?: PrismaClient;
+    /** Event-level progress; a single customer can carry thousands of events. */
+    onProgress?: (progress: {
+        processed: number;
+        total: number;
+    }) => void;
 };
 /**
  * DB-backed replay for a single customer. Links deferred payments on

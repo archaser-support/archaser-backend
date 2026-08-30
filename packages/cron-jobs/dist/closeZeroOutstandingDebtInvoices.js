@@ -11,9 +11,9 @@ const INVOICE_STATUS = {
 };
 /**
  * Close Due/Overdue invoices with near-zero customer outstanding debt
- * (within ±INVOICE_PAID_TOLERANCE), then recalculate customer rollups and
- * refresh credit-insurance fields. Large negative outstanding (credit notes)
- * is not treated as Paid.
+ * (within ±account paid tolerance, else ±INVOICE_PAID_TOLERANCE), then
+ * recalculate customer rollups and refresh credit-insurance fields. Large
+ * negative outstanding (credit notes) is not treated as Paid.
  */
 async function closeZeroOutstandingDebtInvoices(prisma) {
     const start = Date.now();
@@ -45,11 +45,19 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
             },
         });
     }
-    const invoices = await prisma.invoice.findMany({
+    const connectors = await prisma.billingConnector.findMany({
+        select: { account_id: true, invoice_paid_tolerance: true },
+    });
+    const toleranceByAccount = new Map();
+    for (const connector of connectors) {
+        const value = Number(connector.invoice_paid_tolerance);
+        toleranceByAccount.set(connector.account_id, Number.isFinite(value) ? value : billing_connector_1.INVOICE_PAID_TOLERANCE);
+    }
+    const candidates = await prisma.invoice.findMany({
         where: {
             customer_outstanding_debt: {
-                gte: -billing_connector_1.INVOICE_PAID_TOLERANCE,
-                lte: billing_connector_1.INVOICE_PAID_TOLERANCE,
+                gte: -billing_connector_1.INVOICE_PAID_TOLERANCE_MAX,
+                lte: billing_connector_1.INVOICE_PAID_TOLERANCE_MAX,
             },
             status: {
                 in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE],
@@ -58,8 +66,11 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
         select: {
             id: true,
             customer_id: true,
+            account_id: true,
+            customer_outstanding_debt: true,
         },
     });
+    const invoices = candidates.filter((invoice) => (0, billing_connector_1.isWithinPaidTolerance)(invoice.customer_outstanding_debt ?? 0, toleranceByAccount.get(invoice.account_id) ?? billing_connector_1.INVOICE_PAID_TOLERANCE));
     if (invoices.length === 0) {
         return {
             success: true,

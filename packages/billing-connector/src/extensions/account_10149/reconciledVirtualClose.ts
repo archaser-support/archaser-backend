@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 
-import { INVOICE_PAID_TOLERANCE } from "../../invoice/invoicePaidTolerance";
+import { resolveInvoicePaidTolerance } from "../../invoice/invoicePaidTolerance";
 import { commitOps } from "../../import/bulkWrite";
 
 export const VIRTUAL_PAYMENT_METHOD = "virtual";
@@ -62,7 +62,10 @@ function resolveVirtualAmounts(
  * Callers then recalc paid totals.
  */
 export async function applyReconciledVirtualCloses(
-    prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">,
+    prisma: Pick<
+        PrismaClient,
+        "invoice" | "invoicePayment" | "billingConnector" | "$transaction"
+    >,
     accountId: number,
     candidates: ReconciledVirtualCloseCandidate[],
     userId?: string
@@ -74,6 +77,8 @@ export async function applyReconciledVirtualCloses(
     if (byInvoice.size === 0) {
         return new Set();
     }
+
+    const paidTolerance = await resolveInvoicePaidTolerance(prisma, accountId);
 
     const invoiceIds = [...byInvoice.keys()];
     const [invoices, linkedPayments] = await Promise.all([
@@ -151,8 +156,7 @@ export async function applyReconciledVirtualCloses(
         // Positive invoices: remaining > T. Credit notes (negative net): remaining < -T.
         // Virtual payment equals remaining so net − (real + virtual) ≈ 0 after recalc.
         const needsVirtual =
-            remaining > INVOICE_PAID_TOLERANCE ||
-            remaining < -INVOICE_PAID_TOLERANCE;
+            remaining > paidTolerance || remaining < -paidTolerance;
 
         if (needsVirtual) {
             const amounts = resolveVirtualAmounts(invoice, remaining);
@@ -221,7 +225,10 @@ export async function applyReconciledVirtualCloses(
  * (full net when no real payments). Caller must recalc paid totals.
  */
 export async function applyReconciledVirtualClosesForInvoiceNumbers(
-    prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">,
+    prisma: Pick<
+        PrismaClient,
+        "invoice" | "invoicePayment" | "billingConnector" | "$transaction"
+    >,
     accountId: number,
     invoiceNumbers: string[],
     userId?: string,
