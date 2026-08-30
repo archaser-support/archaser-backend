@@ -18,7 +18,13 @@
     "packages/cron-jobs"
   ],
   "overrides": {
-    "esbuild": "0.24.2"
+    "esbuild": "0.25.0",
+    "nodemailer": "9.0.6",
+    "deepmerge-ts": "8.0.2",
+    "postcss": "8.5.26",
+    "@nestjs/swagger": {
+      "js-yaml": "5.4.1"
+    }
   },
   "engines": {
     "node": ">=20.0.0",

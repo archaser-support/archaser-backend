@@ -24,7 +24,7 @@
     "cron-parser": "^4.9.0",
     "ioredis": "^5.11.1",
     "moment-timezone": "^0.5.47",
-    "nodemailer": "^7.0.13"
+    "nodemailer": "^9.0.6"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
