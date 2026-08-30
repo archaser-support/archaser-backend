@@ -3,7 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.shouldSkipReportingBreachOnConnectorWrite = shouldSkipReportingBreachOnConnectorWrite;
 exports.extractMaxUpdatedAt = extractMaxUpdatedAt;
 exports.importMappedEntityBatch = importMappedEntityBatch;
-exports.updateAccountLastSyncDate = updateAccountLastSyncDate;
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 const applyMaturedDeferredPayments_1 = require("./applyMaturedDeferredPayments");
 const bulkWrite_1 = require("./bulkWrite");
@@ -776,10 +775,4 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
         }
     }
     return markCancelled(result, options);
-}
-async function updateAccountLastSyncDate(prisma, accountId, syncedAt = new Date()) {
-    await prisma.account.update({
-        where: { id: accountId },
-        data: { last_sync_date: syncedAt },
-    });
 }
