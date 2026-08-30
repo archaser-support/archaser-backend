@@ -2,7 +2,7 @@
  * Thin live-refresh entry after import/sync: recompute MEP / overdue block and
  * run the capacity-gap pipeline via existing customer insurance sync follow-up.
  */
-import { syncCustomerInsuranceFields } from "./syncCustomerInsuranceFields";
+import { syncCustomerInsuranceFields } from "@archaser/credit-insurance-domain";
 
 export type PostImportOverdueMetricsError = {
     customerId: number;

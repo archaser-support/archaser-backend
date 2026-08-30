@@ -1,14 +1,15 @@
 import { Prisma, type cost_calculation_method } from "@prisma/client";
 
-import { prisma } from "../domain-db";
-import { parsePortfolioHealthDateRange } from "./shared/portfolioHealthDateRange";
 import {
+    computeCreditDashboardHealthIndex,
+    computeTopUpDailyCostAggregate,
+    creditInsurancePrisma as prisma,
+    isActiveTopUp,
     isPendingReviewExclusion,
     normalizePolicyExclusionReason,
-} from "./shared/policyExclusion";
-import { computeCreditDashboardHealthIndex } from "./creditDashboardSnapshotService";
-import { computeTopUpDailyCostAggregate } from "./customerPolicyDailyCost";
-import type { TermsBreachByReasonSnapshotKey } from "./customerPolicyTrendTermsBreachByReason";
+    type TermsBreachByReasonSnapshotKey,
+} from "@archaser/credit-insurance-domain";
+import { parsePortfolioHealthDateRange } from "./shared/portfolioHealthDateRange";
 import {
     computePortfolioRangeCost,
     RANGE_COST_EXCLUDED_INVOICE_STATUSES,
@@ -16,7 +17,6 @@ import {
     type PortfolioRangeCostInvoice,
     type PortfolioRangeCostTopUpSlice,
 } from "./portfolioRangeCost";
-import { isActiveTopUp } from "./resolveEffectiveApprovedLimit";
 
 export const PORTFOLIO_HEALTH_BELOW_THRESHOLD_PCT = 85;
 export const INSURER_DECLINED_REASON = "Insurer declined";

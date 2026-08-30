@@ -7,7 +7,7 @@ import {
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
-import { refreshInsuranceTargetDatesForInvoiceIds } from "../credit-insurance/domain/syncInvoiceReportingBreach";
+import { refreshInsuranceTargetDatesForInvoiceIds } from "@archaser/credit-insurance-domain";
 import { DatabaseService } from "../database/database.service";
 
 export type InvoicesListQuery = {

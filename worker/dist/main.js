@@ -25,6 +25,7 @@ const ioredis_1 = __importDefault(require("ioredis"));
 const prom_client_1 = require("prom-client");
 const database_1 = require("@archaser/database");
 const cron_jobs_1 = require("@archaser/cron-jobs");
+const billing_connector_1 = require("@archaser/billing-connector");
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
 let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
     constructor(config) {
@@ -37,6 +38,7 @@ let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
         this.register = new prom_client_1.Registry();
     }
     async start() {
+        (0, billing_connector_1.registerArPostIngestOrchestrator)((options) => (0, cron_jobs_1.runArPostIngestForCustomers)(options));
         (0, prom_client_1.collectDefaultMetrics)({
             register: this.register,
             prefix: "archaser_worker_",

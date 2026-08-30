@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.computeCustomerOverdueMetrics = computeCustomerOverdueMetrics;
 const client_1 = require("@prisma/client");
-const creditDomain_1 = require("./creditDomain");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 const CUSTOMER_CHUNK = 2000;
 const INVOICE_REPORTING_BREACH_CHUNK = 2000;
 function startOfTodayUtc() {
@@ -20,10 +20,7 @@ function scheduleTimeOnApprovedLimitExpirationDate(expiration) {
  */
 async function computeCustomerOverdueMetrics(prisma, customerIdFilter) {
     const start = Date.now();
-    (0, creditDomain_1.bindCreditDomain)(prisma);
-    const syncMod = (0, creditDomain_1.requireCreditDomainModule)("domain/syncCustomerInsuranceFields.js");
-    const breachMod = (0, creditDomain_1.requireCreditDomainModule)("domain/syncInvoiceReportingBreach.js");
-    const statusMod = (0, creditDomain_1.requireCreditDomainModule)("domain/insurancePolicyStatusCron.js");
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
     let customersSynced = 0;
     let limitExpirationsProcessed = 0;
     let reportingBreachesPromoted = 0;
@@ -52,7 +49,7 @@ async function computeCustomerOverdueMetrics(prisma, customerIdFilter) {
         }
         lastCustomerId = lastId;
         for (const row of chunk) {
-            await syncMod.syncCustomerInsuranceFields(row.id);
+            await (0, credit_insurance_domain_1.syncCustomerInsuranceFields)(row.id);
             customersSynced += 1;
         }
     }
@@ -86,7 +83,7 @@ async function computeCustomerOverdueMetrics(prisma, customerIdFilter) {
         }
         lastInvoiceId = lastId;
         reportingBreachesPromoted +=
-            await breachMod.sweepReportingBreachForOverdueInvoiceIds(invoiceBatch.map((row) => row.id), prisma);
+            await (0, credit_insurance_domain_1.sweepReportingBreachForOverdueInvoiceIds)(invoiceBatch.map((row) => row.id), prisma);
     }
     const todayUtc = startOfTodayUtc();
     const expiredFromActivePolicy = await prisma.customerPolicy.findMany({
@@ -144,7 +141,7 @@ async function computeCustomerOverdueMetrics(prisma, customerIdFilter) {
         });
         limitExpirationsProcessed += 1;
     }
-    const policyStatus = await statusMod.runInsurancePolicyStatusMaintenance();
+    const policyStatus = await (0, credit_insurance_domain_1.runInsurancePolicyStatusMaintenance)();
     const durationMs = Date.now() - start;
     const summary = {
         customersSynced,

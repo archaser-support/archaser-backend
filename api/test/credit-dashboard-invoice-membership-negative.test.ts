@@ -1,7 +1,7 @@
 import {
     reportingCountdownMembershipWhere,
     termsBreachMembershipWhere,
-} from "../src/credit-insurance/domain/creditDashboardInvoiceMembership";
+} from "@archaser/credit-insurance-domain";
 
 describe("credit dashboard invoice membership — exclude negative amounts", () => {
     it("reporting countdown membership excludes amount < 0", () => {

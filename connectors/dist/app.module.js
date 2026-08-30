@@ -15,6 +15,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppModule = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
+const billing_connector_1 = require("@archaser/billing-connector");
+const cron_jobs_1 = require("@archaser/cron-jobs");
 const prom_client_1 = require("prom-client");
 const auth_module_1 = require("./auth/auth.module");
 const database_module_1 = require("./database/database.module");
@@ -67,6 +69,16 @@ HealthController = __decorate([
     __metadata("design:paramtypes", [ConnectorsMetrics])
 ], HealthController);
 let AppModule = class AppModule {
+    /**
+     * Connector syncs triggered here (queue worker, nested account sync,
+     * internal inline sync) pass no `onArPostIngest`, so they fall back to
+     * `runArPostIngestViaHost`, which calls the registered orchestrator.
+     * Without this the fallback would log "orchestrator is not registered"
+     * and post-ingest AR refresh would silently stop in this process.
+     */
+    onModuleInit() {
+        (0, billing_connector_1.registerArPostIngestOrchestrator)((options) => (0, cron_jobs_1.runArPostIngestForCustomers)(options));
+    }
 };
 exports.AppModule = AppModule;
 exports.AppModule = AppModule = __decorate([

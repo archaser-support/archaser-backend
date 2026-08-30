@@ -1,13 +1,16 @@
 import { ImportService } from "../src/import/import.service";
-import { runArPostIngestForCustomers } from "../src/credit-insurance/domain/arPostIngestOrchestrator";
-import { enqueueRewriteForImport } from "../src/credit-insurance/domain/asOfRewriteQueue";
+import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
+import { enqueueRewriteForImport } from "@archaser/credit-insurance-domain";
 import { recalculateCustomerAmounts } from "../src/customers/domain/recalculateCustomerAmounts";
 
-jest.mock("../src/credit-insurance/domain/arPostIngestOrchestrator", () => ({
+jest.mock("@archaser/cron-jobs", () => ({
     runArPostIngestForCustomers: jest.fn(),
 }));
 
-jest.mock("../src/credit-insurance/domain/asOfRewriteQueue", () => ({
+jest.mock("../../packages/credit-insurance-domain/src/credit-insurance/domain/asOfRewriteQueue", () => ({
+    ...jest.requireActual(
+        "../../packages/credit-insurance-domain/src/credit-insurance/domain/asOfRewriteQueue"
+    ),
     enqueueRewriteForImport: jest.fn().mockResolvedValue(undefined),
 }));
 

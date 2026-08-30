@@ -1,79 +1,51 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.registerArPostIngestOrchestrator = registerArPostIngestOrchestrator;
+exports.isArPostIngestOrchestratorRegistered = isArPostIngestOrchestratorRegistered;
+exports.resetArPostIngestOrchestratorForTests = resetArPostIngestOrchestratorForTests;
 exports.refreshInsuranceTargetDatesViaHost = refreshInsuranceTargetDatesViaHost;
 exports.runArPostIngestViaHost = runArPostIngestViaHost;
 exports.invokeConnectorArPostIngest = invokeConnectorArPostIngest;
-const path = __importStar(require("path"));
-function resolveCreditInsuranceDomainRoot() {
-    if (process.env.CREDIT_INSURANCE_DOMAIN_ROOT?.trim()) {
-        return path.resolve(process.env.CREDIT_INSURANCE_DOMAIN_ROOT.trim());
-    }
-    // packages/billing-connector/dist/credit → ../../../api/dist/credit-insurance
-    return path.resolve(__dirname, "../../../api/dist/credit-insurance");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
+/**
+ * Host port for the AR post-ingest orchestrator.
+ *
+ * The orchestrator lives in `@archaser/cron-jobs`, which depends on this
+ * package, so importing it back would create a cycle. Every process that can
+ * reach the no-callback fallback registers it at startup instead: the api
+ * (`CreditInsuranceModule`), connectors (`AppModule`) and worker (runtime start).
+ */
+let registeredOrchestrator;
+function registerArPostIngestOrchestrator(orchestrator) {
+    registeredOrchestrator = orchestrator;
+}
+function isArPostIngestOrchestratorRegistered() {
+    return registeredOrchestrator !== undefined;
+}
+function resetArPostIngestOrchestratorForTests() {
+    registeredOrchestrator = undefined;
 }
 /**
  * Recompute invoice insurance target dates after amount/date upserts.
- * Uses the same Nest credit-insurance refresh as API due-date edits.
+ * Uses the same credit-insurance refresh as API due-date edits.
  */
 async function refreshInsuranceTargetDatesViaHost(invoiceIds, prisma) {
     if (invoiceIds.length === 0) {
         return 0;
     }
-    const root = resolveCreditInsuranceDomainRoot();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const domainDb = require(path.join(root, "domain-db.js"));
-    domainDb.bindCreditInsurancePrisma(prisma);
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const breachMod = require(path.join(root, "domain/syncInvoiceReportingBreach.js"));
-    return breachMod.refreshInsuranceTargetDatesForInvoiceIds(invoiceIds, prisma);
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
+    return (0, credit_insurance_domain_1.refreshInsuranceTargetDatesForInvoiceIds)(invoiceIds, prisma);
 }
 /**
  * Default post-Invoice / payment-only AR post-ingest when the host does not
  * pass onArPostIngest (queue worker, scheduled sync, internal inline).
  */
 async function runArPostIngestViaHost(input, prisma) {
-    const root = resolveCreditInsuranceDomainRoot();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const domainDb = require(path.join(root, "domain-db.js"));
-    domainDb.bindCreditInsurancePrisma(prisma);
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const orch = require(path.join(root, "domain/arPostIngestOrchestrator.js"));
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const asOfMod = require(path.join(root, "domain/asOfRewriteQueue.js"));
-    const result = await orch.runArPostIngestForCustomers({
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
+    if (!registeredOrchestrator) {
+        throw new Error("AR post-ingest orchestrator is not registered. Call registerArPostIngestOrchestrator(fn) during service startup, or pass onArPostIngest to the sync options.");
+    }
+    const result = await registeredOrchestrator({
         accountId: input.accountId,
         customerIds: input.customerIds,
         runReplay: input.runReplay === true,
@@ -86,12 +58,22 @@ async function runArPostIngestViaHost(input, prisma) {
         enqueueAsOfRewrite: input.enqueueAsOfRewrite === true,
         dryRun: input.dryRun === true,
         asOfRewrite: input.asOfRewrite,
+        ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     });
+    for (const failure of result.errors ?? []) {
+        console.error("[arPostIngestHost] post-ingest step failed", {
+            accountId: input.accountId,
+            step: failure.step,
+            customerId: failure.customerId,
+            message: failure.message,
+            stack: failure.stack,
+        });
+    }
     // Match file-import: collection-only still enqueues as-of rewrite.
     if (result.skipped &&
         input.enqueueAsOfRewrite === true &&
         input.asOfRewrite) {
-        await asOfMod.enqueueRewriteForImport({
+        await (0, credit_insurance_domain_1.enqueueRewriteForImport)({
             accountId: input.accountId,
             importType: input.asOfRewrite.importType,
             entityIds: input.asOfRewrite.entityIds,
@@ -140,6 +122,7 @@ async function invokeConnectorArPostIngest(params) {
             runLiveRefresh: true,
             enqueueAsOfRewrite: true,
             asOfRewrite,
+            ...(params.onProgress ? { onProgress: params.onProgress } : {}),
         });
         params.log(`AR post-ingest finished for ${customerIds.length} customer(s)`);
     }

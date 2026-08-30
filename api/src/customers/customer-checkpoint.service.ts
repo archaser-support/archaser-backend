@@ -15,8 +15,10 @@ import { Prisma } from "@prisma/client";
 
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
-import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
-import { syncCustomerInsuranceFields } from "../credit-insurance/domain/syncCustomerInsuranceFields";
+import {
+    bindCreditInsurancePrisma,
+    syncCustomerInsuranceFields,
+} from "@archaser/credit-insurance-domain";
 import { DatabaseService } from "../database/database.service";
 import { recalculateCustomerAmounts } from "./domain/recalculateCustomerAmounts";
 

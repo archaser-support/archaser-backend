@@ -19,6 +19,7 @@ import {
     areBackfillOptionsLocked,
     formatBackfillStartDateForApi,
     resolveBackfillStartDateChange,
+    resolveMepBreachStartDateChange,
     resolveIncludeOlderOpenInvoicesChange,
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
@@ -417,6 +418,7 @@ export class AccountsNestedService {
         consecutive_auth_failures: number;
         backfill_started_at?: Date | null;
         backfill_start_date?: Date | null;
+        mep_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
         skip_reporting_breach_on_backfill?: boolean;
         extension_key?: string | null;
@@ -442,6 +444,9 @@ export class AccountsNestedService {
             consecutive_auth_failures: connector.consecutive_auth_failures,
             backfill_start_date: formatBackfillStartDateForApi(
                 connector.backfill_start_date
+            ),
+            mep_breach_start_date: formatBackfillStartDateForApi(
+                connector.mep_breach_start_date
             ),
             include_older_open_invoices:
                 connector.include_older_open_invoices ?? true,
@@ -571,6 +576,33 @@ export class AccountsNestedService {
             });
         }
 
+        let mepBreachStartDateChange;
+        try {
+            mepBreachStartDateChange = resolveMepBreachStartDateChange({
+                backfillStartedAt: existing?.backfill_started_at,
+                existingStartDate: existing?.mep_breach_start_date,
+                nextInput:
+                    body.mep_breach_start_date === undefined
+                        ? undefined
+                        : (body.mep_breach_start_date as string | null),
+            });
+        } catch (error: unknown) {
+            const err = error as { code?: string; message?: string };
+            if (err?.code === "INVALID_MEP_BREACH_START_DATE") {
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid mep_breach_start_date",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (!mepBreachStartDateChange.ok) {
+            throw new ConflictException({
+                error: mepBreachStartDateChange.message,
+                code: mepBreachStartDateChange.code,
+            });
+        }
+
         const includeOlderChange = resolveIncludeOlderOpenInvoicesChange({
             backfillStartedAt: existing?.backfill_started_at,
             existingValue: existing?.include_older_open_invoices,
@@ -603,6 +635,9 @@ export class AccountsNestedService {
 
         if (startDateChange.value !== undefined) {
             data.backfill_start_date = startDateChange.value;
+        }
+        if (mepBreachStartDateChange.value !== undefined) {
+            data.mep_breach_start_date = mepBreachStartDateChange.value;
         }
         if (includeOlderChange.value !== undefined) {
             data.include_older_open_invoices = includeOlderChange.value;

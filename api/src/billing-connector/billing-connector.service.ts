@@ -68,12 +68,15 @@ import {
     formatBackfillStartDateForApi,
     resolveBackfillStartDateChange,
     resolveIncludeOlderOpenInvoicesChange,
+    resolveMepBreachStartDateChange,
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
-import { runArPostIngestForCustomers } from "../credit-insurance/domain/arPostIngestOrchestrator";
-import { enqueueRewriteForImport } from "../credit-insurance/domain/asOfRewriteQueue";
-import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
+import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
+import {
+    bindCreditInsurancePrisma,
+    enqueueRewriteForImport,
+} from "@archaser/credit-insurance-domain";
 
 const ADMIN_ACCOUNT_ID = 10013;
 
@@ -194,6 +197,7 @@ export class BillingConnectorApiService {
         consecutive_auth_failures: number;
         backfill_started_at?: Date | null;
         backfill_start_date?: Date | null;
+        mep_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
         skip_reporting_breach_on_backfill?: boolean;
         pull_filters?: unknown;
@@ -250,6 +254,9 @@ export class BillingConnectorApiService {
             consecutive_auth_failures: connector.consecutive_auth_failures,
             backfill_start_date: formatBackfillStartDateForApi(
                 connector.backfill_start_date
+            ),
+            mep_breach_start_date: formatBackfillStartDateForApi(
+                connector.mep_breach_start_date
             ),
             include_older_open_invoices:
                 connector.include_older_open_invoices ?? true,
@@ -428,6 +435,32 @@ export class BillingConnectorApiService {
                 code: startDateChange.code,
             });
         }
+        let mepBreachStartDateChange;
+        try {
+            mepBreachStartDateChange = resolveMepBreachStartDateChange({
+                backfillStartedAt: existing?.backfill_started_at,
+                existingStartDate: existing?.mep_breach_start_date,
+                nextInput:
+                    body.mep_breach_start_date === undefined
+                        ? undefined
+                        : (body.mep_breach_start_date as string | null),
+            });
+        } catch (error: unknown) {
+            const err = error as { code?: string; message?: string };
+            if (err?.code === "INVALID_MEP_BREACH_START_DATE") {
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid mep_breach_start_date",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (!mepBreachStartDateChange.ok) {
+            throw new ConflictException({
+                error: mepBreachStartDateChange.message,
+                code: mepBreachStartDateChange.code,
+            });
+        }
         const includeOlderChange = resolveIncludeOlderOpenInvoicesChange({
             backfillStartedAt: existing?.backfill_started_at,
             existingValue: existing?.include_older_open_invoices,
@@ -458,6 +491,9 @@ export class BillingConnectorApiService {
         }
         if (startDateChange.value !== undefined) {
             data.backfill_start_date = startDateChange.value;
+        }
+        if (mepBreachStartDateChange.value !== undefined) {
+            data.mep_breach_start_date = mepBreachStartDateChange.value;
         }
         if (includeOlderChange.value !== undefined) {
             data.include_older_open_invoices = includeOlderChange.value;
@@ -748,6 +784,9 @@ export class BillingConnectorApiService {
                 backfill_start_date: formatBackfillStartDateForApi(
                     connector.backfill_start_date
                 ),
+                mep_breach_start_date: formatBackfillStartDateForApi(
+                    connector.mep_breach_start_date
+                ),
                 include_older_open_invoices:
                     connector.include_older_open_invoices ?? true,
                 skip_reporting_breach_on_backfill:
@@ -868,8 +907,20 @@ export class BillingConnectorApiService {
                                 input.enqueueAsOfRewrite === true,
                             dryRun: input.dryRun === true,
                             asOfRewrite: input.asOfRewrite,
+                            ...(input.onProgress
+                                ? { onProgress: input.onProgress }
+                                : {}),
                         });
                         skipped = result.skipped;
+                        for (const failure of result.errors) {
+                            this.logger.error(
+                                `[account ${accountId}] AR post-ingest step "${failure.step}" failed` +
+                                    (failure.customerId != null
+                                        ? ` for customer ${failure.customerId}`
+                                        : "") +
+                                    `: ${failure.message}\n${failure.stack ?? ""}`
+                            );
+                        }
                     } catch (error) {
                         skipped = true;
                         thrown = error;

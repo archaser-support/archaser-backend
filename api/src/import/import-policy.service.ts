@@ -12,8 +12,8 @@ import {
     deriveExcludedFromPolicy,
     isAllowedPolicyExclusionReason,
     normalizePolicyExclusionReason,
-} from "../credit-insurance/domain/shared/policyExclusion";
-import { syncCustomerInsuranceFields } from "../credit-insurance/domain/syncCustomerInsuranceFields";
+    syncCustomerInsuranceFields,
+} from "@archaser/credit-insurance-domain";
 
 export type ImportPolicyRowInput = {
     policy_number?: unknown;

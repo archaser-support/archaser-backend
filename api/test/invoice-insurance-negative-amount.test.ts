@@ -3,7 +3,7 @@ import {
     computeInvoiceInsuranceRowData,
     parseImportDateToLocalCalendarDate,
     shouldSetReportingBreach,
-} from "../src/credit-insurance/domain/invoiceInsuranceFields";
+} from "@archaser/credit-insurance-domain";
 
 const baseCustomer = {
     reporting_days: 5,

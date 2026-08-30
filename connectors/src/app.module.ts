@@ -1,5 +1,15 @@
-import { Controller, Get, Header, Injectable, Module, Res } from "@nestjs/common";
+import {
+    Controller,
+    Get,
+    Header,
+    Injectable,
+    Module,
+    Res,
+    type OnModuleInit,
+} from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { registerArPostIngestOrchestrator } from "@archaser/billing-connector";
+import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
 import { collectDefaultMetrics, Registry } from "prom-client";
 import type { Response } from "express";
 import { AuthModule } from "./auth/auth.module";
@@ -52,4 +62,17 @@ class HealthController {
     controllers: [HealthController, InternalConnectorsController],
     providers: [ConnectorsMetrics],
 })
-export class AppModule {}
+export class AppModule implements OnModuleInit {
+    /**
+     * Connector syncs triggered here (queue worker, nested account sync,
+     * internal inline sync) pass no `onArPostIngest`, so they fall back to
+     * `runArPostIngestViaHost`, which calls the registered orchestrator.
+     * Without this the fallback would log "orchestrator is not registered"
+     * and post-ingest AR refresh would silently stop in this process.
+     */
+    onModuleInit(): void {
+        registerArPostIngestOrchestrator((options) =>
+            runArPostIngestForCustomers(options)
+        );
+    }
+}

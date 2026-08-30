@@ -17,6 +17,13 @@ import {
 import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
 import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
 import {
+    BALANCES_ENTITY_STATS_KEY,
+    PENDING_CLOSES_ENTITY_STATS_KEY,
+    POST_INGEST_ENTITY_STATS_KEY,
+    type TailStepKey,
+    type TailStepState,
+} from "./connectorSyncRuntime";
+import {
     invokeConnectorArPostIngest,
     type ArPostIngestHostFn,
 } from "../credit/arPostIngestHost";
@@ -122,6 +129,7 @@ export interface RunStagedExtensionSyncResult {
         paymentsStillDeferred?: number;
         paymentsLinkTotal?: number;
         paymentLinkError?: string;
+        tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
     };
     cancelled?: boolean;
     error?: string;
@@ -295,7 +303,8 @@ async function finalizeCustomerBalances(
     onCustomerBalancesFinal:
         | ((customerIds: number[]) => Promise<void>)
         | undefined,
-    log: (message: string) => void
+    log: (message: string) => void,
+    setStep?: (key: TailStepKey, state: TailStepState) => void
 ): Promise<void> {
     if (customerIds.size === 0) {
         return;
@@ -305,17 +314,31 @@ async function finalizeCustomerBalances(
         onCustomerBalancesFinal ??
         ((customerIdsToRecalc: number[]) =>
             recalculateCustomerAmountsViaHost(customerIdsToRecalc, prisma));
+    setStep?.(BALANCES_ENTITY_STATS_KEY, {
+        status: "running",
+        total: ids.length,
+    });
     try {
         await run(ids);
         log(
             `Recalculated customer due/overdue amounts for ${ids.length} customer(s)`
         );
+        setStep?.(BALANCES_ENTITY_STATS_KEY, {
+            status: "done",
+            processed: ids.length,
+            total: ids.length,
+        });
     } catch (error) {
         const message =
             error instanceof Error
                 ? error.message
                 : "Customer amount recalculation failed";
         log(`Customer amount recalculation failed: ${message}`);
+        setStep?.(BALANCES_ENTITY_STATS_KEY, {
+            status: "failed",
+            total: ids.length,
+            error: message,
+        });
     }
 }
 
@@ -334,16 +357,31 @@ export async function runStagedExtensionSync(
     const previewBatch: ExtensionMappedBatch = {};
     const importFn = options.importBatch ?? importMappedEntityBatch;
     const dryRun = options.dryRun === true;
+    const tailSteps: Partial<Record<TailStepKey, TailStepState>> = {};
     const log = (message: string) => options.onLog?.(message);
     const emitProgress = () =>
         options.onProgress?.({
             ...stats,
             ...paymentLink,
+            tailSteps: { ...tailSteps },
         });
     const resultStats = () => ({
         ...stats,
         ...paymentLink,
+        tailSteps: { ...tailSteps },
     });
+    const setTailStep = (key: TailStepKey, state: TailStepState) => {
+        // A late `running` update must not resurrect a finished step.
+        const current = tailSteps[key];
+        if (
+            state.status === "running" &&
+            (current?.status === "done" || current?.status === "failed")
+        ) {
+            return;
+        }
+        tailSteps[key] = state;
+        emitProgress();
+    };
     const cutover = options.pullCreatedOnOrAfter === true;
     const entitySets = parseEntitySetsMap(options.entitySets);
     const arAffectedCustomerIds = new Set<number>();
@@ -364,6 +402,12 @@ export async function runStagedExtensionSync(
         ) {
             return;
         }
+        const pendingTotal =
+            pendingInvoiceCloses.size + pendingHelamOffsetCloses.size;
+        setTailStep(PENDING_CLOSES_ENTITY_STATS_KEY, {
+            status: "running",
+            total: pendingTotal,
+        });
         try {
             const pendingNumbers = Array.from(pendingInvoiceCloses);
             const helamOffsetNumbers = Array.from(pendingHelamOffsetCloses);
@@ -386,6 +430,11 @@ export async function runStagedExtensionSync(
             log(
                 `Extension pending invoice closes (${label}): ${flushResult.closedIds.length} settled (${pendingNumbers.length} virtual, ${helamOffsetNumbers.length} Helam offset)`
             );
+            setTailStep(PENDING_CLOSES_ENTITY_STATS_KEY, {
+                status: "done",
+                processed: flushResult.closedIds.length,
+                total: pendingTotal,
+            });
         } catch (error) {
             const message =
                 error instanceof Error
@@ -394,6 +443,61 @@ export async function runStagedExtensionSync(
             log(
                 `Extension pending invoice closes failed (${label}): ${message}`
             );
+            setTailStep(PENDING_CLOSES_ENTITY_STATS_KEY, {
+                status: "failed",
+                total: pendingTotal,
+                error: message,
+            });
+        }
+    };
+
+    /** Wraps post-ingest so the UI shows it instead of freezing on the last entity. */
+    const runPostIngestWithProgress = async (args: {
+        customerIds: number[];
+        invoiceEntityIds: number[];
+        paymentEntityIds: number[];
+        runMaturity: boolean;
+    }): Promise<void> => {
+        setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
+            status: "running",
+            total: args.customerIds.length,
+        });
+        try {
+            await invokeConnectorArPostIngest({
+                accountId: options.accountId,
+                customerIds: args.customerIds,
+                invoiceEntityIds: args.invoiceEntityIds,
+                paymentEntityIds: args.paymentEntityIds,
+                prisma: options.prisma,
+                onArPostIngest: options.onArPostIngest,
+                log,
+                runMaturity: args.runMaturity,
+                onProgress: ({ completed, total, step, detail }) => {
+                    setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
+                        status: "running",
+                        processed: completed,
+                        total,
+                        ...(step
+                            ? { detail: { step, ...(detail ?? {}) } }
+                            : {}),
+                    });
+                },
+            });
+            setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
+                status: "done",
+                processed: args.customerIds.length,
+                total: args.customerIds.length,
+            });
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "AR post-ingest failed";
+            setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
+                status: "failed",
+                total: args.customerIds.length,
+                error: message,
+            });
         }
     };
 
@@ -410,14 +514,10 @@ export async function runStagedExtensionSync(
                 !invoicePostIngestRan &&
                 paymentAffectedCustomerIds.size > 0
             ) {
-                await invokeConnectorArPostIngest({
-                    accountId: options.accountId,
+                await runPostIngestWithProgress({
                     customerIds: Array.from(paymentAffectedCustomerIds),
                     invoiceEntityIds: [],
                     paymentEntityIds: Array.from(arAffectedPaymentIds),
-                    prisma: options.prisma,
-                    onArPostIngest: options.onArPostIngest,
-                    log,
                     runMaturity: true,
                 });
             }
@@ -425,7 +525,8 @@ export async function runStagedExtensionSync(
                 arAffectedCustomerIds,
                 options.prisma,
                 options.onCustomerBalancesFinal,
-                log
+                log,
+                setTailStep
             );
         }
         return { ...result, invoicePostIngestRan };
@@ -516,7 +617,6 @@ export async function runStagedExtensionSync(
                     });
                 }
                 guard += 1;
-                log(`Pulling ${entityType} page ${guard}…`);
                 const page = await options.provider.pull(entityType, {
                     since: usesDatePull && !applyDateWindow ? window.start : null,
                     createdOnOrAfter: applyDateWindow ? windowCutover : null,
@@ -549,9 +649,6 @@ export async function runStagedExtensionSync(
                 }
 
                 bumpProcessedPage(stats, entityType, mappedPage.length);
-                log(
-                    `Pulled ${entityType} page ${guard}: ${page.records.length} record(s) (${(stats as Record<string, number>)[processedKey(entityType)]} in window)`
-                );
                 emitProgress();
 
                 let pageRows: Record<string, unknown>[] = mappedPage;
@@ -594,14 +691,8 @@ export async function runStagedExtensionSync(
                         });
                     }
 
-                    if (dryRun) {
-                        // Preview accumulates post-plugin rows; no entity writes.
-                    } else if (pageRows.length === 0) {
-                        log(`No ${entityType} rows to import on page ${guard}`);
-                    } else {
-                        log(
-                            `Importing ${pageRows.length} ${entityType} row(s)…`
-                        );
+                    // Preview accumulates post-plugin rows without entity writes.
+                    if (!dryRun && pageRows.length > 0) {
                         const importResult = await importFn(
                             options.prisma,
                             entityType,
@@ -645,9 +736,6 @@ export async function runStagedExtensionSync(
                                 }
                             }
                         }
-                        log(
-                            `Imported ${entityType}: ${importResult.success} success, ${importResult.failed} failed`
-                        );
                         if (importResult.failed > 0) {
                             entityLastError =
                                 importResult.errors.slice(0, 3).join("; ") ||
@@ -784,14 +872,10 @@ export async function runStagedExtensionSync(
 
                 // Once after all Invoice pages + maturity, before Contact.
                 invoicePostIngestRan = true;
-                await invokeConnectorArPostIngest({
-                    accountId: options.accountId,
+                await runPostIngestWithProgress({
                     customerIds: Array.from(arAffectedCustomerIds),
                     invoiceEntityIds: Array.from(arAffectedInvoiceIds),
                     paymentEntityIds: Array.from(arAffectedPaymentIds),
-                    prisma: options.prisma,
-                    onArPostIngest: options.onArPostIngest,
-                    log,
                     runMaturity: false,
                 });
             }

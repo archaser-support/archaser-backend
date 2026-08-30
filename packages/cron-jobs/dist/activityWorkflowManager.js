@@ -699,7 +699,6 @@ async function resolveSmsVendor(prisma, accountId, countryId) {
  * Phase 2: Generate next automated activities
  */
 async function generateNextActivities(prisma, options, stats) {
-    const now = new Date();
     // Find open collection periods needing next activity
     const whereClause = {
         create_next_activity: true,

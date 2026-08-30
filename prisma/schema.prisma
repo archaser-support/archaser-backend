@@ -12,112 +12,112 @@ datasource db {
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model Account {
-  id                                    Int                             @id(map: "Customer_pkey") @unique(map: "account_id_key") @default(autoincrement())
-  created_at                            DateTime                        @default(now()) @db.Timestamptz(6)
-  name                                  String?                         @db.VarChar
-  address_line1                         String?
-  city                                  String?
-  postal_code                           String?
-  address_line2                         String?
-  country_id                            Int?                            @db.SmallInt
-  promise_to_pay                        Int                             @default(0) @db.SmallInt
-  modified_at                           DateTime                        @default(now()) @db.Timestamptz(6)
-  state_id                              Int?
-  company_number                        String?
-  client_type                           customer_client_type            @default(All)
-  sms_from_name                         String?                         @db.VarChar
-  status                                record_status                   @default(Active)
-  sub_domain                            String?                         @db.VarChar
-  no_of_auomated_steps                  Int                             @default(10) @db.SmallInt
-  category_after_automated              category?
-  allow_partial_payment                 Boolean                         @default(true)
-  bank_comments                         String?
-  logo                                  String?
-  primary_color                         String?                         @db.VarChar(7)
-  secondary_color                       String?                         @db.VarChar(7)
-  chart_palette_color                   String?                         @db.VarChar(7)
-  default_language                      language?
-  start_days_after_due                  Int                             @default(1) @db.SmallInt
-  email_from_name                       String?                         @db.VarChar
-  email_server_host                     String?                         @db.VarChar
-  email_from                            String?                         @db.VarChar
-  email_server_user                     String?                         @db.VarChar
-  email_server_password                 String?                         @db.VarChar
-  email_server_port                     Int?                            @db.SmallInt
-  currency                              String?                         @db.VarChar
-  wait_days_after_automated             Int                             @default(1) @db.SmallInt
-  max_promise_to_pay_allowed_per_cycle  Int?                            @default(0) @db.SmallInt
-  locale                                String?                         @default("en-US") @db.VarChar(10)
-  next_activity_date                    DateTime?                       @db.Timestamptz(6)
-  beneficiary_name                      String?                         @db.VarChar
-  bank_name                             String?                         @db.VarChar
-  branch_number                         String?                         @db.VarChar
-  branch_name                           String?                         @db.VarChar
-  swift                                 String?                         @db.VarChar
-  iban                                  String?                         @db.VarChar
-  account_number                        String?                         @db.VarChar
-  balance_evaluation_method             String?                         @default("Invoice-Based") @db.VarChar
-  generic_field_config                  Json?
-  use_customer_language                 Boolean?                        @default(true)
-  last_sync_date                        DateTime?                       @db.Timestamptz(6)
-  default_first_activity_delay_days     Int?                            @db.SmallInt
-  sms_fallback_enabled                  Boolean?                        @default(true)
-  unlisted_country_sms_policy           String?                         @default("block") @db.VarChar(20)
-  intelligent_channel_selection_enabled Boolean?                        @default(false)
-  category_for_new_collection           category?
-  portal_verification_enabled           Boolean?                        @default(true)
-  sso_enabled                           Boolean?                        @default(false)
-  sso_providers                         String?                         @db.VarChar(100)
-  has_collection                        Boolean                         @default(true)
-  has_credit_insurance                  Boolean                         @default(false)
+  id                                     Int                             @id(map: "Customer_pkey") @unique(map: "account_id_key") @default(autoincrement())
+  created_at                             DateTime                        @default(now()) @db.Timestamptz(6)
+  name                                   String?                         @db.VarChar
+  address_line1                          String?
+  city                                   String?
+  postal_code                            String?
+  address_line2                          String?
+  country_id                             Int?                            @db.SmallInt
+  promise_to_pay                         Int                             @default(0) @db.SmallInt
+  modified_at                            DateTime                        @default(now()) @db.Timestamptz(6)
+  state_id                               Int?
+  company_number                         String?
+  client_type                            customer_client_type            @default(All)
+  sms_from_name                          String?                         @db.VarChar
+  status                                 record_status                   @default(Active)
+  sub_domain                             String?                         @db.VarChar
+  no_of_auomated_steps                   Int                             @default(10) @db.SmallInt
+  category_after_automated               category?
+  allow_partial_payment                  Boolean                         @default(true)
+  bank_comments                          String?
+  logo                                   String?
+  primary_color                          String?                         @db.VarChar(7)
+  secondary_color                        String?                         @db.VarChar(7)
+  chart_palette_color                    String?                         @db.VarChar(7)
+  default_language                       language?
+  start_days_after_due                   Int                             @default(1) @db.SmallInt
+  email_from_name                        String?                         @db.VarChar
+  email_server_host                      String?                         @db.VarChar
+  email_from                             String?                         @db.VarChar
+  email_server_user                      String?                         @db.VarChar
+  email_server_password                  String?                         @db.VarChar
+  email_server_port                      Int?                            @db.SmallInt
+  currency                               String?                         @db.VarChar
+  wait_days_after_automated              Int                             @default(1) @db.SmallInt
+  max_promise_to_pay_allowed_per_cycle   Int?                            @default(0) @db.SmallInt
+  locale                                 String?                         @default("en-US") @db.VarChar(10)
+  next_activity_date                     DateTime?                       @db.Timestamptz(6)
+  beneficiary_name                       String?                         @db.VarChar
+  bank_name                              String?                         @db.VarChar
+  branch_number                          String?                         @db.VarChar
+  branch_name                            String?                         @db.VarChar
+  swift                                  String?                         @db.VarChar
+  iban                                   String?                         @db.VarChar
+  account_number                         String?                         @db.VarChar
+  balance_evaluation_method              String?                         @default("Invoice-Based") @db.VarChar
+  generic_field_config                   Json?
+  use_customer_language                  Boolean?                        @default(true)
+  last_sync_date                         DateTime?                       @db.Timestamptz(6)
+  default_first_activity_delay_days      Int?                            @db.SmallInt
+  sms_fallback_enabled                   Boolean?                        @default(true)
+  unlisted_country_sms_policy            String?                         @default("block") @db.VarChar(20)
+  intelligent_channel_selection_enabled  Boolean?                        @default(false)
+  category_for_new_collection            category?
+  portal_verification_enabled            Boolean?                        @default(true)
+  sso_enabled                            Boolean?                        @default(false)
+  sso_providers                          String?                         @db.VarChar(100)
+  has_collection                         Boolean                         @default(true)
+  has_credit_insurance                   Boolean                         @default(false)
   /// When false, File Import is hidden from nav, Import page, and role matrix (UI-only).
-  has_file_import                       Boolean                         @default(true)
-  enable_customer_checkpoints           Boolean                         @default(false)
+  has_file_import                        Boolean                         @default(true)
+  enable_customer_checkpoints            Boolean                         @default(false)
   /// AR coverage percentage threshold to include a customer in limit warnings (e.g. 95).
-  credit_limit_warning_threshold_pct    Int?                            @db.SmallInt
+  credit_limit_warning_threshold_pct     Int?                            @db.SmallInt
   /// Number of days before credit-score validity expiry to include customer in warnings.
-  credit_score_validity_warning_days    Int?                            @db.SmallInt
+  credit_score_validity_warning_days     Int?                            @db.SmallInt
   /// Number of days before target reporting date to include invoices in reporting countdown.
-  reporting_date_warning_days           Int?                            @db.SmallInt
+  reporting_date_warning_days            Int?                            @db.SmallInt
   /// Number of days before approved_limit_expiration_date to start showing the customer in limit warnings.
-  customer_limit_expiration_warning_days Int?                           @db.SmallInt
-  created_by                            String?                         @db.VarChar
-  modified_by                           String?                         @db.VarChar
-  deleted_at                            DateTime?                       @db.Timestamptz(6)
-  deleted_by                            String?                         @db.VarChar
-  User_Account_created_byToUser         User?                           @relation("Account_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountCreatedBy_fkey")
-  User_Account_modified_byToUser        User?                           @relation("Account_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountModifiedBy_fkey")
-  User_Account_deleted_byToUser         User?                           @relation("Account_deleted_byToUser", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountDeletedBy_fkey")
-  Country                               Country?                        @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "account_country_id_fkey")
-  State                                 State?                          @relation(fields: [state_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "account_state_id_fkey")
-  AccountBankAccounts                   AccountBankAccounts[]
-  AccountSMSProviderPreferences         AccountSMSProviderPreferences[]
-  ActivitiesSequence                    ActivitiesSequence[]
-  ActivitiesTemplate                    ActivitiesTemplate[]
-  Activity                              Activity[]
-  ActivityAttachment                    ActivityAttachment[]
+  customer_limit_expiration_warning_days Int?                            @db.SmallInt
+  created_by                             String?                         @db.VarChar
+  modified_by                            String?                         @db.VarChar
+  deleted_at                             DateTime?                       @db.Timestamptz(6)
+  deleted_by                             String?                         @db.VarChar
+  User_Account_created_byToUser          User?                           @relation("Account_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountCreatedBy_fkey")
+  User_Account_modified_byToUser         User?                           @relation("Account_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountModifiedBy_fkey")
+  User_Account_deleted_byToUser          User?                           @relation("Account_deleted_byToUser", fields: [deleted_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "AccountDeletedBy_fkey")
+  Country                                Country?                        @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "account_country_id_fkey")
+  State                                  State?                          @relation(fields: [state_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "account_state_id_fkey")
+  AccountBankAccounts                    AccountBankAccounts[]
+  AccountSMSProviderPreferences          AccountSMSProviderPreferences[]
+  ActivitiesSequence                     ActivitiesSequence[]
+  ActivitiesTemplate                     ActivitiesTemplate[]
+  Activity                               Activity[]
+  ActivityAttachment                     ActivityAttachment[]
   // ActivityTemplateLanguage relation removed (account_id column dropped from that table)
-  BusinessUnitBankAccounts              BusinessUnitBankAccounts[]
-  CustomerBanks                         CustomerBanks[]
-  DisputeReason                         DisputeReason[]
+  BusinessUnitBankAccounts               BusinessUnitBankAccounts[]
+  CustomerBanks                          CustomerBanks[]
+  DisputeReason                          DisputeReason[]
   // DisputeReasonLanguage relation removed (account_id column dropped from that table)
-  ImportJob                             ImportJob[]
-  InternalEmailTemplate                 InternalEmailTemplate[]
-  Invoice                               Invoice[]
-  InvoicePayment                        InvoicePayment[]
-  Log                                   Log[]
-  Notification                          Notification[]
-  NotificationRuleSet                   NotificationRuleSet[]
-  NotificationDeliveryLog               NotificationDeliveryLog[]
-  SequenceContainer                     SequenceContainer[]
-  User_User_account_idToAccount         User[]                          @relation("User_account_idToAccount")
-  BusinessUnit                          BusinessUnit[]
-  RolePermission                        RolePermission[]                @relation("RolePermission_account_idToAccount")
-  Customer                              Customer[]
-  InsurancePolicy                       InsurancePolicy[]
-  Report                                Report[]
-  BillingConnector                      BillingConnector?
-  CustomerCheckpoint                    CustomerCheckpoint[]
+  ImportJob                              ImportJob[]
+  InternalEmailTemplate                  InternalEmailTemplate[]
+  Invoice                                Invoice[]
+  InvoicePayment                         InvoicePayment[]
+  Log                                    Log[]
+  Notification                           Notification[]
+  NotificationRuleSet                    NotificationRuleSet[]
+  NotificationDeliveryLog                NotificationDeliveryLog[]
+  SequenceContainer                      SequenceContainer[]
+  User_User_account_idToAccount          User[]                          @relation("User_account_idToAccount")
+  BusinessUnit                           BusinessUnit[]
+  RolePermission                         RolePermission[]                @relation("RolePermission_account_idToAccount")
+  Customer                               Customer[]
+  InsurancePolicy                        InsurancePolicy[]
+  Report                                 Report[]
+  BillingConnector                       BillingConnector?
+  CustomerCheckpoint                     CustomerCheckpoint[]
 
   @@index([country_id], map: "idx_account_country_id")
   @@index([country_id, state_id], map: "idx_account_country_state")
@@ -192,22 +192,22 @@ model AccountSMSProviderPreferences {
 }
 
 model BusinessUnit {
-  id                                  Int                        @id @default(autoincrement())
+  id                                  Int                            @id @default(autoincrement())
   account_id                          Int
-  name                                String                     @db.VarChar
+  name                                String                         @db.VarChar
   parent_id                           Int?
-  external_id                         String?                    @db.VarChar
-  status                              record_status              @default(Active)
-  is_primary                          Boolean                    @default(false)
-  created_at                          DateTime                   @default(now()) @db.Timestamptz(6)
-  modified_at                         DateTime                   @default(now()) @db.Timestamptz(6)
-  created_by                          String?                    @db.VarChar
-  modified_by                         String?                    @db.VarChar
-  Account                             Account                    @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  Parent                              BusinessUnit?              @relation("BusinessUnitHierarchy", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  Children                            BusinessUnit[]             @relation("BusinessUnitHierarchy")
-  User_BusinessUnit_created_byToUser  User?                      @relation("BusinessUnit_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  User_BusinessUnit_modified_byToUser User?                      @relation("BusinessUnit_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  external_id                         String?                        @db.VarChar
+  status                              record_status                  @default(Active)
+  is_primary                          Boolean                        @default(false)
+  created_at                          DateTime                       @default(now()) @db.Timestamptz(6)
+  modified_at                         DateTime                       @default(now()) @db.Timestamptz(6)
+  created_by                          String?                        @db.VarChar
+  modified_by                         String?                        @db.VarChar
+  Account                             Account                        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Parent                              BusinessUnit?                  @relation("BusinessUnitHierarchy", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Children                            BusinessUnit[]                 @relation("BusinessUnitHierarchy")
+  User_BusinessUnit_created_byToUser  User?                          @relation("BusinessUnit_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  User_BusinessUnit_modified_byToUser User?                          @relation("BusinessUnit_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   BusinessUnitBankAccounts            BusinessUnitBankAccounts[]
   Customer                            Customer[]
   User                                User[]
@@ -626,6 +626,7 @@ model Contact {
   other_Contact                  Contact[]                   @relation("ContactToContact")
   State                          State?                      @relation(fields: [state_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@unique([company_id, erp_contact_id], map: "Contact_company_id_erp_contact_id_key")
   @@index([email_bounce_count, sms_delivery_failure_count, communication_score], map: "idx_contact_communication_health")
   @@index([communication_score], map: "idx_contact_communication_score")
   @@index([company_id, status], map: "idx_contact_company_status")
@@ -640,7 +641,6 @@ model Contact {
   @@index([priority_level], map: "idx_contact_priority")
   @@index([sms_delivery_failure_count], map: "idx_contact_sms_failure_count")
   @@index([state_id], map: "idx_contact_state_id")
-  @@unique([company_id, erp_contact_id], map: "Contact_company_id_erp_contact_id_key")
 }
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
@@ -742,15 +742,15 @@ model CronJob {
 }
 
 model CurrencyRate {
-  id              Int      @id @default(autoincrement())
-  rate_date       DateTime @db.Date
-  base_currency   String   @db.VarChar(16)
-  other_currency  String   @db.VarChar(16)
-  currency_ratio  Float
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
-  modified_at     DateTime @updatedAt @db.Timestamptz(6)
-  created_by      String?  @db.VarChar
-  modified_by     String?  @db.VarChar
+  id             Int      @id @default(autoincrement())
+  rate_date      DateTime @db.Date
+  base_currency  String   @db.VarChar(16)
+  other_currency String   @db.VarChar(16)
+  currency_ratio Float
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  modified_at    DateTime @updatedAt @db.Timestamptz(6)
+  created_by     String?  @db.VarChar
+  modified_by    String?  @db.VarChar
 
   @@unique([rate_date, base_currency, other_currency])
   @@index([rate_date, base_currency])
@@ -872,118 +872,118 @@ model CustomerCheckpoint {
 
 /// Per-customer insurance policy assignment history (one active row per customer).
 model CustomerPolicy {
-  id                              Int                   @id @default(autoincrement())
-  created_at                      DateTime              @default(now()) @db.Timestamptz(6)
-  modified_at                     DateTime              @updatedAt @db.Timestamptz(6)
-  customer_id                     Int
-  insurance_policy_id             Int?
-  customer_number_policy          String?               @db.VarChar(255)
-  approved_limit                  Decimal?              @db.Decimal(20, 4)
-  approved_limit_currency         String?               @db.VarChar(16)
-  approved_limit_expiration_date  DateTime?             @db.Date
-  zero_limit_date                 DateTime?             @db.Date
-  limit_type                      customer_limit_type?
-  max_payment_term                Int?
-  max_allowed_mep                 Int?
-  reporting_days                  Int?
-  mep_cutoff_day_of_month         Int?
-  mep_substitute_day_of_month     Int?
-  reporting_cutoff_day_of_month   Int?
-  reporting_substitute_day_of_month Int?
-  payment_term_cutoff_day_of_month Int?
-  payment_term_substitute_day_of_month Int?
-  excluded_from_policy            Boolean               @default(false)
-  policy_exclusion_reason         String?
-  credit_score                    Decimal?              @db.Decimal(10, 2)
-  credit_score_input_date         DateTime?             @db.Date
-  active_customer_since           DateTime?             @db.Date
-  outdated_dcl                    Boolean               @default(false)
-  cost_percent                    Decimal?              @db.Decimal(10, 2)
-  registration_fee_percent        Decimal?              @db.Decimal(10, 2)
-  is_active                       Boolean               @default(false)
-  capacity_gap_amount             Float?
-  capacity_gap_amount_date        DateTime?             @db.Date
-  retained_capacity_gap           Float?
-  uninsured_amount                Float?
-  capacity_gap_amount1            Float?
-  capacity_gap_currency1          String?               @db.VarChar(16)
-  capacity_gap_amount2            Float?
-  capacity_gap_currency2          String?               @db.VarChar(16)
-  uninsured_amount1               Float?
-  uninsured_currency1             String?               @db.VarChar(16)
-  uninsured_amount2               Float?
-  uninsured_currency2             String?               @db.VarChar(16)
-  created_by                      String?               @db.VarChar
-  modified_by                     String?               @db.VarChar
-  Customer                        Customer              @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customer_policy_customer_id_fkey")
-  InsurancePolicy                 InsurancePolicy?      @relation(fields: [insurance_policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_policy_insurance_policy_id_fkey")
-  User_CustomerPolicy_created_byToUser  User?           @relation("CustomerPolicy_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerPolicyCreatedBy_fkey")
-  User_CustomerPolicy_modified_byToUser User?           @relation("CustomerPolicy_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerPolicyModifiedBy_fkey")
+  id                                    Int                   @id @default(autoincrement())
+  created_at                            DateTime              @default(now()) @db.Timestamptz(6)
+  modified_at                           DateTime              @updatedAt @db.Timestamptz(6)
+  customer_id                           Int
+  insurance_policy_id                   Int?
+  customer_number_policy                String?               @db.VarChar(255)
+  approved_limit                        Decimal?              @db.Decimal(20, 4)
+  approved_limit_currency               String?               @db.VarChar(16)
+  approved_limit_expiration_date        DateTime?             @db.Date
+  zero_limit_date                       DateTime?             @db.Date
+  limit_type                            customer_limit_type?
+  max_payment_term                      Int?
+  max_allowed_mep                       Int?
+  reporting_days                        Int?
+  mep_cutoff_day_of_month               Int?
+  mep_substitute_day_of_month           Int?
+  reporting_cutoff_day_of_month         Int?
+  reporting_substitute_day_of_month     Int?
+  payment_term_cutoff_day_of_month      Int?
+  payment_term_substitute_day_of_month  Int?
+  excluded_from_policy                  Boolean               @default(false)
+  policy_exclusion_reason               String?
+  credit_score                          Decimal?              @db.Decimal(10, 2)
+  credit_score_input_date               DateTime?             @db.Date
+  active_customer_since                 DateTime?             @db.Date
+  outdated_dcl                          Boolean               @default(false)
+  cost_percent                          Decimal?              @db.Decimal(10, 2)
+  registration_fee_percent              Decimal?              @db.Decimal(10, 2)
+  is_active                             Boolean               @default(false)
+  capacity_gap_amount                   Float?
+  capacity_gap_amount_date              DateTime?             @db.Date
+  retained_capacity_gap                 Float?
+  uninsured_amount                      Float?
+  capacity_gap_amount1                  Float?
+  capacity_gap_currency1                String?               @db.VarChar(16)
+  capacity_gap_amount2                  Float?
+  capacity_gap_currency2                String?               @db.VarChar(16)
+  uninsured_amount1                     Float?
+  uninsured_currency1                   String?               @db.VarChar(16)
+  uninsured_amount2                     Float?
+  uninsured_currency2                   String?               @db.VarChar(16)
+  created_by                            String?               @db.VarChar
+  modified_by                           String?               @db.VarChar
+  Customer                              Customer              @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customer_policy_customer_id_fkey")
+  InsurancePolicy                       InsurancePolicy?      @relation(fields: [insurance_policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_policy_insurance_policy_id_fkey")
+  User_CustomerPolicy_created_byToUser  User?                 @relation("CustomerPolicy_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerPolicyCreatedBy_fkey")
+  User_CustomerPolicy_modified_byToUser User?                 @relation("CustomerPolicy_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "CustomerPolicyModifiedBy_fkey")
+  CustomerPolicyTrend                   CustomerPolicyTrend[]
 
   @@index([customer_id], map: "idx_customer_policy_customer_id")
   @@index([insurance_policy_id], map: "idx_customer_policy_insurance_policy_id")
   @@index([customer_id, is_active], map: "idx_customer_policy_customer_active")
-  CustomerPolicyTrend               CustomerPolicyTrend[]
 }
 
 /// Daily snapshot of active customer policy limits and open-AR usage (credit dashboard trends).
 model CustomerPolicyTrend {
-  id                             BigInt                @id @default(autoincrement())
-  account_id                     Int
-  customer_id                    Int
-  insurance_policy_id            Int?
-  customer_policy_id             Int?
-  snapshot_date                  DateTime              @db.Date
-  approved_limit                 Decimal?              @db.Decimal(20, 4)
-  usage_amount                   Float                 @default(0)
-  usage_pct                      Float?
-  customer_number_policy         String?               @db.VarChar(255)
-  approved_limit_currency        String?               @db.VarChar(16)
-  approved_limit_expiration_date DateTime?             @db.Date
-  limit_type                     customer_limit_type?
-  max_payment_term               Int?
-  max_allowed_mep                Int?
-  reporting_days                 Int?
-  mep_cutoff_day_of_month        Int?
-  mep_substitute_day_of_month    Int?
-  reporting_cutoff_day_of_month  Int?
-  reporting_substitute_day_of_month Int?
-  payment_term_cutoff_day_of_month Int?
+  id                                   BigInt                   @id @default(autoincrement())
+  account_id                           Int
+  customer_id                          Int
+  insurance_policy_id                  Int?
+  customer_policy_id                   Int?
+  snapshot_date                        DateTime                 @db.Date
+  approved_limit                       Decimal?                 @db.Decimal(20, 4)
+  usage_amount                         Float                    @default(0)
+  usage_pct                            Float?
+  customer_number_policy               String?                  @db.VarChar(255)
+  approved_limit_currency              String?                  @db.VarChar(16)
+  approved_limit_expiration_date       DateTime?                @db.Date
+  limit_type                           customer_limit_type?
+  max_payment_term                     Int?
+  max_allowed_mep                      Int?
+  reporting_days                       Int?
+  mep_cutoff_day_of_month              Int?
+  mep_substitute_day_of_month          Int?
+  reporting_cutoff_day_of_month        Int?
+  reporting_substitute_day_of_month    Int?
+  payment_term_cutoff_day_of_month     Int?
   payment_term_substitute_day_of_month Int?
-  excluded_from_policy           Boolean               @default(false)
-  policy_exclusion_reason        String?
-  credit_score                   Decimal?              @db.Decimal(10, 2)
-  credit_score_input_date        DateTime?             @db.Date
-  active_customer_since          DateTime?             @db.Date
-  outdated_dcl                   Boolean               @default(false)
-  top_up_total                   Float?
-  effective_approved_limit       Decimal?              @db.Decimal(20, 4)
-  active_top_up_count            Int?
-  policy_daily_cost              Decimal?              @db.Decimal(20, 4)
-  policy_cost_currency           String?               @db.VarChar(16)
-  top_up_daily_cost              Decimal?              @db.Decimal(20, 4)
-  top_up_cost_currency           String?               @db.VarChar(16)
-  total_daily_cost               Decimal?              @db.Decimal(20, 4)
-  cost_calculation_method        cost_calculation_method?
-  cost_percent                   Decimal?              @db.Decimal(10, 2)
-  registration_fee_percent       Decimal?              @db.Decimal(10, 2)
-  financial_currency             String?               @db.VarChar(16)
-  total_receivables              Decimal?              @db.Decimal(20, 4)
-  health_index                   Float?
-  at_risk_exposure               Decimal?              @db.Decimal(20, 4)
-  compliant_exposure             Decimal?              @db.Decimal(20, 4)
-  terms_breach_amount            Decimal?              @db.Decimal(20, 4)
-  capacity_gap_amount            Decimal?              @db.Decimal(20, 4)
-  terms_breach_count             Int?
-  terms_breach_by_reason         Json                  @default("{}")
-  policy_usage_pct               Float?
-  top_up_usage_pct               Float?
-  effective_usage_pct            Float?
-  created_at                     DateTime              @default(now()) @db.Timestamptz(6)
-  modified_at                    DateTime              @updatedAt @db.Timestamptz(6)
-  Customer                       Customer              @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customer_policy_trend_customer_id_fkey")
-  InsurancePolicy                InsurancePolicy?      @relation(fields: [insurance_policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_policy_trend_insurance_policy_id_fkey")
-  CustomerPolicy                 CustomerPolicy?       @relation(fields: [customer_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customer_policy_trend_customer_policy_id_fkey")
+  excluded_from_policy                 Boolean                  @default(false)
+  policy_exclusion_reason              String?
+  credit_score                         Decimal?                 @db.Decimal(10, 2)
+  credit_score_input_date              DateTime?                @db.Date
+  active_customer_since                DateTime?                @db.Date
+  outdated_dcl                         Boolean                  @default(false)
+  top_up_total                         Float?
+  effective_approved_limit             Decimal?                 @db.Decimal(20, 4)
+  active_top_up_count                  Int?
+  policy_daily_cost                    Decimal?                 @db.Decimal(20, 4)
+  policy_cost_currency                 String?                  @db.VarChar(16)
+  top_up_daily_cost                    Decimal?                 @db.Decimal(20, 4)
+  top_up_cost_currency                 String?                  @db.VarChar(16)
+  total_daily_cost                     Decimal?                 @db.Decimal(20, 4)
+  cost_calculation_method              cost_calculation_method?
+  cost_percent                         Decimal?                 @db.Decimal(10, 2)
+  registration_fee_percent             Decimal?                 @db.Decimal(10, 2)
+  financial_currency                   String?                  @db.VarChar(16)
+  total_receivables                    Decimal?                 @db.Decimal(20, 4)
+  health_index                         Float?
+  at_risk_exposure                     Decimal?                 @db.Decimal(20, 4)
+  compliant_exposure                   Decimal?                 @db.Decimal(20, 4)
+  terms_breach_amount                  Decimal?                 @db.Decimal(20, 4)
+  capacity_gap_amount                  Decimal?                 @db.Decimal(20, 4)
+  terms_breach_count                   Int?
+  terms_breach_by_reason               Json                     @default("{}")
+  policy_usage_pct                     Float?
+  top_up_usage_pct                     Float?
+  effective_usage_pct                  Float?
+  created_at                           DateTime                 @default(now()) @db.Timestamptz(6)
+  modified_at                          DateTime                 @updatedAt @db.Timestamptz(6)
+  Customer                             Customer                 @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customer_policy_trend_customer_id_fkey")
+  InsurancePolicy                      InsurancePolicy?         @relation(fields: [insurance_policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_policy_trend_insurance_policy_id_fkey")
+  CustomerPolicy                       CustomerPolicy?          @relation(fields: [customer_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customer_policy_trend_customer_policy_id_fkey")
 
   @@unique([customer_id, customer_policy_id, snapshot_date], map: "ux_customer_policy_trend_customer_policy_day")
   @@index([account_id, snapshot_date(sort: Desc)], map: "idx_customer_policy_trend_account_day")
@@ -1009,6 +1009,26 @@ model CreditAsOfRewriteQueue {
   @@index([status, account_id], map: "idx_credit_asof_rewrite_queue_status_account")
 }
 
+/// Customers whose AR post-ingest refresh failed mid-import. The orchestrator
+/// swallows step failures so ingest still succeeds, which used to leave stale
+/// capacity gaps with no record; one row per customer is enqueued here instead
+/// and retried by the overnight drain.
+model ArPostIngestRetryQueue {
+  id          BigInt   @id @default(autoincrement())
+  account_id  Int
+  customer_id Int
+  /// Orchestrator steps that failed, e.g. ["replay", "live_refresh"].
+  steps       String[] @default([])
+  status      String   @default("pending") @db.VarChar(16)
+  attempts    Int      @default(0)
+  last_error  String?
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([account_id, customer_id], map: "uniq_ar_post_ingest_retry_account_customer")
+  @@index([status, account_id], map: "idx_ar_post_ingest_retry_status_account")
+}
+
 /// Admin-driven full-history as-of backfill job (one per target account).
 /// Drives a day-by-day recompute of CustomerPolicyTrend + CreditDashboardDailySnapshot
 /// with pause/resume via `status` and per-day `checkpoint_date`. Overnight drain
@@ -1031,40 +1051,40 @@ model CreditAsOfBackfillJob {
 
 /// Daily snapshot of insurance policy master data and rollups (policy config trends).
 model InsurancePolicyTrend {
-  id                           BigInt                    @id @default(autoincrement())
+  id                           BigInt                   @id @default(autoincrement())
   account_id                   Int
   insurance_policy_id          Int
-  snapshot_date                DateTime                  @db.Date
-  policy_number                String                    @db.VarChar(255)
-  start_date                   DateTime                  @db.Date
-  end_date                     DateTime                  @db.Date
-  currency                     String?                   @db.VarChar(16)
-  insurer_name                 String?                   @db.VarChar(255)
-  policy_kind                  insurance_policy_kind     @default(Primary)
+  snapshot_date                DateTime                 @db.Date
+  policy_number                String                   @db.VarChar(255)
+  start_date                   DateTime                 @db.Date
+  end_date                     DateTime                 @db.Date
+  currency                     String?                  @db.VarChar(16)
+  insurer_name                 String?                  @db.VarChar(255)
+  policy_kind                  insurance_policy_kind    @default(Primary)
   parent_insurance_policy_id   Int?
-  allow_concurrent_top_ups     Boolean                   @default(true)
-  max_total_cover              Decimal?                  @db.Decimal(20, 4)
-  max_total_dcl_sdl_cover      Decimal?                  @db.Decimal(20, 4)
-  min_credit_score             Decimal?                  @db.Decimal(10, 2)
+  allow_concurrent_top_ups     Boolean                  @default(true)
+  max_total_cover              Decimal?                 @db.Decimal(20, 4)
+  max_total_dcl_sdl_cover      Decimal?                 @db.Decimal(20, 4)
+  min_credit_score             Decimal?                 @db.Decimal(10, 2)
   score_validity_period_months Int?
-  max_dcl                      Decimal?                  @db.Decimal(20, 4)
+  max_dcl                      Decimal?                 @db.Decimal(20, 4)
   dcl_customer_since_months    Int?
   max_payment_term             Int?
   max_allowed_mep              Int?
   reporting_days               Int?
   cost_calculation_method      cost_calculation_method?
-  cost_percent                 Decimal?                  @db.Decimal(10, 2)
-  registration_fee_percent     Decimal?                  @db.Decimal(10, 2)
-  status                       record_status             @default(Draft)
-  active_customer_count        Int                       @default(0)
-  total_approved_limit         Decimal?                  @db.Decimal(20, 4)
-  total_open_ar                Float                     @default(0)
+  cost_percent                 Decimal?                 @db.Decimal(10, 2)
+  registration_fee_percent     Decimal?                 @db.Decimal(10, 2)
+  status                       record_status            @default(Draft)
+  active_customer_count        Int                      @default(0)
+  total_approved_limit         Decimal?                 @db.Decimal(20, 4)
+  total_open_ar                Float                    @default(0)
   policy_usage_pct             Float?
-  named_policy_row_count       Int                       @default(0)
-  country_row_count            Int                       @default(0)
-  created_at                   DateTime                  @default(now()) @db.Timestamptz(6)
-  modified_at                  DateTime                  @updatedAt @db.Timestamptz(6)
-  InsurancePolicy              InsurancePolicy           @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_trend_insurance_policy_id_fkey")
+  named_policy_row_count       Int                      @default(0)
+  country_row_count            Int                      @default(0)
+  created_at                   DateTime                 @default(now()) @db.Timestamptz(6)
+  modified_at                  DateTime                 @updatedAt @db.Timestamptz(6)
+  InsurancePolicy              InsurancePolicy          @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_trend_insurance_policy_id_fkey")
 
   @@unique([insurance_policy_id, snapshot_date], map: "ux_insurance_policy_trend_policy_day")
   @@index([account_id, snapshot_date(sort: Desc)], map: "idx_insurance_policy_trend_account_day")
@@ -1118,55 +1138,55 @@ model NamedPolicyTrend {
 
 /// Credit insurance policy (account-scoped). Primary or TopUp.
 model InsurancePolicy {
-  id                           Int                       @id @default(autoincrement())
-  created_at                   DateTime                  @default(now()) @db.Timestamptz(6)
-  modified_at                  DateTime                  @updatedAt @db.Timestamptz(6)
-  account_id                   Int
-  policy_number                String                    @db.VarChar(255)
-  start_date                   DateTime                  @db.Date
-  end_date                     DateTime                  @db.Date
-  currency                     String?                   @db.VarChar(16)
-  insurer_name                 String?                   @db.VarChar(255)
-  policy_kind                  insurance_policy_kind     @default(Primary)
-  parent_insurance_policy_id   Int?
-  allow_concurrent_top_ups     Boolean                   @default(true)
-  max_total_cover              Decimal?                  @db.Decimal(20, 4)
-  max_total_dcl_sdl_cover      Decimal?                  @db.Decimal(20, 4)
-  min_credit_score             Decimal?                  @db.Decimal(10, 2)
-  score_validity_period_months Int?
-  max_dcl                      Decimal?                  @db.Decimal(20, 4)
-  dcl_customer_since_months    Int?
+  id                                     Int                           @id @default(autoincrement())
+  created_at                             DateTime                      @default(now()) @db.Timestamptz(6)
+  modified_at                            DateTime                      @updatedAt @db.Timestamptz(6)
+  account_id                             Int
+  policy_number                          String                        @db.VarChar(255)
+  start_date                             DateTime                      @db.Date
+  end_date                               DateTime                      @db.Date
+  currency                               String?                       @db.VarChar(16)
+  insurer_name                           String?                       @db.VarChar(255)
+  policy_kind                            insurance_policy_kind         @default(Primary)
+  parent_insurance_policy_id             Int?
+  allow_concurrent_top_ups               Boolean                       @default(true)
+  max_total_cover                        Decimal?                      @db.Decimal(20, 4)
+  max_total_dcl_sdl_cover                Decimal?                      @db.Decimal(20, 4)
+  min_credit_score                       Decimal?                      @db.Decimal(10, 2)
+  score_validity_period_months           Int?
+  max_dcl                                Decimal?                      @db.Decimal(20, 4)
+  dcl_customer_since_months              Int?
   /// Policy-level defaults (days); align with Customer.max_payment_term / max_allowed_mep / reporting_days.
-  max_payment_term             Int?
-  max_allowed_mep              Int?
-  reporting_days               Int?
-  mep_cutoff_day_of_month      Int?
-  mep_substitute_day_of_month  Int?
-  reporting_cutoff_day_of_month Int?
-  reporting_substitute_day_of_month Int?
-  payment_term_cutoff_day_of_month Int?
-  payment_term_substitute_day_of_month Int?
-  cost_calculation_method      cost_calculation_method?
-  cost_percent                 Decimal?                  @db.Decimal(10, 2)
-  registration_fee_percent     Decimal?                  @db.Decimal(10, 2)
-  status                       record_status             @default(Draft)
-  auto_activate_on_term_start  Boolean                   @default(false)
-  created_by                   String?                   @db.VarChar
-  modified_by                  String?                   @db.VarChar
-  Account                      Account                   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_account_id_fkey")
-  User_InsurancePolicy_created_byToUser  User?         @relation("InsurancePolicy_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyCreatedBy_fkey")
-  User_InsurancePolicy_modified_byToUser User?       @relation("InsurancePolicy_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyModifiedBy_fkey")
-  InsurancePolicyCountry       InsurancePolicyCountry[]
-  NamedPolicy                  NamedPolicy[]
-  CustomerPolicy               CustomerPolicy[]
-  CustomerPolicyTrend          CustomerPolicyTrend[]
-  InsurancePolicyTrend         InsurancePolicyTrend[]
-  InsurancePolicyCountryTrend  InsurancePolicyCountryTrend[]
-  NamedPolicyTrend             NamedPolicyTrend[]
-  Invoice                      Invoice[]
-  CustomerTopUp                CustomerTopUp[]
-  ParentInsurancePolicy        InsurancePolicy?          @relation("InsurancePolicyToInsurancePolicy", fields: [parent_insurance_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  ChildInsurancePolicies       InsurancePolicy[]         @relation("InsurancePolicyToInsurancePolicy")
+  max_payment_term                       Int?
+  max_allowed_mep                        Int?
+  reporting_days                         Int?
+  mep_cutoff_day_of_month                Int?
+  mep_substitute_day_of_month            Int?
+  reporting_cutoff_day_of_month          Int?
+  reporting_substitute_day_of_month      Int?
+  payment_term_cutoff_day_of_month       Int?
+  payment_term_substitute_day_of_month   Int?
+  cost_calculation_method                cost_calculation_method?
+  cost_percent                           Decimal?                      @db.Decimal(10, 2)
+  registration_fee_percent               Decimal?                      @db.Decimal(10, 2)
+  status                                 record_status                 @default(Draft)
+  auto_activate_on_term_start            Boolean                       @default(false)
+  created_by                             String?                       @db.VarChar
+  modified_by                            String?                       @db.VarChar
+  Account                                Account                       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_account_id_fkey")
+  User_InsurancePolicy_created_byToUser  User?                         @relation("InsurancePolicy_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyCreatedBy_fkey")
+  User_InsurancePolicy_modified_byToUser User?                         @relation("InsurancePolicy_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyModifiedBy_fkey")
+  InsurancePolicyCountry                 InsurancePolicyCountry[]
+  NamedPolicy                            NamedPolicy[]
+  CustomerPolicy                         CustomerPolicy[]
+  CustomerPolicyTrend                    CustomerPolicyTrend[]
+  InsurancePolicyTrend                   InsurancePolicyTrend[]
+  InsurancePolicyCountryTrend            InsurancePolicyCountryTrend[]
+  NamedPolicyTrend                       NamedPolicyTrend[]
+  Invoice                                Invoice[]
+  CustomerTopUp                          CustomerTopUp[]
+  ParentInsurancePolicy                  InsurancePolicy?              @relation("InsurancePolicyToInsurancePolicy", fields: [parent_insurance_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  ChildInsurancePolicies                 InsurancePolicy[]             @relation("InsurancePolicyToInsurancePolicy")
 
   @@unique([account_id, policy_number], map: "unique_insurance_policy_account_policy_number")
   @@index([account_id], map: "idx_insurance_policy_account_id")
@@ -1179,26 +1199,26 @@ model InsurancePolicy {
 
 /// Per-customer time-bounded top-up coverage linked to a TopUp InsurancePolicy.
 model CustomerTopUp {
-  id                   Int                   @id @default(autoincrement())
-  customer_id          Int
-  insurance_policy_id  Int
-  top_up_type          customer_top_up_type  @default(Fixed)
-  top_up_value         Decimal               @db.Decimal(20, 4)
-  currency             String?               @db.VarChar(16)
-  start_date           DateTime              @db.Date
-  end_date             DateTime              @db.Date
-  notes                String?               @db.Text
-  premium              Decimal?              @db.Decimal(20, 4)
-  premium_currency     String?               @db.VarChar(16)
-  cancelled_at         DateTime?             @db.Timestamptz(6)
-  created_by           String?               @db.VarChar
-  modified_by          String?               @db.VarChar
-  created_at           DateTime              @default(now()) @db.Timestamptz(6)
-  modified_at          DateTime              @updatedAt @db.Timestamptz(6)
-  Customer             Customer              @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  InsurancePolicy      InsurancePolicy       @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  User_CustomerTopUp_created_byToUser  User?  @relation("CustomerTopUp_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  User_CustomerTopUp_modified_byToUser User?  @relation("CustomerTopUp_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                                   Int                  @id @default(autoincrement())
+  customer_id                          Int
+  insurance_policy_id                  Int
+  top_up_type                          customer_top_up_type @default(Fixed)
+  top_up_value                         Decimal              @db.Decimal(20, 4)
+  currency                             String?              @db.VarChar(16)
+  start_date                           DateTime             @db.Date
+  end_date                             DateTime             @db.Date
+  notes                                String?              @db.Text
+  premium                              Decimal?             @db.Decimal(20, 4)
+  premium_currency                     String?              @db.VarChar(16)
+  cancelled_at                         DateTime?            @db.Timestamptz(6)
+  created_by                           String?              @db.VarChar
+  modified_by                          String?              @db.VarChar
+  created_at                           DateTime             @default(now()) @db.Timestamptz(6)
+  modified_at                          DateTime             @updatedAt @db.Timestamptz(6)
+  Customer                             Customer             @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  InsurancePolicy                      InsurancePolicy      @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_CustomerTopUp_created_byToUser  User?                @relation("CustomerTopUp_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  User_CustomerTopUp_modified_byToUser User?                @relation("CustomerTopUp_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([customer_id, start_date, end_date], map: "idx_customer_top_up_customer_date")
   @@index([customer_id, insurance_policy_id], map: "idx_customer_top_up_customer_policy")
@@ -1207,21 +1227,21 @@ model CustomerTopUp {
 
 /// Per-country caps and terms for an insurance policy.
 model InsurancePolicyCountry {
-  id                  String            @id @default(uuid()) @db.Uuid
-  created_at          DateTime          @default(now()) @db.Timestamptz(6)
-  modified_at         DateTime          @updatedAt @db.Timestamptz(6)
-  insurance_policy_id Int
-  country_id          Int
-  payment_term_cap    Int?
-  country_mep         Int?
-  reporting_days      Int?
-  country_max_limit   Decimal?          @db.Decimal(20, 4)
-  created_by          String?           @db.VarChar
-  modified_by         String?           @db.VarChar
-  InsurancePolicy     InsurancePolicy   @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_country_policy_id_fkey")
-  Country             Country           @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "insurance_policy_country_country_id_fkey")
-  User_InsurancePolicyCountry_created_byToUser  User? @relation("InsurancePolicyCountry_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyCountryCreatedBy_fkey")
-  User_InsurancePolicyCountry_modified_byToUser User? @relation("InsurancePolicyCountry_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyCountryModifiedBy_fkey")
+  id                                            String                        @id @default(uuid()) @db.Uuid
+  created_at                                    DateTime                      @default(now()) @db.Timestamptz(6)
+  modified_at                                   DateTime                      @updatedAt @db.Timestamptz(6)
+  insurance_policy_id                           Int
+  country_id                                    Int
+  payment_term_cap                              Int?
+  country_mep                                   Int?
+  reporting_days                                Int?
+  country_max_limit                             Decimal?                      @db.Decimal(20, 4)
+  created_by                                    String?                       @db.VarChar
+  modified_by                                   String?                       @db.VarChar
+  InsurancePolicy                               InsurancePolicy               @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_country_policy_id_fkey")
+  Country                                       Country                       @relation(fields: [country_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "insurance_policy_country_country_id_fkey")
+  User_InsurancePolicyCountry_created_byToUser  User?                         @relation("InsurancePolicyCountry_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyCountryCreatedBy_fkey")
+  User_InsurancePolicyCountry_modified_byToUser User?                         @relation("InsurancePolicyCountry_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InsurancePolicyCountryModifiedBy_fkey")
   InsurancePolicyCountryTrend                   InsurancePolicyCountryTrend[]
 
   @@unique([insurance_policy_id, country_id], map: "unique_insurance_policy_country")
@@ -1232,22 +1252,22 @@ model InsurancePolicyCountry {
 
 /// Per-customer-number caps and terms for an insurance policy (named / DCL-style rows).
 model NamedPolicy {
-  id                  Int             @id @default(autoincrement())
-  created_at          DateTime        @default(now()) @db.Timestamptz(6)
-  modified_at         DateTime        @updatedAt @db.Timestamptz(6)
-  insurance_policy_id Int
-  customer_number     String          @db.VarChar(255)
-  max_payment_term    Int?
-  customer_mep        Int?
-  reporting_days      Int?
-  customer_max_limit  Decimal?        @db.Decimal(20, 4)
+  id                                 Int                @id @default(autoincrement())
+  created_at                         DateTime           @default(now()) @db.Timestamptz(6)
+  modified_at                        DateTime           @updatedAt @db.Timestamptz(6)
+  insurance_policy_id                Int
+  customer_number                    String             @db.VarChar(255)
+  max_payment_term                   Int?
+  customer_mep                       Int?
+  reporting_days                     Int?
+  customer_max_limit                 Decimal?           @db.Decimal(20, 4)
   /// Expiration date for the named customer's approved limit.
-  limit_expiration_date DateTime?     @db.Date
-  created_by          String?         @db.VarChar
-  modified_by         String?         @db.VarChar
-  InsurancePolicy     InsurancePolicy @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "named_policy_insurance_policy_id_fkey")
-  User_NamedPolicy_created_byToUser  User? @relation("NamedPolicy_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "NamedPolicyCreatedBy_fkey")
-  User_NamedPolicy_modified_byToUser User? @relation("NamedPolicy_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "NamedPolicyModifiedBy_fkey")
+  limit_expiration_date              DateTime?          @db.Date
+  created_by                         String?            @db.VarChar
+  modified_by                        String?            @db.VarChar
+  InsurancePolicy                    InsurancePolicy    @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "named_policy_insurance_policy_id_fkey")
+  User_NamedPolicy_created_byToUser  User?              @relation("NamedPolicy_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "NamedPolicyCreatedBy_fkey")
+  User_NamedPolicy_modified_byToUser User?              @relation("NamedPolicy_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "NamedPolicyModifiedBy_fkey")
   NamedPolicyTrend                   NamedPolicyTrend[]
 
   @@unique([insurance_policy_id, customer_number], map: "unique_named_policy_policy_customer_number")
@@ -1406,40 +1426,40 @@ model DashboardCache {
 }
 
 model CreditDashboardDailySnapshot {
-  id                                     BigInt   @id @default(autoincrement())
+  id                                     BigInt        @id @default(autoincrement())
   account_id                             Int
   policy_id                              Int?
   business_unit_id                       Int?
-  snapshot_date                          DateTime @db.Date
-  health_index                           Float    @default(0)
-  total_receivables                      Float    @default(0)
-  compliant_exposure                     Float    @default(0)
-  at_risk_exposure                       Float    @default(0)
-  policy_risk_exposure                   Float    @default(0)
-  policy_risk_exposure_customer_count    Int      @default(0)
-  gross_risk_exposure                    Float    @default(0)
-  overdue_block_customer_count           Int      @default(0)
-  overdue_block_total_outstanding        Float    @default(0)
-  capacity_gap_total_amount              Float    @default(0)
-  capacity_gap_customer_over_limit_count Int      @default(0)
-  terms_breach_invoice_count             Int      @default(0)
-  terms_breach_total_amount              Float    @default(0)
-  terms_breach_count_by_reason           Json     @default("{}")
-  without_policy_customer_count          Int      @default(0)
-  without_policy_total_amount            Float    @default(0)
-  reporting_countdown_invoice_count      Int      @default(0)
-  reporting_countdown_total_amount       Float    @default(0)
-  reporting_countdown_window_days        Int      @default(0)
-  limit_warnings_customer_count          Int      @default(0)
-  limit_warnings_total_amount            Float    @default(0)
-  limit_warnings_threshold_pct           Int      @default(0)
-  limit_warnings_score_warn_days         Int      @default(0)
-  account_currency                       String   @default("USD") @db.VarChar(10)
+  snapshot_date                          DateTime      @db.Date
+  health_index                           Float         @default(0)
+  total_receivables                      Float         @default(0)
+  compliant_exposure                     Float         @default(0)
+  at_risk_exposure                       Float         @default(0)
+  policy_risk_exposure                   Float         @default(0)
+  policy_risk_exposure_customer_count    Int           @default(0)
+  gross_risk_exposure                    Float         @default(0)
+  overdue_block_customer_count           Int           @default(0)
+  overdue_block_total_outstanding        Float         @default(0)
+  capacity_gap_total_amount              Float         @default(0)
+  capacity_gap_customer_over_limit_count Int           @default(0)
+  terms_breach_invoice_count             Int           @default(0)
+  terms_breach_total_amount              Float         @default(0)
+  terms_breach_count_by_reason           Json          @default("{}")
+  without_policy_customer_count          Int           @default(0)
+  without_policy_total_amount            Float         @default(0)
+  reporting_countdown_invoice_count      Int           @default(0)
+  reporting_countdown_total_amount       Float         @default(0)
+  reporting_countdown_window_days        Int           @default(0)
+  limit_warnings_customer_count          Int           @default(0)
+  limit_warnings_total_amount            Float         @default(0)
+  limit_warnings_threshold_pct           Int           @default(0)
+  limit_warnings_score_warn_days         Int           @default(0)
+  account_currency                       String        @default("USD") @db.VarChar(10)
   top_up_cover_total_amount              Float?
   customers_with_active_top_up_count     Int?
   top_up_expiring_customer_count         Int?
-  created_at                             DateTime @default(now()) @db.Timestamptz(6)
-  modified_at                            DateTime @updatedAt @db.Timestamptz(6)
+  created_at                             DateTime      @default(now()) @db.Timestamptz(6)
+  modified_at                            DateTime      @updatedAt @db.Timestamptz(6)
   BusinessUnit                           BusinessUnit? @relation(fields: [business_unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([account_id, snapshot_date(sort: Desc)], map: "idx_credit_dashboard_daily_snapshot_account_day")
@@ -1627,91 +1647,91 @@ model InternalEmailTemplate {
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model Invoice {
-  id                             Int                       @id @unique @default(autoincrement())
-  created_at                     DateTime                  @default(now()) @db.Timestamptz(6)
-  promise_to_pay                 Int?                      @db.SmallInt
-  modified_at                    DateTime                  @default(now()) @updatedAt @db.Timestamptz(6)
-  customer_id                    Int?
+  id                                Int                       @id @unique @default(autoincrement())
+  created_at                        DateTime                  @default(now()) @db.Timestamptz(6)
+  promise_to_pay                    Int?                      @db.SmallInt
+  modified_at                       DateTime                  @default(now()) @updatedAt @db.Timestamptz(6)
+  customer_id                       Int?
   /// Insurance policy linked at invoice create/import (active customer policy).
-  policy_id                      Int?
-  invoice_number                 String?
+  policy_id                         Int?
+  invoice_number                    String?
   /// Account-specific billing code from import (custom_code1).
-  custom_code1                   String?                   @db.VarChar(10)
-  amount                         Float?
-  due_date                       DateTime?                 @db.Date
-  oldest_overdue_invoice_date    DateTime?                 @db.Date
-  total_paid                     Float?                    @default(0)
-  status                         invoice_status
-  last_payment_date              DateTime?                 @db.Date
-  zero_limit_alert              Boolean                   @default(false)
-  invoice_date                   DateTime                  @db.Date
-  outstanding_debt               Float?
-  collection_period_id           Int?
-  first_activity_date            DateTime?                 @db.Date
-  customer_number                Int?
-  account_id                     Int
-  customer_total_paid            Float?
-  customer_amount                Float?
-  customer_outstanding_debt      Float?
-  customer_currency              String?                   @db.VarChar
-  credit_for_invoice_id          Int?
-  net_amount                     Float?
-  credit_for_invoice_number      String?                   @db.VarChar
-  customer_net_amount            Float?
-  generic_text1                  String?
-  generic_text2                  String?
-  generic_number1                Float?
-  generic_number2                Float?
-  generic_date1                  DateTime?                 @db.Date
-  generic_date2                  DateTime?                 @db.Date
-  created_by                     String?                   @db.VarChar
-  modified_by                    String?                   @db.VarChar
-  due_notification_state         Json?
-  payment_term                   Int?
-  target_reporting_date          DateTime?                 @db.Date
-  actual_reporting_date          DateTime?                 @db.Date
+  custom_code1                      String?                   @db.VarChar(10)
+  amount                            Float?
+  due_date                          DateTime?                 @db.Date
+  oldest_overdue_invoice_date       DateTime?                 @db.Date
+  total_paid                        Float?                    @default(0)
+  status                            invoice_status
+  last_payment_date                 DateTime?                 @db.Date
+  zero_limit_alert                  Boolean                   @default(false)
+  invoice_date                      DateTime                  @db.Date
+  outstanding_debt                  Float?
+  collection_period_id              Int?
+  first_activity_date               DateTime?                 @db.Date
+  customer_number                   Int?
+  account_id                        Int
+  customer_total_paid               Float?
+  customer_amount                   Float?
+  customer_outstanding_debt         Float?
+  customer_currency                 String?                   @db.VarChar
+  credit_for_invoice_id             Int?
+  net_amount                        Float?
+  credit_for_invoice_number         String?                   @db.VarChar
+  customer_net_amount               Float?
+  generic_text1                     String?
+  generic_text2                     String?
+  generic_number1                   Float?
+  generic_number2                   Float?
+  generic_date1                     DateTime?                 @db.Date
+  generic_date2                     DateTime?                 @db.Date
+  created_by                        String?                   @db.VarChar
+  modified_by                       String?                   @db.VarChar
+  due_notification_state            Json?
+  payment_term                      Int?
+  target_reporting_date             DateTime?                 @db.Date
+  actual_reporting_date             DateTime?                 @db.Date
   /// Reference / free-text note when marking an invoice as reported to the insurer (single field).
-  reporting_comment              String?                   @db.Text
+  reporting_comment                 String?                   @db.Text
   /// Set when the user records reporting (for date & time display on the “Reported” list).
-  reporting_captured_at          DateTime?                 @db.Timestamptz(6)
-  target_mep_date                DateTime?                 @db.Date
-  reported_status                invoice_reported_status?
-  reporting_breach               Boolean                   @default(false)
+  reporting_captured_at             DateTime?                 @db.Timestamptz(6)
+  target_mep_date                   DateTime?                 @db.Date
+  reported_status                   invoice_reported_status?
+  reporting_breach                  Boolean                   @default(false)
   /// True when calendar credit days (due_date − invoice_date) exceed Customer.max_payment_term.
-  ctv_payment_term Boolean             @default(false)
+  ctv_payment_term                  Boolean                   @default(false)
   /// Snapshot at create/import: Customer was in overdue (MEP) breach.
-  ctv_customer_overdue_mep Boolean   @default(false)
+  ctv_customer_overdue_mep          Boolean                   @default(false)
   /// Snapshot at create/import: Customer.excluded_from_policy.
-  ctv_customer_excluded_from_policy Boolean @default(false)
+  ctv_customer_excluded_from_policy Boolean                   @default(false)
   /// Snapshot at create/import: credit score / DCL info expired vs invoice issue date (policy validity months).
-  ctv_outdated_dcl Boolean             @default(false)
+  ctv_outdated_dcl                  Boolean                   @default(false)
   /// Snapshot at create/import: invoice_date on or after InsurancePolicy.end_date (expiry day counts).
-  ctv_invoice_after_policy_end Boolean @default(false)
+  ctv_invoice_after_policy_end      Boolean                   @default(false)
   /// Open Due/Overdue balance allocated above approved limit (FIFO by invoice_date); excluded from terms-breach sum when computing at-risk exposure.
-  in_capacity_gap              Boolean                   @default(false)
+  in_capacity_gap                   Boolean                   @default(false)
   /// Invoice-level limit basis snapshot captured when invoice first becomes open.
-  limit_assessed_amount        Decimal?                  @db.Decimal(20, 4)
+  limit_assessed_amount             Decimal?                  @db.Decimal(20, 4)
   /// Timestamp when invoice-level limit basis was captured.
-  limit_assessed_at            DateTime?                 @db.Timestamptz(6)
+  limit_assessed_at                 DateTime?                 @db.Timestamptz(6)
   /// Currency of invoice-level limit basis snapshot.
-  limit_assessed_currency      String?                   @db.VarChar(16)
+  limit_assessed_currency           String?                   @db.VarChar(16)
   /// Capacity gap in account base currency (sticky per open invoice).
-  capacity_gap_amount          Decimal?                  @db.Decimal(20, 4)
+  capacity_gap_amount               Decimal?                  @db.Decimal(20, 4)
   /// Capacity gap in limit / invoice currency (`limit_assessed_currency`).
-  capacity_gap_amount_limit    Decimal?                  @db.Decimal(20, 4)
+  capacity_gap_amount_limit         Decimal?                  @db.Decimal(20, 4)
   /// FX rate date when table rate used for base gap; null when implicit invoice rate.
-  capacity_gap_amount_date     DateTime?                 @db.Date
-  DisputeInvoice                 DisputeInvoice[]
-  User_Invoice_created_byToUser  User?                     @relation("Invoice_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InvoiceCreatedBy_fkey")
-  User_Invoice_modified_byToUser User?                     @relation("Invoice_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InvoiceModifiedBy_fkey")
-  Account                        Account                   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  CustomerCollectionPeriod       CustomerCollectionPeriod? @relation(fields: [collection_period_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "Invoice_collection_period_fkey")
-  Invoice                        Invoice?                  @relation("InvoiceToInvoice", fields: [credit_for_invoice_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  other_Invoice                  Invoice[]                 @relation("InvoiceToInvoice")
-  Customer                       Customer?                 @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  InsurancePolicy                InsurancePolicy?          @relation(fields: [policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "invoice_insurance_policy_id_fkey")
-  InvoicePayment                 InvoicePayment[]
-  Activity                       Activity[]
+  capacity_gap_amount_date          DateTime?                 @db.Date
+  DisputeInvoice                    DisputeInvoice[]
+  User_Invoice_created_byToUser     User?                     @relation("Invoice_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InvoiceCreatedBy_fkey")
+  User_Invoice_modified_byToUser    User?                     @relation("Invoice_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "InvoiceModifiedBy_fkey")
+  Account                           Account                   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  CustomerCollectionPeriod          CustomerCollectionPeriod? @relation(fields: [collection_period_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "Invoice_collection_period_fkey")
+  Invoice                           Invoice?                  @relation("InvoiceToInvoice", fields: [credit_for_invoice_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_Invoice                     Invoice[]                 @relation("InvoiceToInvoice")
+  Customer                          Customer?                 @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  InsurancePolicy                   InsurancePolicy?          @relation(fields: [policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "invoice_insurance_policy_id_fkey")
+  InvoicePayment                    InvoicePayment[]
+  Activity                          Activity[]
 
   @@index([policy_id], map: "idx_invoice_policy_id")
   @@index([created_by], map: "idx_invoice_created_by")
@@ -1751,7 +1771,6 @@ model InvoicePayment {
   @@index([modified_by], map: "idx_invoice_payment_modified_by")
   @@index([account_id], map: "idx_invoicepayment_customer_id")
 }
-
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model Log {
@@ -1803,84 +1822,84 @@ model Notification {
 }
 
 model NotificationRuleSet {
-  id             Int                            @id @default(autoincrement())
-  account_id     Int
-  product        notification_rule_product
-  trigger_type   notification_rule_trigger_type
-  enabled        Boolean                        @default(true)
-  created_at     DateTime                       @default(now()) @db.Timestamptz(6)
-  modified_at    DateTime                       @default(now()) @db.Timestamptz(6)
-  created_by     String?                        @db.VarChar
-  modified_by    String?                        @db.VarChar
-  Account        Account                        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  rules          NotificationRule[]
+  id           Int                            @id @default(autoincrement())
+  account_id   Int
+  product      notification_rule_product
+  trigger_type notification_rule_trigger_type
+  enabled      Boolean                        @default(true)
+  created_at   DateTime                       @default(now()) @db.Timestamptz(6)
+  modified_at  DateTime                       @default(now()) @db.Timestamptz(6)
+  created_by   String?                        @db.VarChar
+  modified_by  String?                        @db.VarChar
+  Account      Account                        @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  rules        NotificationRule[]
 
   @@unique([account_id, product, trigger_type], map: "ux_notification_rule_set_account_product_trigger")
   @@index([account_id, product], map: "idx_notification_rule_set_account_product")
 }
 
 model NotificationRule {
-  id                   Int                            @id @default(autoincrement())
-  rule_set_id          Int
-  advance_day_offsets  Int[]                          @default([])
-  metadata             Json?
-  created_at           DateTime                       @default(now()) @db.Timestamptz(6)
-  modified_at          DateTime                       @default(now()) @db.Timestamptz(6)
-  created_by           String?                        @db.VarChar
-  modified_by          String?                        @db.VarChar
-  rule_set             NotificationRuleSet            @relation(fields: [rule_set_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  role_defaults        NotificationRuleRoleDefault[]
-  user_overrides       NotificationRuleUserOverride[]
-  delivery_logs        NotificationDeliveryLog[]
+  id                  Int                            @id @default(autoincrement())
+  rule_set_id         Int
+  advance_day_offsets Int[]                          @default([])
+  metadata            Json?
+  created_at          DateTime                       @default(now()) @db.Timestamptz(6)
+  modified_at         DateTime                       @default(now()) @db.Timestamptz(6)
+  created_by          String?                        @db.VarChar
+  modified_by         String?                        @db.VarChar
+  rule_set            NotificationRuleSet            @relation(fields: [rule_set_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  role_defaults       NotificationRuleRoleDefault[]
+  user_overrides      NotificationRuleUserOverride[]
+  delivery_logs       NotificationDeliveryLog[]
 
   @@unique([rule_set_id], map: "ux_notification_rule_rule_set")
   @@index([rule_set_id], map: "idx_notification_rule_rule_set")
 }
 
 model NotificationRuleRoleDefault {
-  id          Int               @id @default(autoincrement())
+  id          Int              @id @default(autoincrement())
   rule_id     Int
   role        user_role
-  created_at  DateTime          @default(now()) @db.Timestamptz(6)
-  modified_at DateTime          @default(now()) @db.Timestamptz(6)
-  created_by  String?           @db.VarChar
-  modified_by String?           @db.VarChar
-  rule        NotificationRule  @relation(fields: [rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  created_at  DateTime         @default(now()) @db.Timestamptz(6)
+  modified_at DateTime         @default(now()) @db.Timestamptz(6)
+  created_by  String?          @db.VarChar
+  modified_by String?          @db.VarChar
+  rule        NotificationRule @relation(fields: [rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([rule_id, role], map: "ux_notification_rule_role_default_rule_role")
   @@index([rule_id], map: "idx_notification_rule_role_default_rule")
 }
 
 model NotificationRuleUserOverride {
-  id          Int               @id @default(autoincrement())
+  id          Int              @id @default(autoincrement())
   rule_id     Int
-  user_id     String            @db.VarChar(255)
-  active      Boolean           @default(true)
-  created_at  DateTime          @default(now()) @db.Timestamptz(6)
-  modified_at DateTime          @default(now()) @db.Timestamptz(6)
-  created_by  String?           @db.VarChar
-  modified_by String?           @db.VarChar
-  rule        NotificationRule  @relation(fields: [rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user_id     String           @db.VarChar(255)
+  active      Boolean          @default(true)
+  created_at  DateTime         @default(now()) @db.Timestamptz(6)
+  modified_at DateTime         @default(now()) @db.Timestamptz(6)
+  created_by  String?          @db.VarChar
+  modified_by String?          @db.VarChar
+  rule        NotificationRule @relation(fields: [rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([rule_id, user_id], map: "ux_notification_rule_user_override_rule_user")
   @@index([rule_id, active], map: "idx_notification_rule_user_override_rule_active")
 }
 
 model NotificationDeliveryLog {
-  id             BigInt                        @id @default(autoincrement())
-  account_id     Int
-  rule_id        Int
-  entity_type    String                        @db.VarChar(50)
-  entity_id      String                        @db.VarChar(128)
-  offset_days    Int?
-  channel        notification_delivery_channel
-  delivered_at   DateTime                      @default(now()) @db.Timestamptz(6)
-  cleared_at     DateTime?                     @db.Timestamptz(6)
-  metadata       Json?
-  created_at     DateTime                      @default(now()) @db.Timestamptz(6)
-  modified_at    DateTime                      @default(now()) @db.Timestamptz(6)
-  Account        Account                       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  rule           NotificationRule              @relation(fields: [rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id           BigInt                        @id @default(autoincrement())
+  account_id   Int
+  rule_id      Int
+  entity_type  String                        @db.VarChar(50)
+  entity_id    String                        @db.VarChar(128)
+  offset_days  Int?
+  channel      notification_delivery_channel
+  delivered_at DateTime                      @default(now()) @db.Timestamptz(6)
+  cleared_at   DateTime?                     @db.Timestamptz(6)
+  metadata     Json?
+  created_at   DateTime                      @default(now()) @db.Timestamptz(6)
+  modified_at  DateTime                      @default(now()) @db.Timestamptz(6)
+  Account      Account                       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  rule         NotificationRule              @relation(fields: [rule_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([account_id, delivered_at(sort: Desc)], map: "idx_notification_delivery_log_account_delivered_desc")
   @@index([rule_id, entity_type, entity_id], map: "idx_notification_delivery_log_rule_entity")
@@ -2095,7 +2114,7 @@ model User {
   InsurancePolicy_InsurancePolicy_created_byToUser                                InsurancePolicy[]                @relation("InsurancePolicy_created_byToUser")
   InsurancePolicy_InsurancePolicy_modified_byToUser                               InsurancePolicy[]                @relation("InsurancePolicy_modified_byToUser")
   InsurancePolicyCountry_InsurancePolicyCountry_created_byToUser                  InsurancePolicyCountry[]         @relation("InsurancePolicyCountry_created_byToUser")
-  InsurancePolicyCountry_InsurancePolicyCountry_modified_byToUser               InsurancePolicyCountry[]         @relation("InsurancePolicyCountry_modified_byToUser")
+  InsurancePolicyCountry_InsurancePolicyCountry_modified_byToUser                 InsurancePolicyCountry[]         @relation("InsurancePolicyCountry_modified_byToUser")
   NamedPolicy_NamedPolicy_created_byToUser                                        NamedPolicy[]                    @relation("NamedPolicy_created_byToUser")
   NamedPolicy_NamedPolicy_modified_byToUser                                       NamedPolicy[]                    @relation("NamedPolicy_modified_byToUser")
   CustomerTopUp_CustomerTopUp_created_byToUser                                    CustomerTopUp[]                  @relation("CustomerTopUp_created_byToUser")
@@ -2459,7 +2478,6 @@ enum invoice_status {
   Cancelled
 }
 
-
 enum language {
   English
   Hebrew
@@ -2605,94 +2623,96 @@ enum BillingConnectorStatus {
 }
 
 model BillingConnector {
-  id                            Int                    @id @default(autoincrement())
-  account_id                    Int                    @unique
-  provider                      BillingProvider        @default(PRIORITY)
-  status                        BillingConnectorStatus @default(Disabled)
-  base_url                      String?                @db.VarChar(500)
-  auth_type                     ConnectorAuthType      @default(API_KEY)
-  credentials_encrypted         String?                @db.Text
-  sync_enabled                  Boolean                @default(false)
-  sync_cron_expression          String                 @default("0 */6 * * *") @db.VarChar(100)
-  sync_mode                     ConnectorSyncMode      @default(BACKFILL)
-  enabled_entities              Json                   @default("[\"Customer\", \"Contact\", \"Invoice\", \"Payment\"]")
-  sync_overlap_minutes          Int                    @default(5)
-  backfill_max_pages_per_run    Int                    @default(50)
-  backfill_max_duration_seconds Int                    @default(600)
-  backfill_import_batch_size    Int                    @default(20)
-  consecutive_auth_failures     Int                    @default(0)
-  backfill_started_at           DateTime?              @db.Timestamptz(6)
-  /// Optional cutover calendar day (account TZ). Null = full-history backfill.
-  backfill_start_date           DateTime?              @db.Date
+  id                                Int                     @id @default(autoincrement())
+  account_id                        Int                     @unique
+  provider                          BillingProvider         @default(PRIORITY)
+  status                            BillingConnectorStatus  @default(Disabled)
+  base_url                          String?                 @db.VarChar(500)
+  auth_type                         ConnectorAuthType       @default(API_KEY)
+  credentials_encrypted             String?                 @db.Text
+  sync_enabled                      Boolean                 @default(false)
+  sync_cron_expression              String                  @default("0 */6 * * *") @db.VarChar(100)
+  sync_mode                         ConnectorSyncMode       @default(BACKFILL)
+  enabled_entities                  Json                    @default("[\"Customer\", \"Contact\", \"Invoice\", \"Payment\"]")
+  sync_overlap_minutes              Int                     @default(5)
+  backfill_max_pages_per_run        Int                     @default(50)
+  backfill_max_duration_seconds     Int                     @default(600)
+  backfill_import_batch_size        Int                     @default(20)
+  consecutive_auth_failures         Int                     @default(0)
+  backfill_started_at               DateTime?               @db.Timestamptz(6)
+  /// Optional cutover calendar day (UTC). Null = full-history backfill.
+  backfill_start_date               DateTime?               @db.Date
+  /// Optional UTC calendar day; invoices issued before it are out of scope for MEP breach. Null = no gate.
+  mep_breach_start_date             DateTime?               @db.Date
   /// When start date is set: also pull unpaid pre-date invoices + related payments.
-  include_older_open_invoices   Boolean                @default(true)
+  include_older_open_invoices       Boolean                 @default(true)
   /// When true, backfill invoice writes do not stamp reporting_breach (incremental/cron unchanged).
-  skip_reporting_breach_on_backfill Boolean             @default(false)
+  skip_reporting_breach_on_backfill Boolean                 @default(false)
   /// Per-entity Priority EntitySet name overrides (JSON object).
-  entity_sets                     Json                   @default("{}")
+  entity_sets                       Json                    @default("{}")
   /// Cached EntitySet catalog from the ERP.
-  entity_set_catalog              Json?
-  entity_set_catalog_fetched_at   DateTime?              @db.Timestamptz(6)
+  entity_set_catalog                Json?
+  entity_set_catalog_fetched_at     DateTime?               @db.Timestamptz(6)
   /// Per-entity pull filters (OData / rule builder).
-  pull_filters                    Json                   @default("{}")
-  pull_filters_cleanup_pending    Boolean                @default(false)
-  pull_filters_cleanup_entities   Json                   @default("[]")
+  pull_filters                      Json                    @default("{}")
+  pull_filters_cleanup_pending      Boolean                 @default(false)
+  pull_filters_cleanup_entities     Json                    @default("[]")
   /// Per-entity preview go/no-go pass flags.
-  preview_passes                  Json                   @default("{}")
+  preview_passes                    Json                    @default("{}")
   /// Optional account-extension plugin key (registry). Null/empty = standard sync path.
-  extension_key                 String?                @db.VarChar(100)
+  extension_key                     String?                 @db.VarChar(100)
   /// Plugin-owned settings JSON for the attached extension.
-  extension_config              Json?
-  last_connection_test_at       DateTime?              @db.Timestamptz(6)
-  last_connection_error         String?                @db.VarChar(500)
-  created_at                    DateTime               @default(now()) @db.Timestamptz(6)
-  modified_at                   DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
-  created_by                    String?                @db.VarChar
-  modified_by                   String?                @db.VarChar
-  Account                       Account                @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  ConnectorFieldMapping         ConnectorFieldMapping[]
-  ConnectorSyncState            ConnectorSyncState[]
+  extension_config                  Json?
+  last_connection_test_at           DateTime?               @db.Timestamptz(6)
+  last_connection_error             String?                 @db.VarChar(500)
+  created_at                        DateTime                @default(now()) @db.Timestamptz(6)
+  modified_at                       DateTime                @default(now()) @updatedAt @db.Timestamptz(6)
+  created_by                        String?                 @db.VarChar
+  modified_by                       String?                 @db.VarChar
+  Account                           Account                 @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  ConnectorFieldMapping             ConnectorFieldMapping[]
+  ConnectorSyncState                ConnectorSyncState[]
 
   @@index([account_id], map: "idx_billing_connector_account_id")
   @@index([status], map: "idx_billing_connector_status")
 }
 
 model ConnectorFieldMapping {
-  id           Int              @id @default(autoincrement())
-  connector_id Int
-  import_type  ImportType
-    mapping      Json
-    is_complete  Boolean          @default(false)
-    /// Optional OData date column for backfill/incremental window filters.
-    pull_date_field             String?           @db.VarChar(100)
-    discovered_headers            Json?
-  discovered_example_values     Json?
-  discovered_sample_count       Int?
-  discovered_at                 DateTime?         @db.Timestamptz(6)
-  modified_at  DateTime         @default(now()) @db.Timestamptz(6)
-  modified_by  String?          @db.VarChar
-  BillingConnector BillingConnector @relation(fields: [connector_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                        Int              @id @default(autoincrement())
+  connector_id              Int
+  import_type               ImportType
+  mapping                   Json
+  is_complete               Boolean          @default(false)
+  /// Optional OData date column for backfill/incremental window filters.
+  pull_date_field           String?          @db.VarChar(100)
+  discovered_headers        Json?
+  discovered_example_values Json?
+  discovered_sample_count   Int?
+  discovered_at             DateTime?        @db.Timestamptz(6)
+  modified_at               DateTime         @default(now()) @db.Timestamptz(6)
+  modified_by               String?          @db.VarChar
+  BillingConnector          BillingConnector @relation(fields: [connector_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([connector_id, import_type], map: "unique_connector_field_mapping")
   @@index([connector_id], map: "idx_connector_field_mapping_connector_id")
 }
 
 model ConnectorSyncState {
-  id                         Int              @id @default(autoincrement())
-  connector_id               Int
-  entity_type                ImportType
-  backfill_completed         Boolean          @default(false)
-  backfill_completed_at      DateTime?        @db.Timestamptz(6)
-  backfill_cursor            String?          @db.VarChar(500)
-  backfill_records_pulled    Int              @default(0)
-  backfill_last_checkpoint_at DateTime?       @db.Timestamptz(6)
-  backfill_window_end        DateTime?        @db.Timestamptz(6)
-  backfill_total_records     Int?
-  last_max_updated_at        DateTime?        @db.Timestamptz(6)
-  last_successful_run_at     DateTime?        @db.Timestamptz(6)
-  last_attempt_at            DateTime?        @db.Timestamptz(6)
-  last_error                 String?          @db.VarChar(500)
-  BillingConnector           BillingConnector @relation(fields: [connector_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                          Int              @id @default(autoincrement())
+  connector_id                Int
+  entity_type                 ImportType
+  backfill_completed          Boolean          @default(false)
+  backfill_completed_at       DateTime?        @db.Timestamptz(6)
+  backfill_cursor             String?          @db.VarChar(500)
+  backfill_records_pulled     Int              @default(0)
+  backfill_last_checkpoint_at DateTime?        @db.Timestamptz(6)
+  backfill_window_end         DateTime?        @db.Timestamptz(6)
+  backfill_total_records      Int?
+  last_max_updated_at         DateTime?        @db.Timestamptz(6)
+  last_successful_run_at      DateTime?        @db.Timestamptz(6)
+  last_attempt_at             DateTime?        @db.Timestamptz(6)
+  last_error                  String?          @db.VarChar(500)
+  BillingConnector            BillingConnector @relation(fields: [connector_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([connector_id, entity_type], map: "unique_connector_entity_sync_state")
   @@index([connector_id], map: "idx_connector_sync_state_connector_id")

@@ -14,6 +14,7 @@
   "dependencies": {
     "@archaser/auth": "*",
     "@archaser/billing-connector": "*",
+    "@archaser/credit-insurance-domain": "*",
     "@archaser/cron-jobs": "*",
     "@archaser/database": "*",
     "@archaser/sms-send": "*",

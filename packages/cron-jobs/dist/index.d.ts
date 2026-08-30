@@ -1,5 +1,4 @@
 export { fetchAndStoreCurrencyRates, } from "./currencyRateService";
-export { bindCreditDomain, requireCreditDomainModule, } from "./creditDomain";
 export { executeNamedCronJob, isCronJobPorted, NOT_PORTED_CRON_JOB_NAMES, type CronJobResult, type CronJobContext, } from "./handlers";
 export { recordCronJobRun, buildCronJobRunUpdate, computeNextRunAt, type CronJobRunStatsRow, type CronJobRunOutcome, } from "./recordCronJobRun";
 export { computeCustomerOverdueMetrics } from "./computeCustomerOverdueMetrics";
@@ -13,3 +12,5 @@ export { EXPECTED_CRON_JOB_NAMES, WORKER_SOAK_KNOWN_GAPS, PATH_FLIP_FLAGS, asses
 export { processNotificationRules } from "./processNotificationRules";
 export { processDueNotifications } from "./processDueNotifications";
 export { activityWorkflowManager } from "./activityWorkflowManager";
+export { createDefaultArPostIngestDeps, defaultAccountHasCreditInsurance, runArPostIngestForCustomers, type ArPostIngestDeps, type ArPostIngestError, type ArPostIngestResult, type ArPostIngestStep, type RunArPostIngestOptions, } from "./credit/arPostIngestOrchestrator";
+export { buildReplayEvents, compareReplayEvents, getInvoiceGap, replayArImportForCustomers, replayCustomerArImport, simulateCustomerArReplay, sortReplayEvents, type ReplayBatchSummary, type ReplayCustomerSummary, type ReplayEvent, type ReplayInvoiceInput, type ReplayPaymentInput, type ReplaySimulationConfig, type ReplaySimulationInvoice, type ReplaySimulationSummary, } from "./credit/importArReplayService";

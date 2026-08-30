@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.closeZeroOutstandingDebtInvoices = closeZeroOutstandingDebtInvoices;
 const billing_connector_1 = require("@archaser/billing-connector");
-const creditDomain_1 = require("./creditDomain");
+const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 const customersDomain_1 = require("./customersDomain");
 const INVOICE_STATUS = {
     DUE: "Due",
@@ -80,10 +80,9 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
         .map((invoice) => invoice.customer_id)
         .filter((id) => id !== null && id !== undefined)));
     await (0, customersDomain_1.recalculateCustomerAmountsViaApi)(customerIds, prisma);
-    (0, creditDomain_1.bindCreditDomain)(prisma);
-    const syncMod = (0, creditDomain_1.requireCreditDomainModule)("domain/syncCustomerInsuranceFields.js");
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
     for (const customerId of customerIds) {
-        await syncMod.syncCustomerInsuranceFields(customerId);
+        await (0, credit_insurance_domain_1.syncCustomerInsuranceFields)(customerId);
     }
     return {
         success: true,
