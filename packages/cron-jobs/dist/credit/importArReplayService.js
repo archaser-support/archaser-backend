@@ -243,7 +243,15 @@ async function replayCustomerArImport(params) {
     // past events, permanently locking the limit inside closed invoices.
     const openArRunning = new Map();
     const openOutstandingByInvoice = new Map();
+    let eventsProcessed = 0;
     for (const event of events) {
+        eventsProcessed += 1;
+        if (eventsProcessed % 100 === 0 || eventsProcessed === events.length) {
+            params.onProgress?.({
+                processed: eventsProcessed,
+                total: events.length,
+            });
+        }
         if (event.type === "invoice_open") {
             const payload = event.payload;
             const scopeKey = "default";

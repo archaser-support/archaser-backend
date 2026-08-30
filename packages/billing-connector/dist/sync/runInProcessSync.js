@@ -143,11 +143,14 @@ async function runInProcessSyncBody(options) {
                 onArPostIngest: options.onArPostIngest,
                 log,
                 runMaturity: args.runMaturity,
-                onProgress: ({ completed, total }) => {
+                onProgress: ({ completed, total, step, detail }) => {
                     setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
                         status: "running",
                         processed: completed,
                         total,
+                        ...(step
+                            ? { detail: { step, ...(detail ?? {}) } }
+                            : {}),
                     });
                 },
             });
