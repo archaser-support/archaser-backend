@@ -59,7 +59,6 @@ model Account {
   balance_evaluation_method              String?                         @default("Invoice-Based") @db.VarChar
   generic_field_config                   Json?
   use_customer_language                  Boolean?                        @default(true)
-  last_sync_date                         DateTime?                       @db.Timestamptz(6)
   default_first_activity_delay_days      Int?                            @db.SmallInt
   sms_fallback_enabled                   Boolean?                        @default(true)
   unlisted_country_sms_policy            String?                         @default("block") @db.VarChar(20)
@@ -808,6 +807,8 @@ model Customer {
   generic_date2                   DateTime?                        @db.Date
   automation_stuck_no_contacts    Boolean?                         @default(false)
   oldest_invoice_overdue_date     DateTime?                        @db.Timestamp(6)
+  /// Oldest overdue due date ignoring the MEP breach start-date gate. Display only.
+  oldest_invoice_overdue_date_all DateTime?                        @db.Timestamp(6)
   /// True when today is past Customer MEP deadline: oldest_invoice_overdue_date + max_allowed_mep (calendar days).
   overdue_block                   Boolean                          @default(false)
   zero_limit_alert_exist          Boolean                          @default(false)

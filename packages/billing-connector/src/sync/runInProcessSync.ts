@@ -15,7 +15,6 @@ import {
     extractMaxUpdatedAt,
     importMappedEntityBatch,
     shouldSkipReportingBreachOnConnectorWrite,
-    updateAccountLastSyncDate,
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "../import/entityImporter";
@@ -566,10 +565,6 @@ async function runInProcessSyncBody(
                 overlapMinutes: connector.sync_overlap_minutes,
             });
 
-            if (!dryRun && !staged.cancelled) {
-                await updateAccountLastSyncDate(prisma, accountId);
-            }
-
             const imported =
                 staged.stats.customersImported +
                 staged.stats.contactsImported +
@@ -847,8 +842,6 @@ async function runInProcessSyncBody(
             log,
             setTailStep
         );
-
-        await updateAccountLastSyncDate(prisma, accountId);
 
         const imported =
             stats.customersImported +

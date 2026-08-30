@@ -364,9 +364,6 @@ async function runInProcessSyncBody(options) {
                 dateFieldByType,
                 overlapMinutes: connector.sync_overlap_minutes,
             });
-            if (!dryRun && !staged.cancelled) {
-                await (0, entityImporter_1.updateAccountLastSyncDate)(prisma, accountId);
-            }
             const imported = staged.stats.customersImported +
                 staged.stats.contactsImported +
                 staged.stats.invoicesImported +
@@ -596,7 +593,6 @@ async function runInProcessSyncBody(options) {
             });
         }
         await finalizeLegacyCustomerBalances(arAffectedCustomerIds, prisma, options.onCustomerBalancesFinal, log, setTailStep);
-        await (0, entityImporter_1.updateAccountLastSyncDate)(prisma, accountId);
         const imported = stats.customersImported +
             stats.contactsImported +
             stats.invoicesImported +
