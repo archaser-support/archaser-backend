@@ -2648,6 +2648,8 @@ model BillingConnector {
   include_older_open_invoices       Boolean                 @default(true)
   /// When true, backfill invoice writes do not stamp reporting_breach (incremental/cron unchanged).
   skip_reporting_breach_on_backfill Boolean                 @default(false)
+  /// Leftover band for Paid (customer outstanding). Units = customer currency leftover.
+  invoice_paid_tolerance            Float                   @default(0.2)
   /// Per-entity Priority EntitySet name overrides (JSON object).
   entity_sets                       Json                    @default("{}")
   /// Cached EntitySet catalog from the ERP.

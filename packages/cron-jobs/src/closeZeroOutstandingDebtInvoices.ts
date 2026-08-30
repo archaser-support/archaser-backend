@@ -1,5 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
-import { INVOICE_PAID_TOLERANCE } from "@archaser/billing-connector";
+import {
+    INVOICE_PAID_TOLERANCE,
+    INVOICE_PAID_TOLERANCE_MAX,
+    isWithinPaidTolerance,
+} from "@archaser/billing-connector";
 import {
     bindCreditInsurancePrisma,
     syncCustomerInsuranceFields,
@@ -14,9 +18,9 @@ const INVOICE_STATUS = {
 
 /**
  * Close Due/Overdue invoices with near-zero customer outstanding debt
- * (within ±INVOICE_PAID_TOLERANCE), then recalculate customer rollups and
- * refresh credit-insurance fields. Large negative outstanding (credit notes)
- * is not treated as Paid.
+ * (within ±account paid tolerance, else ±INVOICE_PAID_TOLERANCE), then
+ * recalculate customer rollups and refresh credit-insurance fields. Large
+ * negative outstanding (credit notes) is not treated as Paid.
  */
 export async function closeZeroOutstandingDebtInvoices(
     prisma: PrismaClient
@@ -63,11 +67,23 @@ export async function closeZeroOutstandingDebtInvoices(
         });
     }
 
-    const invoices = await prisma.invoice.findMany({
+    const connectors = await prisma.billingConnector.findMany({
+        select: { account_id: true, invoice_paid_tolerance: true },
+    });
+    const toleranceByAccount = new Map<number, number>();
+    for (const connector of connectors) {
+        const value = Number(connector.invoice_paid_tolerance);
+        toleranceByAccount.set(
+            connector.account_id,
+            Number.isFinite(value) ? value : INVOICE_PAID_TOLERANCE
+        );
+    }
+
+    const candidates = await prisma.invoice.findMany({
         where: {
             customer_outstanding_debt: {
-                gte: -INVOICE_PAID_TOLERANCE,
-                lte: INVOICE_PAID_TOLERANCE,
+                gte: -INVOICE_PAID_TOLERANCE_MAX,
+                lte: INVOICE_PAID_TOLERANCE_MAX,
             },
             status: {
                 in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE],
@@ -76,8 +92,17 @@ export async function closeZeroOutstandingDebtInvoices(
         select: {
             id: true,
             customer_id: true,
+            account_id: true,
+            customer_outstanding_debt: true,
         },
     });
+
+    const invoices = candidates.filter((invoice) =>
+        isWithinPaidTolerance(
+            invoice.customer_outstanding_debt ?? 0,
+            toleranceByAccount.get(invoice.account_id) ?? INVOICE_PAID_TOLERANCE
+        )
+    );
 
     if (invoices.length === 0) {
         return {

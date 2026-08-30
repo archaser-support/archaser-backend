@@ -72,7 +72,7 @@ async function defaultAccountHasCreditInsurance(accountId) {
 function createDefaultArPostIngestDeps() {
     return {
         accountHasCreditInsurance: defaultAccountHasCreditInsurance,
-        replayCustomer: ({ customerId, accountId }) => (0, importArReplayService_1.replayCustomerArImport)({ customerId, accountId }),
+        replayCustomer: ({ customerId, accountId, onProgress }) => (0, importArReplayService_1.replayCustomerArImport)({ customerId, accountId, onProgress }),
         applyMaturity: (accountId, asOf) => (0, billing_connector_1.applyMaturedDeferredPayments)(credit_insurance_domain_1.creditInsurancePrisma, accountId, asOf),
         processOverdueCustomer: async (customerId) => {
             await (0, handleOverdueInvoices_1.handleOverdueInvoices)(credit_insurance_domain_1.creditInsurancePrisma, customerId);
@@ -126,7 +126,7 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
     let progressCompleted = 0;
     // Reported after each customer-step, success or failure: the bar tracks
     // work done, not work that succeeded.
-    const advanceProgress = () => {
+    const advanceProgress = (step, customerId) => {
         if (progressTotal === 0) {
             return;
         }
@@ -134,6 +134,18 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
         options.onProgress?.({
             completed: progressCompleted,
             total: progressTotal,
+            step,
+            customerId,
+        });
+    };
+    /** Progress inside the current step (e.g. replay events for one customer). */
+    const reportStepDetail = (step, customerId, detail) => {
+        options.onProgress?.({
+            completed: progressCompleted,
+            total: progressTotal,
+            step,
+            customerId,
+            detail,
         });
     };
     // --- Credit-insurance-gated steps ---
@@ -143,6 +155,7 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
                 await deps.replayCustomer({
                     customerId,
                     accountId: options.accountId,
+                    onProgress: (detail) => reportStepDetail("replay", customerId, detail),
                 });
             }
             catch (error) {
@@ -161,7 +174,7 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
                     ...(stack ? { stack } : {}),
                 });
             }
-            advanceProgress();
+            advanceProgress("replay", customerId);
         }
     }
     if (hasCreditInsurance && options.runMaturity) {
@@ -205,7 +218,7 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
                     ...(stack ? { stack } : {}),
                 });
             }
-            advanceProgress();
+            advanceProgress("process_overdue", customerId);
         }
     }
     // --- Credit-insurance-gated: live refresh + as-of ---
@@ -230,7 +243,7 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
                     ...(stack ? { stack } : {}),
                 });
             }
-            advanceProgress();
+            advanceProgress("live_refresh", customerId);
         }
     }
     if (hasCreditInsurance && options.enqueueAsOfRewrite) {

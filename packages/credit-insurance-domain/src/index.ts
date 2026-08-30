@@ -87,6 +87,10 @@ export {
     clearMepBreachStartDateCache,
     resolveMepBreachStartDate,
 } from "./credit-insurance/domain/resolveMepBreachStartDate";
+export {
+    clearInvoicePaidToleranceCache,
+    resolveInvoicePaidTolerance,
+} from "./credit-insurance/domain/resolveInvoicePaidTolerance";
 
 // --- Api service surface ---
 // The api service's dashboards, controllers and its own api-only domain files

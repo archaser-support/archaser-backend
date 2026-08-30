@@ -10,6 +10,7 @@ import {
     isNegativeInvoiceAmount,
 } from "./invoiceInsuranceFields";
 import { computeInvoiceLineOpenArInAccountCurrency } from "./openReceivableByCustomerCurrency";
+import { resolveInvoicePaidTolerance } from "./resolveInvoicePaidTolerance";
 import { isInvoiceInMepBreachScope } from "./shared/mepBreachScope";
 
 /** Invoice statuses excluded from as-of open AR (cancelled / void book). */
@@ -49,10 +50,11 @@ export const ASOF_OPEN_AMOUNT_TOLERANCE = 0.2;
  */
 export function computeAsOfOpenAmount(
     original: number,
-    paymentsOnOrBeforeAsOf: number
+    paymentsOnOrBeforeAsOf: number,
+    tolerance: number = ASOF_OPEN_AMOUNT_TOLERANCE
 ): number {
     const open = Number(original) - Number(paymentsOnOrBeforeAsOf);
-    if (!Number.isFinite(open) || open <= ASOF_OPEN_AMOUNT_TOLERANCE) {
+    if (!Number.isFinite(open) || open <= tolerance) {
         return 0;
     }
     return open;
@@ -108,6 +110,11 @@ export type AsOfOpenInvoiceLine = {
      * forever.
      */
     liveClosed?: boolean;
+    /**
+     * Residue threshold for Open invoices. Paid (`liveClosed`) ignores this and
+     * stays closed from the last payment day onward.
+     */
+    openAmountTolerance?: number;
     reportingBreach: boolean;
     ctvPaymentTerm: boolean;
     ctvCustomerOverdueMep: boolean;
@@ -180,7 +187,11 @@ export function wasAsOfInvoiceOpenAt(
         amount: line.paymentsOnOrBeforeAsOf,
         customerAmount: line.paymentsCustomerOnOrBeforeAsOf,
     });
-    if (computeAsOfOpenAmount(original, paidAsOfLoad) > 0) {
+    if (computeAsOfOpenAmount(
+        original,
+        paidAsOfLoad,
+        line.openAmountTolerance
+    ) > 0) {
         return true;
     }
     if (paidAsOfLoad <= 0) {
@@ -369,6 +380,10 @@ export function computeAsOfOpenInvoiceLine(
     line: AsOfOpenInvoiceLine,
     asOfDate: Date
 ): AsOfOpenInvoiceComputed | null {
+    if (line.liveClosed && !wasAsOfInvoiceOpenAt(line, asOfDate)) {
+        return null;
+    }
+    const tolerance = line.openAmountTolerance ?? ASOF_OPEN_AMOUNT_TOLERANCE;
     const openAmount = computeAsOfOpenAmount(
         preferAmountPair({
             amount: line.amount,
@@ -377,7 +392,8 @@ export function computeAsOfOpenInvoiceLine(
         preferAmountPair({
             amount: line.paymentsOnOrBeforeAsOf,
             customerAmount: line.paymentsCustomerOnOrBeforeAsOf,
-        })
+        }),
+        tolerance
     );
     if (openAmount <= 0) {
         return null;
@@ -385,7 +401,8 @@ export function computeAsOfOpenInvoiceLine(
     const openCustomerAmount = computeAsOfOpenAmount(
         Number(line.customerAmount ?? 0) || Number(line.amount ?? 0),
         Number(line.paymentsCustomerOnOrBeforeAsOf ?? 0) ||
-            Number(line.paymentsOnOrBeforeAsOf ?? 0)
+            Number(line.paymentsOnOrBeforeAsOf ?? 0),
+        tolerance
     );
     return {
         ...line,
@@ -431,7 +448,10 @@ type AsOfInvoiceSqlRow = {
     status: string;
 };
 
-function mapSqlRow(row: AsOfInvoiceSqlRow): AsOfOpenInvoiceLine {
+function mapSqlRow(
+    row: AsOfInvoiceSqlRow,
+    openAmountTolerance: number
+): AsOfOpenInvoiceLine {
     return {
         invoiceId: Number(row.invoice_id),
         customerId: Number(row.customer_id),
@@ -454,6 +474,7 @@ function mapSqlRow(row: AsOfInvoiceSqlRow): AsOfOpenInvoiceLine {
         actualReportingDate: row.actual_reporting_date,
         lastPaymentDate: row.last_payment_date,
         liveClosed: row.status === "Paid",
+        openAmountTolerance,
     };
 }
 
@@ -525,7 +546,11 @@ export async function loadAsOfOpenInvoiceCandidates(
           ${policyFilter}
     `;
 
-    return rows.map(mapSqlRow);
+    const openAmountTolerance = await resolveInvoicePaidTolerance(
+        accountId,
+        db
+    );
+    return rows.map((row) => mapSqlRow(row, openAmountTolerance));
 }
 
 function lineMatchesScope(

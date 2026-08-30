@@ -80,7 +80,10 @@ export type ExtensionPaymentLinkedCandidate = {
 };
 
 export type ExtensionAfterPaymentLinkedContext = {
-    prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">;
+    prisma: Pick<
+        PrismaClient,
+        "invoice" | "invoicePayment" | "billingConnector" | "$transaction"
+    >;
     accountId: number;
     userId?: string;
     candidates: ExtensionPaymentLinkedCandidate[];
@@ -128,7 +131,10 @@ export interface BillingAccountExtension {
      * no virtual / cancel payment import.
      */
     flushPendingInvoiceCloses?(ctx: {
-        prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">;
+        prisma: Pick<
+            PrismaClient,
+            "invoice" | "invoicePayment" | "billingConnector" | "$transaction"
+        >;
         accountId: number;
         userId?: string;
         invoiceNumbers: string[];

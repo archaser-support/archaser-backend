@@ -10,6 +10,7 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/jwt-payload";
 import {
     decryptCredentials,
+    normalizeInvoicePaidTolerance,
     resolveExtensionAttachmentInput,
     runInProcessSync,
     testBillingConnectorConnection,
@@ -424,6 +425,7 @@ export class AccountsNestedService {
         mep_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
         skip_reporting_breach_on_backfill?: boolean;
+        invoice_paid_tolerance?: number;
         extension_key?: string | null;
         extension_config?: unknown;
         last_connection_test_at: Date | null;
@@ -455,6 +457,7 @@ export class AccountsNestedService {
                 connector.include_older_open_invoices ?? true,
             skip_reporting_breach_on_backfill:
                 connector.skip_reporting_breach_on_backfill ?? false,
+            invoice_paid_tolerance: connector.invoice_paid_tolerance ?? 0.2,
             backfill_options_locked: areBackfillOptionsLocked(
                 connector.backfill_started_at
             ),
@@ -647,6 +650,19 @@ export class AccountsNestedService {
         }
         if (skipBreachChange.value !== undefined) {
             data.skip_reporting_breach_on_backfill = skipBreachChange.value;
+        }
+        if (body.invoice_paid_tolerance !== undefined) {
+            try {
+                data.invoice_paid_tolerance = normalizeInvoicePaidTolerance(
+                    body.invoice_paid_tolerance
+                );
+            } catch (error: unknown) {
+                const err = error as { code?: string; message?: string };
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid invoice_paid_tolerance",
+                    code: err.code ?? "INVALID_INVOICE_PAID_TOLERANCE",
+                });
+            }
         }
 
         let extensionPatch;

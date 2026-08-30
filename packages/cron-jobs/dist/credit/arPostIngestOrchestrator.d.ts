@@ -55,12 +55,21 @@ export type RunArPostIngestOptions = {
     /**
      * Per-customer progress for callers that show a live bar. `total` counts
      * every customer-step this run will perform, so it stays accurate whether
-     * one credit step is enabled or all three.
+     * one credit step is enabled or all three. `detail` reports progress inside
+     * the current step, which is what the user actually watches when a single
+     * customer has thousands of invoices.
      */
-    onProgress?: (progress: {
-        completed: number;
+    onProgress?: (progress: ArPostIngestProgress) => void;
+};
+export type ArPostIngestProgress = {
+    completed: number;
+    total: number;
+    step?: ArPostIngestStep;
+    customerId?: number;
+    detail?: {
+        processed: number;
         total: number;
-    }) => void;
+    };
 };
 export type ArPostIngestResult = {
     skipped: boolean;
@@ -72,6 +81,10 @@ export type ArPostIngestDeps = {
     replayCustomer: (args: {
         customerId: number;
         accountId: number;
+        onProgress?: (progress: {
+            processed: number;
+            total: number;
+        }) => void;
     }) => Promise<ReplayCustomerSummary | void>;
     applyMaturity: (accountId: number, asOf: Date) => Promise<MaturityResult | void>;
     /** Full Process Overdue Invoices for one customer (daily-cron behavior). */

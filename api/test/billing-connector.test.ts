@@ -83,6 +83,7 @@ function connectorRow(overrides: Record<string, unknown> = {}) {
         backfill_start_date: null,
         include_older_open_invoices: true,
         skip_reporting_breach_on_backfill: false,
+        invoice_paid_tolerance: 0.2,
         pull_filters: {},
         entity_sets: {},
         entity_set_catalog: null,
