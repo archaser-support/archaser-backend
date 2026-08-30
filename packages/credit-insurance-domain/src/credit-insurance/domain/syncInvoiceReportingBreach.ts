@@ -3,6 +3,8 @@ import { prisma } from "../domain-db";
 import { resolveCreatedOverdueMepByInvoiceId } from "./createdOverdueMepAtInvoiceDate";
 import { loadEffectiveInsuranceForCustomers } from "./loadEffectiveInsuranceForCustomers";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
+import { resolveReportingBreachStartDate } from "./resolveReportingBreachStartDate";
+import { isInvoiceInReportingBreachScope } from "./shared/reportingBreachScope";
 import {
     computeCreatedTermsViolationSnapshot,
     computeInsuranceTargetDates,
@@ -39,6 +41,8 @@ export async function syncInvoiceReportingBreach(
         where: { id: invoiceId },
         select: {
             id: true,
+            account_id: true,
+            invoice_date: true,
             status: true,
             amount: true,
             target_reporting_date: true,
@@ -74,12 +78,22 @@ export async function syncInvoiceReportingBreach(
         inv.amount
     );
 
-    if (should && !inv.reporting_breach) {
-        await db.invoice.update({
-            where: { id: invoiceId },
-            data: { reporting_breach: true },
-        });
+    if (!should || inv.reporting_breach) {
+        return;
     }
+
+    const inScope = isInvoiceInReportingBreachScope(
+        inv.invoice_date,
+        await resolveReportingBreachStartDate(inv.account_id, db)
+    );
+    if (!inScope) {
+        return;
+    }
+
+    await db.invoice.update({
+        where: { id: invoiceId },
+        data: { reporting_breach: true },
+    });
 }
 
 /**
@@ -128,15 +142,39 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
         },
         select: {
             id: true,
+            account_id: true,
+            invoice_date: true,
             status: true,
             amount: true,
             target_reporting_date: true,
         },
     });
 
+    // One connector read per distinct account in this batch, not per invoice.
+    const startDateByAccountId = new Map<number, Date | null>();
+    for (const accountId of new Set(
+        invoices
+            .map((inv) => inv.account_id)
+            .filter((id): id is number => id != null)
+    )) {
+        startDateByAccountId.set(
+            accountId,
+            await resolveReportingBreachStartDate(accountId, db)
+        );
+    }
+
     let n = 0;
     for (const inv of invoices) {
         if (!inv.target_reporting_date) {
+            continue;
+        }
+        const inScope = isInvoiceInReportingBreachScope(
+            inv.invoice_date,
+            inv.account_id == null
+                ? null
+                : (startDateByAccountId.get(inv.account_id) ?? null)
+        );
+        if (!inScope) {
             continue;
         }
         const should = shouldSetReportingBreach(
