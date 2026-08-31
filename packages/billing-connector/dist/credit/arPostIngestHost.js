@@ -88,8 +88,9 @@ async function runArPostIngestViaHost(input, prisma) {
 async function invokeConnectorArPostIngest(params) {
     const { customerIds, invoiceEntityIds, paymentEntityIds } = params;
     if (customerIds.length === 0) {
-        return;
+        return { deferred: false };
     }
+    (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(params.prisma);
     // Amount (and date) upserts must refresh insurance targets before replay
     // so sign flips apply even if later post-ingest steps are skipped.
     if (invoiceEntityIds.length > 0) {
@@ -110,6 +111,46 @@ async function invokeConnectorArPostIngest(params) {
             importType: "Payment",
             entityIds: paymentEntityIds,
         };
+    if (params.deferPostIngest === true) {
+        try {
+            await (0, credit_insurance_domain_1.enqueueRewriteForImport)({
+                accountId: params.accountId,
+                importType: asOfRewrite.importType,
+                entityIds: asOfRewrite.entityIds,
+                customerIds,
+            });
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            params.log(`As-of rewrite enqueue failed: ${message}`);
+        }
+        const deferredSteps = [
+            "replay",
+            "process_overdue",
+            "live_refresh",
+        ];
+        if (params.enqueueDeferredSteps) {
+            await params.enqueueDeferredSteps({
+                accountId: params.accountId,
+                customerIds,
+                steps: deferredSteps,
+            });
+        }
+        else {
+            params.log("AR post-ingest defer requested but enqueueDeferredSteps is not configured");
+        }
+        if (params.schedulePostIngestDrain) {
+            try {
+                await params.schedulePostIngestDrain();
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                params.log(`Failed to schedule AR post-ingest worker drain: ${message}`);
+            }
+        }
+        params.log(`AR post-ingest deferred for ${customerIds.length} customer(s) — worker will process replay/overdue/live-refresh`);
+        return { deferred: true };
+    }
     const run = params.onArPostIngest ??
         ((input) => runArPostIngestViaHost(input, params.prisma));
     params.log(`AR post-ingest starting for ${customerIds.length} customer(s)…`);
@@ -130,4 +171,5 @@ async function invokeConnectorArPostIngest(params) {
         const message = error instanceof Error ? error.message : "AR post-ingest failed";
         params.log(`AR post-ingest failed: ${message}`);
     }
+    return { deferred: false };
 }

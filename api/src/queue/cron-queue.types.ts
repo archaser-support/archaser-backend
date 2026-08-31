@@ -9,3 +9,8 @@ export type CronRunNowJobData = {
 export type CronSyncSchedulesJobData = {
     reason: "startup" | "config-change" | "manual" | "lambda-cron-tick";
 };
+
+export type ArPostIngestDrainJobData = {
+    accountId?: number;
+    maxItems?: number;
+};

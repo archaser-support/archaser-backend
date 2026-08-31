@@ -63,6 +63,21 @@ export declare function refreshInsuranceTargetDatesViaHost(invoiceIds: number[],
  * pass onArPostIngest (queue worker, scheduled sync, internal inline).
  */
 export declare function runArPostIngestViaHost(input: ArPostIngestHostInput, prisma: PrismaClient): Promise<void>;
+export type DeferredArPostIngestStep = "replay" | "process_overdue" | "live_refresh";
+export type ConnectorPostIngestDeferOptions = {
+    /**
+     * When true, enqueue replay/overdue/live-refresh on the worker instead of
+     * blocking the billing connector sync tail.
+     */
+    deferPostIngest?: boolean;
+    enqueueDeferredSteps?: (args: {
+        accountId: number;
+        customerIds: number[];
+        steps: DeferredArPostIngestStep[];
+    }) => Promise<void>;
+    /** Ask the worker to drain the AR post-ingest retry queue soon. */
+    schedulePostIngestDrain?: () => Promise<void>;
+};
 /**
  * Once after Invoice entity completion. Best-effort: errors are logged and do
  * not fail the sync. Caller must skip on dry-run.
@@ -79,4 +94,6 @@ export declare function invokeConnectorArPostIngest(params: {
     runMaturity?: boolean;
     /** Live per-customer progress for the sync progress panel. */
     onProgress?: (progress: ArPostIngestProgress) => void;
-}): Promise<void>;
+} & ConnectorPostIngestDeferOptions): Promise<{
+    deferred: boolean;
+}>;

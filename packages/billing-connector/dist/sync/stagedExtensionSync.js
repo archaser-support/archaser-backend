@@ -188,7 +188,9 @@ async function runStagedExtensionSync(options) {
         // A late `running` update must not resurrect a finished step.
         const current = tailSteps[key];
         if (state.status === "running" &&
-            (current?.status === "done" || current?.status === "failed")) {
+            (current?.status === "done" ||
+                current?.status === "failed" ||
+                current?.status === "queued")) {
             return;
         }
         tailSteps[key] = state;
@@ -264,7 +266,7 @@ async function runStagedExtensionSync(options) {
             total: args.customerIds.length,
         });
         try {
-            await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
+            const postIngest = await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
                 accountId: options.accountId,
                 customerIds: args.customerIds,
                 invoiceEntityIds: args.invoiceEntityIds,
@@ -273,6 +275,9 @@ async function runStagedExtensionSync(options) {
                 onArPostIngest: options.onArPostIngest,
                 log,
                 runMaturity: args.runMaturity,
+                deferPostIngest: options.deferPostIngest,
+                enqueueDeferredSteps: options.enqueueDeferredSteps,
+                schedulePostIngestDrain: options.schedulePostIngestDrain,
                 onProgress: ({ completed, total, step, detail }) => {
                     setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
                         status: "running",
@@ -285,7 +290,7 @@ async function runStagedExtensionSync(options) {
                 },
             });
             setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
-                status: "done",
+                status: postIngest.deferred ? "queued" : "done",
                 processed: args.customerIds.length,
                 total: args.customerIds.length,
             });
