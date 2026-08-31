@@ -8,6 +8,7 @@ import type {
     ExtensionMappedBatch,
     ExtensionTransformContext,
 } from "../types";
+import { parseErpDateOnly } from "../../utils/connectorFieldUtils";
 import { applyHelamOffsetStampClosesForInvoiceNumbers } from "./helamOffsetClose";
 import {
     applyReconciledVirtualCloses,
@@ -430,7 +431,11 @@ export function transformAccount10149Batch(
     batch: ExtensionMappedBatch,
     options?: {
         /** Invoice numbers from dropped reconciled debit / CR* lines. */
-        onReconciledInvoiceCloseTargets?: (invoiceNumbers: string[]) => void;
+        onReconciledInvoiceCloseTargets?: (
+            invoiceNumbers: string[],
+            /** ERP CURDATE per invoice number, when the line carries one. */
+            closeDates?: Map<string, Date>
+        ) => void;
         /** Original + cancel stamp numbers for Helam offset pair stamp-close. */
         onHelamOffsetCloseTargets?: (invoiceNumbers: string[]) => void;
     }
@@ -453,6 +458,7 @@ export function transformAccount10149Batch(
         }
 
         const queuedCloseNumbers: string[] = [];
+        const queuedCloseDates = new Map<string, Date>();
         const kept: Record<string, unknown>[] = [];
         for (const row of payments) {
             const raw = rawRecordOf(row);
@@ -486,6 +492,10 @@ export function transformAccount10149Batch(
             if (dropForVirtualClose) {
                 if (ivnum) {
                     queuedCloseNumbers.push(ivnum);
+                    const curDate = parseErpDateOnly(raw.CURDATE ?? row.CURDATE);
+                    if (curDate) {
+                        queuedCloseDates.set(ivnum.trim(), curDate);
+                    }
                 }
                 continue;
             }
@@ -495,7 +505,10 @@ export function transformAccount10149Batch(
             }
         }
         if (queuedCloseNumbers.length > 0) {
-            options?.onReconciledInvoiceCloseTargets?.(queuedCloseNumbers);
+            options?.onReconciledInvoiceCloseTargets?.(
+                queuedCloseNumbers,
+                queuedCloseDates
+            );
         }
         nextPayments = kept;
     }
@@ -541,10 +554,15 @@ export const account10149Extension: BillingAccountExtension = {
         ctx: ExtensionTransformContext
     ): Promise<ExtensionMappedBatch> {
         return transformAccount10149Batch(ctx.batch, {
-            onReconciledInvoiceCloseTargets: (invoiceNumbers) => {
+            onReconciledInvoiceCloseTargets: (invoiceNumbers, closeDates) => {
                 if (ctx.pendingInvoiceCloses) {
                     for (const invoiceNumber of invoiceNumbers) {
                         ctx.pendingInvoiceCloses.add(invoiceNumber);
+                    }
+                }
+                if (ctx.pendingInvoiceCloseDates && closeDates) {
+                    for (const [invoiceNumber, date] of closeDates) {
+                        ctx.pendingInvoiceCloseDates.set(invoiceNumber, date);
                     }
                 }
             },
@@ -591,7 +609,8 @@ export const account10149Extension: BillingAccountExtension = {
                 ctx.prisma,
                 ctx.accountId,
                 virtualNumbers,
-                ctx.userId
+                ctx.userId,
+                ctx.invoiceCloseDates
             );
             if (result.touchedIds.length > 0) {
                 // Dynamic import avoids account_10149 ↔ extensions ↔ recalc cycle.
