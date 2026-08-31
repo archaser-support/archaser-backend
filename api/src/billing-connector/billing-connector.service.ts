@@ -78,7 +78,12 @@ import {
 } from "./billing-connector-backfill-options";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 import { MetricsService } from "../metrics/metrics.service";
-import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
+import { CronQueueService } from "../queue/cron-queue.service";
+import {
+    enqueueArPostIngestSteps,
+    runArPostIngestForCustomers,
+    type ArPostIngestStep,
+} from "@archaser/cron-jobs";
 import {
     bindCreditInsurancePrisma,
     clearInvoicePaidToleranceCache,
@@ -160,6 +165,7 @@ export class BillingConnectorApiService {
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService,
+        private readonly cronQueue: CronQueueService,
         metrics: MetricsService
     ) {
         this.syncMetrics = createBillingConnectorMetricsSinkFromProm({
@@ -168,6 +174,52 @@ export class BillingConnectorApiService {
             errorsTotal: metrics.business.billingConnectorErrorsTotal,
             recordsProcessed: metrics.business.billingConnectorRecordsProcessed,
         });
+    }
+
+    private shouldDeferPostIngest(mode: "backfill" | "incremental"): boolean {
+        const flag = process.env.BILLING_CONNECTOR_DEFER_POST_INGEST;
+        if (flag === "false") {
+            return false;
+        }
+        if (flag === "true") {
+            return true;
+        }
+        return mode === "backfill";
+    }
+
+    private buildPostIngestDeferOptions(
+        accountId: number,
+        mode: "backfill" | "incremental"
+    ) {
+        if (!this.shouldDeferPostIngest(mode)) {
+            return {};
+        }
+        return {
+            deferPostIngest: true,
+            enqueueDeferredSteps: async (args: {
+                accountId: number;
+                customerIds: number[];
+                steps: ArPostIngestStep[];
+            }) => {
+                bindCreditInsurancePrisma(this.db);
+                await enqueueArPostIngestSteps(
+                    args.accountId,
+                    args.customerIds,
+                    args.steps
+                );
+            },
+            schedulePostIngestDrain: async () => {
+                const result = await this.cronQueue.enqueueArPostIngestDrain({
+                    accountId,
+                    maxItems: 100,
+                });
+                if (!result.queued) {
+                    this.logger.warn(
+                        `[account ${accountId}] AR post-ingest drain not queued: ${result.reason ?? "unknown"}`
+                    );
+                }
+            },
+        };
     }
 
     async assertAccess(
@@ -909,6 +961,7 @@ export class BillingConnectorApiService {
                 executionId,
                 mode,
                 onLog,
+                ...this.buildPostIngestDeferOptions(accountId, mode),
                 observability: {
                     metrics: this.syncMetrics,
                 },

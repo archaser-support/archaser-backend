@@ -43,6 +43,7 @@ import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCusto
 import {
     invokeConnectorArPostIngest,
     type ArPostIngestHostFn,
+    type ConnectorPostIngestDeferOptions,
 } from "../credit/arPostIngestHost";
 import {
     emitBillingConnectorSyncFinish,
@@ -51,7 +52,7 @@ import {
     type BillingConnectorObservabilityOptions,
 } from "../observability";
 
-export interface RunInProcessSyncOptions {
+export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions {
     prisma: PrismaClient;
     accountId: number;
     trigger?: string;
@@ -334,7 +335,9 @@ async function runInProcessSyncBody(
         const current = stats.tailSteps?.[key];
         if (
             state.status === "running" &&
-            (current?.status === "done" || current?.status === "failed")
+            (current?.status === "done" ||
+                current?.status === "failed" ||
+                current?.status === "queued")
         ) {
             return;
         }
@@ -353,7 +356,7 @@ async function runInProcessSyncBody(
             total: args.customerIds.length,
         });
         try {
-            await invokeConnectorArPostIngest({
+            const postIngest = await invokeConnectorArPostIngest({
                 accountId,
                 customerIds: args.customerIds,
                 invoiceEntityIds: args.invoiceEntityIds,
@@ -362,6 +365,9 @@ async function runInProcessSyncBody(
                 onArPostIngest: options.onArPostIngest,
                 log,
                 runMaturity: args.runMaturity,
+                deferPostIngest: options.deferPostIngest,
+                enqueueDeferredSteps: options.enqueueDeferredSteps,
+                schedulePostIngestDrain: options.schedulePostIngestDrain,
                 onProgress: ({ completed, total, step, detail }) => {
                     setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
                         status: "running",
@@ -374,7 +380,7 @@ async function runInProcessSyncBody(
                 },
             });
             setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-                status: "done",
+                status: postIngest.deferred ? "queued" : "done",
                 processed: args.customerIds.length,
                 total: args.customerIds.length,
             });
@@ -638,6 +644,9 @@ async function runInProcessSyncBody(
                 shouldCancel: () => isCancelRequested(options),
                 onCustomerBalancesFinal: options.onCustomerBalancesFinal,
                 onArPostIngest: options.onArPostIngest,
+                deferPostIngest: options.deferPostIngest,
+                enqueueDeferredSteps: options.enqueueDeferredSteps,
+                schedulePostIngestDrain: options.schedulePostIngestDrain,
                 pullCreatedOnOrAfter:
                     !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,

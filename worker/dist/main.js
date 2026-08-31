@@ -26,7 +26,20 @@ const prom_client_1 = require("prom-client");
 const database_1 = require("@archaser/database");
 const cron_jobs_1 = require("@archaser/cron-jobs");
 const billing_connector_1 = require("@archaser/billing-connector");
+const billing_connector_sync_counters_1 = require("./billing-connector-sync-counters");
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
+const cronJobExecutionsTotal = new prom_client_1.Counter({
+    name: "archaser_cron_job_executions_total",
+    help: "Total cron job executions",
+    labelNames: ["job_name", "status"],
+    registers: [],
+});
+const cronJobDurationSeconds = new prom_client_1.Gauge({
+    name: "archaser_cron_job_duration_seconds",
+    help: "Last execution duration of cron jobs in seconds",
+    labelNames: ["job_name"],
+    registers: [],
+});
 let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
     constructor(config) {
         this.config = config;
@@ -38,6 +51,16 @@ let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
         this.register = new prom_client_1.Registry();
     }
     async start() {
+        this.register.setDefaultLabels({ service: "archaser-worker" });
+        this.register.registerMetric(cronJobExecutionsTotal);
+        this.register.registerMetric(cronJobDurationSeconds);
+        const billingCounters = (0, billing_connector_sync_counters_1.registerBillingConnectorSyncCounters)(this.register);
+        (0, billing_connector_1.setDefaultBillingConnectorMetricsSink)((0, billing_connector_1.createBillingConnectorMetricsSinkFromProm)({
+            syncTotal: billingCounters.billingConnectorSyncTotal,
+            syncDuration: billingCounters.billingConnectorSyncDuration,
+            errorsTotal: billingCounters.billingConnectorErrorsTotal,
+            recordsProcessed: billingCounters.billingConnectorRecordsProcessed,
+        }));
         (0, billing_connector_1.registerArPostIngestOrchestrator)((options) => (0, cron_jobs_1.runArPostIngestForCustomers)(options));
         (0, prom_client_1.collectDefaultMetrics)({
             register: this.register,
@@ -74,6 +97,14 @@ let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
         if (job.name === "run-now") {
             const data = job.data;
             return this.executeCronJob(data.cronJobId, "run-now");
+        }
+        if (job.name === "ar-post-ingest-drain") {
+            const data = job.data;
+            const result = await (0, cron_jobs_1.drainArPostIngestRetryQueue)({
+                maxItems: data.maxItems ?? 100,
+            });
+            this.logger.log(`AR post-ingest drain: ${result.itemsProcessed} processed, ${result.failures} failures, ${result.givenUp} given up`);
+            return result;
         }
         if (job.name.startsWith("cron:")) {
             const cronJobId = Number(job.name.replace("cron:", ""));
@@ -139,6 +170,22 @@ let WorkerRuntimeService = WorkerRuntimeService_1 = class WorkerRuntimeService {
         }
         catch (error) {
             this.logger.warn(`Failed to persist CronJob ${job.id} run stats: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        const timedOut = !result.success &&
+            Math.round((result.durationMs || 0) / 1000) >=
+                (job.timeout_period_seconds || 1800);
+        const status = timedOut
+            ? "TIMEOUT"
+            : result.success
+                ? "SUCCESS"
+                : "FAILED";
+        const durationSeconds = Math.max(0, Math.round((result.durationMs || 0) / 1000));
+        try {
+            cronJobExecutionsTotal.inc({ job_name: job.name, status });
+            cronJobDurationSeconds.set({ job_name: job.name }, durationSeconds);
+        }
+        catch (error) {
+            this.logger.warn(`Failed to record Prometheus metrics for CronJob ${job.id}: ${error instanceof Error ? error.message : String(error)}`);
         }
         return {
             ok: result.success,
