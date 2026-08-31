@@ -66,6 +66,9 @@ export type ExtensionAlignPaymentAmountsInput = {
     customer_amount: number;
     customer_currency: string;
     invoiceCustomerCurrency: string | null | undefined;
+    /** Invoice base-currency amount; with `invoiceCustomerAmount` gives the FX ratio. */
+    invoiceAmount: number | null | undefined;
+    invoiceCustomerAmount: number | null | undefined;
     rawErpRow: Record<string, unknown>;
 };
 

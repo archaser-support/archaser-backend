@@ -12,7 +12,6 @@ import {
     deriveExcludedFromPolicy,
     isAllowedPolicyExclusionReason,
     normalizePolicyExclusionReason,
-    syncCustomerInsuranceFields,
 } from "@archaser/credit-insurance-domain";
 
 export type ImportPolicyRowInput = {
@@ -174,11 +173,6 @@ function validateMonthEndFields(
 
 @Injectable()
 export class ImportPolicyService {
-    private syncCustomer: (
-        customerId: number,
-        options?: { refreshTermsBreachFlags?: boolean }
-    ) => Promise<void> = syncCustomerInsuranceFields;
-
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService
@@ -510,13 +504,9 @@ export class ImportPolicyService {
             });
         }
 
-        try {
-            await this.syncCustomer(customer.id, {
-                refreshTermsBreachFlags: explicitExclusionReason,
-            });
-        } catch {
-            // Do not turn a durable row import into a failed row outcome.
-        }
+        // Import writes the assignment only. Derived insurance fields (gap flags,
+        // MEP breach, zero-limit alerts) cost seconds per customer and dominated
+        // import time; the scheduled recalculation jobs pick them up instead.
         return { success: true, action, customerId: customer.id };
     }
 }

@@ -10,6 +10,16 @@ export interface MaturityResult {
 export interface MaturityProgress {
     linked: number;
     totalCandidates: number;
+    /**
+     * What the pass is doing right now. Linking is only part of the wall time;
+     * currency alignment, extension closes and paid-total recalcs follow it.
+     */
+    detail?: MaturityProgressDetail;
+}
+export interface MaturityProgressDetail {
+    step: "link" | "align" | "close" | "recalc";
+    processed?: number;
+    total?: number;
 }
 /**
  * Rebuild a minimal ERP-shaped row for extension hooks after maturity.
