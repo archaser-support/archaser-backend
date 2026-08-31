@@ -243,7 +243,7 @@ export class ImportService {
         await this.db.importJob.update({
             where: { id: jobId },
             data: {
-                status: "InProgress",
+                status: "Processing",
                 successful_records: { increment: successCount },
                 failed_records: { increment: failCount },
                 metadata: {
@@ -255,7 +255,7 @@ export class ImportService {
                     ],
                 } as never,
                 modified_at: new Date(),
-            } as never,
+            },
         });
 
         return serializeBigInt({
