@@ -202,6 +202,8 @@ async function runStagedExtensionSync(options) {
     const paymentAffectedCustomerIds = new Set();
     /** Recon debit IVNUMs queued during Payment transform for virtual close. */
     const pendingInvoiceCloses = new Set();
+    /** ERP CURDATE per queued IVNUM — payment date for its virtual close. */
+    const pendingInvoiceCloseDates = new Map();
     /** Helam offset-pair invoice numbers (original + cancel) for stamp-close. */
     const pendingHelamOffsetCloses = new Set();
     let invoicePostIngestRan = false;
@@ -224,6 +226,7 @@ async function runStagedExtensionSync(options) {
                 accountId: options.accountId,
                 userId: options.userId,
                 invoiceNumbers: pendingNumbers,
+                invoiceCloseDates: new Map(pendingInvoiceCloseDates),
                 helamOffsetInvoiceNumbers: helamOffsetNumbers,
             });
             for (const invoiceId of flushResult.closedIds) {
@@ -233,6 +236,7 @@ async function runStagedExtensionSync(options) {
                 arAffectedCustomerIds.add(customerId);
             }
             pendingInvoiceCloses.clear();
+            pendingInvoiceCloseDates.clear();
             pendingHelamOffsetCloses.clear();
             log(`Extension pending invoice closes (${label}): ${flushResult.closedIds.length} settled (${pendingNumbers.length} virtual, ${helamOffsetNumbers.length} Helam offset)`);
             setTailStep(connectorSyncRuntime_1.PENDING_CLOSES_ENTITY_STATS_KEY, {
@@ -430,6 +434,7 @@ async function runStagedExtensionSync(options) {
                             userId: options.userId,
                             dryRun,
                             pendingInvoiceCloses,
+                            pendingInvoiceCloseDates,
                             pendingHelamOffsetCloses,
                         });
                         mergeBatch(previewBatch, afterPlugin);
