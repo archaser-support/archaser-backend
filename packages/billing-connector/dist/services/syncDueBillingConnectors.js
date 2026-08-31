@@ -76,6 +76,8 @@ async function syncDueBillingConnectors(prisma, options) {
                 accountId: connector.account_id,
                 trigger: "scheduled",
                 executionId,
+                onLog: options?.onLog,
+                observability: options?.observability,
             });
             results.push(result);
             processed += 1;

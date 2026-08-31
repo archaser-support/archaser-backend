@@ -4,6 +4,7 @@ import type { BillingAccountExtension, ExtensionMappedBatch, ExtensionSyncWindow
 import { type ConnectorEntityStats } from "./connectorSyncRuntime";
 import { type ImportBatchFn } from "./stagedExtensionSync";
 import { type ArPostIngestHostFn } from "../credit/arPostIngestHost";
+import { type BillingConnectorObservabilityOptions } from "../observability";
 export interface RunInProcessSyncOptions {
     prisma: PrismaClient;
     accountId: number;
@@ -38,6 +39,8 @@ export interface RunInProcessSyncOptions {
      * refresh, as-of enqueue). Nest wires runArPostIngestForCustomers.
      */
     onArPostIngest?: ArPostIngestHostFn;
+    /** Structured Loki JSON + Prometheus counters (start / finish / errors). */
+    observability?: BillingConnectorObservabilityOptions;
 }
 export interface RunInProcessSyncResult {
     ok: boolean;
@@ -76,9 +79,4 @@ export interface RunInProcessSyncResult {
         imported: number;
     }>;
 }
-/**
- * In-process Priority sync for main API / worker (D71).
- * Accounts with extension_key use staged windowed plugin path;
- * accounts without a key keep entity-by-entity pull/map/import.
- */
 export declare function runInProcessSync(options: RunInProcessSyncOptions): Promise<RunInProcessSyncResult>;

@@ -37,6 +37,7 @@ import {
     listSyncRuns,
     mergeEntitySetsPatch,
     mergePullFiltersPatch,
+    normalizeInvoicePaidTolerance,
     parseEntitySetCatalog,
     parseEntitySetsMap,
     parseMappingRules,
@@ -59,9 +60,13 @@ import {
     listExecutionsForAccount,
     sweepStaleRunning,
     syncHistoryExecutionToSummary,
+    createBillingConnectorMetricsSinkFromProm,
+    resolveSyncExecutionStatus,
+    resolveSyncErrorType,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
     type PullFiltersMap,
+    type BillingConnectorSyncMetricsSink,
 } from "@archaser/billing-connector";
 import {
     areBackfillOptionsLocked,
@@ -72,9 +77,11 @@ import {
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
+import { MetricsService } from "../metrics/metrics.service";
 import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
 import {
     bindCreditInsurancePrisma,
+    clearInvoicePaidToleranceCache,
     enqueueRewriteForImport,
 } from "@archaser/credit-insurance-domain";
 
@@ -148,11 +155,20 @@ function rethrowCoded(error: unknown): never {
 @Injectable()
 export class BillingConnectorApiService {
     private readonly logger = new Logger(BillingConnectorApiService.name);
+    private readonly syncMetrics: BillingConnectorSyncMetricsSink;
 
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
-    ) {}
+        private readonly accessScope: AccessScopeService,
+        metrics: MetricsService
+    ) {
+        this.syncMetrics = createBillingConnectorMetricsSinkFromProm({
+            syncTotal: metrics.business.billingConnectorSyncTotal,
+            syncDuration: metrics.business.billingConnectorSyncDuration,
+            errorsTotal: metrics.business.billingConnectorErrorsTotal,
+            recordsProcessed: metrics.business.billingConnectorRecordsProcessed,
+        });
+    }
 
     async assertAccess(
         user: JwtPayload,
@@ -200,6 +216,7 @@ export class BillingConnectorApiService {
         mep_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
         skip_reporting_breach_on_backfill?: boolean;
+        invoice_paid_tolerance?: number;
         pull_filters?: unknown;
         entity_sets?: unknown;
         entity_set_catalog?: unknown;
@@ -262,6 +279,7 @@ export class BillingConnectorApiService {
                 connector.include_older_open_invoices ?? true,
             skip_reporting_breach_on_backfill:
                 connector.skip_reporting_breach_on_backfill ?? false,
+            invoice_paid_tolerance: connector.invoice_paid_tolerance ?? 0.2,
             pull_filters: pullFilterFields.pull_filters,
             effective_pull_filters: pullFilterFields.effective_pull_filters,
             entity_sets: entitySets,
@@ -501,6 +519,19 @@ export class BillingConnectorApiService {
         if (skipBreachChange.value !== undefined) {
             data.skip_reporting_breach_on_backfill = skipBreachChange.value;
         }
+        if (body.invoice_paid_tolerance !== undefined) {
+            try {
+                data.invoice_paid_tolerance = normalizeInvoicePaidTolerance(
+                    body.invoice_paid_tolerance
+                );
+            } catch (error: unknown) {
+                const err = error as { code?: string; message?: string };
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid invoice_paid_tolerance",
+                    code: err.code ?? "INVALID_INVOICE_PAID_TOLERANCE",
+                });
+            }
+        }
 
         let extensionPatch;
         try {
@@ -617,6 +648,9 @@ export class BillingConnectorApiService {
                   },
                   include: { ConnectorSyncState: true },
               });
+        if (data.invoice_paid_tolerance !== undefined) {
+            clearInvoicePaidToleranceCache(accountId);
+        }
         return serializeBigInt({
             config: await this.toPublicConfig(connector),
         });
@@ -875,6 +909,9 @@ export class BillingConnectorApiService {
                 executionId,
                 mode,
                 onLog,
+                observability: {
+                    metrics: this.syncMetrics,
+                },
                 onProgress: (entityStats) => {
                     patchSyncRunEntityStats(
                         accountId,
@@ -957,14 +994,14 @@ export class BillingConnectorApiService {
                 },
             });
             const completedAt = new Date();
-            const status = result.cancelled
-                ? "TIMEOUT"
-                : result.ok
-                  ? "SUCCESS"
-                  : "FAILED";
-            const errorType = result.cancelled
-                ? "cancelled"
-                : result.error ?? null;
+            const status = resolveSyncExecutionStatus(result) as
+                | "SUCCESS"
+                | "FAILED"
+                | "PARTIAL"
+                | "TIMEOUT";
+            const errorType =
+                resolveSyncErrorType(result, status) ??
+                (result.error ?? null);
             onLog(
                 `Finished ${mode}: ${status}${
                     result.error ? ` — ${result.error}` : ""
