@@ -16,6 +16,14 @@ import {
     resolveCustomerHeaderOpenArAmounts,
 } from "@archaser/credit-insurance-domain";
 import { DatabaseService } from "../database/database.service";
+import {
+    CustomerPolicyService,
+    hasPolicyPayloadInBody,
+} from "./customer-policy.service";
+import {
+    applyCustomerNameUpdate,
+    buildCustomerUncheckedUpdateData,
+} from "./customer-update.mapper";
 
 export type CustomersListQuery = {
     page?: string;
@@ -184,7 +192,8 @@ const ACTIVITY_TYPES = [
 export class CustomersService {
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
+        private readonly accessScope: AccessScopeService,
+        private readonly customerPolicy: CustomerPolicyService
     ) {
         // Header AR resolution reaches into the credit-insurance domain, whose FX
         // lookup reads the module-level client rather than one we pass in.
@@ -530,6 +539,10 @@ export class CustomersService {
     }
 
     async update(user: JwtPayload, id: number, body: Record<string, unknown>) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const effectiveUserId = this.accessScope.getEffectiveUserId(userInfo);
+
         await this.getById(user, id);
 
         if (
@@ -542,43 +555,31 @@ export class CustomersService {
             });
         }
 
-        const data: Record<string, unknown> = { ...body };
-        delete data.id;
-        delete data.account_id;
-        delete data.Person;
-        delete data.Company;
-        delete data.Owner;
-        delete data.Country;
-        delete data.State;
-        delete data.ParentCustomer;
-        delete data.CustomerCollectionPeriod;
-        delete data.Invoice;
-        delete data.CustomerPolicy;
-        delete data.customerPolicies;
-        delete data.activeCustomerPolicy;
-        // Derived on GET, not columns — Prisma rejects them as unknown arguments.
-        delete data.total_ar;
-        delete data.total_ar_secondary;
-        delete data.credit_insurance_secondary_currency;
+        const policyPayloadPresent = hasPolicyPayloadInBody(body);
+        const customerUpdateData = buildCustomerUncheckedUpdateData(body);
 
-        const updated = await this.db.customer.update({
+        await this.db.customer.update({
             where: { id },
-            data: data as never,
-            include: {
-                Country: true,
-                State: true,
-                Owner: {
-                    select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        username: true,
-                    },
-                },
-            },
+            data: customerUpdateData,
         });
 
-        return serializeBigInt(updated);
+        await applyCustomerNameUpdate(
+            this.db,
+            id,
+            body.customer_name,
+            effectiveUserId
+        );
+
+        if (policyPayloadPresent) {
+            await this.customerPolicy.applyFromPoliciesTabSave({
+                customerId: id,
+                accountId,
+                userId: effectiveUserId,
+                body,
+            });
+        }
+
+        return this.getById(user, id);
     }
 
     /** Resolve account scope + assert the customer belongs to it (nested-path guard). */

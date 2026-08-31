@@ -387,6 +387,21 @@ export class InsuranceEntitiesService {
         const accountId = await this.accountId(user);
         const policy = await this.db.insurancePolicy.findFirst({
             where: { id: policyId, account_id: accountId },
+            select: {
+                max_payment_term: true,
+                max_allowed_mep: true,
+                reporting_days: true,
+                mep_cutoff_day_of_month: true,
+                mep_substitute_day_of_month: true,
+                reporting_cutoff_day_of_month: true,
+                reporting_substitute_day_of_month: true,
+                payment_term_cutoff_day_of_month: true,
+                payment_term_substitute_day_of_month: true,
+                min_credit_score: true,
+                max_dcl: true,
+                cost_percent: true,
+                registration_fee_percent: true,
+            },
         });
         if (!policy) {
             throw new NotFoundException({ error: "Policy not found" });
@@ -400,11 +415,14 @@ export class InsuranceEntitiesService {
             query.customer_number_policy?.trim() || null;
         const namedMatchByPolicyCustomerNumberOnly =
             query.named_match === "policy_customer_number";
+        const dclOnly =
+            query.limit_type === "DCL" || query.limit_type === "Discretionary";
 
         let countryRow: {
             payment_term_cap: number | null;
             country_mep: number | null;
             reporting_days: number | null;
+            country_max_limit: unknown;
         } | null = null;
         if (countryId && Number.isFinite(countryId)) {
             countryRow = await this.db.insurancePolicyCountry.findFirst({
@@ -416,14 +434,20 @@ export class InsuranceEntitiesService {
                     payment_term_cap: true,
                     country_mep: true,
                     reporting_days: true,
+                    country_max_limit: true,
                 },
             });
         }
 
-        const namedLookup =
-            namedMatchByPolicyCustomerNumberOnly && customerNumberPolicy
-                ? customerNumberPolicy
-                : customerNumber;
+        const namedSelect = {
+            customer_number: true,
+            max_payment_term: true,
+            customer_mep: true,
+            reporting_days: true,
+            customer_max_limit: true,
+            limit_expiration_date: true,
+        } as const;
+
         let named: {
             max_payment_term: number | null;
             customer_mep: number | null;
@@ -432,36 +456,51 @@ export class InsuranceEntitiesService {
             limit_expiration_date: Date | null;
             customer_number: string;
         } | null = null;
-        if (namedLookup) {
-            named = await this.db.namedPolicy.findFirst({
-                where: {
-                    insurance_policy_id: policyId,
-                    customer_number: namedLookup,
-                },
-            });
-            if (!named && namedMatchByPolicyCustomerNumberOnly) {
-                return { source: "no_named_match" };
+
+        if (!dclOnly && namedMatchByPolicyCustomerNumberOnly) {
+            if (customerNumberPolicy) {
+                named = await this.db.namedPolicy.findFirst({
+                    where: {
+                        insurance_policy_id: policyId,
+                        customer_number: customerNumberPolicy,
+                    },
+                    select: namedSelect,
+                });
+            }
+            if (!named && customerNumber) {
+                named = await this.db.namedPolicy.findFirst({
+                    where: {
+                        insurance_policy_id: policyId,
+                        customer_number: customerNumber,
+                    },
+                    select: namedSelect,
+                });
+            }
+            if (!named) {
+                return serializeBigInt({ source: "no_named_match" });
+            }
+        } else if (!dclOnly) {
+            if (customerNumber) {
+                named = await this.db.namedPolicy.findFirst({
+                    where: {
+                        insurance_policy_id: policyId,
+                        customer_number: customerNumber,
+                    },
+                    select: namedSelect,
+                });
+            }
+            if (!named && customerNumberPolicy) {
+                named = await this.db.namedPolicy.findFirst({
+                    where: {
+                        insurance_policy_id: policyId,
+                        customer_number: customerNumberPolicy,
+                    },
+                    select: namedSelect,
+                });
             }
         }
 
-        return serializeBigInt({
-            source: named ? "named_policy" : countryRow ? "country" : "policy",
-            limit_type: named ? "Named" : "Discretionary",
-            max_payment_term:
-                named?.max_payment_term ??
-                countryRow?.payment_term_cap ??
-                policy.max_payment_term ??
-                null,
-            max_allowed_mep:
-                named?.customer_mep ??
-                countryRow?.country_mep ??
-                policy.max_allowed_mep ??
-                null,
-            reporting_days:
-                named?.reporting_days ??
-                countryRow?.reporting_days ??
-                policy.reporting_days ??
-                null,
+        const monthEndFields = {
             mep_cutoff_day_of_month: policy.mep_cutoff_day_of_month ?? null,
             mep_substitute_day_of_month:
                 policy.mep_substitute_day_of_month ?? null,
@@ -473,13 +512,80 @@ export class InsuranceEntitiesService {
                 policy.payment_term_cutoff_day_of_month ?? null,
             payment_term_substitute_day_of_month:
                 policy.payment_term_substitute_day_of_month ?? null,
-            approved_limit: named?.customer_max_limit ?? null,
-            approved_limit_expiration_date:
-                named?.limit_expiration_date ?? null,
+        };
+
+        if (named) {
+            let approvedLimit: unknown = named.customer_max_limit;
+            if (approvedLimit == null && countryRow) {
+                approvedLimit = countryRow.country_max_limit;
+            }
+            if (approvedLimit == null) {
+                approvedLimit = policy.max_dcl;
+            }
+
+            return serializeBigInt({
+                source: "named_policy",
+                limit_type: "Named",
+                max_payment_term:
+                    named.max_payment_term ??
+                    countryRow?.payment_term_cap ??
+                    policy.max_payment_term ??
+                    null,
+                max_allowed_mep:
+                    named.customer_mep ??
+                    countryRow?.country_mep ??
+                    policy.max_allowed_mep ??
+                    null,
+                reporting_days:
+                    named.reporting_days ??
+                    countryRow?.reporting_days ??
+                    policy.reporting_days ??
+                    null,
+                ...monthEndFields,
+                approved_limit: approvedLimit,
+                approved_limit_expiration_date:
+                    named.limit_expiration_date ?? null,
+                cost_percent: policy.cost_percent ?? null,
+                registration_fee_percent: policy.registration_fee_percent ?? null,
+                credit_score: policy.min_credit_score ?? null,
+                customer_number_policy: named.customer_number,
+            });
+        }
+
+        if (countryRow) {
+            return serializeBigInt({
+                source: "country",
+                limit_type: "DCL",
+                max_payment_term:
+                    countryRow.payment_term_cap ?? policy.max_payment_term ?? null,
+                max_allowed_mep:
+                    countryRow.country_mep ?? policy.max_allowed_mep ?? null,
+                reporting_days:
+                    countryRow.reporting_days ?? policy.reporting_days ?? null,
+                ...monthEndFields,
+                approved_limit:
+                    countryRow.country_max_limit ?? policy.max_dcl ?? null,
+                approved_limit_expiration_date: null,
+                cost_percent: policy.cost_percent ?? null,
+                registration_fee_percent: policy.registration_fee_percent ?? null,
+                credit_score: policy.min_credit_score ?? null,
+                customer_number_policy: null,
+            });
+        }
+
+        return serializeBigInt({
+            source: "policy",
+            limit_type: "DCL",
+            max_payment_term: policy.max_payment_term ?? null,
+            max_allowed_mep: policy.max_allowed_mep ?? null,
+            reporting_days: policy.reporting_days ?? null,
+            ...monthEndFields,
+            approved_limit: policy.max_dcl ?? null,
+            approved_limit_expiration_date: null,
             cost_percent: policy.cost_percent ?? null,
             registration_fee_percent: policy.registration_fee_percent ?? null,
-            credit_score: null,
-            customer_number_policy: named?.customer_number ?? null,
+            credit_score: policy.min_credit_score ?? null,
+            customer_number_policy: null,
         });
     }
 
