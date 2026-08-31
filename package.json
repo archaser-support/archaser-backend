@@ -18,7 +18,13 @@
     "packages/cron-jobs"
   ],
   "overrides": {
-    "esbuild": "0.24.2"
+    "esbuild": "0.25.0",
+    "nodemailer": "9.0.6",
+    "deepmerge-ts": "8.0.2",
+    "postcss": "8.5.26",
+    "@nestjs/swagger": {
+      "js-yaml": "5.4.1"
+    }
   },
   "engines": {
     "node": ">=20.0.0",
@@ -52,20 +58,7 @@
     "format:check": "prettier --check .",
     "migrate:activity-keys": "npx tsx scripts/database/run-migration.ts",
     "migrate:activity-keys:dry": "npx tsx scripts/database/run-migration.ts --dry-run",
-    "fix:currency-corruption": "npx tsx scripts/database/fix-currency-corruption.ts",
-    "fix:currency-corruption:dry-run": "npx tsx scripts/database/fix-currency-corruption.ts --dry-run",
-    "backfill:invoice-capacity-gap-amounts": "npx tsx scripts/_quarantine/backfill-invoice-capacity-gap-amounts.ts",
-    "backfill:invoice-capacity-gap-amounts:dry": "npx tsx scripts/_quarantine/backfill-invoice-capacity-gap-amounts.ts --dry-run",
-    "datafix:customer-policy-capacity-gap:dry": "npx tsx scripts/_quarantine/datafixes/repair-customer-policy-capacity-gap-amounts.ts --dry-run",
-    "datafix:customer-policy-capacity-gap": "npx tsx scripts/_quarantine/datafixes/repair-customer-policy-capacity-gap-amounts.ts --fix",
-    "credit-reporting-sample-data:dry-run": "npx tsx scripts/_quarantine/testing/generate-credit-reporting-sample-data.ts --dry-run --days 30",
-    "credit-reporting-sample-data:smoke": "npx tsx scripts/_quarantine/testing/generate-credit-reporting-sample-data.ts --confirm --days 7",
-    "credit-reporting-sample-data:verify": "npx tsx scripts/_quarantine/testing/generate-credit-reporting-sample-data.ts --verify",
-    "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js",
-    "debug:logs": "npx tsx scripts/_quarantine/debug/analyze-console-logs.ts",
-    "debug:logs:analyze": "npx tsx scripts/_quarantine/debug/analyze-console-logs.ts analyze",
-    "debug:logs:clear": "npx tsx scripts/_quarantine/debug/analyze-console-logs.ts clear",
-    "debug:logs:tail": "npx tsx scripts/_quarantine/debug/analyze-console-logs.ts tail"
+    "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js"
   },
   "devDependencies": {
     "dotenv": "^16.4.5",
