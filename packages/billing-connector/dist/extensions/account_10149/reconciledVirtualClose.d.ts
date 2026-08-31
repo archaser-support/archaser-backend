@@ -23,4 +23,6 @@ export declare function applyReconciledVirtualCloses(prisma: Pick<PrismaClient, 
  * Resolve invoice numbers from the payment feed and fill virtual shortfall
  * (full net when no real payments). Caller must recalc paid totals.
  */
-export declare function applyReconciledVirtualClosesForInvoiceNumbers(prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "billingConnector" | "$transaction">, accountId: number, invoiceNumbers: string[], userId?: string, paymentDate?: Date): Promise<ReconciledVirtualCloseByNumbersResult>;
+export declare function applyReconciledVirtualClosesForInvoiceNumbers(prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "billingConnector" | "$transaction">, accountId: number, invoiceNumbers: string[], userId?: string, 
+/** ERP CURDATE per invoice number; used when the invoice has no real payment. */
+paymentDates?: Map<string, Date>, paymentDate?: Date): Promise<ReconciledVirtualCloseByNumbersResult>;

@@ -62,6 +62,7 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
                 id: true,
                 invoice_id: true,
                 customer_amount: true,
+                payment_date: true,
                 payment_method: true,
                 reference: true,
                 customer_id: true,
@@ -91,6 +92,7 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
         const existingVirtual = linked.find((row) => row.reference === virtualRef ||
             (row.payment_method ?? "").trim() === exports.VIRTUAL_PAYMENT_METHOD) ?? null;
         let realCustomerPaid = 0;
+        let latestRealPaymentDate = null;
         for (const payment of linked) {
             if (existingVirtual && payment.id === existingVirtual.id) {
                 continue;
@@ -99,7 +101,14 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
                 continue;
             }
             realCustomerPaid += payment.customer_amount ?? 0;
+            if (payment.payment_date &&
+                (latestRealPaymentDate === null ||
+                    payment.payment_date > latestRealPaymentDate)) {
+                latestRealPaymentDate = payment.payment_date;
+            }
         }
+        // Virtual close must carry the ERP payment date, not the import time.
+        const virtualPaymentDate = latestRealPaymentDate ?? candidate.paymentDate;
         const net = invoice.customer_net_amount ?? invoice.customer_amount ?? 0;
         const remaining = net - realCustomerPaid;
         touchedInvoiceIds.add(candidate.invoiceId);
@@ -115,7 +124,7 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
                         amount: amounts.amount,
                         customer_amount: amounts.customer_amount,
                         customer_currency: amounts.customer_currency,
-                        payment_date: candidate.paymentDate,
+                        payment_date: virtualPaymentDate,
                         payment_method: exports.VIRTUAL_PAYMENT_METHOD,
                         reference: virtualRef,
                         invoice_id: candidate.invoiceId,
@@ -132,7 +141,7 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
                     amount: amounts.amount,
                     customer_amount: amounts.customer_amount,
                     customer_currency: amounts.customer_currency,
-                    payment_date: candidate.paymentDate,
+                    payment_date: virtualPaymentDate,
                     payment_method: exports.VIRTUAL_PAYMENT_METHOD,
                     reference: virtualRef,
                     customer_id: candidate.customerId,
@@ -166,7 +175,9 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
  * Resolve invoice numbers from the payment feed and fill virtual shortfall
  * (full net when no real payments). Caller must recalc paid totals.
  */
-async function applyReconciledVirtualClosesForInvoiceNumbers(prisma, accountId, invoiceNumbers, userId, paymentDate = new Date()) {
+async function applyReconciledVirtualClosesForInvoiceNumbers(prisma, accountId, invoiceNumbers, userId, 
+/** ERP CURDATE per invoice number; used when the invoice has no real payment. */
+paymentDates, paymentDate = new Date()) {
     const unique = Array.from(new Set(invoiceNumbers
         .map((value) => value.trim())
         .filter((value) => value.length > 0)));
@@ -200,7 +211,7 @@ async function applyReconciledVirtualClosesForInvoiceNumbers(prisma, accountId, 
             invoiceId: invoice.id,
             customerId: invoice.customer_id,
             invoiceNumber: invoice.invoice_number,
-            paymentDate,
+            paymentDate: paymentDates?.get(invoice.invoice_number.trim()) ?? paymentDate,
         });
         customerIds.add(invoice.customer_id);
     }
