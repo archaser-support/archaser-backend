@@ -18,9 +18,9 @@ export type ReconciledVirtualCloseByNumbersResult = {
  * Handles positive AR invoices and credit notes (negative net / remaining).
  * Callers then recalc paid totals.
  */
-export declare function applyReconciledVirtualCloses(prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">, accountId: number, candidates: ReconciledVirtualCloseCandidate[], userId?: string): Promise<Set<number>>;
+export declare function applyReconciledVirtualCloses(prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "billingConnector" | "$transaction">, accountId: number, candidates: ReconciledVirtualCloseCandidate[], userId?: string): Promise<Set<number>>;
 /**
  * Resolve invoice numbers from the payment feed and fill virtual shortfall
  * (full net when no real payments). Caller must recalc paid totals.
  */
-export declare function applyReconciledVirtualClosesForInvoiceNumbers(prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">, accountId: number, invoiceNumbers: string[], userId?: string, paymentDate?: Date): Promise<ReconciledVirtualCloseByNumbersResult>;
+export declare function applyReconciledVirtualClosesForInvoiceNumbers(prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "billingConnector" | "$transaction">, accountId: number, invoiceNumbers: string[], userId?: string, paymentDate?: Date): Promise<ReconciledVirtualCloseByNumbersResult>;

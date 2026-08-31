@@ -43,6 +43,7 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
     if (byInvoice.size === 0) {
         return new Set();
     }
+    const paidTolerance = await (0, invoicePaidTolerance_1.resolveInvoicePaidTolerance)(prisma, accountId);
     const invoiceIds = [...byInvoice.keys()];
     const [invoices, linkedPayments] = await Promise.all([
         prisma.invoice.findMany({
@@ -104,8 +105,7 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
         touchedInvoiceIds.add(candidate.invoiceId);
         // Positive invoices: remaining > T. Credit notes (negative net): remaining < -T.
         // Virtual payment equals remaining so net − (real + virtual) ≈ 0 after recalc.
-        const needsVirtual = remaining > invoicePaidTolerance_1.INVOICE_PAID_TOLERANCE ||
-            remaining < -invoicePaidTolerance_1.INVOICE_PAID_TOLERANCE;
+        const needsVirtual = remaining > paidTolerance || remaining < -paidTolerance;
         if (needsVirtual) {
             const amounts = resolveVirtualAmounts(invoice, remaining);
             if (existingVirtual) {

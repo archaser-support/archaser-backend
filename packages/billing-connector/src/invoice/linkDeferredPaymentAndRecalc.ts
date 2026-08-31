@@ -1,5 +1,9 @@
 import type { Invoice, InvoicePayment, Prisma, PrismaClient } from "@prisma/client";
-import { isWithinPaidTolerance } from "./invoicePaidTolerance";
+import {
+    INVOICE_PAID_TOLERANCE,
+    isWithinPaidTolerance,
+    resolveInvoicePaidTolerance,
+} from "./invoicePaidTolerance";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
 import { commitOps } from "../import/bulkWrite";
@@ -13,6 +17,8 @@ export type LinkDeferredPaymentAndRecalcResult = {
 export {
     INVOICE_PAID_TOLERANCE,
     isWithinPaidTolerance,
+    normalizeInvoicePaidTolerance,
+    resolveInvoicePaidTolerance,
 } from "./invoicePaidTolerance";
 
 export type InvoicePaidRecalcOptions = {
@@ -68,7 +74,8 @@ function buildInvoicePaidUpdate(
     invoice: InvoiceForPaidRecalc,
     linkedPayments: LinkedPaymentForRecalc[],
     options: InvoicePaidRecalcOptions | undefined,
-    modifiedAt: Date
+    modifiedAt: Date,
+    paidTolerance: number
 ): Prisma.InvoiceUpdateInput {
     if (hasForcePaidClose(linkedPayments, options?.isForcePaidClose)) {
         const totalPaid = invoice.net_amount ?? 0;
@@ -107,7 +114,10 @@ function buildInvoicePaidUpdate(
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;
     const newCustomerOutstanding =
         (invoice.customer_net_amount ?? 0) - totalCustomerPaid;
-    const becomesPaid = isWithinPaidTolerance(newCustomerOutstanding);
+    const becomesPaid = isWithinPaidTolerance(
+        newCustomerOutstanding,
+        paidTolerance
+    );
 
     return {
         total_paid: totalPaid,
@@ -124,7 +134,7 @@ function buildInvoicePaidUpdate(
 }
 
 export async function recalculateInvoiceFromLinkedPayments(
-    tx: Pick<PrismaClient, "invoice" | "invoicePayment">,
+    tx: Pick<PrismaClient, "invoice" | "invoicePayment" | "billingConnector">,
     invoiceId: number,
     options?: InvoicePaidRecalcOptions
 ): Promise<Invoice> {
@@ -146,6 +156,10 @@ export async function recalculateInvoiceFromLinkedPayments(
         invoice.account_id,
         options?.isForcePaidClose
     );
+    const paidTolerance = await resolveInvoicePaidTolerance(
+        tx,
+        invoice.account_id
+    );
 
     return tx.invoice.update({
         where: { id: invoiceId },
@@ -153,7 +167,8 @@ export async function recalculateInvoiceFromLinkedPayments(
             invoice,
             linkedPayments,
             { ...options, isForcePaidClose },
-            new Date()
+            new Date(),
+            paidTolerance
         ),
     });
 }
@@ -163,7 +178,10 @@ export async function recalculateInvoiceFromLinkedPayments(
  * three round-trips per invoice.
  */
 export async function recalculateInvoicesFromLinkedPayments(
-    prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">,
+    prisma: Pick<
+        PrismaClient,
+        "invoice" | "invoicePayment" | "billingConnector" | "$transaction"
+    >,
     targets: Map<number, InvoicePaidRecalcOptions>
 ): Promise<void> {
     if (targets.size === 0) return;
@@ -202,17 +220,25 @@ export async function recalculateInvoicesFromLinkedPayments(
         number,
         InvoicePaidRecalcOptions["isForcePaidClose"]
     >();
+    const paidToleranceByAccount = new Map<number, number>();
     for (const invoice of invoices) {
-        if (forcePaidByAccount.has(invoice.account_id)) continue;
-        const target = targets.get(invoice.id);
-        forcePaidByAccount.set(
-            invoice.account_id,
-            await resolveForcePaidClose(
-                prisma,
+        if (!forcePaidByAccount.has(invoice.account_id)) {
+            const target = targets.get(invoice.id);
+            forcePaidByAccount.set(
                 invoice.account_id,
-                target?.isForcePaidClose
-            )
-        );
+                await resolveForcePaidClose(
+                    prisma,
+                    invoice.account_id,
+                    target?.isForcePaidClose
+                )
+            );
+        }
+        if (!paidToleranceByAccount.has(invoice.account_id)) {
+            paidToleranceByAccount.set(
+                invoice.account_id,
+                await resolveInvoicePaidTolerance(prisma, invoice.account_id)
+            );
+        }
     }
 
     const modifiedAt = new Date();
@@ -230,7 +256,9 @@ export async function recalculateInvoicesFromLinkedPayments(
                             invoice.account_id
                         ),
                     },
-                    modifiedAt
+                    modifiedAt,
+                    paidToleranceByAccount.get(invoice.account_id) ??
+                        INVOICE_PAID_TOLERANCE
                 ),
             })
         )

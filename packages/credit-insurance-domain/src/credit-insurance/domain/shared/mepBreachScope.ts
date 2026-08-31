@@ -5,13 +5,10 @@
  * block (cause side), the created-terms-violation snapshot (flag side), and the
  * as-of replay — so the sides cannot drift apart.
  *
- * The calendar-day comparison itself lives in {@link ./breachStartDateScope},
+ * The calendar-day comparison itself lives in {@link ./calendarDayCompare},
  * shared with the reporting-breach gate.
  */
-import {
-    filterInvoicesOnOrAfterBreachStartDate,
-    isInvoiceOnOrAfterBreachStartDate,
-} from "./breachStartDateScope";
+import { isInvoiceOnOrAfterStartDate } from "./calendarDayCompare";
 
 /**
  * Whether an invoice participates in MEP breach evaluation.
@@ -24,7 +21,7 @@ export function isInvoiceInMepBreachScope(
     invoiceDate: Date | string | null | undefined,
     mepBreachStartDate: Date | string | null | undefined
 ): boolean {
-    return isInvoiceOnOrAfterBreachStartDate(invoiceDate, mepBreachStartDate);
+    return isInvoiceOnOrAfterStartDate(invoiceDate, mepBreachStartDate);
 }
 
 /**
@@ -37,9 +34,10 @@ export function filterInvoicesInMepBreachScope<T>(
     mepBreachStartDate: Date | null | undefined,
     invoiceDateOf: (invoice: T) => Date | string | null | undefined
 ): T[] {
-    return filterInvoicesOnOrAfterBreachStartDate(
-        invoices,
-        mepBreachStartDate,
-        invoiceDateOf
+    if (mepBreachStartDate == null) {
+        return invoices;
+    }
+    return invoices.filter((invoice) =>
+        isInvoiceInMepBreachScope(invoiceDateOf(invoice), mepBreachStartDate)
     );
 }

@@ -50,6 +50,18 @@ function accessScope(accountId: number, allowed = true) {
     };
 }
 
+
+function mockMetrics() {
+    return {
+        business: {
+            billingConnectorSyncTotal: { inc: jest.fn() },
+            billingConnectorSyncDuration: { observe: jest.fn() },
+            billingConnectorErrorsTotal: { inc: jest.fn() },
+            billingConnectorRecordsProcessed: { inc: jest.fn() },
+        },
+    };
+}
+
 const CONNECTOR_NOW = new Date("2026-08-01T00:00:00.000Z");
 
 function connectorRow(overrides: Record<string, unknown> = {}) {
@@ -71,6 +83,7 @@ function connectorRow(overrides: Record<string, unknown> = {}) {
         backfill_start_date: null,
         include_older_open_invoices: true,
         skip_reporting_breach_on_backfill: false,
+        invoice_paid_tolerance: 0.2,
         pull_filters: {},
         entity_sets: {},
         entity_set_catalog: null,
@@ -97,7 +110,8 @@ describe("billing connector Nest API", () => {
     it("rejects a caller without billing-connector permission", async () => {
         const service = new BillingConnectorApiService(
             {} as never,
-            accessScope(42, false) as never
+            accessScope(42, false) as never,
+            mockMetrics() as never
         );
         await expect(
             service.getConfig(user(42), 42)
@@ -107,7 +121,8 @@ describe("billing connector Nest API", () => {
     it("rejects cross-account access unless super-admin", async () => {
         const service = new BillingConnectorApiService(
             {} as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockMetrics() as never
         );
         await expect(
             service.getConfig(user(42), 99)
@@ -137,7 +152,8 @@ describe("billing connector Nest API", () => {
         };
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockMetrics() as never
         );
         await expect(
             service.runSync(user(42), 42, "backfill")
@@ -169,7 +185,8 @@ describe("billing connector Nest API", () => {
         };
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockMetrics() as never
         );
         const result = await service.runSync(user(42), 42, "backfill");
         expect(result.result.status).toBe("RUNNING");
@@ -191,7 +208,8 @@ describe("billing connector Nest API", () => {
     it("requires preview, backfill, or incremental mode", async () => {
         const service = new BillingConnectorApiService(
             {} as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockMetrics() as never
         );
         await expect(
             service.runSync(user(42), 42, "nope")
@@ -212,7 +230,8 @@ describe("billing connector Nest API", () => {
         });
         const service = new BillingConnectorApiService(
             {} as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockMetrics() as never
         );
         const result = await service.cancelSync(user(42), 42);
         expect(result.result).toEqual({
@@ -235,7 +254,8 @@ describe("billing connector Nest API", () => {
         };
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockMetrics() as never
         );
         const result = await service.getConfig(user(42), 42);
         expect(result.config.extension_key).toBe(ACCOUNT_10149_EXTENSION_KEY);
@@ -256,7 +276,8 @@ describe("billing connector Nest API", () => {
         };
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockMetrics() as never
         );
         const result = await service.upsertConfig(user(42), 42, {
             extension_key: ACCOUNT_10149_EXTENSION_KEY,
@@ -291,7 +312,8 @@ describe("billing connector Nest API", () => {
         };
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockMetrics() as never
         );
         const result = await service.upsertConfig(user(42), 42, {
             extension_key: null,
@@ -318,7 +340,8 @@ describe("billing connector Nest API", () => {
         };
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockMetrics() as never
         );
         await expect(
             service.upsertConfig(user(42), 42, {

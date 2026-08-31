@@ -87,12 +87,13 @@ export {
     clearMepBreachStartDateCache,
     resolveMepBreachStartDate,
 } from "./credit-insurance/domain/resolveMepBreachStartDate";
-
-// --- Reporting breach start date gate (backfill window; mirrors the MEP gate) ---
 export {
-    filterInvoicesOnOrAfterBreachStartDate,
-    isInvoiceOnOrAfterBreachStartDate,
-} from "./credit-insurance/domain/shared/breachStartDateScope";
+    clearInvoicePaidToleranceCache,
+    resolveInvoicePaidTolerance,
+} from "./credit-insurance/domain/resolveInvoicePaidTolerance";
+
+// --- Reporting breach start date gate (imported pre-go-live history) ---
+export { isInvoiceInReportingBreachScope } from "./credit-insurance/domain/shared/reportingBreachScope";
 export {
     clearReportingBreachStartDateCache,
     resolveReportingBreachStartDate,

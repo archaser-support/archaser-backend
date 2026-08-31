@@ -22,6 +22,7 @@ export { PriorityProviderClient } from "./priority/PriorityProviderClient";
 export { odataSelectFieldsFromMapping } from "./priority/prioritySelectFields";
 export { ConnectorFeature, type BillingProviderClient, type SourceField, type PullPage, type PullOptions, } from "./billing/BillingProviderClient";
 export { runInProcessSync, type RunInProcessSyncOptions, type RunInProcessSyncResult, } from "./sync/runInProcessSync";
+export { BILLING_CONNECTOR_SYNC_SOURCE, createBillingConnectorMetricsSinkFromProm, emitBillingConnectorSyncFinish, emitBillingConnectorSyncStart, getDefaultBillingConnectorMetricsSink, resolveSyncErrorType, resolveSyncExecutionStatus, setDefaultBillingConnectorMetricsSink, type BillingConnectorObservabilityOptions, type BillingConnectorSyncMetricsSink, type BillingConnectorSyncStatus, } from "./observability";
 export { runPreviewSync, discoverConnectorFields, } from "./sync/runPreviewSync";
 export { fetchPriorityEntitySetCatalog } from "./priority/PriorityClient";
 export { getImportEntityFieldCatalog } from "./utils/connectorFieldUtils";
@@ -34,7 +35,7 @@ export { runStagedExtensionSync, planDefaultSyncWindows, STAGED_ENTITY_ORDER, ty
 export { runArPostIngestViaHost, invokeConnectorArPostIngest, refreshInsuranceTargetDatesViaHost, registerArPostIngestOrchestrator, isArPostIngestOrchestratorRegistered, resetArPostIngestOrchestratorForTests, type ArPostIngestHostFn, type ArPostIngestHostInput, type ArPostIngestOrchestratorFn, type ArPostIngestOrchestratorResult, } from "./credit/arPostIngestHost";
 export { syncDueBillingConnectors, type SyncDueBillingConnectorsOptions, type SyncDueBillingConnectorsResult, } from "./services/syncDueBillingConnectors";
 export { ensureMongoConnection, createRunningExecution, completeExecution, markExecutionCancelled, listExecutionsForAccount, sweepStaleRunning, syncHistoryExecutionToSummary, useMemorySyncHistoryStoreForTests, resetSyncHistoryStoreForTests, HISTORY_WINDOW_DAYS, STALE_RUNNING_HOURS, defaultSinceDate, type CompleteExecutionInput, type CreateRunningExecutionInput, type ListExecutionsOptions, type MarkExecutionCancelledInput, type SweepStaleRunningOptions, type SyncHistoryExecution, type ConnectorExecutionStatus, type ConnectorSyncTrigger, type SyncHistoryEntityStats, } from "./syncHistory";
-export { importMappedEntityBatch, extractMaxUpdatedAt, shouldSkipReportingBreachOnConnectorWrite, updateAccountLastSyncDate, type EntityImportBatchOptions, type EntityImportBatchResult, type EntityImportRowResult, type ImportEntityType, } from "./import/entityImporter";
+export { importMappedEntityBatch, extractMaxUpdatedAt, shouldSkipReportingBreachOnConnectorWrite, type EntityImportBatchOptions, type EntityImportBatchResult, type EntityImportRowResult, type ImportEntityType, } from "./import/entityImporter";
 export { applyMaturedDeferredPayments, rawErpRowFromMaturedPayment, type MaturityProgress, type MaturityResult, } from "./import/applyMaturedDeferredPayments";
 export { linkDeferredPaymentAndRecalc, recalculateInvoicesFromLinkedPayments, type LinkDeferredPaymentAndRecalcResult, } from "./invoice/linkDeferredPaymentAndRecalc";
-export { INVOICE_PAID_TOLERANCE, isWithinPaidTolerance, } from "./invoice/invoicePaidTolerance";
+export { INVOICE_PAID_TOLERANCE, INVOICE_PAID_TOLERANCE_MAX, INVOICE_PAID_TOLERANCE_MIN, isWithinPaidTolerance, normalizeInvoicePaidTolerance, resolveInvoicePaidTolerance, } from "./invoice/invoicePaidTolerance";

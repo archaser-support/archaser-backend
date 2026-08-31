@@ -36,6 +36,9 @@ export interface SyncDueBillingConnectorsOptions {
     createExecutionId?: () => string;
     /** Clock for due checks + stale sweep (unit tests). */
     now?: Date;
+    /** Prometheus sink + structured log hook for scheduled syncs. */
+    observability?: RunInProcessSyncOptions["observability"];
+    onLog?: (message: string) => void;
 }
 
 /**
@@ -116,6 +119,8 @@ export async function syncDueBillingConnectors(
                 accountId: connector.account_id,
                 trigger: "scheduled",
                 executionId,
+                onLog: options?.onLog,
+                observability: options?.observability,
             });
             results.push(result);
             processed += 1;

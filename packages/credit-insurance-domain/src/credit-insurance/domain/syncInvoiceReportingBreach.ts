@@ -43,10 +43,10 @@ export async function syncInvoiceReportingBreach(
         where: { id: invoiceId },
         select: {
             id: true,
-            status: true,
-            amount: true,
             account_id: true,
             invoice_date: true,
+            status: true,
+            amount: true,
             target_reporting_date: true,
             actual_reporting_date: true,
             reporting_breach: true,
@@ -87,12 +87,14 @@ export async function syncInvoiceReportingBreach(
         }
     );
 
-    if (should && !inv.reporting_breach) {
-        await db.invoice.update({
-            where: { id: invoiceId },
-            data: { reporting_breach: true },
-        });
+    if (!should || inv.reporting_breach) {
+        return;
     }
+
+    await db.invoice.update({
+        where: { id: invoiceId },
+        data: { reporting_breach: true },
+    });
 }
 
 /**
@@ -141,10 +143,10 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
         },
         select: {
             id: true,
-            status: true,
-            amount: true,
             account_id: true,
             invoice_date: true,
+            status: true,
+            amount: true,
             target_reporting_date: true,
         },
     });

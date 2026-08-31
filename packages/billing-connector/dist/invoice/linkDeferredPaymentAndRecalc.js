@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isWithinPaidTolerance = exports.INVOICE_PAID_TOLERANCE = void 0;
+exports.resolveInvoicePaidTolerance = exports.normalizeInvoicePaidTolerance = exports.isWithinPaidTolerance = exports.INVOICE_PAID_TOLERANCE = void 0;
 exports.recalculateInvoiceFromLinkedPayments = recalculateInvoiceFromLinkedPayments;
 exports.recalculateInvoicesFromLinkedPayments = recalculateInvoicesFromLinkedPayments;
 exports.linkDeferredPaymentAndRecalc = linkDeferredPaymentAndRecalc;
@@ -10,6 +10,8 @@ const bulkWrite_1 = require("../import/bulkWrite");
 var invoicePaidTolerance_2 = require("./invoicePaidTolerance");
 Object.defineProperty(exports, "INVOICE_PAID_TOLERANCE", { enumerable: true, get: function () { return invoicePaidTolerance_2.INVOICE_PAID_TOLERANCE; } });
 Object.defineProperty(exports, "isWithinPaidTolerance", { enumerable: true, get: function () { return invoicePaidTolerance_2.isWithinPaidTolerance; } });
+Object.defineProperty(exports, "normalizeInvoicePaidTolerance", { enumerable: true, get: function () { return invoicePaidTolerance_2.normalizeInvoicePaidTolerance; } });
+Object.defineProperty(exports, "resolveInvoicePaidTolerance", { enumerable: true, get: function () { return invoicePaidTolerance_2.resolveInvoicePaidTolerance; } });
 const LINKED_PAYMENT_RECALC_SELECT = {
     id: true,
     payment_date: true,
@@ -29,7 +31,7 @@ async function resolveForcePaidClose(prisma, accountId, existing) {
     const extension = await (0, extensions_1.resolveAccountBillingExtension)(prisma, accountId);
     return extension?.isForcePaidClose;
 }
-function buildInvoicePaidUpdate(invoice, linkedPayments, options, modifiedAt) {
+function buildInvoicePaidUpdate(invoice, linkedPayments, options, modifiedAt, paidTolerance) {
     if (hasForcePaidClose(linkedPayments, options?.isForcePaidClose)) {
         const totalPaid = invoice.net_amount ?? 0;
         const totalCustomerPaid = invoice.customer_net_amount ?? 0;
@@ -62,7 +64,7 @@ function buildInvoicePaidUpdate(invoice, linkedPayments, options, modifiedAt) {
     }
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;
     const newCustomerOutstanding = (invoice.customer_net_amount ?? 0) - totalCustomerPaid;
-    const becomesPaid = (0, invoicePaidTolerance_1.isWithinPaidTolerance)(newCustomerOutstanding);
+    const becomesPaid = (0, invoicePaidTolerance_1.isWithinPaidTolerance)(newCustomerOutstanding, paidTolerance);
     return {
         total_paid: totalPaid,
         customer_total_paid: totalCustomerPaid,
@@ -88,9 +90,10 @@ async function recalculateInvoiceFromLinkedPayments(tx, invoiceId, options) {
         select: LINKED_PAYMENT_RECALC_SELECT,
     });
     const isForcePaidClose = await resolveForcePaidClose(tx, invoice.account_id, options?.isForcePaidClose);
+    const paidTolerance = await (0, invoicePaidTolerance_1.resolveInvoicePaidTolerance)(tx, invoice.account_id);
     return tx.invoice.update({
         where: { id: invoiceId },
-        data: buildInvoicePaidUpdate(invoice, linkedPayments, { ...options, isForcePaidClose }, new Date()),
+        data: buildInvoicePaidUpdate(invoice, linkedPayments, { ...options, isForcePaidClose }, new Date(), paidTolerance),
     });
 }
 /**
@@ -130,11 +133,15 @@ async function recalculateInvoicesFromLinkedPayments(prisma, targets) {
         paymentsByInvoiceId.set(payment.invoice_id, list);
     }
     const forcePaidByAccount = new Map();
+    const paidToleranceByAccount = new Map();
     for (const invoice of invoices) {
-        if (forcePaidByAccount.has(invoice.account_id))
-            continue;
-        const target = targets.get(invoice.id);
-        forcePaidByAccount.set(invoice.account_id, await resolveForcePaidClose(prisma, invoice.account_id, target?.isForcePaidClose));
+        if (!forcePaidByAccount.has(invoice.account_id)) {
+            const target = targets.get(invoice.id);
+            forcePaidByAccount.set(invoice.account_id, await resolveForcePaidClose(prisma, invoice.account_id, target?.isForcePaidClose));
+        }
+        if (!paidToleranceByAccount.has(invoice.account_id)) {
+            paidToleranceByAccount.set(invoice.account_id, await (0, invoicePaidTolerance_1.resolveInvoicePaidTolerance)(prisma, invoice.account_id));
+        }
     }
     const modifiedAt = new Date();
     await (0, bulkWrite_1.commitOps)(prisma, invoices.map((invoice) => prisma.invoice.update({
@@ -142,7 +149,8 @@ async function recalculateInvoicesFromLinkedPayments(prisma, targets) {
         data: buildInvoicePaidUpdate(invoice, paymentsByInvoiceId.get(invoice.id) ?? [], {
             ...targets.get(invoice.id),
             isForcePaidClose: forcePaidByAccount.get(invoice.account_id),
-        }, modifiedAt),
+        }, modifiedAt, paidToleranceByAccount.get(invoice.account_id) ??
+            invoicePaidTolerance_1.INVOICE_PAID_TOLERANCE),
     })));
 }
 async function linkDeferredPaymentAndRecalc(prisma, params) {

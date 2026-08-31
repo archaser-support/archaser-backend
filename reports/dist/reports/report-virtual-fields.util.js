@@ -4,6 +4,8 @@ exports.calculateDaysOverdue = calculateDaysOverdue;
 exports.calculateDaysUntilDue = calculateDaysUntilDue;
 exports.calculateDaysLeft = calculateDaysLeft;
 exports.extractTermsBreachReasonCodes = extractTermsBreachReasonCodes;
+exports.computedFieldToPrismaWhere = computedFieldToPrismaWhere;
+exports.getComputedFieldFilterCodes = getComputedFieldFilterCodes;
 exports.formatTermsBreachReasonForDisplay = formatTermsBreachReasonForDisplay;
 exports.isPrismaScalarField = isPrismaScalarField;
 exports.isPrismaListRelation = isPrismaListRelation;
@@ -76,6 +78,89 @@ function extractTermsBreachReasonCodes(row) {
     }
     return codes.join(" · ");
 }
+/**
+ * Computed report fields have no column of their own, so filters on them must
+ * be rewritten against the columns they derive from. The mapping lives here as
+ * data so `computedFieldToPrismaWhere` stays generic: supporting another field
+ * is a new entry, not another branch.
+ */
+const COMPUTED_FILTER_MAPPINGS = [
+    {
+        table: "Invoice",
+        field: "terms_breach_reason",
+        kind: "boolean_set",
+        // Deliberately excludes ctv_customer_excluded_from_policy, matching
+        // extractTermsBreachReasonCodes.
+        columnByCode: {
+            reporting_breach: "reporting_breach",
+            ctv_payment_term: "ctv_payment_term",
+            ctv_customer_overdue_mep: "ctv_customer_overdue_mep",
+            ctv_outdated_dcl: "ctv_outdated_dcl",
+            ctv_invoice_after_policy_end: "ctv_invoice_after_policy_end",
+        },
+    },
+];
+const PRESENCE_OPERATORS = new Set([
+    "is_not_empty",
+    "is_not_null",
+    "isnotnull",
+]);
+const ABSENCE_OPERATORS = new Set(["is_empty", "is_null", "isnull"]);
+const ANY_OF_OPERATORS = new Set(["in", "equals", "="]);
+const NONE_OF_OPERATORS = new Set(["not_in", "not_equals", "not", "!="]);
+function matchesAnyColumn(columns) {
+    return { OR: columns.map((column) => ({ [column]: true })) };
+}
+function matchesNoColumn(columns) {
+    // `not: true` also matches NULL, which reads as "flag not set".
+    return { AND: columns.map((column) => ({ [column]: { not: true } })) };
+}
+function parseFilterCodes(value) {
+    const raw = Array.isArray(value)
+        ? value
+        : typeof value === "string"
+            ? value.split(",")
+            : value == null
+                ? []
+                : [value];
+    return raw.map((item) => String(item).trim()).filter(Boolean);
+}
+/**
+ * Prisma where clause for a filter on a computed report field. Returns null
+ * when the field or operator is unsupported, and the caller then drops the
+ * filter as before.
+ */
+function computedFieldToPrismaWhere(table, field, operator, value) {
+    const mapping = COMPUTED_FILTER_MAPPINGS.find((candidate) => candidate.table === table && candidate.field === field);
+    if (!mapping) {
+        return null;
+    }
+    const op = (operator || "").toLowerCase();
+    if (PRESENCE_OPERATORS.has(op)) {
+        return matchesAnyColumn(Object.values(mapping.columnByCode));
+    }
+    if (ABSENCE_OPERATORS.has(op)) {
+        return matchesNoColumn(Object.values(mapping.columnByCode));
+    }
+    const isAnyOf = ANY_OF_OPERATORS.has(op);
+    if (!isAnyOf && !NONE_OF_OPERATORS.has(op)) {
+        return null;
+    }
+    const columns = Array.from(new Set(parseFilterCodes(value)
+        .map((code) => mapping.columnByCode[code])
+        .filter((column) => !!column)));
+    // An empty or unrecognised selection carries no intent; drop it rather
+    // than match nothing.
+    if (columns.length === 0) {
+        return null;
+    }
+    return isAnyOf ? matchesAnyColumn(columns) : matchesNoColumn(columns);
+}
+/** Filter value codes offered for a computed field, for report metadata. */
+function getComputedFieldFilterCodes(table, field) {
+    const mapping = COMPUTED_FILTER_MAPPINGS.find((candidate) => candidate.table === table && candidate.field === field);
+    return mapping ? Object.keys(mapping.columnByCode) : [];
+}
 const TERMS_BREACH_CODE_TO_CAUSE = {
     reporting_breach: "reporting_breach",
     ctv_payment_term: "payment_term",
@@ -83,20 +168,22 @@ const TERMS_BREACH_CODE_TO_CAUSE = {
     ctv_outdated_dcl: "outdated_dcl",
     ctv_invoice_after_policy_end: "invoice_after_policy_end",
 };
+// Wording mirrors locales/{en,he}/invoices.json so the report cell and the
+// filter pick-list name each reason identically.
 const TERMS_BREACH_CAUSE_LABELS = {
     en: {
-        reporting_breach: "Reporting breach",
-        payment_term: "Payment term violation",
-        customer_overdue_mep: "Customer overdue (MEP) at creation",
-        outdated_dcl: "Outdated DCL at creation",
-        invoice_after_policy_end: "Invoice dated after policy end",
+        reporting_breach: "Reporting Breach",
+        payment_term: "Terms violation at creation (payment term)",
+        customer_overdue_mep: "Terms violation at creation (customer overdue MEP)",
+        outdated_dcl: "Terms violation at creation (outdated DCL)",
+        invoice_after_policy_end: "Terms violation at creation (invoice after policy end)",
     },
     he: {
         reporting_breach: "חריגת דיווח",
-        payment_term: "הפרת תנאי תשלום",
-        customer_overdue_mep: "לקוח בפיגור MEP בעת יצירה",
-        outdated_dcl: "DCL לא עדכני בעת יצירה",
-        invoice_after_policy_end: "חשבונית לאחר סיום הפוליסה",
+        payment_term: "הפרת תנאים בעת יצירה (תנאי תשלום)",
+        customer_overdue_mep: "הפרת תנאים בעת יצירה (לקוח בפיגור MEP)",
+        outdated_dcl: "הפרת תנאים בעת יצירה (DCL לא עדכני)",
+        invoice_after_policy_end: "הפרת תנאים בעת יצירה (חשבונית לאחר סיום הפוליסה)",
     },
 };
 function formatTermsBreachReasonForDisplay(codesJoined, locale) {

@@ -32,7 +32,7 @@
             "id": 10,
             "options": {
                 "mode": "markdown",
-                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-prod/archaser-home-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-prod/alert-drilldown-production)"
+                "content": "**Dashboards:** [Home](/d/archaser-unified-v1-prod/archaser-home-production) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-prod/cron-health-production) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-prod/communications-production) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-prod/infrastructure-production) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-prod/alert-drilldown-production) &nbsp;|&nbsp; [Postgres Logs](/d/archaser-postgres-logs-prod/postgres-logs-production)"
             },
             "title": "",
             "type": "text",
@@ -93,7 +93,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_total{instance=\"Production\"}",
+                    "expr": "(archaser_cron_jobs_total{instance=\"Production\"}) or vector(0)",
                     "refId": "A"
                 }
             ],
@@ -203,7 +203,7 @@
             },
             "targets": [
                 {
-                    "expr": "archaser_cron_jobs_overdue{instance=\"Production\"}",
+                    "expr": "(archaser_cron_jobs_overdue{instance=\"Production\"}) or vector(0)",
                     "refId": "A"
                 }
             ],
@@ -365,17 +365,17 @@
             },
             "targets": [
                 {
-                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Production\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Production\",status=\"SUCCESS\"}[24h])) or vector(0)",
                     "legendFormat": "SUCCESS",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Production\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Production\",status=\"FAILED\"}[24h])) or vector(0)",
                     "legendFormat": "FAILED",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum(archaser_cron_job_timeout_count_30d{instance=\"Production\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Production\",status=\"TIMEOUT\"}[24h])) or vector(0)",
                     "legendFormat": "TIMEOUT",
                     "refId": "C"
                 }
@@ -410,21 +410,21 @@
             "type": "table",
             "targets": [
                 {
-                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Production\"} + archaser_cron_job_failure_count_30d{instance=\"Production\"} + archaser_cron_job_timeout_count_30d{instance=\"Production\"})",
+                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Production\"}[24h]))",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Total Executions",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum by(job_name) (archaser_cron_job_success_count_30d{instance=\"Production\"})",
+                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Production\",status=\"SUCCESS\"}[24h]))",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Success Count",
                     "refId": "B"
                 },
                 {
-                    "expr": "sum by(job_name) (archaser_cron_job_failure_count_30d{instance=\"Production\"})",
+                    "expr": "sum by(job_name) (increase(archaser_cron_job_executions_total{instance=\"Production\",status=\"FAILED\"}[24h]))",
                     "format": "table",
                     "instant": true,
                     "legendFormat": "Failure Count",
@@ -633,12 +633,12 @@
             },
             "targets": [
                 {
-                    "expr": "sum(archaser_cron_job_success_count_30d{instance=\"Production\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Production\",status=\"SUCCESS\"}[1h])) or vector(0)",
                     "legendFormat": "Success",
                     "refId": "A"
                 },
                 {
-                    "expr": "sum(archaser_cron_job_failure_count_30d{instance=\"Production\"})",
+                    "expr": "sum(increase(archaser_cron_job_executions_total{instance=\"Production\",status=\"FAILED\"}[1h])) or vector(0)",
                     "legendFormat": "Failed",
                     "refId": "B"
                 }

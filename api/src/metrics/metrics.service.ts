@@ -10,6 +10,10 @@ import {
     type ArchaserBusinessMetrics,
 } from "./archaser-business-metrics";
 import { MetricsUpdaterService } from "./metrics-updater.service";
+import {
+    createBillingConnectorMetricsSinkFromProm,
+    setDefaultBillingConnectorMetricsSink,
+} from "@archaser/billing-connector";
 
 @Injectable()
 export class MetricsService implements OnModuleInit {
@@ -39,6 +43,14 @@ export class MetricsService implements OnModuleInit {
 
         this.business = createArchaserBusinessMetrics(this.register);
         this.updater.bindMetrics(this.business);
+        setDefaultBillingConnectorMetricsSink(
+            createBillingConnectorMetricsSinkFromProm({
+                syncTotal: this.business.billingConnectorSyncTotal,
+                syncDuration: this.business.billingConnectorSyncDuration,
+                errorsTotal: this.business.billingConnectorErrorsTotal,
+                recordsProcessed: this.business.billingConnectorRecordsProcessed,
+            })
+        );
     }
 
     onModuleInit() {

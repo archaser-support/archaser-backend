@@ -111,7 +111,8 @@ services:
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # MONITORING_ENV=staging|production selects instance label for Grafana dashboards
+      - ./prometheus-${MONITORING_ENV:-staging}.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
