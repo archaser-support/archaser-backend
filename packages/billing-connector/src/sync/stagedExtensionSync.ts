@@ -26,6 +26,7 @@ import {
 import {
     invokeConnectorArPostIngest,
     type ArPostIngestHostFn,
+    type ConnectorPostIngestDeferOptions,
 } from "../credit/arPostIngestHost";
 import {
     mapErpRecord,
@@ -62,7 +63,7 @@ export interface StagedWindowOutcome {
     importErrors: number;
 }
 
-export interface RunStagedExtensionSyncOptions {
+export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferOptions {
     prisma: PrismaClient;
     accountId: number;
     connectorId: number;
@@ -375,7 +376,9 @@ export async function runStagedExtensionSync(
         const current = tailSteps[key];
         if (
             state.status === "running" &&
-            (current?.status === "done" || current?.status === "failed")
+            (current?.status === "done" ||
+                current?.status === "failed" ||
+                current?.status === "queued")
         ) {
             return;
         }
@@ -463,7 +466,7 @@ export async function runStagedExtensionSync(
             total: args.customerIds.length,
         });
         try {
-            await invokeConnectorArPostIngest({
+            const postIngest = await invokeConnectorArPostIngest({
                 accountId: options.accountId,
                 customerIds: args.customerIds,
                 invoiceEntityIds: args.invoiceEntityIds,
@@ -472,6 +475,9 @@ export async function runStagedExtensionSync(
                 onArPostIngest: options.onArPostIngest,
                 log,
                 runMaturity: args.runMaturity,
+                deferPostIngest: options.deferPostIngest,
+                enqueueDeferredSteps: options.enqueueDeferredSteps,
+                schedulePostIngestDrain: options.schedulePostIngestDrain,
                 onProgress: ({ completed, total, step, detail }) => {
                     setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
                         status: "running",
@@ -484,7 +490,7 @@ export async function runStagedExtensionSync(
                 },
             });
             setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-                status: "done",
+                status: postIngest.deferred ? "queued" : "done",
                 processed: args.customerIds.length,
                 total: args.customerIds.length,
             });
