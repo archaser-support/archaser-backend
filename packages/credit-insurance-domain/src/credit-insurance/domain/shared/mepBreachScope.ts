@@ -5,25 +5,13 @@
  * block (cause side), the created-terms-violation snapshot (flag side), and the
  * as-of replay — so the sides cannot drift apart.
  *
- * `BillingConnector.mep_breach_start_date` and `Invoice.invoice_date` are both
- * `@db.Date`, so this is a pure calendar-day comparison with no timezone rules.
+ * The calendar-day comparison itself lives in {@link ./breachStartDateScope},
+ * shared with the reporting-breach gate.
  */
-import { normalizeCalendarDayForInsuranceCompare } from "./calendarDayCompare";
-
-function toComparableCalendarDay(value: Date | string): Date {
-    if (typeof value === "string") {
-        const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
-        if (ymd) {
-            return new Date(
-                Number(ymd[1]),
-                Number(ymd[2]) - 1,
-                Number(ymd[3])
-            );
-        }
-    }
-    const date = value instanceof Date ? value : new Date(value);
-    return normalizeCalendarDayForInsuranceCompare(date);
-}
+import {
+    filterInvoicesOnOrAfterBreachStartDate,
+    isInvoiceOnOrAfterBreachStartDate,
+} from "./breachStartDateScope";
 
 /**
  * Whether an invoice participates in MEP breach evaluation.
@@ -36,16 +24,7 @@ export function isInvoiceInMepBreachScope(
     invoiceDate: Date | string | null | undefined,
     mepBreachStartDate: Date | string | null | undefined
 ): boolean {
-    if (mepBreachStartDate == null) {
-        return true;
-    }
-    if (invoiceDate == null) {
-        return true;
-    }
-    return (
-        toComparableCalendarDay(invoiceDate).getTime() >=
-        toComparableCalendarDay(mepBreachStartDate).getTime()
-    );
+    return isInvoiceOnOrAfterBreachStartDate(invoiceDate, mepBreachStartDate);
 }
 
 /**
@@ -58,10 +37,9 @@ export function filterInvoicesInMepBreachScope<T>(
     mepBreachStartDate: Date | null | undefined,
     invoiceDateOf: (invoice: T) => Date | string | null | undefined
 ): T[] {
-    if (mepBreachStartDate == null) {
-        return invoices;
-    }
-    return invoices.filter((invoice) =>
-        isInvoiceInMepBreachScope(invoiceDateOf(invoice), mepBreachStartDate)
+    return filterInvoicesOnOrAfterBreachStartDate(
+        invoices,
+        mepBreachStartDate,
+        invoiceDateOf
     );
 }
