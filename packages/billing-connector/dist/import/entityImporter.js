@@ -77,6 +77,10 @@ async function importCustomerBatch(prisma, rows, accountId, userId, options) {
         address_line2: str(row.address_line2) || null,
         postal_code: str(row.postal_code) || null,
         crn: str(row.crn) || null,
+        businessUnit: str(row.business_unit) || null,
+        ownerEmail: str(row.owner_email) || null,
+        stateIso2: str(row.state_iso2) || null,
+        parentCustomerNumber: str(row.parent_customer_number) || null,
     }));
     for (const row of prepared) {
         if (!row.customerNumber) {
@@ -92,7 +96,9 @@ async function importCustomerBatch(prisma, rows, accountId, userId, options) {
     const winners = (0, bulkWrite_1.lastWinsByKey)(valid, (row) => row.customerNumber);
     const countryCodes = [...new Set(winners.map((row) => row.countryIso2))];
     const customerNumbers = winners.map((row) => row.customerNumber);
-    const [countries, existingCustomers] = await Promise.all([
+    const needsOwnerLookup = winners.some((row) => row.ownerEmail);
+    const needsStateLookup = winners.some((row) => row.stateIso2);
+    const [countries, existingCustomers, businessUnits, accountUsers] = await Promise.all([
         countryCodes.length === 0
             ? Promise.resolve([])
             : prisma.country.findMany({
@@ -106,14 +112,99 @@ async function importCustomerBatch(prisma, rows, accountId, userId, options) {
                     account_id: accountId,
                     customer_number: { in: customerNumbers },
                 },
-                select: { id: true, customer_number: true, company_id: true },
+                select: {
+                    id: true,
+                    customer_number: true,
+                    company_id: true,
+                },
             }),
+        prisma.businessUnit.findMany({
+            where: { account_id: accountId },
+            select: {
+                id: true,
+                name: true,
+                external_id: true,
+                is_primary: true,
+            },
+        }),
+        needsOwnerLookup
+            ? prisma.user.findMany({
+                where: { account_id: accountId },
+                select: { id: true, email: true, status: true },
+            })
+            : Promise.resolve([]),
     ]);
     const countryByIso2 = new Map();
     for (const country of countries) {
         if (country.iso2)
             countryByIso2.set(country.iso2, country.id);
     }
+    const primaryBusinessUnitId = businessUnits.find((unit) => unit.is_primary)?.id ?? null;
+    const businessUnitByKey = new Map();
+    for (const unit of businessUnits) {
+        const name = unit.name?.trim().toLowerCase();
+        if (name)
+            businessUnitByKey.set(name, unit.id);
+    }
+    // external_id wins over name, so it is registered last.
+    for (const unit of businessUnits) {
+        const externalId = unit.external_id?.trim().toLowerCase();
+        if (externalId)
+            businessUnitByKey.set(externalId, unit.id);
+    }
+    // Several users can share an email; prefer an active one, then the lowest id
+    // so repeated imports resolve to the same owner.
+    const ownerByEmail = new Map();
+    for (const user of accountUsers) {
+        const email = user.email?.trim().toLowerCase();
+        if (!email)
+            continue;
+        const candidate = { id: user.id, active: user.status === "Active" };
+        const current = ownerByEmail.get(email);
+        if (current == null ||
+            (candidate.active && !current.active) ||
+            (candidate.active === current.active && candidate.id < current.id)) {
+            ownerByEmail.set(email, candidate);
+        }
+    }
+    // States are only unique per country, so the lookup key carries both.
+    const countryIds = [...new Set(countryByIso2.values())];
+    const states = needsStateLookup && countryIds.length > 0
+        ? await prisma.state.findMany({
+            where: { country_id: { in: countryIds } },
+            select: { id: true, iso2: true, country_id: true },
+        })
+        : [];
+    const stateByCountryAndIso2 = new Map();
+    for (const state of states) {
+        const iso2 = state.iso2?.trim().toLowerCase();
+        if (!iso2)
+            continue;
+        stateByCountryAndIso2.set(`${state.country_id}::${iso2}`, state.id);
+    }
+    // A whole batch usually trips the same lookup miss, so report each distinct
+    // warning once instead of per row.
+    const seenWarnings = new Set();
+    const warn = (key, message) => {
+        if (seenWarnings.has(key))
+            return;
+        seenWarnings.add(key);
+        result.errors.push(message);
+        options?.onLog?.(message);
+    };
+    const resolveBusinessUnitId = (row) => {
+        if (row.businessUnit) {
+            const matched = businessUnitByKey.get(row.businessUnit.toLowerCase());
+            if (matched != null) {
+                return matched;
+            }
+            warn(`bu:${row.businessUnit.toLowerCase()}`, `Unknown business unit "${row.businessUnit}" (first seen on customer ${row.customerNumber}); affected customers fall back to the primary business unit`);
+        }
+        if (primaryBusinessUnitId == null) {
+            warn("bu:no-primary", `Account ${accountId} has no primary business unit; imported customers will have no business unit assigned`);
+        }
+        return primaryBusinessUnitId;
+    };
     const existingByNumber = new Map();
     for (const customer of existingCustomers) {
         if (customer.customer_number) {
@@ -211,7 +302,31 @@ async function importCustomerBatch(prisma, rows, accountId, userId, options) {
             type: item.row.customerType,
             company_id: companyId,
             modified_by: userId || null,
+            // Always assigned: an unmapped or unknown unit falls back to the
+            // account's primary business unit rather than leaving the customer
+            // unscoped.
+            business_unit_id: resolveBusinessUnitId(item.row),
         };
+        // Owner, state and parent preserve whatever Archaser already holds when
+        // the incoming value is empty, so the key is only added once resolved.
+        if (item.row.ownerEmail) {
+            const ownerId = ownerByEmail.get(item.row.ownerEmail.toLowerCase())?.id;
+            if (ownerId) {
+                data.owner_id = ownerId;
+            }
+            else {
+                warn(`owner:${item.row.ownerEmail.toLowerCase()}`, `Unknown owner email "${item.row.ownerEmail}" (first seen on customer ${item.row.customerNumber}); owner left unchanged`);
+            }
+        }
+        if (item.row.stateIso2) {
+            const stateId = stateByCountryAndIso2.get(`${item.countryId}::${item.row.stateIso2.toLowerCase()}`);
+            if (stateId != null) {
+                data.state_id = stateId;
+            }
+            else {
+                warn(`state:${item.countryId}:${item.row.stateIso2.toLowerCase()}`, `Unknown state "${item.row.stateIso2}" (first seen on customer ${item.row.customerNumber}); state left unchanged`);
+            }
+        }
         if (item.existingId != null) {
             updates.push({ id: item.existingId, data });
         }
@@ -245,6 +360,66 @@ async function importCustomerBatch(prisma, rows, accountId, userId, options) {
             data: row.data,
             select: { id: true },
         })));
+    }
+    // Parent links are a second pass: a parent may be created in this same
+    // batch, or may only arrive in a later page.
+    const parentCandidates = ready
+        .map((item) => ({
+        entityId: item.existingId ??
+            createdByNumber.get(item.row.customerNumber) ??
+            null,
+        customerNumber: item.row.customerNumber,
+        parentNumber: item.row.parentCustomerNumber,
+    }))
+        .filter((candidate) => Boolean(candidate.parentNumber) && candidate.entityId != null);
+    if (parentCandidates.length > 0) {
+        const parentIdByNumber = new Map();
+        for (const [number, existing] of existingByNumber) {
+            parentIdByNumber.set(number, existing.id);
+        }
+        for (const [number, id] of createdByNumber) {
+            parentIdByNumber.set(number, id);
+        }
+        const unresolvedParentNumbers = [
+            ...new Set(parentCandidates
+                .map((candidate) => candidate.parentNumber)
+                .filter((number) => !parentIdByNumber.has(number))),
+        ];
+        if (unresolvedParentNumbers.length > 0) {
+            const fetchedParents = await prisma.customer.findMany({
+                where: {
+                    account_id: accountId,
+                    customer_number: { in: unresolvedParentNumbers },
+                },
+                select: { id: true, customer_number: true },
+            });
+            for (const parent of fetchedParents) {
+                if (parent.customer_number) {
+                    parentIdByNumber.set(parent.customer_number, parent.id);
+                }
+            }
+        }
+        const parentUpdates = [];
+        for (const candidate of parentCandidates) {
+            const parentId = parentIdByNumber.get(candidate.parentNumber);
+            if (candidate.parentNumber === candidate.customerNumber ||
+                parentId === candidate.entityId) {
+                warn(`parent:self:${candidate.customerNumber}`, `Customer ${candidate.customerNumber} lists itself as its own parent; parent left unchanged`);
+                continue;
+            }
+            if (parentId == null) {
+                warn(`parent:missing:${candidate.parentNumber}`, `Parent customer "${candidate.parentNumber}" not found (first seen on customer ${candidate.customerNumber}); parent left unchanged`);
+                continue;
+            }
+            parentUpdates.push({ id: candidate.entityId, parentId });
+        }
+        if (parentUpdates.length > 0) {
+            await (0, bulkWrite_1.commitOps)(prisma, parentUpdates.map((update) => prisma.customer.update({
+                where: { id: update.id },
+                data: { parent_customer_id: update.parentId },
+                select: { id: true },
+            })));
+        }
     }
     for (const item of ready) {
         const entityId = item.existingId ?? createdByNumber.get(item.row.customerNumber);
