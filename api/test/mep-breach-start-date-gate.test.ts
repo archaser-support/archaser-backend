@@ -177,7 +177,9 @@ describe("cause side — customer overdue block", () => {
         const result = await runCustomerSync(fake);
 
         expect(result.overdueBlock).toBe(false);
-        expect(result.oldestInvoiceOverdueDate).toBeNull();
+        // Aging is not gated: the stored date still reports the real oldest
+        // overdue line so days-overdue keeps counting for a pre-cutover invoice.
+        expect(result.oldestInvoiceOverdueDate).toEqual(day("2020-04-10"));
     });
 
     it("still blocks on an overdue invoice issued after the configured date", async () => {
@@ -197,9 +199,9 @@ describe("cause side — customer overdue block", () => {
         const result = await runCustomerSync(fake);
 
         expect(result.overdueBlock).toBe(true);
-        // The legacy line is gone from the candidate set, so the oldest overdue
-        // due date is the in-scope invoice's.
-        expect(result.oldestInvoiceOverdueDate).toEqual(day("2025-07-31"));
+        // The legacy line is gone from the block candidate set, but it is still
+        // the customer's oldest overdue line for aging purposes.
+        expect(result.oldestInvoiceOverdueDate).toEqual(day("2020-04-10"));
     });
 
     it("keeps an invoice issued exactly on the configured date in the candidate set", async () => {

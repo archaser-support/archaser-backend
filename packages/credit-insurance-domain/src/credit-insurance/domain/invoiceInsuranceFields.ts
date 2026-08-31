@@ -5,6 +5,7 @@ import { computeOutdatedDclAtEvaluation } from "./customerOutdatedDcl";
 import { readUninsuredAmountForDisplay, storedCapacityGapAmount } from "./policyGapAmounts";
 import { isCustomerPolicyExcluded } from "./policyExclusion";
 import { normalizeCalendarDayForInsuranceCompare } from "./shared/calendarDayCompare";
+import { isInvoiceOnOrAfterBreachStartDate } from "./shared/breachStartDateScope";
 import { isInvoiceInMepBreachScope } from "./shared/mepBreachScope";
 
 /**
@@ -279,15 +280,33 @@ export function isEligibleForCustomerMepOverdue(
  * Whether reporting_breach should be true for an open Due/Overdue invoice
  * (evaluation only; persistence in sync helper).
  * Negative-amount invoices (credit notes) never promote reporting breach.
+ *
+ * Invoices issued before the account's reporting-breach start date are out of
+ * scope, mirroring the MEP gate: their reporting filings predate the backfill
+ * window, so a missing actual_reporting_date is an import gap and not a breach.
+ * Callers that know both dates pass `scope`; omitting it keeps the ungated
+ * behavior.
  */
 export function shouldSetReportingBreach(
     status: invoice_status,
     targetReportingDate: Date | null | undefined,
     actualReportingDate: Date | null | undefined,
     today: Date = new Date(),
-    amount?: number | null
+    amount?: number | null,
+    scope?: {
+        invoiceDate?: Date | string | null;
+        reportingBreachStartDate?: Date | string | null;
+    }
 ): boolean {
     if (isNegativeInvoiceAmount(amount)) {
+        return false;
+    }
+    if (
+        !isInvoiceOnOrAfterBreachStartDate(
+            scope?.invoiceDate ?? null,
+            scope?.reportingBreachStartDate ?? null
+        )
+    ) {
         return false;
     }
     if (status !== "Due" && status !== "Overdue") {
@@ -565,6 +584,8 @@ export function computeInvoiceInsuranceRowData(args: {
     /** When true, use explicit payment_term from input instead of calendar diff */
     explicitPaymentTerm?: number | null;
     today?: Date;
+    /** Account reporting-breach start date; pre-window invoices never breach. */
+    reporting_breach_start_date?: Date | null;
 }): InsuranceComputedForRow {
     const today = args.today ?? new Date();
     const payment_term =
@@ -585,7 +606,11 @@ export function computeInvoiceInsuranceRowData(args: {
         target_reporting_date,
         args.actual_reporting_date ?? null,
         today,
-        args.amount
+        args.amount,
+        {
+            invoiceDate: args.invoice_date ?? null,
+            reportingBreachStartDate: args.reporting_breach_start_date ?? null,
+        }
     );
 
     const ctv_payment_term = computePaymentTermBreach(

@@ -3,6 +3,9 @@
  * from live Invoice rows; policy-derived fields (MEP, DCL, limits) are written to
  * the active CustomerPolicy.
  *
+ * `oldest_invoice_overdue_date` is the ungated aging date. `overdue_block` uses the
+ * MEP breach start date scope, so a pre-cutover open invoice still ages but never blocks.
+ *
  * Ported from the legacy `server/services/creditInsurance/syncCustomerInsuranceFields.ts`
  * (deleted in frontend commit 2223f5e). One legacy behaviour is intentionally dropped:
  * the original wrote an "overdue block applied/cleared" timeline Activity via
@@ -71,18 +74,20 @@ async function syncCustomerInsuranceFieldsCore(
     ]);
 
     // Invoices issued before the account's MEP breach start date never cause a
-    // block, so they are dropped before the oldest overdue line is picked.
+    // block, so they are dropped from the block candidate set.
     const mepBreachStartDate = await resolveMepBreachStartDate(
         customerRow?.account_id,
         dbClient
     );
 
+    // Two dates, deliberately: the stored column is the customer's real aging
+    // (days overdue on the header, legal cases, report virtual field), while the
+    // block is MEP-scoped. Gating the stored column too would zero out aging for
+    // pre-cutover open invoices, which the MEP gate is not meant to touch.
     let oldestDue: Date | null = null;
+    let oldestDueInMepScope: Date | null = null;
     for (const invoice of overdueInvoices) {
         if (!isEligibleForCustomerMepOverdue(invoice.amount)) {
-            continue;
-        }
-        if (!isInvoiceInMepBreachScope(invoice.invoice_date, mepBreachStartDate)) {
             continue;
         }
         if (!invoice.due_date) {
@@ -91,6 +96,12 @@ async function syncCustomerInsuranceFieldsCore(
         const dueDate = new Date(invoice.due_date);
         if (!oldestDue || dueDate < oldestDue) {
             oldestDue = dueDate;
+        }
+        if (!isInvoiceInMepBreachScope(invoice.invoice_date, mepBreachStartDate)) {
+            continue;
+        }
+        if (!oldestDueInMepScope || dueDate < oldestDueInMepScope) {
+            oldestDueInMepScope = dueDate;
         }
     }
 
@@ -122,7 +133,7 @@ async function syncCustomerInsuranceFieldsCore(
         : null;
 
     const overdueBlock = computeCustomerOverdueBlock({
-        oldestInvoiceOverdueDate: oldestDue,
+        oldestInvoiceOverdueDate: oldestDueInMepScope,
         maxAllowedMepDays: policyWithInsurance?.max_allowed_mep ?? null,
         today,
     });
