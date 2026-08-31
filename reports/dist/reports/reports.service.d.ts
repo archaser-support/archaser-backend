@@ -84,6 +84,11 @@ export declare class ReportsService {
             modified_at_formatted: string | null;
         };
     }>;
+    /**
+     * Reports are unique per (account_id, unique_name); append a numeric
+     * suffix so two reports with the same name can coexist in an account.
+     */
+    private resolveAvailableUniqueName;
     create(user: JwtPayload, body: Record<string, unknown>): Promise<{
         report: {
             User_Report_created_byToUser: {
