@@ -13,6 +13,8 @@ export type TermBreachInvoiceRow = {
     inCapacityGap?: boolean;
     capacityGapAmount?: number;
     targetReportingDate?: Date | null;
+    /** Needed to apply the reporting-breach start date gate on recompute. */
+    invoiceDate?: Date | null;
     reportingBreach?: boolean;
     ctvPaymentTerm?: boolean;
     ctvCustomerOverdueMep?: boolean;
@@ -28,7 +30,8 @@ export type PolicyRowForUncoveredExposure = {
 
 export function invoiceHasTermsBreachForKpi(
     invoice: TermBreachInvoiceRow,
-    asOf: Date
+    asOf: Date,
+    options?: { reportingBreachStartDate?: Date | null }
 ): boolean {
     if (invoice.outstanding <= 0) {
         return false;
@@ -50,18 +53,31 @@ export function invoiceHasTermsBreachForKpi(
         "Due",
         invoice.targetReportingDate ?? null,
         null,
-        asOf
+        asOf,
+        undefined,
+        {
+            invoiceDate: invoice.invoiceDate ?? null,
+            reportingBreachStartDate: options?.reportingBreachStartDate ?? null,
+        }
     );
 }
 
 export function sumFlagBasedTermsBreachOutstanding(
     invoices: TermBreachInvoiceRow[],
     asOf: Date,
-    options?: { excludeCapacityGapInvoices?: boolean }
+    options?: {
+        excludeCapacityGapInvoices?: boolean;
+        reportingBreachStartDate?: Date | null;
+    }
 ): number {
     let total = 0;
     for (const invoice of invoices) {
-        if (!invoiceHasTermsBreachForKpi(invoice, asOf)) {
+        if (
+            !invoiceHasTermsBreachForKpi(invoice, asOf, {
+                reportingBreachStartDate:
+                    options?.reportingBreachStartDate ?? null,
+            })
+        ) {
             continue;
         }
 
@@ -88,12 +104,14 @@ export function resolveCustomerTermsBreachOutstanding(args: {
     invoices: TermBreachInvoiceRow[];
     asOf: Date;
     excludeCapacityGapInvoices?: boolean;
+    reportingBreachStartDate?: Date | null;
 }): number {
     if (args.uncovered) {
         return Math.max(0, args.totalOpenAr);
     }
     return sumFlagBasedTermsBreachOutstanding(args.invoices, args.asOf, {
         excludeCapacityGapInvoices: args.excludeCapacityGapInvoices,
+        reportingBreachStartDate: args.reportingBreachStartDate ?? null,
     });
 }
 

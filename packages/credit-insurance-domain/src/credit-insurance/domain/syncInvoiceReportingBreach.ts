@@ -4,6 +4,10 @@ import { resolveCreatedOverdueMepByInvoiceId } from "./createdOverdueMepAtInvoic
 import { loadEffectiveInsuranceForCustomers } from "./loadEffectiveInsuranceForCustomers";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import {
+    resolveReportingBreachStartDate,
+    resolveReportingBreachStartDatesForAccounts,
+} from "./resolveReportingBreachStartDate";
+import {
     computeCreatedTermsViolationSnapshot,
     computeInsuranceTargetDates,
     computePaymentTermBreach,
@@ -41,6 +45,8 @@ export async function syncInvoiceReportingBreach(
             id: true,
             status: true,
             amount: true,
+            account_id: true,
+            invoice_date: true,
             target_reporting_date: true,
             actual_reporting_date: true,
             reporting_breach: true,
@@ -71,7 +77,14 @@ export async function syncInvoiceReportingBreach(
         inv.target_reporting_date,
         inv.actual_reporting_date,
         today,
-        inv.amount
+        inv.amount,
+        {
+            invoiceDate: inv.invoice_date,
+            reportingBreachStartDate: await resolveReportingBreachStartDate(
+                inv.account_id,
+                db
+            ),
+        }
     );
 
     if (should && !inv.reporting_breach) {
@@ -130,9 +143,18 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             id: true,
             status: true,
             amount: true,
+            account_id: true,
+            invoice_date: true,
             target_reporting_date: true,
         },
     });
+
+    // One connector read per distinct account in this batch, not per invoice.
+    const startDateByAccountId =
+        await resolveReportingBreachStartDatesForAccounts(
+            invoices.map((inv) => inv.account_id),
+            db
+        );
 
     let n = 0;
     for (const inv of invoices) {
@@ -144,7 +166,14 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             inv.target_reporting_date,
             null,
             today,
-            inv.amount
+            inv.amount,
+            {
+                invoiceDate: inv.invoice_date,
+                reportingBreachStartDate:
+                    inv.account_id != null
+                        ? startDateByAccountId.get(inv.account_id) ?? null
+                        : null,
+            }
         );
         if (should) {
             await db.invoice.update({

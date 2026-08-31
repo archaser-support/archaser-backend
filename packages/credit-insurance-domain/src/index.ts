@@ -88,6 +88,17 @@ export {
     resolveMepBreachStartDate,
 } from "./credit-insurance/domain/resolveMepBreachStartDate";
 
+// --- Reporting breach start date gate (backfill window; mirrors the MEP gate) ---
+export {
+    filterInvoicesOnOrAfterBreachStartDate,
+    isInvoiceOnOrAfterBreachStartDate,
+} from "./credit-insurance/domain/shared/breachStartDateScope";
+export {
+    clearReportingBreachStartDateCache,
+    resolveReportingBreachStartDate,
+    resolveReportingBreachStartDatesForAccounts,
+} from "./credit-insurance/domain/resolveReportingBreachStartDate";
+
 // --- Api service surface ---
 // The api service's dashboards, controllers and its own api-only domain files
 // (as-of backfill, portfolio health, registration fee, top-up parent policy)
