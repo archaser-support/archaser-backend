@@ -89,6 +89,9 @@ let ReportsService = class ReportsService {
         if (context) {
             where.AND.push({ context });
         }
+        if (query.isSystem === "true" || query.isSystem === "1") {
+            where.AND.push({ is_system: true });
+        }
         if (search) {
             where.AND.push({
                 OR: [
