@@ -6,6 +6,7 @@ import {
     CRON_QUEUE_NAME,
     CronRunNowJobData,
     CronSyncSchedulesJobData,
+    ArPostIngestDrainJobData,
 } from "./cron-queue.types";
 
 @Injectable()
@@ -97,6 +98,38 @@ export class CronQueueService implements OnModuleDestroy {
             });
             return { queued: true, jobId: String(job.id) };
         } catch (error) {
+            return {
+                queued: false,
+                reason: error instanceof Error ? error.message : "enqueue failed",
+            };
+        }
+    }
+
+    async enqueueArPostIngestDrain(
+        data: ArPostIngestDrainJobData = {}
+    ): Promise<{ queued: boolean; jobId?: string; reason?: string }> {
+        const queue = this.ensureQueue();
+        if (!queue) {
+            return {
+                queued: false,
+                reason: "BULLMQ_ENABLED=false or Redis unavailable",
+            };
+        }
+        try {
+            if (this.connection && this.connection.status !== "ready") {
+                await this.connection.connect();
+            }
+            const job = await queue.add("ar-post-ingest-drain", data, {
+                removeOnComplete: 100,
+                removeOnFail: 200,
+            });
+            return { queued: true, jobId: String(job.id) };
+        } catch (error) {
+            this.logger.error(
+                `enqueueArPostIngestDrain failed: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
             return {
                 queued: false,
                 reason: error instanceof Error ? error.message : "enqueue failed",
