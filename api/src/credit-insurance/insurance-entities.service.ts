@@ -48,6 +48,22 @@ const ENTITY_CONFIG: Record<InsuranceEntityType, EntityConfig> = {
     },
 };
 
+const POLICY_DETAIL_INCLUDE = {
+    InsurancePolicyCountry: {
+        include: { Country: { select: { name: true, iso2: true } } },
+        orderBy: { country_id: "asc" },
+    },
+    NamedPolicy: { orderBy: { customer_number: "asc" } },
+    ParentInsurancePolicy: {
+        select: {
+            id: true,
+            policy_number: true,
+            insurer_name: true,
+            status: true,
+        },
+    },
+} as const;
+
 export type InsuranceEntityListQuery = {
     page?: string;
     limit?: string;
@@ -126,7 +142,14 @@ export class InsuranceEntitiesService {
         const delegate = this.delegate(entityType);
 
         const row = config.direct
-            ? await delegate.findUnique({ where: { id } })
+            ? await delegate.findUnique({
+                  where: { id },
+                  // The policy detail screen renders the country and named-customer
+                  // grids straight off this payload.
+                  ...(entityType === "insurance-policies"
+                      ? { include: POLICY_DETAIL_INCLUDE }
+                      : {}),
+              })
             : await delegate.findUnique({
                   where: { id },
                   include: {
@@ -145,7 +168,58 @@ export class InsuranceEntitiesService {
             throw new ForbiddenException({ error: "Access denied" });
         }
 
+        if (entityType === "insurance-policies") {
+            return serializeBigInt({
+                ...row,
+                NamedPolicy: await this.attachNamedCustomers(
+                    accountId,
+                    row.NamedPolicy ?? []
+                ),
+            });
+        }
+
         return serializeBigInt(row);
+    }
+
+    /**
+     * NamedPolicy stores a bare customer number, so the grid's name/link columns
+     * need a lookup against the account's customers.
+     */
+    private async attachNamedCustomers(
+        accountId: number,
+        namedRows: Array<{ customer_number: string }>
+    ) {
+        if (namedRows.length === 0) return namedRows;
+
+        const customers = await this.db.customer.findMany({
+            where: {
+                account_id: accountId,
+                customer_number: {
+                    in: [...new Set(namedRows.map((r) => r.customer_number))],
+                },
+            },
+            select: {
+                id: true,
+                customer_number: true,
+                Company: { select: { name: true } },
+                Person: { select: { full_name: true } },
+            },
+        });
+        const byNumber = new Map(
+            customers.map((c) => [c.customer_number, c])
+        );
+
+        return namedRows.map((named) => {
+            const customer = byNumber.get(named.customer_number);
+            return {
+                ...named,
+                customer_id: customer?.id ?? null,
+                customer_name:
+                    customer?.Company?.name ??
+                    customer?.Person?.full_name ??
+                    null,
+            };
+        });
     }
 
     async update(

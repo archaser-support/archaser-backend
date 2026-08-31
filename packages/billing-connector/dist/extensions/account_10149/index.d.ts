@@ -62,7 +62,9 @@ export declare function isAccount10149CreditInvoiceNumber(invoiceNumber: string 
  */
 export declare function transformAccount10149Batch(batch: ExtensionMappedBatch, options?: {
     /** Invoice numbers from dropped reconciled debit / CR* lines. */
-    onReconciledInvoiceCloseTargets?: (invoiceNumbers: string[]) => void;
+    onReconciledInvoiceCloseTargets?: (invoiceNumbers: string[], 
+    /** ERP CURDATE per invoice number, when the line carries one. */
+    closeDates?: Map<string, Date>) => void;
     /** Original + cancel stamp numbers for Helam offset pair stamp-close. */
     onHelamOffsetCloseTargets?: (invoiceNumbers: string[]) => void;
 }): ExtensionMappedBatch;

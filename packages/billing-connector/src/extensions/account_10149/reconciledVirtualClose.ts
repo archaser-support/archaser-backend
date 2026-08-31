@@ -98,6 +98,7 @@ export async function applyReconciledVirtualCloses(
                 id: true,
                 invoice_id: true,
                 customer_amount: true,
+                payment_date: true,
                 payment_method: true,
                 reference: true,
                 customer_id: true,
@@ -137,6 +138,7 @@ export async function applyReconciledVirtualCloses(
             ) ?? null;
 
         let realCustomerPaid = 0;
+        let latestRealPaymentDate: Date | null = null;
         for (const payment of linked) {
             if (existingVirtual && payment.id === existingVirtual.id) {
                 continue;
@@ -147,7 +149,18 @@ export async function applyReconciledVirtualCloses(
                 continue;
             }
             realCustomerPaid += payment.customer_amount ?? 0;
+            if (
+                payment.payment_date &&
+                (latestRealPaymentDate === null ||
+                    payment.payment_date > latestRealPaymentDate)
+            ) {
+                latestRealPaymentDate = payment.payment_date;
+            }
         }
+
+        // Virtual close must carry the ERP payment date, not the import time.
+        const virtualPaymentDate =
+            latestRealPaymentDate ?? candidate.paymentDate;
 
         const net = invoice.customer_net_amount ?? invoice.customer_amount ?? 0;
         const remaining = net - realCustomerPaid;
@@ -167,7 +180,7 @@ export async function applyReconciledVirtualCloses(
                         amount: amounts.amount,
                         customer_amount: amounts.customer_amount,
                         customer_currency: amounts.customer_currency,
-                        payment_date: candidate.paymentDate,
+                        payment_date: virtualPaymentDate,
                         payment_method: VIRTUAL_PAYMENT_METHOD,
                         reference: virtualRef,
                         invoice_id: candidate.invoiceId,
@@ -183,7 +196,7 @@ export async function applyReconciledVirtualCloses(
                     amount: amounts.amount,
                     customer_amount: amounts.customer_amount,
                     customer_currency: amounts.customer_currency,
-                    payment_date: candidate.paymentDate,
+                    payment_date: virtualPaymentDate,
                     payment_method: VIRTUAL_PAYMENT_METHOD,
                     reference: virtualRef,
                     customer_id: candidate.customerId,
@@ -232,6 +245,8 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
     accountId: number,
     invoiceNumbers: string[],
     userId?: string,
+    /** ERP CURDATE per invoice number; used when the invoice has no real payment. */
+    paymentDates?: Map<string, Date>,
     paymentDate: Date = new Date()
 ): Promise<ReconciledVirtualCloseByNumbersResult> {
     const unique = Array.from(
@@ -275,7 +290,8 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
             invoiceId: invoice.id,
             customerId: invoice.customer_id,
             invoiceNumber: invoice.invoice_number,
-            paymentDate,
+            paymentDate:
+                paymentDates?.get(invoice.invoice_number.trim()) ?? paymentDate,
         });
         customerIds.add(invoice.customer_id);
     }
