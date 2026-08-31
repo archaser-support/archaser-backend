@@ -329,6 +329,8 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
         const alignedRow = extension?.alignPaymentAmountsForInvoice?.({
             ...paymentAmountRow,
             invoiceCustomerCurrency: invoice.customer_currency,
+            invoiceAmount: invoice.amount,
+            invoiceCustomerAmount: invoice.customer_amount,
             rawErpRow,
         }) ?? paymentAmountRow;
         const amountResolution = (0, resolvePaymentImportAmounts_1.resolvePaymentImportAmounts)(alignedRow, invoiceAmountContext, currencyOptions);
