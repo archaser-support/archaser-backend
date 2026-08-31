@@ -39,6 +39,7 @@ function emptyPaymentLinkProgress() {
         paymentsStillDeferred: 0,
         paymentsLinkTotal: 0,
         paymentLinkError: undefined,
+        paymentLinkDetail: undefined,
     };
 }
 function recordInWindow(record, window) {
@@ -568,11 +569,12 @@ async function runStagedExtensionSync(options) {
                     const maturityStarted = Date.now();
                     const maturityResult = await (0, applyMaturedDeferredPayments_1.applyMaturedDeferredPayments)(options.prisma, options.accountId, new Date(), undefined, {
                         userId: options.userId,
-                        onProgress: ({ linked, totalCandidates }) => {
+                        onProgress: ({ linked, totalCandidates, detail, }) => {
                             paymentLink.paymentLinkStatus = "running";
                             paymentLink.paymentsLinked = linked;
                             paymentLink.paymentsLinkTotal = totalCandidates;
                             paymentLink.paymentsStillDeferred = Math.max(0, totalCandidates - linked);
+                            paymentLink.paymentLinkDetail = detail;
                             emitProgress();
                         },
                     });
@@ -580,6 +582,7 @@ async function runStagedExtensionSync(options) {
                         arAffectedCustomerIds.add(id);
                     }
                     paymentLink.paymentLinkStatus = "done";
+                    paymentLink.paymentLinkDetail = undefined;
                     paymentLink.paymentsLinked = maturityResult.matured;
                     paymentLink.paymentsStillDeferred =
                         maturityResult.deferredRemaining;

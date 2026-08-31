@@ -15,7 +15,12 @@ export declare function recalculateInvoiceFromLinkedPayments(tx: Pick<PrismaClie
  * Recalculate many invoices with two reads and chunked writes instead of
  * three round-trips per invoice.
  */
-export declare function recalculateInvoicesFromLinkedPayments(prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "billingConnector" | "$transaction">, targets: Map<number, InvoicePaidRecalcOptions>): Promise<void>;
+export declare function recalculateInvoicesFromLinkedPayments(prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "billingConnector" | "$transaction">, targets: Map<number, InvoicePaidRecalcOptions>, options?: {
+    onProgress?: (progress: {
+        processed: number;
+        total: number;
+    }) => void;
+}): Promise<void>;
 export declare function linkDeferredPaymentAndRecalc(prisma: PrismaClient, params: {
     invoicePaymentId: number;
     invoiceId: number;

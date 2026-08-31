@@ -91,6 +91,8 @@ export interface ConnectorSyncCounts {
     /** Eligible deferred payments at the start of the linking pass. */
     paymentsLinkTotal?: number;
     paymentLinkError?: string;
+    /** What the linking pass is doing now (linking, aligning, recalculating). */
+    paymentLinkDetail?: TailStepDetail;
     /** Tail steps (AR post-ingest, pending closes, balance recalculation). */
     tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
 }
@@ -137,6 +139,9 @@ export function entityStatsFromCounts(
             failed: stats.paymentLinkStatus === "failed" ? 1 : 0,
             skipped: Math.max(0, total - linked),
             status: stats.paymentLinkStatus,
+            ...(stats.paymentLinkDetail
+                ? { detail: stats.paymentLinkDetail }
+                : {}),
             ...(stats.paymentLinkError
                 ? { sample_errors: [stats.paymentLinkError] }
                 : {}),

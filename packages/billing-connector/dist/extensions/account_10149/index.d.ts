@@ -12,6 +12,10 @@ export declare function normalizeAccount10149PaymentCurrency(currency: string | 
  * Priority IDG_ARFNCITEMS4 dual currency:
  * CODE + CREDIT1/DEBIT1 (primary) and CODE5 + CREDIT5/DEBIT5 (secondary).
  * Pick the side matching the invoice currency; keep the other as base amount.
+ *
+ * Receipt lines (FNCPATNAME "ק") carry only the primary side — Priority books
+ * the dual currency on the invoice/debit line — so when neither side matches the
+ * invoice we convert the primary amount with the invoice's own FX ratio.
  */
 export declare function alignAccount10149PaymentAmountsForInvoice(input: ExtensionAlignPaymentAmountsInput): ExtensionAlignedPaymentAmounts;
 /**

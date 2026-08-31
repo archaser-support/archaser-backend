@@ -4,7 +4,10 @@ exports.rawErpRowFromMaturedPayment = rawErpRowFromMaturedPayment;
 exports.applyMaturedDeferredPayments = applyMaturedDeferredPayments;
 const extensions_1 = require("../extensions");
 const linkDeferredPaymentAndRecalc_1 = require("../invoice/linkDeferredPaymentAndRecalc");
+const alignPaymentToInvoiceCurrency_1 = require("../payment/alignPaymentToInvoiceCurrency");
+const bulkWrite_1 = require("./bulkWrite");
 const UPDATE_MANY_ID_CHUNK = 500;
+const CURRENCY_FIX_PROGRESS_CHUNK = 200;
 /**
  * Rebuild a minimal ERP-shaped row for extension hooks after maturity.
  * When reference is FRECONNUM|FNCNUM|KLINE, treat as reconciled (BAL=0).
@@ -59,7 +62,9 @@ async function applyMaturedDeferredPayments(prisma, accountId, asOf, invoiceNumb
             invoice_number: true,
             customer_id: true,
             reference: true,
+            amount: true,
             customer_amount: true,
+            customer_currency: true,
             payment_date: true,
         },
     });
@@ -96,26 +101,55 @@ async function applyMaturedDeferredPayments(prisma, accountId, asOf, invoiceNumb
                 id: true,
                 customer_id: true,
                 invoice_number: true,
+                amount: true,
+                customer_amount: true,
+                customer_currency: true,
             },
         });
     const invoiceByCustomerAndNumber = new Map();
     for (const invoice of invoices) {
         if (!invoice.invoice_number)
             continue;
-        invoiceByCustomerAndNumber.set(`${invoice.customer_id}::${invoice.invoice_number}`, invoice.id);
+        invoiceByCustomerAndNumber.set(`${invoice.customer_id}::${invoice.invoice_number}`, invoice);
     }
+    const extension = await (0, extensions_1.resolveAccountBillingExtension)(prisma, accountId);
+    const currencyOptions = extension?.normalizePaymentCurrency
+        ? { normalizeCurrency: extension.normalizePaymentCurrency }
+        : undefined;
     const now = new Date();
     const paymentIdsByInvoiceId = new Map();
+    /**
+     * Deferred rows stored in the invoice's base currency: link and convert in
+     * one per-row update, since grouped updateMany cannot carry row amounts.
+     */
+    const currencyFixes = [];
     const linkCandidates = [];
     for (const row of deferredRows) {
         if (!row.invoice_number)
             continue;
-        const invoiceId = invoiceByCustomerAndNumber.get(`${row.customer_id}::${row.invoice_number}`);
-        if (invoiceId == null)
+        const invoice = invoiceByCustomerAndNumber.get(`${row.customer_id}::${row.invoice_number}`);
+        if (invoice == null)
             continue;
-        const list = paymentIdsByInvoiceId.get(invoiceId) ?? [];
-        list.push(row.id);
-        paymentIdsByInvoiceId.set(invoiceId, list);
+        const invoiceId = invoice.id;
+        const alignment = (0, alignPaymentToInvoiceCurrency_1.alignPaymentToInvoiceCurrency)(row, invoice, currencyOptions);
+        if (alignment) {
+            currencyFixes.push({
+                id: row.id,
+                invoiceId,
+                data: {
+                    invoice_id: invoiceId,
+                    amount: alignment.amount,
+                    customer_amount: alignment.customer_amount,
+                    customer_currency: alignment.customer_currency,
+                    modified_at: now,
+                },
+            });
+        }
+        else {
+            const list = paymentIdsByInvoiceId.get(invoiceId) ?? [];
+            list.push(row.id);
+            paymentIdsByInvoiceId.set(invoiceId, list);
+        }
         linkCandidates.push({
             invoiceId,
             customerId: row.customer_id,
@@ -130,6 +164,7 @@ async function applyMaturedDeferredPayments(prisma, accountId, asOf, invoiceNumb
     }
     let matured = 0;
     let lastProgressAt = 0;
+    let progressDetail;
     const emitProgress = (force = false) => {
         const nowMs = Date.now();
         if (!force &&
@@ -138,10 +173,15 @@ async function applyMaturedDeferredPayments(prisma, accountId, asOf, invoiceNumb
             return;
         }
         lastProgressAt = nowMs;
-        options?.onProgress?.({ linked: matured, totalCandidates });
+        options?.onProgress?.({
+            linked: matured,
+            totalCandidates,
+            ...(progressDetail ? { detail: progressDetail } : {}),
+        });
     };
     const invoiceIdsToRecalc = new Map();
-    if (paymentIdsByInvoiceId.size > 0) {
+    if (paymentIdsByInvoiceId.size > 0 || currencyFixes.length > 0) {
+        progressDetail = { step: "link" };
         for (const [invoiceId, paymentIds] of paymentIdsByInvoiceId) {
             for (let offset = 0; offset < paymentIds.length; offset += UPDATE_MANY_ID_CHUNK) {
                 const idChunk = paymentIds.slice(offset, offset + UPDATE_MANY_ID_CHUNK);
@@ -161,9 +201,34 @@ async function applyMaturedDeferredPayments(prisma, accountId, asOf, invoiceNumb
             }
             invoiceIdsToRecalc.set(invoiceId, {});
         }
+        // Committed in slices so the progress bar keeps moving: currency
+        // alignment needs one update per row and can dominate the pass.
+        for (let offset = 0; offset < currencyFixes.length; offset += CURRENCY_FIX_PROGRESS_CHUNK) {
+            const chunk = currencyFixes.slice(offset, offset + CURRENCY_FIX_PROGRESS_CHUNK);
+            await (0, bulkWrite_1.commitOps)(prisma, chunk.map((row) => prisma.invoicePayment.update({
+                where: { id: row.id },
+                data: row.data,
+                select: { id: true },
+            })));
+            matured += chunk.length;
+            for (const row of chunk) {
+                invoiceIdsToRecalc.set(row.invoiceId, {});
+            }
+            progressDetail = {
+                step: "align",
+                processed: Math.min(offset + chunk.length, currencyFixes.length),
+                total: currencyFixes.length,
+            };
+            emitProgress();
+        }
+        progressDetail = undefined;
         emitProgress(true);
-        const extension = await (0, extensions_1.resolveAccountBillingExtension)(prisma, accountId);
         if (extension?.afterPaymentLinked && linkCandidates.length > 0) {
+            progressDetail = {
+                step: "close",
+                total: linkCandidates.length,
+            };
+            emitProgress(true);
             const { invoiceIdsToRecalc: extensionRecalcIds, invoiceIdsSkipRecalc: extensionSkipIds, } = await extension.afterPaymentLinked({
                 prisma,
                 accountId,
@@ -177,7 +242,14 @@ async function applyMaturedDeferredPayments(prisma, accountId, asOf, invoiceNumb
                 invoiceIdsToRecalc.delete(invoiceId);
             }
         }
-        await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoicesFromLinkedPayments)(prisma, invoiceIdsToRecalc);
+        await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoicesFromLinkedPayments)(prisma, invoiceIdsToRecalc, {
+            onProgress: ({ processed, total }) => {
+                progressDetail = { step: "recalc", processed, total };
+                emitProgress(processed === 0 || processed === total);
+            },
+        });
+        progressDetail = undefined;
+        emitProgress(true);
     }
     const stillDeferred = await prisma.invoicePayment.count({
         where: { account_id: accountId, invoice_id: null },

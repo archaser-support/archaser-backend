@@ -49,6 +49,7 @@ exports.isAccount10149CreditInvoiceNumber = isAccount10149CreditInvoiceNumber;
 exports.transformAccount10149Batch = transformAccount10149Batch;
 exports.afterAccount10149PaymentLinked = afterAccount10149PaymentLinked;
 const connectorFieldUtils_1 = require("../../utils/connectorFieldUtils");
+const alignPaymentToInvoiceCurrency_1 = require("../../payment/alignPaymentToInvoiceCurrency");
 const helamOffsetClose_1 = require("./helamOffsetClose");
 const reconciledVirtualClose_1 = require("./reconciledVirtualClose");
 /** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp, credit abs payments. */
@@ -134,10 +135,17 @@ function pickNonZeroAmount(...values) {
     }
     return null;
 }
+function roundCurrency(value) {
+    return Math.round(value * 100) / 100;
+}
 /**
  * Priority IDG_ARFNCITEMS4 dual currency:
  * CODE + CREDIT1/DEBIT1 (primary) and CODE5 + CREDIT5/DEBIT5 (secondary).
  * Pick the side matching the invoice currency; keep the other as base amount.
+ *
+ * Receipt lines (FNCPATNAME "ק") carry only the primary side — Priority books
+ * the dual currency on the invoice/debit line — so when neither side matches the
+ * invoice we convert the primary amount with the invoice's own FX ratio.
  */
 function alignAccount10149PaymentAmountsForInvoice(input) {
     const raw = input.rawErpRow;
@@ -155,6 +163,12 @@ function alignAccount10149PaymentAmountsForInvoice(input) {
     const amount5 = pickNonZeroAmount(raw.CREDIT5, raw.DEBIT5);
     const invoiceCurrencyRaw = (input.invoiceCustomerCurrency ?? "").trim() ||
         input.customer_currency;
+    const invoiceFxRatio = (0, alignPaymentToInvoiceCurrency_1.deriveInvoiceFxRatio)(input.invoiceAmount, input.invoiceCustomerAmount);
+    // Only the primary side exists (no CODE5) and it is not the invoice currency.
+    const needsInvoiceFxConversion = code !== invoiceCurrency &&
+        code5 === "" &&
+        amount1 !== null &&
+        invoiceFxRatio !== null;
     const aligned = code5 === invoiceCurrency && amount5 !== null
         ? {
             amount: amount1 ?? input.amount,
@@ -167,11 +181,17 @@ function alignAccount10149PaymentAmountsForInvoice(input) {
                 customer_amount: amount1,
                 customer_currency: invoiceCurrencyRaw,
             }
-            : {
-                amount: input.amount,
-                customer_amount: input.customer_amount,
-                customer_currency: input.customer_currency,
-            };
+            : needsInvoiceFxConversion
+                ? {
+                    amount: amount1,
+                    customer_amount: roundCurrency(amount1 / invoiceFxRatio),
+                    customer_currency: invoiceCurrencyRaw,
+                }
+                : {
+                    amount: input.amount,
+                    customer_amount: input.customer_amount,
+                    customer_currency: input.customer_currency,
+                };
     return absAlignedCancelDebitAmounts(raw, aligned);
 }
 /** Keep Helam cancel DEBIT1 from reintroducing a negative customer_amount. */

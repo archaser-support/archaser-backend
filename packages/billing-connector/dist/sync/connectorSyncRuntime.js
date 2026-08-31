@@ -66,6 +66,9 @@ function entityStatsFromCounts(stats) {
             failed: stats.paymentLinkStatus === "failed" ? 1 : 0,
             skipped: Math.max(0, total - linked),
             status: stats.paymentLinkStatus,
+            ...(stats.paymentLinkDetail
+                ? { detail: stats.paymentLinkDetail }
+                : {}),
             ...(stats.paymentLinkError
                 ? { sample_errors: [stats.paymentLinkError] }
                 : {}),
