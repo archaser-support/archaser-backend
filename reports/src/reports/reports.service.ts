@@ -110,6 +110,9 @@ export class ReportsService {
         if (context) {
             (where.AND as unknown[]).push({ context });
         }
+        if (query.isSystem === "true" || query.isSystem === "1") {
+            (where.AND as unknown[]).push({ is_system: true });
+        }
         if (search) {
             (where.AND as unknown[]).push({
                 OR: [
