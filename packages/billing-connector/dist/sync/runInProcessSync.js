@@ -158,7 +158,9 @@ async function runInProcessSyncBody(options, obsRuntime) {
         // A late `running` update must not resurrect a finished step.
         const current = stats.tailSteps?.[key];
         if (state.status === "running" &&
-            (current?.status === "done" || current?.status === "failed")) {
+            (current?.status === "done" ||
+                current?.status === "failed" ||
+                current?.status === "queued")) {
             return;
         }
         stats.tailSteps = { ...(stats.tailSteps ?? {}), [key]: state };
@@ -171,7 +173,7 @@ async function runInProcessSyncBody(options, obsRuntime) {
             total: args.customerIds.length,
         });
         try {
-            await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
+            const postIngest = await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
                 accountId,
                 customerIds: args.customerIds,
                 invoiceEntityIds: args.invoiceEntityIds,
@@ -180,6 +182,9 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 onArPostIngest: options.onArPostIngest,
                 log,
                 runMaturity: args.runMaturity,
+                deferPostIngest: options.deferPostIngest,
+                enqueueDeferredSteps: options.enqueueDeferredSteps,
+                schedulePostIngestDrain: options.schedulePostIngestDrain,
                 onProgress: ({ completed, total, step, detail }) => {
                     setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
                         status: "running",
@@ -192,7 +197,7 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 },
             });
             setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
-                status: "done",
+                status: postIngest.deferred ? "queued" : "done",
                 processed: args.customerIds.length,
                 total: args.customerIds.length,
             });
@@ -412,6 +417,9 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 shouldCancel: () => isCancelRequested(options),
                 onCustomerBalancesFinal: options.onCustomerBalancesFinal,
                 onArPostIngest: options.onArPostIngest,
+                deferPostIngest: options.deferPostIngest,
+                enqueueDeferredSteps: options.enqueueDeferredSteps,
+                schedulePostIngestDrain: options.schedulePostIngestDrain,
                 pullCreatedOnOrAfter: !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,
                 entitySets: connector.entity_sets,

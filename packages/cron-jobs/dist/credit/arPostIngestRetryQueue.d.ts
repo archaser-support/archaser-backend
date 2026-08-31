@@ -1,4 +1,4 @@
-import type { ArPostIngestError } from "./arPostIngestOrchestrator";
+import type { ArPostIngestError, ArPostIngestStep } from "./arPostIngestOrchestrator";
 /** Processing rows older than this are assumed abandoned and reclaimed. */
 export declare const AR_POST_INGEST_RETRY_STALE_PROCESSING_MS: number;
 /** Beyond this the row is parked as `failed` so it stops consuming drain slots. */
@@ -11,10 +11,13 @@ export type EnqueueArPostIngestRetryResult = {
     customersEnqueued: number;
 };
 /**
- * Records per-customer failures for retry. Account-level failures (maturity,
- * as-of enqueue) are skipped: they carry no customer and the as-of path needs
- * the original entity ids, which are gone by the time the drain runs.
+ * Intentionally queue post-ingest steps (e.g. after billing connector backfill)
+ * so replay/overdue/live-refresh run on the worker instead of blocking sync.
  */
+export declare function enqueueArPostIngestSteps(accountId: number, customerIds: number[], steps: ArPostIngestStep[], options?: {
+    dbClient?: DbClient;
+    now?: Date;
+}): Promise<EnqueueArPostIngestRetryResult>;
 export declare function enqueueArPostIngestRetries(accountId: number, errors: ArPostIngestError[], options?: {
     dbClient?: DbClient;
     now?: Date;

@@ -3,7 +3,7 @@ import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionEntityType, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
 import { type EntityImportBatchOptions, type EntityImportBatchResult, type ImportEntityType } from "../import/entityImporter";
 import { type TailStepKey, type TailStepState } from "./connectorSyncRuntime";
-import { type ArPostIngestHostFn } from "../credit/arPostIngestHost";
+import { type ArPostIngestHostFn, type ConnectorPostIngestDeferOptions } from "../credit/arPostIngestHost";
 import { type MappingRule } from "../utils/connectorFieldUtils";
 export declare const STAGED_ENTITY_ORDER: ExtensionEntityType[];
 export type ImportBatchFn = (prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string, options?: EntityImportBatchOptions) => Promise<EntityImportBatchResult>;
@@ -15,7 +15,7 @@ export interface StagedWindowOutcome {
     imported: number;
     importErrors: number;
 }
-export interface RunStagedExtensionSyncOptions {
+export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferOptions {
     prisma: PrismaClient;
     accountId: number;
     connectorId: number;

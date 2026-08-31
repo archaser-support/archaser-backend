@@ -43,6 +43,13 @@ export {
     type RunArPostIngestOptions,
 } from "./credit/arPostIngestOrchestrator";
 export {
+    drainArPostIngestRetryQueue,
+    enqueueArPostIngestRetries,
+    enqueueArPostIngestSteps,
+    type DrainArPostIngestRetryResult,
+    type EnqueueArPostIngestRetryResult,
+} from "./credit/arPostIngestRetryQueue";
+export {
     buildReplayEvents,
     compareReplayEvents,
     getInvoiceGap,

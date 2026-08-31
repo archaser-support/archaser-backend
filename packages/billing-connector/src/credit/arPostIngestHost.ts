@@ -158,6 +158,26 @@ export async function runArPostIngestViaHost(
     }
 }
 
+export type DeferredArPostIngestStep =
+    | "replay"
+    | "process_overdue"
+    | "live_refresh";
+
+export type ConnectorPostIngestDeferOptions = {
+    /**
+     * When true, enqueue replay/overdue/live-refresh on the worker instead of
+     * blocking the billing connector sync tail.
+     */
+    deferPostIngest?: boolean;
+    enqueueDeferredSteps?: (args: {
+        accountId: number;
+        customerIds: number[];
+        steps: DeferredArPostIngestStep[];
+    }) => Promise<void>;
+    /** Ask the worker to drain the AR post-ingest retry queue soon. */
+    schedulePostIngestDrain?: () => Promise<void>;
+};
+
 /**
  * Once after Invoice entity completion. Best-effort: errors are logged and do
  * not fail the sync. Caller must skip on dry-run.
@@ -174,11 +194,13 @@ export async function invokeConnectorArPostIngest(params: {
     runMaturity?: boolean;
     /** Live per-customer progress for the sync progress panel. */
     onProgress?: (progress: ArPostIngestProgress) => void;
-}): Promise<void> {
+} & ConnectorPostIngestDeferOptions): Promise<{ deferred: boolean }> {
     const { customerIds, invoiceEntityIds, paymentEntityIds } = params;
     if (customerIds.length === 0) {
-        return;
+        return { deferred: false };
     }
+
+    bindCreditInsurancePrisma(params.prisma);
 
     // Amount (and date) upserts must refresh insurance targets before replay
     // so sign flips apply even if later post-ingest steps are skipped.
@@ -207,6 +229,56 @@ export async function invokeConnectorArPostIngest(params: {
                   importType: "Payment" as const,
                   entityIds: paymentEntityIds,
               };
+
+    if (params.deferPostIngest === true) {
+        try {
+            await enqueueRewriteForImport({
+                accountId: params.accountId,
+                importType: asOfRewrite.importType,
+                entityIds: asOfRewrite.entityIds,
+                customerIds,
+            });
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            params.log(`As-of rewrite enqueue failed: ${message}`);
+        }
+
+        const deferredSteps: DeferredArPostIngestStep[] = [
+            "replay",
+            "process_overdue",
+            "live_refresh",
+        ];
+        if (params.enqueueDeferredSteps) {
+            await params.enqueueDeferredSteps({
+                accountId: params.accountId,
+                customerIds,
+                steps: deferredSteps,
+            });
+        } else {
+            params.log(
+                "AR post-ingest defer requested but enqueueDeferredSteps is not configured"
+            );
+        }
+
+        if (params.schedulePostIngestDrain) {
+            try {
+                await params.schedulePostIngestDrain();
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                params.log(
+                    `Failed to schedule AR post-ingest worker drain: ${message}`
+                );
+            }
+        }
+
+        params.log(
+            `AR post-ingest deferred for ${customerIds.length} customer(s) — worker will process replay/overdue/live-refresh`
+        );
+        return { deferred: true };
+    }
+
     const run =
         params.onArPostIngest ??
         ((input) => runArPostIngestViaHost(input, params.prisma));
@@ -232,4 +304,5 @@ export async function invokeConnectorArPostIngest(params: {
             error instanceof Error ? error.message : "AR post-ingest failed";
         params.log(`AR post-ingest failed: ${message}`);
     }
+    return { deferred: false };
 }
