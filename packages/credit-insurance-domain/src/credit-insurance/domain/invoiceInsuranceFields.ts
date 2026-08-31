@@ -5,7 +5,7 @@ import { computeOutdatedDclAtEvaluation } from "./customerOutdatedDcl";
 import { readUninsuredAmountForDisplay, storedCapacityGapAmount } from "./policyGapAmounts";
 import { isCustomerPolicyExcluded } from "./policyExclusion";
 import { normalizeCalendarDayForInsuranceCompare } from "./shared/calendarDayCompare";
-import { isInvoiceOnOrAfterBreachStartDate } from "./shared/breachStartDateScope";
+import { isInvoiceInReportingBreachScope } from "./shared/reportingBreachScope";
 import { isInvoiceInMepBreachScope } from "./shared/mepBreachScope";
 
 /**
@@ -302,7 +302,7 @@ export function shouldSetReportingBreach(
         return false;
     }
     if (
-        !isInvoiceOnOrAfterBreachStartDate(
+        !isInvoiceInReportingBreachScope(
             scope?.invoiceDate ?? null,
             scope?.reportingBreachStartDate ?? null
         )

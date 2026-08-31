@@ -17,6 +17,7 @@ const connectorSyncRuntime_1 = require("./connectorSyncRuntime");
 const stagedExtensionSync_1 = require("./stagedExtensionSync");
 const recalculateCustomerAmountsHost_1 = require("../customers/recalculateCustomerAmountsHost");
 const arPostIngestHost_1 = require("../credit/arPostIngestHost");
+const observability_1 = require("../observability");
 const ENTITY_ORDER = [
     "Customer",
     "Payment",
@@ -108,15 +109,51 @@ function enabledEntitiesFromConnector(raw) {
  * Accounts with extension_key use staged windowed plugin path;
  * accounts without a key keep entity-by-entity pull/map/import.
  */
-async function runInProcessSync(options) {
-    return attachSyncMeta(await runInProcessSyncBody(options), options);
+function resolveInitialSyncMode(options) {
+    if (options.mode === "incremental")
+        return "INCREMENTAL";
+    if (options.mode === "backfill")
+        return "BACKFILL";
+    return "UNKNOWN";
 }
-async function runInProcessSyncBody(options) {
+async function runInProcessSync(options) {
+    const obsRuntime = {
+        connectorId: null,
+        provider: "UNKNOWN",
+        syncMode: resolveInitialSyncMode(options),
+        startedAtMs: Date.now(),
+        startEmitted: false,
+    };
+    const result = attachSyncMeta(await runInProcessSyncBody(options, obsRuntime), options);
+    const structuredLogs = options.observability?.structuredLogs !== false;
+    const metrics = options.observability?.metrics ??
+        (0, observability_1.getDefaultBillingConnectorMetricsSink)();
+    // Skip dry-run / preview noise on Prometheus (still allow Loki if host wants).
+    const emitMetrics = metrics && !options.dryRun ? metrics : null;
+    (0, observability_1.emitBillingConnectorSyncFinish)({
+        accountId: options.accountId,
+        connectorId: obsRuntime.connectorId,
+        provider: result.provider || obsRuntime.provider,
+        syncMode: obsRuntime.syncMode,
+        trigger: options.trigger ?? "manual",
+        executionId: options.executionId,
+        correlationId: options.observability?.correlationId,
+        startedAtMs: obsRuntime.startedAtMs,
+        result,
+    }, {
+        onLog: options.onLog,
+        metrics: emitMetrics,
+        structuredLogs,
+    });
+    return result;
+}
+async function runInProcessSyncBody(options, obsRuntime) {
     const { prisma, accountId, trigger = "manual", userId, dryRun = false, onLog, } = options;
     const stats = emptyStats();
     const resolveExtension = options.resolveExtension ?? extensions_1.getRegisteredExtension;
     const importBatch = options.importBatch ?? entityImporter_1.importMappedEntityBatch;
     const log = (message) => emitSyncLog(onLog, message);
+    const structuredLogs = options.observability?.structuredLogs !== false;
     const setTailStep = (key, state) => {
         // A late `running` update must not resurrect a finished step.
         const current = stats.tailSteps?.[key];
@@ -184,6 +221,23 @@ async function runInProcessSyncBody(options) {
                 message: "No billing connector configured for this account",
                 error: "CONNECTOR_NOT_FOUND",
             };
+        }
+        obsRuntime.connectorId = connector.id;
+        obsRuntime.provider = connector.provider;
+        if (obsRuntime.syncMode === "UNKNOWN") {
+            obsRuntime.syncMode = connector.sync_mode;
+        }
+        if (!obsRuntime.startEmitted) {
+            obsRuntime.startEmitted = true;
+            (0, observability_1.emitBillingConnectorSyncStart)({
+                accountId,
+                connectorId: connector.id,
+                provider: connector.provider,
+                syncMode: obsRuntime.syncMode,
+                trigger,
+                executionId: options.executionId,
+                correlationId: options.observability?.correlationId,
+            }, onLog, structuredLogs);
         }
         const extensionKey = typeof connector.extension_key === "string"
             ? connector.extension_key.trim() || null
@@ -364,9 +418,6 @@ async function runInProcessSyncBody(options) {
                 dateFieldByType,
                 overlapMinutes: connector.sync_overlap_minutes,
             });
-            if (!dryRun && !staged.cancelled) {
-                await (0, entityImporter_1.updateAccountLastSyncDate)(prisma, accountId);
-            }
             const imported = staged.stats.customersImported +
                 staged.stats.contactsImported +
                 staged.stats.invoicesImported +
@@ -596,7 +647,6 @@ async function runInProcessSyncBody(options) {
             });
         }
         await finalizeLegacyCustomerBalances(arAffectedCustomerIds, prisma, options.onCustomerBalancesFinal, log, setTailStep);
-        await (0, entityImporter_1.updateAccountLastSyncDate)(prisma, accountId);
         const imported = stats.customersImported +
             stats.contactsImported +
             stats.invoicesImported +

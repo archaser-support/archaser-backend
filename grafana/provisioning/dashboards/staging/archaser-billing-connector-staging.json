@@ -1,0 +1,490 @@
+{
+    "annotations": {
+        "list": [
+            {
+                "builtIn": 1,
+                "datasource": {
+                    "type": "grafana",
+                    "uid": "-- Grafana --"
+                },
+                "enable": true,
+                "hide": true,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            }
+        ]
+    },
+    "description": "ERP billing-connector logs + run history + metrics (staging). Production board/alerts copy is a follow-up after soak (Phase 5).",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+        {
+            "gridPos": { "h": 2, "w": 24, "x": 0, "y": 0 },
+            "id": 1,
+            "options": {
+                "mode": "markdown",
+                "content": "**Dashboards:** [Home](/d/archaser-unified-v1-staging/archaser-home-staging) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-staging/cron-health-staging) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-staging/communications-staging) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-staging/infrastructure-staging) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-staging/alert-drilldown-staging) &nbsp;|&nbsp; [Postgres Logs](/d/archaser-postgres-logs-stag/postgres-logs-staging) &nbsp;|&nbsp; [Billing Connector](/d/archaser-billing-connector-stag/billing-connector-staging)"
+            },
+            "title": "",
+            "type": "text",
+            "transparent": true
+        },
+        {
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 2 },
+            "id": 2,
+            "title": "Health summary",
+            "type": "row"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "thresholds" },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            { "color": "green", "value": null },
+                            { "color": "red", "value": 1 }
+                        ]
+                    }
+                }
+            },
+            "gridPos": { "h": 4, "w": 4, "x": 0, "y": 3 },
+            "id": 3,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "sum(archaser_billing_connector_connectors_in_error{instance=\"Staging\", nest_service=\"archaser-api\"}) or vector(0)",
+                    "instant": true,
+                    "legendFormat": "in error",
+                    "refId": "A"
+                }
+            ],
+            "title": "Connectors in error",
+            "type": "stat"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "thresholds" },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            { "color": "green", "value": null },
+                            { "color": "orange", "value": 1 }
+                        ]
+                    }
+                }
+            },
+            "gridPos": { "h": 4, "w": 4, "x": 4, "y": 3 },
+            "id": 4,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "sum(increase(archaser_billing_connector_sync_total{instance=\"Staging\", status=~\"FAILED|TIMEOUT\"}[24h])) or vector(0)",
+                    "instant": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Sync failures 24h",
+            "type": "stat"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "thresholds" },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            { "color": "green", "value": null },
+                            { "color": "orange", "value": 1 }
+                        ]
+                    }
+                }
+            },
+            "gridPos": { "h": 4, "w": 4, "x": 8, "y": 3 },
+            "id": 5,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "archaser_billing_connector_stale_incremental_count{instance=\"Staging\", nest_service=\"archaser-api\"} or vector(0)",
+                    "instant": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Stale incremental",
+            "type": "stat"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "thresholds" },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            { "color": "green", "value": null },
+                            { "color": "orange", "value": 1 }
+                        ]
+                    }
+                }
+            },
+            "gridPos": { "h": 4, "w": 4, "x": 12, "y": 3 },
+            "id": 6,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "archaser_billing_connector_stale_running_count{instance=\"Staging\", nest_service=\"archaser-api\"} or vector(0)",
+                    "instant": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Stale RUNNING",
+            "type": "stat"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "thresholds" },
+                    "unit": "s",
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            { "color": "green", "value": null },
+                            { "color": "yellow", "value": 3600 },
+                            { "color": "orange", "value": 86400 }
+                        ]
+                    }
+                }
+            },
+            "gridPos": { "h": 4, "w": 4, "x": 16, "y": 3 },
+            "id": 7,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "time() - archaser_billing_connector_last_checkpoint_timestamp{instance=\"Staging\", nest_service=\"archaser-api\"}",
+                    "instant": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Checkpoint age",
+            "type": "stat"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "thresholds" },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            { "color": "green", "value": null },
+                            { "color": "orange", "value": 1 }
+                        ]
+                    }
+                }
+            },
+            "gridPos": { "h": 4, "w": 4, "x": 20, "y": 3 },
+            "id": 8,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "archaser_billing_connector_sync_enabled_unmapped_count{instance=\"Staging\", nest_service=\"archaser-api\"} or vector(0)",
+                    "instant": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Sync enabled unmapped",
+            "type": "stat"
+        },
+        {
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+            "id": 9,
+            "title": "Sync volume & errors",
+            "type": "row"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "palette-classic" },
+                    "custom": {
+                        "drawStyle": "bars",
+                        "fillOpacity": 60,
+                        "lineWidth": 1,
+                        "showPoints": "never",
+                        "stacking": { "group": "A", "mode": "normal" }
+                    },
+                    "unit": "short"
+                }
+            },
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+            "id": 10,
+            "options": {
+                "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+                "tooltip": { "mode": "multi", "sort": "desc" }
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "sum by (sync_mode, status) (increase(archaser_billing_connector_sync_total{instance=\"Staging\"}[1h]))",
+                    "legendFormat": "{{sync_mode}} / {{status}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Incremental vs backfill by status",
+            "type": "timeseries"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "palette-classic" },
+                    "custom": {
+                        "drawStyle": "bars",
+                        "fillOpacity": 60,
+                        "lineWidth": 1,
+                        "showPoints": "never",
+                        "stacking": { "group": "A", "mode": "normal" }
+                    },
+                    "unit": "short"
+                }
+            },
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+            "id": 11,
+            "options": {
+                "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+                "tooltip": { "mode": "multi", "sort": "desc" }
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "sum by (error_type) (increase(archaser_billing_connector_errors_total{instance=\"Staging\"}[1h]))",
+                    "legendFormat": "{{error_type}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Errors by error_type",
+            "type": "timeseries"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "palette-classic" },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "lineWidth": 2,
+                        "showPoints": "never"
+                    },
+                    "unit": "s"
+                }
+            },
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+            "id": 12,
+            "options": {
+                "legend": { "calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+                "tooltip": { "mode": "multi", "sort": "desc" }
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "histogram_quantile(0.95, sum by (le, provider, sync_mode) (rate(archaser_billing_connector_sync_duration_seconds_bucket{instance=\"Staging\"}[15m])))",
+                    "legendFormat": "p95 {{provider}} {{sync_mode}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Duration p95 by provider / sync_mode",
+            "type": "timeseries"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "palette-classic" },
+                    "custom": {
+                        "drawStyle": "bars",
+                        "fillOpacity": 60,
+                        "lineWidth": 1,
+                        "showPoints": "never",
+                        "stacking": { "group": "A", "mode": "normal" }
+                    },
+                    "unit": "short"
+                }
+            },
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+            "id": 13,
+            "options": {
+                "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+                "tooltip": { "mode": "multi", "sort": "desc" }
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "sum by (entity_type, result) (increase(archaser_billing_connector_records_processed_total{instance=\"Staging\"}[1h]))",
+                    "legendFormat": "{{entity_type}} / {{result}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Records processed by entity_type / result",
+            "type": "timeseries"
+        },
+        {
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+            "id": 14,
+            "title": "Run history (Loki)",
+            "type": "row"
+        },
+        {
+            "datasource": { "type": "loki", "uid": "Loki" },
+            "gridPos": { "h": 10, "w": 12, "x": 0, "y": 25 },
+            "id": 15,
+            "options": {
+                "showTime": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending",
+                "wrapLogMessage": true
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "loki", "uid": "Loki" },
+                    "editorMode": "code",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"api|connectors|worker\"} |= \"billing_connector.sync\" | json | source=\"billing_connector.sync\" | status=~\"SUCCESS|FAILED|PARTIAL|TIMEOUT\" | account_id=~\"$account_id\"",
+                    "queryType": "range",
+                    "refId": "A"
+                }
+            ],
+            "title": "Recent finish / history",
+            "type": "logs"
+        },
+        {
+            "datasource": { "type": "loki", "uid": "Loki" },
+            "gridPos": { "h": 10, "w": 12, "x": 12, "y": 25 },
+            "id": 16,
+            "options": {
+                "showTime": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending",
+                "wrapLogMessage": true
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "loki", "uid": "Loki" },
+                    "editorMode": "code",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"api|connectors|worker\"} |= \"billing_connector.sync\" | json | source=\"billing_connector.sync\" | status=~\"FAILED|PARTIAL|TIMEOUT\" | account_id=~\"$account_id\"",
+                    "queryType": "range",
+                    "refId": "A"
+                }
+            ],
+            "title": "Recent errors",
+            "type": "logs"
+        },
+        {
+            "datasource": { "type": "loki", "uid": "Loki" },
+            "gridPos": { "h": 8, "w": 24, "x": 0, "y": 35 },
+            "id": 17,
+            "options": {
+                "showTime": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending",
+                "wrapLogMessage": true
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "loki", "uid": "Loki" },
+                    "editorMode": "code",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"api|connectors|worker\"} |= \"billing_connector.sync\" | json | source=\"billing_connector.sync\" | status=\"RUNNING\" | account_id=~\"$account_id\"",
+                    "queryType": "range",
+                    "refId": "A"
+                }
+            ],
+            "title": "Start lines / RUNNING",
+            "type": "logs"
+        }
+    ],
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "tags": [
+        "billing-connector",
+        "erp",
+        "staging",
+        "observability"
+    ],
+    "templating": {
+        "list": [
+            {
+                "current": { "selected": true, "text": ".*", "value": ".*" },
+                "description": "Filter Loki panels by account_id regex (default .* = all). Never a Prometheus label.",
+                "label": "account_id",
+                "name": "account_id",
+                "options": [
+                    { "selected": true, "text": ".*", "value": ".*" }
+                ],
+                "query": ".*",
+                "skipUrlSync": false,
+                "type": "textbox"
+            }
+        ]
+    },
+    "time": {
+        "from": "now-24h",
+        "to": "now"
+    },
+    "timezone": "browser",
+    "title": "Billing Connector - Staging",
+    "uid": "archaser-billing-connector-stag",
+    "version": 1
+}

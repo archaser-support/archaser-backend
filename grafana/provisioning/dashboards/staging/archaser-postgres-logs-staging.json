@@ -42,10 +42,26 @@
                 "x": 0,
                 "y": 0
             },
+            "id": 8,
+            "options": {
+                "mode": "markdown",
+                "content": "**Dashboards:** [Home](/d/archaser-unified-v1-staging/archaser-home-staging) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-staging/cron-health-staging) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-staging/communications-staging) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-staging/infrastructure-staging) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-staging/alert-drilldown-staging) &nbsp;|&nbsp; [Postgres Logs](/d/archaser-postgres-logs-stag/postgres-logs-staging) &nbsp;|&nbsp; [Billing Connector](/d/archaser-billing-connector-stag/billing-connector-staging)"
+            },
+            "title": "",
+            "type": "text",
+            "transparent": true
+        },
+        {
+            "gridPos": {
+                "h": 2,
+                "w": 24,
+                "x": 0,
+                "y": 2
+            },
             "id": 1,
             "options": {
                 "mode": "markdown",
-                "content": "**RDS Postgres server logs** (staging). Explore: job=rds-postgres, environment=staging. Alerts are visible in Grafana only (no production SNS)."
+                "content": "**RDS Postgres server logs** (staging) via CloudWatch \u2192 lambda-promtail \u2192 Loki. Explore: `{job=\"rds-postgres\", environment=\"staging\"}`. Currently **stderr** lines (severity extracted by lambda-promtail); switch to jsonlog after parameter-group reboot. Alerts are Grafana-only (no production SNS)."
             },
             "title": "",
             "type": "text",
@@ -79,7 +95,7 @@
                 "h": 8,
                 "w": 16,
                 "x": 0,
-                "y": 2
+                "y": 4
             },
             "id": 2,
             "options": {
@@ -103,7 +119,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "sum by (error_severity) (count_over_time({job=\"rds-postgres\", environment=\"staging\"} | json [$__interval]))",
+                    "expr": "sum by (error_severity) (count_over_time({job=\"rds-postgres\", environment=\"staging\"}[$__interval]))",
                     "legendFormat": "{{error_severity}}",
                     "queryType": "range",
                     "refId": "A"
@@ -143,7 +159,7 @@
                 "h": 8,
                 "w": 8,
                 "x": 16,
-                "y": 2
+                "y": 4
             },
             "id": 3,
             "options": {
@@ -168,7 +184,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "sum by (error_severity) (count_over_time({job=\"rds-postgres\", environment=\"staging\"} | json [$__range]))",
+                    "expr": "sum by (error_severity) (count_over_time({job=\"rds-postgres\", environment=\"staging\"}[$__range]))",
                     "legendFormat": "{{error_severity}}",
                     "queryType": "instant",
                     "refId": "A"
@@ -186,7 +202,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 10
+                "y": 20
             },
             "id": 4,
             "options": {
@@ -202,7 +218,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} | json | error_severity=~\"FATAL|PANIC\"",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} |~ \"(?i)\\\\b(FATAL|PANIC):\"",
                     "queryType": "range",
                     "refId": "A"
                 }
@@ -219,7 +235,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 10
+                "y": 20
             },
             "id": 5,
             "options": {
@@ -235,7 +251,7 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} | json | duration > 1000 or message =~ \"(?i)duration:\"",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} |~ \"(?i)duration:\"",
                     "queryType": "range",
                     "refId": "A"
                 }
@@ -267,7 +283,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 18
+                "y": 28
             },
             "id": 6,
             "options": {
@@ -318,7 +334,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 18
+                "y": 28
             },
             "id": 7,
             "options": {
@@ -334,12 +350,45 @@
                         "uid": "Loki"
                     },
                     "editorMode": "code",
-                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} | json | error_severity=\"ERROR\"",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\"} |~ \"(?i)\\\\b(ERROR|WARNING):\"",
                     "queryType": "range",
                     "refId": "A"
                 }
             ],
-            "title": "Top recent ERROR messages",
+            "title": "Top recent ERROR / WARNING",
+            "type": "logs"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "Loki"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 12
+            },
+            "id": 9,
+            "options": {
+                "showTime": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending",
+                "wrapLogMessage": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "Loki"
+                    },
+                    "editorMode": "code",
+                    "expr": "{job=\"rds-postgres\", environment=\"staging\"}",
+                    "queryType": "range",
+                    "refId": "A"
+                }
+            ],
+            "title": "All recent postgres logs",
             "type": "logs"
         }
     ],
