@@ -3,9 +3,9 @@ import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
 import { type ConnectorEntityStats } from "./connectorSyncRuntime";
 import { type ImportBatchFn } from "./stagedExtensionSync";
-import { type ArPostIngestHostFn } from "../credit/arPostIngestHost";
+import { type ArPostIngestHostFn, type ConnectorPostIngestDeferOptions } from "../credit/arPostIngestHost";
 import { type BillingConnectorObservabilityOptions } from "../observability";
-export interface RunInProcessSyncOptions {
+export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions {
     prisma: PrismaClient;
     accountId: number;
     trigger?: string;

@@ -24,7 +24,7 @@ export const TAIL_STEP_KEYS = [
 export type TailStepKey = (typeof TAIL_STEP_KEYS)[number];
 
 export type TailStepState = {
-    status: "running" | "done" | "failed";
+    status: "running" | "done" | "failed" | "queued";
     /** Customers / rows handled, when the step can count them. */
     processed?: number;
     total?: number;
@@ -47,7 +47,7 @@ export type ConnectorEntityStatSlice = {
     skipped: number;
     sample_errors?: string[];
     /** Present for `_maturity` while linking / after it finishes. */
-    status?: "running" | "done" | "failed";
+    status?: "running" | "done" | "failed" | "queued";
     /** Present for tail steps while running. */
     detail?: TailStepDetail;
 };

@@ -51,6 +51,12 @@ function accessScope(accountId: number, allowed = true) {
 }
 
 
+function mockCronQueue() {
+    return {
+        enqueueArPostIngestDrain: jest.fn().mockResolvedValue({ queued: true }),
+    };
+}
+
 function mockMetrics() {
     return {
         business: {
@@ -111,6 +117,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             {} as never,
             accessScope(42, false) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         await expect(
@@ -122,6 +129,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             {} as never,
             accessScope(42, true) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         await expect(
@@ -153,6 +161,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             db as never,
             accessScope(42, true) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         await expect(
@@ -186,6 +195,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             db as never,
             accessScope(42, true) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         const result = await service.runSync(user(42), 42, "backfill");
@@ -209,6 +219,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             {} as never,
             accessScope(42, true) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         await expect(
@@ -231,6 +242,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             {} as never,
             accessScope(42, true) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         const result = await service.cancelSync(user(42), 42);
@@ -255,6 +267,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             db as never,
             accessScope(42, true) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         const result = await service.getConfig(user(42), 42);
@@ -277,6 +290,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             db as never,
             accessScope(42, true) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         const result = await service.upsertConfig(user(42), 42, {
@@ -313,6 +327,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             db as never,
             accessScope(42, true) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         const result = await service.upsertConfig(user(42), 42, {
@@ -341,6 +356,7 @@ describe("billing connector Nest API", () => {
         const service = new BillingConnectorApiService(
             db as never,
             accessScope(42, true) as never,
+            mockCronQueue() as never,
             mockMetrics() as never
         );
         await expect(

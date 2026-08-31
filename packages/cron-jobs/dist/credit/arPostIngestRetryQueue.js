@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AR_POST_INGEST_RETRY_MAX_ATTEMPTS = exports.AR_POST_INGEST_RETRY_STALE_PROCESSING_MS = void 0;
+exports.enqueueArPostIngestSteps = enqueueArPostIngestSteps;
 exports.enqueueArPostIngestRetries = enqueueArPostIngestRetries;
 exports.drainArPostIngestRetryQueue = drainArPostIngestRetryQueue;
 /**
@@ -60,6 +61,39 @@ const RETRYABLE_STEPS = [
  * as-of enqueue) are skipped: they carry no customer and the as-of path needs
  * the original entity ids, which are gone by the time the drain runs.
  */
+async function upsertArPostIngestRetrySteps(db, accountId, customerId, steps, now) {
+    const stepList = Array.from(new Set(steps)).sort();
+    await db.$executeRaw `
+        INSERT INTO "ArPostIngestRetryQueue"
+            (account_id, customer_id, steps, status, created_at, updated_at)
+        VALUES (${accountId}, ${customerId}, ${stepList}, 'pending', ${now}, ${now})
+        ON CONFLICT (account_id, customer_id) DO UPDATE
+        SET steps = ARRAY(
+                SELECT DISTINCT unnest(
+                    "ArPostIngestRetryQueue".steps || EXCLUDED.steps
+                )
+            ),
+            status = 'pending',
+            updated_at = ${now}
+    `;
+}
+/**
+ * Intentionally queue post-ingest steps (e.g. after billing connector backfill)
+ * so replay/overdue/live-refresh run on the worker instead of blocking sync.
+ */
+async function enqueueArPostIngestSteps(accountId, customerIds, steps, options) {
+    const db = options?.dbClient ?? credit_insurance_domain_1.creditInsurancePrisma;
+    const now = options?.now ?? new Date();
+    const stepList = steps.filter((step) => RETRYABLE_STEPS.includes(step));
+    if (stepList.length === 0) {
+        return { customersEnqueued: 0 };
+    }
+    const uniqueCustomerIds = Array.from(new Set(customerIds.filter(Number.isFinite)));
+    for (const customerId of uniqueCustomerIds) {
+        await upsertArPostIngestRetrySteps(db, accountId, customerId, stepList, now);
+    }
+    return { customersEnqueued: uniqueCustomerIds.length };
+}
 async function enqueueArPostIngestRetries(accountId, errors, options) {
     const db = options?.dbClient ?? credit_insurance_domain_1.creditInsurancePrisma;
     const now = options?.now ?? new Date();
@@ -76,22 +110,7 @@ async function enqueueArPostIngestRetries(accountId, errors, options) {
         stepsByCustomer.set(failure.customerId, existing);
     }
     for (const [customerId, steps] of stepsByCustomer) {
-        const stepList = Array.from(steps).sort();
-        // Re-failing an already-queued customer widens the step set and resets
-        // it to pending rather than creating a second row.
-        await db.$executeRaw `
-            INSERT INTO "ArPostIngestRetryQueue"
-                (account_id, customer_id, steps, status, created_at, updated_at)
-            VALUES (${accountId}, ${customerId}, ${stepList}, 'pending', ${now}, ${now})
-            ON CONFLICT (account_id, customer_id) DO UPDATE
-            SET steps = ARRAY(
-                    SELECT DISTINCT unnest(
-                        "ArPostIngestRetryQueue".steps || EXCLUDED.steps
-                    )
-                ),
-                status = 'pending',
-                updated_at = ${now}
-        `;
+        await upsertArPostIngestRetrySteps(db, accountId, customerId, Array.from(steps), now);
     }
     return { customersEnqueued: stepsByCustomer.size };
 }

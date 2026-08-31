@@ -21,6 +21,7 @@ import {
 import type { Response } from "express";
 import {
     computeNextRunAt,
+    drainArPostIngestRetryQueue,
     executeNamedCronJob,
     recordCronJobRun,
     runArPostIngestForCustomers,
@@ -149,6 +150,17 @@ class WorkerRuntimeService implements OnModuleDestroy {
         if (job.name === "run-now") {
             const data = job.data as RunNowData;
             return this.executeCronJob(data.cronJobId, "run-now");
+        }
+
+        if (job.name === "ar-post-ingest-drain") {
+            const data = job.data as { maxItems?: number };
+            const result = await drainArPostIngestRetryQueue({
+                maxItems: data.maxItems ?? 100,
+            });
+            this.logger.log(
+                `AR post-ingest drain: ${result.itemsProcessed} processed, ${result.failures} failures, ${result.givenUp} given up`
+            );
+            return result;
         }
 
         if (job.name.startsWith("cron:")) {
