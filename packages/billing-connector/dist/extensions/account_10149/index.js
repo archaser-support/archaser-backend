@@ -48,6 +48,7 @@ exports.shouldNormalizeAccount10149NegativeCreditPayments = shouldNormalizeAccou
 exports.isAccount10149CreditInvoiceNumber = isAccount10149CreditInvoiceNumber;
 exports.transformAccount10149Batch = transformAccount10149Batch;
 exports.afterAccount10149PaymentLinked = afterAccount10149PaymentLinked;
+const connectorFieldUtils_1 = require("../../utils/connectorFieldUtils");
 const helamOffsetClose_1 = require("./helamOffsetClose");
 const reconciledVirtualClose_1 = require("./reconciledVirtualClose");
 /** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp, credit abs payments. */
@@ -382,6 +383,7 @@ function transformAccount10149Batch(batch, options) {
             options?.onHelamOffsetCloseTargets?.([...offsetStampNumbers]);
         }
         const queuedCloseNumbers = [];
+        const queuedCloseDates = new Map();
         const kept = [];
         for (const row of payments) {
             const raw = rawRecordOf(row);
@@ -408,6 +410,10 @@ function transformAccount10149Batch(batch, options) {
             if (dropForVirtualClose) {
                 if (ivnum) {
                     queuedCloseNumbers.push(ivnum);
+                    const curDate = (0, connectorFieldUtils_1.parseErpDateOnly)(raw.CURDATE ?? row.CURDATE);
+                    if (curDate) {
+                        queuedCloseDates.set(ivnum.trim(), curDate);
+                    }
                 }
                 continue;
             }
@@ -417,7 +423,7 @@ function transformAccount10149Batch(batch, options) {
             }
         }
         if (queuedCloseNumbers.length > 0) {
-            options?.onReconciledInvoiceCloseTargets?.(queuedCloseNumbers);
+            options?.onReconciledInvoiceCloseTargets?.(queuedCloseNumbers, queuedCloseDates);
         }
         nextPayments = kept;
     }
@@ -448,10 +454,15 @@ exports.account10149Extension = {
     label: "Account 10149",
     async transform(ctx) {
         return transformAccount10149Batch(ctx.batch, {
-            onReconciledInvoiceCloseTargets: (invoiceNumbers) => {
+            onReconciledInvoiceCloseTargets: (invoiceNumbers, closeDates) => {
                 if (ctx.pendingInvoiceCloses) {
                     for (const invoiceNumber of invoiceNumbers) {
                         ctx.pendingInvoiceCloses.add(invoiceNumber);
+                    }
+                }
+                if (ctx.pendingInvoiceCloseDates && closeDates) {
+                    for (const [invoiceNumber, date] of closeDates) {
+                        ctx.pendingInvoiceCloseDates.set(invoiceNumber, date);
                     }
                 }
             },
@@ -482,7 +493,7 @@ exports.account10149Extension = {
         const offsetSet = new Set(offsetNumbers.map((value) => value.trim()).filter(Boolean));
         const virtualNumbers = ctx.invoiceNumbers.filter((value) => !offsetSet.has(value.trim()));
         if (virtualNumbers.length > 0) {
-            const result = await (0, reconciledVirtualClose_1.applyReconciledVirtualClosesForInvoiceNumbers)(ctx.prisma, ctx.accountId, virtualNumbers, ctx.userId);
+            const result = await (0, reconciledVirtualClose_1.applyReconciledVirtualClosesForInvoiceNumbers)(ctx.prisma, ctx.accountId, virtualNumbers, ctx.userId, ctx.invoiceCloseDates);
             if (result.touchedIds.length > 0) {
                 // Dynamic import avoids account_10149 ↔ extensions ↔ recalc cycle.
                 const { recalculateInvoicesFromLinkedPayments } = await Promise.resolve().then(() => __importStar(require("../../invoice/linkDeferredPaymentAndRecalc")));

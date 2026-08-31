@@ -27,6 +27,11 @@ export interface ExtensionTransformContext {
      */
     pendingInvoiceCloses?: Set<string>;
     /**
+     * ERP close date (Priority CURDATE) per pending invoice number, so a
+     * virtual close carries the ERP date instead of the import timestamp.
+     */
+    pendingInvoiceCloseDates?: Map<string, Date>;
+    /**
      * Helam offset-pair invoice numbers (original + cancel stamp) to stamp
      * Paid without virtual/cancel payments after Invoice ingest.
      */
@@ -108,6 +113,8 @@ export interface BillingAccountExtension {
         accountId: number;
         userId?: string;
         invoiceNumbers: string[];
+        /** ERP CURDATE per invoice number for virtual-close payment dates. */
+        invoiceCloseDates?: Map<string, Date>;
         helamOffsetInvoiceNumbers?: string[];
     }): Promise<{
         closedIds: number[];
