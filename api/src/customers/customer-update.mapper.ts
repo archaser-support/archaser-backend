@@ -24,6 +24,15 @@ const CUSTOMER_SCALAR_KEYS = [
     "generic_date2",
 ] as const;
 
+const CUSTOMER_INT_SCALAR_KEYS = new Set<string>([
+    "first_activity_delay_days",
+]);
+
+const CUSTOMER_FLOAT_SCALAR_KEYS = new Set<string>([
+    "generic_number1",
+    "generic_number2",
+]);
+
 /** FK scalars accepted on CustomerUncheckedUpdateInput. */
 const CUSTOMER_FK_KEYS = [
     "country_id",
@@ -66,6 +75,28 @@ function parseOptionalDate(value: unknown): Date | null | undefined {
     return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function parseOptionalIntScalar(value: unknown): number | null | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    if (value === null || value === "") {
+        return null;
+    }
+    const n = Number(String(value).trim());
+    return Number.isFinite(n) && Number.isInteger(n) ? n : null;
+}
+
+function parseOptionalFloatScalar(value: unknown): number | null | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    if (value === null || value === "") {
+        return null;
+    }
+    const n = Number(String(value).trim());
+    return Number.isFinite(n) ? n : null;
+}
+
 /**
  * Map the frontend customer PUT body to Prisma unchecked update input.
  * Virtual keys (`customer_name`, `customer_type`, policy fields) are excluded.
@@ -81,6 +112,18 @@ export function buildCustomerUncheckedUpdateData(
         }
         if (key === "generic_date1" || key === "generic_date2") {
             data[key] = parseOptionalDate(body[key]);
+            continue;
+        }
+        if (CUSTOMER_INT_SCALAR_KEYS.has(key)) {
+            (data as Record<string, unknown>)[key] = parseOptionalIntScalar(
+                body[key]
+            );
+            continue;
+        }
+        if (CUSTOMER_FLOAT_SCALAR_KEYS.has(key)) {
+            (data as Record<string, unknown>)[key] = parseOptionalFloatScalar(
+                body[key]
+            );
             continue;
         }
         (data as Record<string, unknown>)[key] = body[key];

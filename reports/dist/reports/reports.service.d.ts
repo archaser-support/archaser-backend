@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/jwt-payload";
 import { DatabaseService } from "../database/database.service";
@@ -33,7 +34,7 @@ export declare class ReportsService {
             modified_by: string | null;
             unique_name: string;
             description: string | null;
-            report_config: import("@prisma/client/runtime/library").JsonValue;
+            report_config: Prisma.JsonValue;
             is_public: boolean;
             is_system: boolean;
             is_default: boolean;
@@ -74,7 +75,7 @@ export declare class ReportsService {
             modified_by: string | null;
             unique_name: string;
             description: string | null;
-            report_config: import("@prisma/client/runtime/library").JsonValue;
+            report_config: Prisma.JsonValue;
             is_public: boolean;
             is_system: boolean;
             is_default: boolean;
@@ -117,7 +118,7 @@ export declare class ReportsService {
             modified_by: string | null;
             unique_name: string;
             description: string | null;
-            report_config: import("@prisma/client/runtime/library").JsonValue;
+            report_config: Prisma.JsonValue;
             is_public: boolean;
             is_system: boolean;
             is_default: boolean;
@@ -155,7 +156,7 @@ export declare class ReportsService {
             modified_by: string | null;
             unique_name: string;
             description: string | null;
-            report_config: import("@prisma/client/runtime/library").JsonValue;
+            report_config: Prisma.JsonValue;
             is_public: boolean;
             is_system: boolean;
             is_default: boolean;
@@ -200,7 +201,7 @@ export declare class ReportsService {
             modified_by: string | null;
             unique_name: string;
             description: string | null;
-            report_config: import("@prisma/client/runtime/library").JsonValue;
+            report_config: Prisma.JsonValue;
             is_public: boolean;
             is_system: boolean;
             is_default: boolean;
@@ -244,7 +245,7 @@ export declare class ReportsService {
             modified_at: Date;
             report_id: number;
             schedule_type: string;
-            schedule_config: import("@prisma/client/runtime/library").JsonValue;
+            schedule_config: Prisma.JsonValue;
             is_active: boolean;
             last_run_at: Date | null;
             next_run_at: Date | null;
@@ -256,7 +257,7 @@ export declare class ReportsService {
         modified_at: Date;
         report_id: number;
         schedule_type: string;
-        schedule_config: import("@prisma/client/runtime/library").JsonValue;
+        schedule_config: Prisma.JsonValue;
         is_active: boolean;
         last_run_at: Date | null;
         next_run_at: Date | null;
@@ -276,4 +277,6 @@ export declare class ReportsService {
     private resolveDefaultView;
     private assertListPermission;
     private formatReportDates;
+    private isDuplicateReportUniqueNameError;
+    private rethrowReportWriteError;
 }
