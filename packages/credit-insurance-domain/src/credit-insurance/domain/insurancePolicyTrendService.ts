@@ -476,23 +476,43 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
  */
 export async function takeInsurancePolicyTrendSnapshots(options?: {
     snapshotDate?: Date;
+    excludeAccountIds?: ReadonlySet<number>;
 }): Promise<{
     accountsProcessed: number;
     policyRowsUpserted: number;
     countryRowsUpserted: number;
     namedRowsUpserted: number;
+    skippedAccountIds: number[];
 }> {
     await runInsurancePolicyStatusMaintenance();
 
     const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
+    const excludeAccountIds = options?.excludeAccountIds;
     const accounts = await prisma.account.findMany({
-        where: { has_credit_insurance: true },
+        where: {
+            has_credit_insurance: true,
+            ...(excludeAccountIds?.size
+                ? { id: { notIn: [...excludeAccountIds] } }
+                : {}),
+        },
         select: { id: true },
     });
 
     let policyRowsUpserted = 0;
     let countryRowsUpserted = 0;
     let namedRowsUpserted = 0;
+    const skippedAccountIds =
+        excludeAccountIds && excludeAccountIds.size > 0
+            ? (
+                  await prisma.account.findMany({
+                      where: {
+                          id: { in: [...excludeAccountIds] },
+                          has_credit_insurance: true,
+                      },
+                      select: { id: true },
+                  })
+              ).map((row) => row.id)
+            : [];
 
     for (const account of accounts) {
         const result = await syncInsurancePolicyTrendSnapshotForAccount(
@@ -509,6 +529,7 @@ export async function takeInsurancePolicyTrendSnapshots(options?: {
         policyRowsUpserted,
         countryRowsUpserted,
         namedRowsUpserted,
+        skippedAccountIds,
     };
 }
 

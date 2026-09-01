@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { CronJobResult } from "./handlers";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 /**
  * Process Automated Collection Periods
  * Ported from frontend SHA 81bd37afa048ee2b07f5e2e1a67629567cbc174f
@@ -19,4 +20,4 @@ import type { CronJobResult } from "./handlers";
  * - Complex activity timeline logic
  * - CustomerService.calculateNextAutomatedActivityTime (complex date calc)
  */
-export declare function processAutomatedCollectionPeriods(prisma: PrismaClient): Promise<CronJobResult>;
+export declare function processAutomatedCollectionPeriods(prisma: PrismaClient, freeze?: CronFrozenAccountGuard): Promise<CronJobResult>;

@@ -52,6 +52,10 @@ export type RunArPostIngestOptions = {
         importType: "Invoice" | "Payment";
         entityIds: number[];
     };
+    /** Invoice ids imported this sync — limits capacity-gap recompute per customer. */
+    affectedInvoiceIds?: number[];
+    /** Narrows replay event load; open AR before this date is seeded from DB. */
+    mepBreachStartDate?: Date | null;
     /**
      * Per-customer progress for callers that show a live bar. `total` counts
      * every customer-step this run will perform, so it stays accurate whether
@@ -81,16 +85,21 @@ export type ArPostIngestDeps = {
     replayCustomer: (args: {
         customerId: number;
         accountId: number;
+        mepBreachStartDate?: Date | null;
         onProgress?: (progress: {
             processed: number;
             total: number;
         }) => void;
     }) => Promise<ReplayCustomerSummary | void>;
     applyMaturity: (accountId: number, asOf: Date) => Promise<MaturityResult | void>;
-    /** Full Process Overdue Invoices for one customer (daily-cron behavior). */
-    processOverdueCustomer: (customerId: number) => Promise<void>;
-    /** One customer at a time — same follow-up as triggerPostImportOverdueMetrics. */
-    liveRefreshCustomer: (customerId: number, asOf?: Date) => Promise<void>;
+    /** Full Process Overdue Invoices for touched customers (daily-cron behavior). */
+    processOverdueCustomers: (customerIds: number[]) => Promise<void>;
+    /**
+     * One customer at a time: live MEP/gap refresh, then restamp open-invoice
+     * CTV/terms (refreshTermsBreachFlags) so re-import does not leave stale
+     * ctv_customer_overdue_mep when overdue_block is already true.
+     */
+    liveRefreshCustomer: (customerId: number, asOf?: Date, invoiceIds?: number[]) => Promise<void>;
     enqueueAsOfRewrite: (args: {
         accountId: number;
         importType: "Invoice" | "Payment";
@@ -105,6 +114,7 @@ export declare function createDefaultArPostIngestDeps(): ArPostIngestDeps;
  * Run post-ingest AR refresh for affected customers.
  * Process Overdue runs for every account; replay / maturity / live refresh
  * (and in-orchestrator as-of) remain credit-insurance-gated.
- * Customers are processed one at a time for replay, overdue, and live refresh.
+ * Customers are processed one at a time for replay and live refresh.
+ * Process Overdue runs once per batch of touched customers.
  */
 export declare function runArPostIngestForCustomers(options: RunArPostIngestOptions, deps?: ArPostIngestDeps): Promise<ArPostIngestResult>;

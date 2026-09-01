@@ -48,6 +48,7 @@ exports.shouldNormalizeAccount10149NegativeCreditPayments = shouldNormalizeAccou
 exports.isAccount10149CreditInvoiceNumber = isAccount10149CreditInvoiceNumber;
 exports.transformAccount10149Batch = transformAccount10149Batch;
 exports.afterAccount10149PaymentLinked = afterAccount10149PaymentLinked;
+const pendingCloseProgress_1 = require("../pendingCloseProgress");
 const connectorFieldUtils_1 = require("../../utils/connectorFieldUtils");
 const alignPaymentToInvoiceCurrency_1 = require("../../payment/alignPaymentToInvoiceCurrency");
 const helamOffsetClose_1 = require("./helamOffsetClose");
@@ -500,8 +501,30 @@ exports.account10149Extension = {
         const closedIds = new Set();
         const customerIds = new Set();
         const offsetNumbers = ctx.helamOffsetInvoiceNumbers ?? [];
+        const total = (0, pendingCloseProgress_1.countUniquePendingCloseInvoiceNumbers)(ctx.invoiceNumbers, offsetNumbers);
+        const report = (processed) => {
+            if (total <= 0) {
+                return;
+            }
+            ctx.onProgress?.({
+                processed: Math.min(processed, total),
+                total,
+            });
+        };
+        if (total > 0) {
+            report(0);
+        }
+        let processed = 0;
         if (offsetNumbers.length > 0) {
-            const offsetResult = await (0, helamOffsetClose_1.applyHelamOffsetStampClosesForInvoiceNumbers)(ctx.prisma, ctx.accountId, offsetNumbers, ctx.userId);
+            const helamBaseline = processed;
+            const helamQueued = (0, pendingCloseProgress_1.uniqueTrimmedInvoiceNumberSet)(offsetNumbers).size;
+            const offsetResult = await (0, helamOffsetClose_1.applyHelamOffsetStampClosesForInvoiceNumbers)(ctx.prisma, ctx.accountId, offsetNumbers, ctx.userId, {
+                onProgress: ({ processed: helamProcessed }) => {
+                    report(helamBaseline + helamProcessed);
+                },
+            });
+            processed += helamQueued;
+            report(processed);
             for (const id of offsetResult.closedIds) {
                 closedIds.add(id);
             }
@@ -510,21 +533,34 @@ exports.account10149Extension = {
             }
         }
         // Virtual fill only for numbers not already stamp-closed as Helam offset.
-        const offsetSet = new Set(offsetNumbers.map((value) => value.trim()).filter(Boolean));
+        const offsetSet = (0, pendingCloseProgress_1.uniqueTrimmedInvoiceNumberSet)(offsetNumbers);
         const virtualNumbers = ctx.invoiceNumbers.filter((value) => !offsetSet.has(value.trim()));
         if (virtualNumbers.length > 0) {
             const result = await (0, reconciledVirtualClose_1.applyReconciledVirtualClosesForInvoiceNumbers)(ctx.prisma, ctx.accountId, virtualNumbers, ctx.userId, ctx.invoiceCloseDates);
+            processed += result.missingNumbers.length;
+            report(processed);
+            const recalcBaseline = processed;
+            const recalcTotal = result.touchedIds.length;
             if (result.touchedIds.length > 0) {
                 // Dynamic import avoids account_10149 ↔ extensions ↔ recalc cycle.
                 const { recalculateInvoicesFromLinkedPayments } = await Promise.resolve().then(() => __importStar(require("../../invoice/linkDeferredPaymentAndRecalc")));
-                await recalculateInvoicesFromLinkedPayments(ctx.prisma, new Map(result.touchedIds.map((invoiceId) => [invoiceId, {}])));
+                await recalculateInvoicesFromLinkedPayments(ctx.prisma, new Map(result.touchedIds.map((invoiceId) => [invoiceId, {}])), {
+                    onProgress: ({ processed: recalcProcessed }) => {
+                        report(recalcBaseline + recalcProcessed);
+                    },
+                });
             }
+            processed = recalcBaseline + recalcTotal;
+            report(processed);
             for (const id of result.touchedIds) {
                 closedIds.add(id);
             }
             for (const id of result.customerIds) {
                 customerIds.add(id);
             }
+        }
+        if (total > 0) {
+            report(total);
         }
         return {
             closedIds: [...closedIds],

@@ -1013,7 +1013,10 @@ async function importInvoiceBatch(
         const customerTotalPaid = paymentsWin
             ? 0
             : (invoice.customer_total_paid ?? 0);
-        const netAmount = customerAmount;
+        // Account currency from `amount`; invoice currency from `customer_amount`.
+        // Do not copy customer amounts into net/outstanding — per-invoice FX is already
+        // baked into `amount` and must stay distinct for dual-currency header totals.
+        const netAmount = amount;
         const customerNetAmount = customerAmount;
         const outstanding = netAmount - totalPaid;
         const customerOutstanding = customerNetAmount - customerTotalPaid;

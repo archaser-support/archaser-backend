@@ -1,9 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 /**
  * Due report schedules: execute via reports Nest S2S when REPORTS_SERVICE_URL
  * is set; email CSV/Excel attachment to schedule_config.recipients when configured.
  */
-export declare function executeScheduledReports(prisma: PrismaClient): Promise<{
+export declare function executeScheduledReports(prisma: PrismaClient, freeze?: CronFrozenAccountGuard): Promise<{
     success: boolean;
     message: string;
     summary: {

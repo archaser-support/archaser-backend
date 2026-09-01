@@ -7,10 +7,12 @@
  * Creates SCHEDULED activities; channel send handled by Activity Workflow Manager.
  */
 import type { PrismaClient } from "@prisma/client";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 export declare function processDueNotifications(prisma: PrismaClient, options?: {
     customerId?: number;
     skipSmsSend?: boolean;
     fastForwardScheduledActivities?: boolean;
+    freeze?: CronFrozenAccountGuard;
 }): Promise<{
     success: boolean;
     message: string;

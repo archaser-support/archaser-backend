@@ -15,11 +15,12 @@ const INVOICE_STATUS = {
  * recalculate customer rollups and refresh credit-insurance fields. Large
  * negative outstanding (credit notes) is not treated as Paid.
  */
-async function closeZeroOutstandingDebtInvoices(prisma) {
+async function closeZeroOutstandingDebtInvoices(prisma, freeze) {
     const start = Date.now();
-    const openInvoices = await prisma.invoice.findMany({
+    const openInvoicesRaw = await prisma.invoice.findMany({
         where: {
             status: { in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE] },
+            ...(freeze ? freeze.accountIdNotInFilter() : {}),
         },
         select: {
             id: true,
@@ -30,9 +31,10 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
             amount: true,
             customer_amount: true,
             customer_id: true,
+            account_id: true,
         },
     });
-    for (const inv of openInvoices) {
+    for (const inv of openInvoicesRaw) {
         const customerNet = inv.customer_net_amount ?? inv.customer_amount ?? 0;
         const customerPaid = inv.customer_total_paid ?? 0;
         const net = inv.net_amount ?? inv.amount ?? 0;
@@ -46,6 +48,9 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
         });
     }
     const connectors = await prisma.billingConnector.findMany({
+        where: freeze?.frozenAccountIds.size
+            ? { account_id: { notIn: [...freeze.frozenAccountIds] } }
+            : undefined,
         select: { account_id: true, invoice_paid_tolerance: true },
     });
     const toleranceByAccount = new Map();
@@ -62,6 +67,7 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
             status: {
                 in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE],
             },
+            ...(freeze ? freeze.accountIdNotInFilter() : {}),
         },
         select: {
             id: true,
@@ -72,6 +78,21 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
     });
     const invoices = candidates.filter((invoice) => (0, billing_connector_1.isWithinPaidTolerance)(invoice.customer_outstanding_debt ?? 0, toleranceByAccount.get(invoice.account_id) ?? billing_connector_1.INVOICE_PAID_TOLERANCE));
     if (invoices.length === 0) {
+        if (freeze && freeze.frozenAccountIds.size > 0) {
+            const skippedRows = await prisma.invoice.findMany({
+                where: {
+                    status: {
+                        in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE],
+                    },
+                    account_id: { in: [...freeze.frozenAccountIds] },
+                },
+                select: { account_id: true },
+                distinct: ["account_id"],
+            });
+            freeze.reportSkips(skippedRows
+                .map((row) => row.account_id)
+                .filter((id) => id != null));
+        }
         return {
             success: true,
             message: "No zero-debt Due/Overdue invoices to close",
@@ -94,6 +115,21 @@ async function closeZeroOutstandingDebtInvoices(prisma) {
     (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
     for (const customerId of customerIds) {
         await (0, credit_insurance_domain_1.syncCustomerInsuranceFields)(customerId);
+    }
+    if (freeze && freeze.frozenAccountIds.size > 0) {
+        const skippedRows = await prisma.invoice.findMany({
+            where: {
+                status: {
+                    in: [INVOICE_STATUS.DUE, INVOICE_STATUS.OVERDUE],
+                },
+                account_id: { in: [...freeze.frozenAccountIds] },
+            },
+            select: { account_id: true },
+            distinct: ["account_id"],
+        });
+        freeze.reportSkips(skippedRows
+            .map((row) => row.account_id)
+            .filter((id) => id != null));
     }
     return {
         success: true,

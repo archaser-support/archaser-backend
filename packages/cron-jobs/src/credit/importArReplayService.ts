@@ -6,14 +6,18 @@
  * Does not overwrite `outstanding_debt` / `customer_outstanding_debt` — those
  * stay owned by invoice import and payment recalc (credits keep negative nets).
  */
-import { linkDeferredPaymentAndRecalc } from "@archaser/billing-connector";
+import {
+    linkDeferredPaymentsAndRecalcBatch,
+    resolveInvoicePaidRecalcOptions,
+} from "@archaser/billing-connector";
 import {
     computeInvoiceCapacityGapContribution,
     computeLimitAssessedAmountForNewOpenInvoice,
     creditInsurancePrisma as boundPrisma,
+    isInvoiceInMepBreachScope,
     parseImportDateToLocalCalendarDate,
-    resolveEffectiveApprovedLimit,
-    stampInvoiceInsuranceFieldsAsOf,
+    resolveTopUpTotalsForAsOfDates,
+    stampInvoicesInsuranceFieldsAsOf,
 } from "@archaser/credit-insurance-domain";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
@@ -91,6 +95,14 @@ function calendarDayKey(date: Date): number {
         normalized.getFullYear() * 10000 +
         (normalized.getMonth() + 1) * 100 +
         normalized.getDate()
+    );
+}
+
+function utcDayKey(date: Date): number {
+    return Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate()
     );
 }
 
@@ -237,18 +249,149 @@ export type ReplayCustomerArImportParams = {
     dbClient?: PrismaClient;
     /** Event-level progress; a single customer can carry thousands of events. */
     onProgress?: (progress: { processed: number; total: number }) => void;
+    /**
+     * When true (default), still link payments with `invoice_id = null`.
+     * Already-linked payments only update the in-memory open-AR timeline.
+     */
+    linkDeferredPayments?: boolean;
+    /**
+     * When true, stamp insurance CTV fields after assessed amounts (batched).
+     * Default false: post-ingest capacity gap only needs assessed stamps + live
+     * refresh; per-invoice CTV stamping dominated runtime at Helam scale.
+     */
+    stampInsuranceFields?: boolean;
+    /**
+     * When set, seed open AR from pre-cutover invoices and replay only events on
+     * or after this date (inclusive). Stamps only apply to in-scope invoices.
+     */
+    mepBreachStartDate?: Date | null;
+};
+
+const ASSESSED_BULK_CHUNK = 500;
+
+function utcDayStart(date: Date): Date {
+    return new Date(
+        Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+    );
+}
+
+/** Sum positive outstanding on invoices issued before the MEP cutover. */
+async function seedOpenArBeforeMepCutover(
+    db: PrismaClient,
+    customerId: number,
+    mepBreachStartDate: Date
+): Promise<number> {
+    const cutover = utcDayStart(mepBreachStartDate);
+    const rows = await db.invoice.findMany({
+        where: {
+            customer_id: customerId,
+            invoice_date: { lt: cutover },
+            OR: [{ outstanding_debt: { gt: 0 } }, { net_amount: { gt: 0 } }],
+        },
+        select: { outstanding_debt: true, net_amount: true },
+    });
+    let total = 0;
+    for (const row of rows) {
+        const outstanding =
+            row.outstanding_debt != null && row.outstanding_debt > 0
+                ? row.outstanding_debt
+                : Math.max(0, row.net_amount ?? 0);
+        total += outstanding;
+    }
+    return total;
+}
+
+function filterReplayInputsForMepCutover(params: {
+    invoiceInputs: ReplayInvoiceInput[];
+    paymentInputs: ReplayPaymentInput[];
+    mepBreachStartDate: Date;
+}): {
+    invoiceInputs: ReplayInvoiceInput[];
+    paymentInputs: ReplayPaymentInput[];
+} {
+    const cutoverMs = utcDayStart(params.mepBreachStartDate).getTime();
+    const invoiceInputs = params.invoiceInputs.filter((inv) => {
+        const day = parseImportDateToLocalCalendarDate(inv.invoiceDate);
+        return day != null && day.getTime() >= cutoverMs;
+    });
+    const postCutoverNumbers = new Set(
+        invoiceInputs.map((inv) => inv.invoiceNumber)
+    );
+    const postCutoverIds = new Set(
+        invoiceInputs
+            .map((inv) => inv.invoiceId)
+            .filter((id): id is number => id != null)
+    );
+    const paymentInputs = params.paymentInputs.filter((payment) => {
+        const day = parseImportDateToLocalCalendarDate(payment.paymentDate);
+        if (day != null && day.getTime() >= cutoverMs) {
+            return true;
+        }
+        if (
+            payment.invoiceId != null &&
+            postCutoverIds.has(payment.invoiceId)
+        ) {
+            return true;
+        }
+        return postCutoverNumbers.has(payment.invoiceNumber);
+    });
+    return { invoiceInputs, paymentInputs };
+}
+
+type AssessedStamp = {
+    invoiceId: number;
+    invoiceDate: Date;
+    limitAssessedAmount: number;
 };
 
 /**
- * DB-backed replay for a single customer. Links deferred payments on
- * payment_apply events and re-stamps limit_assessed_amount on invoice_open.
- * Does not rewrite outstanding columns (import / payment recalc own those).
+ * Persist distinct assessed amounts in chunks via UPDATE … FROM (VALUES …).
+ */
+async function bulkWriteLimitAssessedAmounts(
+    db: PrismaClient,
+    stamps: AssessedStamp[],
+    limitCurrency: string | null,
+    assessedAt: Date
+): Promise<void> {
+    if (stamps.length === 0) {
+        return;
+    }
+    for (let i = 0; i < stamps.length; i += ASSESSED_BULK_CHUNK) {
+        const chunk = stamps.slice(i, i + ASSESSED_BULK_CHUNK);
+        const ids = chunk.map((row) => row.invoiceId);
+        const amounts = chunk.map((row) => row.limitAssessedAmount);
+        await db.$executeRaw`
+            UPDATE "Invoice" AS inv
+            SET
+                limit_assessed_amount = data.amount,
+                limit_assessed_currency = ${limitCurrency},
+                limit_assessed_at = ${assessedAt}
+            FROM (
+                SELECT
+                    UNNEST(${ids}::int[]) AS id,
+                    UNNEST(${amounts}::float8[]) AS amount
+            ) AS data
+            WHERE inv.id = data.id
+        `;
+    }
+}
+
+/**
+ * Chronological AR replay for one customer.
+ *
+ * Computes `limit_assessed_amount` entirely in memory (open-AR timeline), then
+ * bulk-writes stamps. Deferred payments (`invoice_id` null) are linked afterward;
+ * already-linked payments only affect the in-memory timeline — no per-event
+ * forceRecalc. Does not rewrite outstanding columns.
  */
 export async function replayCustomerArImport(
     params: ReplayCustomerArImportParams
 ): Promise<ReplayCustomerSummary> {
     const db = params.dbClient ?? boundPrisma;
     const customerId = params.customerId;
+    const linkDeferredPayments = params.linkDeferredPayments !== false;
+    const stampInsuranceFields = params.stampInsuranceFields === true;
+    const mepBreachStartDate = params.mepBreachStartDate ?? null;
 
     const [dbInvoices, dbPayments, insurance] = await Promise.all([
         db.invoice.findMany({
@@ -289,7 +432,7 @@ export async function replayCustomerArImport(
         }),
     ]);
 
-    const invoiceInputs: ReplayInvoiceInput[] =
+    let invoiceInputs: ReplayInvoiceInput[] =
         params.invoices ??
         dbInvoices
             .filter((inv) => inv.invoice_number && inv.invoice_date)
@@ -301,7 +444,7 @@ export async function replayCustomerArImport(
                 invoiceId: inv.id,
             }));
 
-    const paymentInputs: ReplayPaymentInput[] =
+    let paymentInputs: ReplayPaymentInput[] =
         params.payments ??
         dbPayments
             .filter((p) => p.invoice_number)
@@ -313,6 +456,22 @@ export async function replayCustomerArImport(
                 customerAmount: p.customer_amount,
                 invoiceId: p.invoice_id,
             }));
+
+    let initialOpenAr = 0;
+    if (mepBreachStartDate != null && !params.invoices && !params.payments) {
+        initialOpenAr = await seedOpenArBeforeMepCutover(
+            db,
+            customerId,
+            mepBreachStartDate
+        );
+        const filtered = filterReplayInputsForMepCutover({
+            invoiceInputs,
+            paymentInputs,
+            mepBreachStartDate,
+        });
+        invoiceInputs = filtered.invoiceInputs;
+        paymentInputs = filtered.paymentInputs;
+    }
 
     const baseApprovedLimit =
         params.approvedLimit != null
@@ -327,36 +486,38 @@ export async function replayCustomerArImport(
             ?.trim()
             .toUpperCase() || null;
 
-    // Top-ups carry start/end dates, so each invoice is assessed against the
-    // top-ups live on its own issue date. The base approved limit has no
-    // history, so it stays the current value.
+    // Prefetch top-ups once for the invoice date span, resolve each day in memory.
     const topUpTotalByDay = new Map<number, number>();
-    const resolveTopUpTotalAsOf = async (asOfDate: Date): Promise<number> => {
-        if (params.topUpTotal != null) {
-            return params.topUpTotal;
+    if (params.topUpTotal == null && baseApprovedLimit != null) {
+        const uniqueInvoiceDates = Array.from(
+            new Map(
+                invoiceInputs.map((inv) => [
+                    calendarDayKey(inv.invoiceDate),
+                    inv.invoiceDate,
+                ])
+            ).values()
+        );
+        const totalsByUtc = await resolveTopUpTotalsForAsOfDates(
+            customerId,
+            uniqueInvoiceDates,
+            {
+                baseApprovedLimit,
+                baseApprovedLimitCurrency: limitCurrency,
+                outdatedDcl: insurance?.outdated_dcl ?? false,
+                excludedFromPolicy: insurance?.excluded_from_policy ?? false,
+                ...(insurance?.insurance_policy_id != null
+                    ? { parentPrimaryPolicyId: insurance.insurance_policy_id }
+                    : {}),
+                dbClient: db,
+            }
+        );
+        for (const date of uniqueInvoiceDates) {
+            topUpTotalByDay.set(
+                calendarDayKey(date),
+                totalsByUtc.get(utcDayKey(date)) ?? 0
+            );
         }
-        if (baseApprovedLimit == null) {
-            return 0;
-        }
-        const dayKey = calendarDayKey(asOfDate);
-        const cached = topUpTotalByDay.get(dayKey);
-        if (cached != null) {
-            return cached;
-        }
-        const resolved = await resolveEffectiveApprovedLimit(customerId, {
-            asOfDate,
-            baseApprovedLimit,
-            baseApprovedLimitCurrency: limitCurrency,
-            outdatedDcl: insurance?.outdated_dcl ?? false,
-            excludedFromPolicy: insurance?.excluded_from_policy ?? false,
-            ...(insurance?.insurance_policy_id != null
-                ? { parentPrimaryPolicyId: insurance.insurance_policy_id }
-                : {}),
-            dbClient: db,
-        });
-        topUpTotalByDay.set(dayKey, resolved.topUpTotalInLimitCurrency);
-        return resolved.topUpTotalInLimitCurrency;
-    };
+    }
 
     const events = buildReplayEvents(invoiceInputs, paymentInputs);
     const invoiceIdByNumber = new Map(
@@ -365,19 +526,24 @@ export async function replayCustomerArImport(
             .map((inv) => [inv.invoiceNumber, inv.invoiceId!])
     );
 
-    let paymentsLinked = 0;
-    let deferredRemaining = 0;
-    // Point-in-time open AR: invoices add to it when they open and give the
-    // headroom back as payments are applied along the timeline. Reading current
-    // AR from the DB here would leak present-day (already paid) balances into
-    // past events, permanently locking the limit inside closed invoices.
+    const assessedStamps: AssessedStamp[] = [];
+    const deferredToLink: Array<{
+        paymentId: number;
+        invoiceId: number;
+    }> = [];
+
+    // Point-in-time open AR stays in memory only — never read live DB balances.
     const openArRunning = new Map<string, number>();
     const openOutstandingByInvoice = new Map<string, number>();
+    if (initialOpenAr > 0) {
+        openArRunning.set("default", initialOpenAr);
+    }
+    let deferredRemaining = 0;
     let eventsProcessed = 0;
 
     for (const event of events) {
         eventsProcessed += 1;
-        if (eventsProcessed % 100 === 0 || eventsProcessed === events.length) {
+        if (eventsProcessed % 500 === 0 || eventsProcessed === events.length) {
             params.onProgress?.({
                 processed: eventsProcessed,
                 total: events.length,
@@ -387,30 +553,33 @@ export async function replayCustomerArImport(
             const payload = event.payload;
             const scopeKey = "default";
             const openBefore = openArRunning.get(scopeKey) ?? 0;
-            // Credits (negative net) must not consume limit or be written as 0 outstanding.
             const assessedOutstanding = Math.max(0, payload.netAmount);
+            const dayKey = calendarDayKey(payload.invoiceDate);
+            const topUpTotal =
+                params.topUpTotal ?? topUpTotalByDay.get(dayKey) ?? 0;
             const limitAssessedAmount =
                 computeLimitAssessedAmountForNewOpenInvoice({
                     approvedLimit,
-                    topUpTotal: await resolveTopUpTotalAsOf(payload.invoiceDate),
+                    topUpTotal,
                     openArOnPolicyBeforeInvoice: openBefore,
                     newInvoiceOutstanding: assessedOutstanding,
                 });
 
             if (payload.invoiceId != null) {
-                await db.invoice.update({
-                    where: { id: payload.invoiceId },
-                    data: {
-                        limit_assessed_amount: limitAssessedAmount,
-                        limit_assessed_currency: limitCurrency,
-                        limit_assessed_at: new Date(),
-                    },
-                });
-                await stampInvoiceInsuranceFieldsAsOf(
-                    payload.invoiceId,
-                    payload.invoiceDate,
-                    db
-                );
+                if (
+                    mepBreachStartDate == null ||
+                    isInvoiceInMepBreachScope(
+                        payload.invoiceDate,
+                        mepBreachStartDate
+                    )
+                ) {
+                    assessedStamps.push({
+                        invoiceId: payload.invoiceId,
+                        invoiceDate: payload.invoiceDate,
+                        limitAssessedAmount,
+                    });
+                }
+                invoiceIdByNumber.set(payload.invoiceNumber, payload.invoiceId);
             }
 
             openArRunning.set(scopeKey, openBefore + assessedOutstanding);
@@ -419,9 +588,6 @@ export async function replayCustomerArImport(
                 (openOutstandingByInvoice.get(payload.invoiceNumber) ?? 0) +
                     assessedOutstanding
             );
-            if (payload.invoiceId != null) {
-                invoiceIdByNumber.set(payload.invoiceNumber, payload.invoiceId);
-            }
             continue;
         }
 
@@ -429,15 +595,7 @@ export async function replayCustomerArImport(
         const invoiceId =
             payment.invoiceId ??
             invoiceIdByNumber.get(payment.invoiceNumber) ??
-            (
-                await db.invoice.findFirst({
-                    where: {
-                        customer_id: customerId,
-                        invoice_number: payment.invoiceNumber,
-                    },
-                    select: { id: true },
-                })
-            )?.id;
+            null;
 
         if (invoiceId == null) {
             deferredRemaining += 1;
@@ -446,13 +604,9 @@ export async function replayCustomerArImport(
 
         invoiceIdByNumber.set(payment.invoiceNumber, invoiceId);
 
-        const linkResult = await linkDeferredPaymentAndRecalc(db, {
-            invoicePaymentId: payment.id,
-            invoiceId,
-            forceRecalc: true,
-        });
-        if (!linkResult.alreadyLinked) {
-            paymentsLinked += 1;
+        // Already linked during ingest: only advance the in-memory timeline.
+        if (payment.invoiceId == null && linkDeferredPayments) {
+            deferredToLink.push({ paymentId: payment.id, invoiceId });
         }
 
         const scopeKey = "default";
@@ -469,6 +623,45 @@ export async function replayCustomerArImport(
                 Math.max(0, (openArRunning.get(scopeKey) ?? 0) - applied)
             );
         }
+    }
+
+    const assessedAt = new Date();
+    await bulkWriteLimitAssessedAmounts(
+        db,
+        assessedStamps,
+        limitCurrency,
+        assessedAt
+    );
+    params.onProgress?.({
+        processed: events.length,
+        total: events.length,
+    });
+
+    if (stampInsuranceFields && assessedStamps.length > 0) {
+        await stampInvoicesInsuranceFieldsAsOf(
+            assessedStamps.map((stamp) => ({
+                invoiceId: stamp.invoiceId,
+                asOf: stamp.invoiceDate,
+            })),
+            db
+        );
+    }
+
+    let paymentsLinked = 0;
+    if (linkDeferredPayments && deferredToLink.length > 0) {
+        const recalcOptions = await resolveInvoicePaidRecalcOptions(
+            db,
+            params.accountId
+        );
+        const linkResult = await linkDeferredPaymentsAndRecalcBatch(
+            db,
+            deferredToLink.map((row) => ({
+                invoicePaymentId: row.paymentId,
+                invoiceId: row.invoiceId,
+            })),
+            recalcOptions
+        );
+        paymentsLinked = linkResult.paymentsLinked;
     }
 
     const stillDeferred = await db.invoicePayment.count({

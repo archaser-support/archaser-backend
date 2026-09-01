@@ -53,12 +53,21 @@ const ConnectorSyncExecutionSchema = new mongoose_1.Schema({
         index: true,
     },
     started_at: { type: Date, required: true, default: Date.now },
+    last_progress_at: { type: Date, required: true, default: Date.now },
     completed_at: { type: Date, default: null },
     duration_seconds: { type: Number, default: null },
     // Mixed so `_maturity` may carry status / sample_errors on finish.
     entity_stats: { type: mongoose_1.Schema.Types.Mixed, default: {} },
     error_message: { type: String, default: null },
     error_type: { type: String, default: null },
+    awaiting_post_ingest_drain: { type: Boolean, default: false },
+    pending_terminal_status: {
+        type: String,
+        enum: ["SUCCESS", "FAILED", "PARTIAL", "TIMEOUT"],
+        default: null,
+    },
+    pending_error_message: { type: String, default: null },
+    pending_error_type: { type: String, default: null },
 }, {
     timestamps: {
         createdAt: "created_at",
@@ -70,6 +79,8 @@ ConnectorSyncExecutionSchema.index({ execution_id: 1 }, { unique: true, sparse: 
 ConnectorSyncExecutionSchema.index({ connector_id: 1, started_at: -1 });
 ConnectorSyncExecutionSchema.index({ account_id: 1, started_at: -1 });
 ConnectorSyncExecutionSchema.index({ status: 1, started_at: 1 });
+ConnectorSyncExecutionSchema.index({ status: 1, last_progress_at: 1 });
+ConnectorSyncExecutionSchema.index({ account_id: 1, status: 1, awaiting_post_ingest_drain: 1 }, { sparse: true });
 ConnectorSyncExecutionSchema.index({ started_at: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
 exports.ConnectorSyncExecutionModel = mongoose_1.default.models.ConnectorSyncExecution ||
     mongoose_1.default.model("ConnectorSyncExecution", ConnectorSyncExecutionSchema);

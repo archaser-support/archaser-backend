@@ -18,6 +18,7 @@ const processNotificationRules_1 = require("./processNotificationRules");
 const processDueNotifications_1 = require("./processDueNotifications");
 const processAutomatedCollectionPeriods_1 = require("./processAutomatedCollectionPeriods");
 const activityWorkflowManager_1 = require("./activityWorkflowManager");
+const cronFrozenAccountGuard_1 = require("./accountFreeze/cronFrozenAccountGuard");
 function timed(name, run) {
     const start = Date.now();
     return run()
@@ -52,8 +53,14 @@ const fetchCurrencyRates = (prisma) => timed("Fetch Currency Rates", async () =>
 });
 const computeGapInBaseCurrency = (prisma) => timed("Compute Gap In Base Currency", async () => {
     (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Compute Gap In Base Currency");
     const fxResult = await (0, currencyRateService_1.fetchAndStoreCurrencyRates)(prisma);
-    const gapResult = await (0, credit_insurance_domain_1.syncAllCustomerPolicyGapAmounts)();
+    const gapResult = await (0, credit_insurance_domain_1.syncAllCustomerPolicyGapAmounts)({
+        excludeAccountIds: freeze.frozenAccountIds,
+    });
+    if (gapResult.skippedAccountIds.length > 0) {
+        freeze.reportSkips(gapResult.skippedAccountIds);
+    }
     return {
         message: `FX ${fxResult.ratesStored} rates; base-currency gaps: ${gapResult.customersUpdated} customers updated (missing rates: ${gapResult.missingRates})`,
         summary: { fxResult, gapResult },
@@ -61,7 +68,13 @@ const computeGapInBaseCurrency = (prisma) => timed("Compute Gap In Base Currency
 });
 const creditDashboardDailySnapshot = (prisma) => timed("Credit Dashboard Daily Snapshot", async () => {
     (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
-    const result = await (0, credit_insurance_domain_1.takeCreditDashboardDailySnapshots)();
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Credit Dashboard Daily Snapshot");
+    const result = await (0, credit_insurance_domain_1.takeCreditDashboardDailySnapshots)({
+        excludeAccountIds: freeze.frozenAccountIds,
+    });
+    if (result.skippedAccountIds.length > 0) {
+        freeze.reportSkips(result.skippedAccountIds);
+    }
     return {
         message: `Credit dashboard daily snapshots completed: ${result.scopesProcessed} scopes`,
         summary: result,
@@ -69,7 +82,13 @@ const creditDashboardDailySnapshot = (prisma) => timed("Credit Dashboard Daily S
 });
 const insurancePolicyTrendDailySnapshot = (prisma) => timed("Insurance Policy Trend Daily Snapshot", async () => {
     (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
-    const result = await (0, credit_insurance_domain_1.takeInsurancePolicyTrendSnapshots)();
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Insurance Policy Trend Daily Snapshot");
+    const result = await (0, credit_insurance_domain_1.takeInsurancePolicyTrendSnapshots)({
+        excludeAccountIds: freeze.frozenAccountIds,
+    });
+    if (result.skippedAccountIds.length > 0) {
+        freeze.reportSkips(result.skippedAccountIds);
+    }
     return {
         message: `Insurance policy trend snapshots: ${result.policyRowsUpserted} policies, ${result.countryRowsUpserted} countries, ${result.namedRowsUpserted} named rows across ${result.accountsProcessed} accounts`,
         summary: result,
@@ -106,7 +125,20 @@ const customerPolicyTrendDailySnapshot = (prisma) => timed("Customer Policy Tren
     let retryError;
     let retryResult;
     try {
-        retryResult = await (0, arPostIngestRetryQueue_1.drainArPostIngestRetryQueue)();
+        retryResult = await (0, arPostIngestRetryQueue_1.drainArPostIngestRetryQueue)({
+            onItemProcessed: async (accountId) => {
+                await (0, billing_connector_1.touchAwaitingPostIngestDrainProgress)(accountId, {
+                    countPendingForAccount: arPostIngestRetryQueue_1.countPendingArPostIngestCustomers,
+                });
+                await (0, billing_connector_1.finalizeAwaitingPostIngestDrainExecutions)({
+                    accountId,
+                    countPendingForAccount: arPostIngestRetryQueue_1.countPendingArPostIngestCustomers,
+                });
+            },
+        });
+        await (0, billing_connector_1.finalizeAwaitingPostIngestDrainExecutions)({
+            countPendingForAccount: arPostIngestRetryQueue_1.countPendingArPostIngestCustomers,
+        });
         if (retryResult.failures > 0) {
             retryError = new Error(`AR post-ingest retry drain: ${retryResult.itemsProcessed} retried, ${retryResult.failures} failures, ${retryResult.givenUp} given up`);
         }
@@ -134,7 +166,13 @@ const customerPolicyTrendDailySnapshot = (prisma) => timed("Customer Policy Tren
 /** Requires `MONGODB_URI` so scheduled sync history can persist (shared syncHistory). */
 const syncBillingConnectors = async (prisma) => {
     const start = Date.now();
-    const result = await (0, billing_connector_1.syncDueBillingConnectors)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Sync Billing Connectors");
+    const result = await (0, billing_connector_1.syncDueBillingConnectors)(prisma, {
+        excludeAccountIds: freeze.frozenAccountIds,
+    });
+    if (result.skippedFrozenAccountIds.length > 0) {
+        freeze.reportSkips(result.skippedFrozenAccountIds);
+    }
     return {
         success: result.success,
         message: result.message,
@@ -143,7 +181,8 @@ const syncBillingConnectors = async (prisma) => {
     };
 };
 const computeOverdueMetrics = async (prisma) => {
-    const result = await (0, computeCustomerOverdueMetrics_1.computeCustomerOverdueMetrics)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Compute Customer Overdue Metrics");
+    const result = await (0, computeCustomerOverdueMetrics_1.computeCustomerOverdueMetrics)(prisma, undefined, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -152,7 +191,8 @@ const computeOverdueMetrics = async (prisma) => {
     };
 };
 const closeZeroDebt = async (prisma) => {
-    const result = await (0, closeZeroOutstandingDebtInvoices_1.closeZeroOutstandingDebtInvoices)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Close Zero Outstanding Debt Invoices");
+    const result = await (0, closeZeroOutstandingDebtInvoices_1.closeZeroOutstandingDebtInvoices)(prisma, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -162,7 +202,8 @@ const closeZeroDebt = async (prisma) => {
 };
 const fixClosedCollection = async (prisma, ctx) => {
     const lastRunAt = ctx?.lastRunAt ?? new Date(0);
-    const result = await (0, fixClosedCollectionData_1.fixClosedCollectionData)(prisma, lastRunAt);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Fix Closed Collection Data");
+    const result = await (0, fixClosedCollectionData_1.fixClosedCollectionData)(prisma, lastRunAt, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -171,13 +212,16 @@ const fixClosedCollection = async (prisma, ctx) => {
     };
 };
 const inforuSmsStatus = async (prisma) => {
-    return (0, inforuSmsStatusCheck_1.checkInforuSmsStatus)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Inforu SMS Status Check");
+    return (0, inforuSmsStatusCheck_1.checkInforuSmsStatus)(prisma, freeze);
 };
 const moveCollectionCategory = async (prisma) => {
-    return (0, moveCollectionToNextCategory_1.moveCollectionToNextCategory)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Move Collection To Next Category");
+    return (0, moveCollectionToNextCategory_1.moveCollectionToNextCategory)(prisma, freeze);
 };
 const processOverdueInvoices = async (prisma) => {
-    const result = await (0, handleOverdueInvoices_1.handleOverdueInvoices)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Process Overdue Invoices");
+    const result = await (0, handleOverdueInvoices_1.handleOverdueInvoices)(prisma, undefined, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -186,7 +230,8 @@ const processOverdueInvoices = async (prisma) => {
     };
 };
 const reportScheduler = async (prisma) => {
-    const result = await (0, executeScheduledReports_1.executeScheduledReports)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Report Scheduler");
+    const result = await (0, executeScheduledReports_1.executeScheduledReports)(prisma, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -195,7 +240,8 @@ const reportScheduler = async (prisma) => {
     };
 };
 const notificationRules = async (prisma) => {
-    const result = await (0, processNotificationRules_1.processNotificationRules)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Process Notification Rules");
+    const result = await (0, processNotificationRules_1.processNotificationRules)(prisma, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -204,7 +250,8 @@ const notificationRules = async (prisma) => {
     };
 };
 const dueNotifications = async (prisma) => {
-    const result = await (0, processDueNotifications_1.processDueNotifications)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Process Due Notifications");
+    const result = await (0, processDueNotifications_1.processDueNotifications)(prisma, { freeze });
     return {
         success: result.success,
         message: result.message,
@@ -213,11 +260,22 @@ const dueNotifications = async (prisma) => {
     };
 };
 const processAutomatedPeriods = async (prisma) => {
-    return (0, processAutomatedCollectionPeriods_1.processAutomatedCollectionPeriods)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Process Automated Collection Periods");
+    return (0, processAutomatedCollectionPeriods_1.processAutomatedCollectionPeriods)(prisma, freeze);
 };
 const activityWorkflow = async (prisma) => {
-    return (0, activityWorkflowManager_1.activityWorkflowManager)(prisma);
+    const freeze = await (0, cronFrozenAccountGuard_1.beginCronFrozenAccountGuard)(prisma, "Activity Workflow Manager");
+    return (0, activityWorkflowManager_1.activityWorkflowManager)(prisma, { freeze });
 };
+/**
+ * Cron handler registry.
+ *
+ * Freeze exemptions (no beginCronFrozenAccountGuard at handler entry):
+ * - Fetch Currency Rates — global FX fetch; must run during import freeze.
+ * - Customer Policy Trend Daily Snapshot — snapshot pass may skip frozen accounts
+ *   internally, but AR post-ingest retry drain and as-of rewrite drain must still
+ *   run for frozen accounts (deadlock avoidance, PRD D17).
+ */
 const HANDLERS = {
     "Fetch Currency Rates": fetchCurrencyRates,
     "Compute Gap In Base Currency": computeGapInBaseCurrency,

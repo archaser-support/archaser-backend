@@ -83,11 +83,30 @@ export type ReplayCustomerArImportParams = {
         processed: number;
         total: number;
     }) => void;
+    /**
+     * When true (default), still link payments with `invoice_id = null`.
+     * Already-linked payments only update the in-memory open-AR timeline.
+     */
+    linkDeferredPayments?: boolean;
+    /**
+     * When true, stamp insurance CTV fields after assessed amounts (batched).
+     * Default false: post-ingest capacity gap only needs assessed stamps + live
+     * refresh; per-invoice CTV stamping dominated runtime at Helam scale.
+     */
+    stampInsuranceFields?: boolean;
+    /**
+     * When set, seed open AR from pre-cutover invoices and replay only events on
+     * or after this date (inclusive). Stamps only apply to in-scope invoices.
+     */
+    mepBreachStartDate?: Date | null;
 };
 /**
- * DB-backed replay for a single customer. Links deferred payments on
- * payment_apply events and re-stamps limit_assessed_amount on invoice_open.
- * Does not rewrite outstanding columns (import / payment recalc own those).
+ * Chronological AR replay for one customer.
+ *
+ * Computes `limit_assessed_amount` entirely in memory (open-AR timeline), then
+ * bulk-writes stamps. Deferred payments (`invoice_id` null) are linked afterward;
+ * already-linked payments only affect the in-memory timeline — no per-event
+ * forceRecalc. Does not rewrite outstanding columns.
  */
 export declare function replayCustomerArImport(params: ReplayCustomerArImportParams): Promise<ReplayCustomerSummary>;
 export declare function replayArImportForCustomers(customerIds: number[], accountId: number, dbClient?: PrismaClient): Promise<ReplayBatchSummary>;

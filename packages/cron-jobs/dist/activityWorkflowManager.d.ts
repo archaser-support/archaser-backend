@@ -9,9 +9,11 @@
  *
  */
 import type { PrismaClient } from "@prisma/client";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 export declare function activityWorkflowManager(prisma: PrismaClient, options?: {
     skipSmsSend?: boolean;
     customerId?: number;
+    freeze?: CronFrozenAccountGuard;
 }): Promise<{
     success: boolean;
     message: string;

@@ -7,7 +7,7 @@ const jobLog_1 = require("./logging/jobLog");
  * Ported from frontend SHA 81bd37afa048ee2b07f5e2e1a67629567cbc174f
  * server/services/InforuStatusChecker.ts
  */
-async function checkInforuSmsStatus(prisma) {
+async function checkInforuSmsStatus(prisma, freeze) {
     const start = Date.now();
     const summary = {
         pendingMessagesFound: 0,
@@ -28,6 +28,15 @@ async function checkInforuSmsStatus(prisma) {
                     { message_id: { not: null } },
                 ],
                 created_at: { gte: sevenDaysAgo },
+                ...(freeze && freeze.frozenAccountIds.size > 0
+                    ? {
+                        Activity: {
+                            account_id: {
+                                notIn: [...freeze.frozenAccountIds],
+                            },
+                        },
+                    }
+                    : {}),
             },
             include: {
                 SMSVendor: true,
@@ -49,7 +58,34 @@ async function checkInforuSmsStatus(prisma) {
             take: 20, // Process 20 messages per run
         });
         summary.pendingMessagesFound = pendingMessages.length;
+        const reportFrozenSkips = async () => {
+            if (!freeze || freeze.frozenAccountIds.size === 0) {
+                return;
+            }
+            const skippedRows = await prisma.activityContact.findMany({
+                where: {
+                    status: { in: ["Sent", "Scheduled"] },
+                    communication_channel: "SMS",
+                    SMSVendor: { provider: "inforu" },
+                    OR: [
+                        { vendor_message_id: { not: null } },
+                        { message_id: { not: null } },
+                    ],
+                    created_at: { gte: sevenDaysAgo },
+                    Activity: {
+                        account_id: { in: [...freeze.frozenAccountIds] },
+                    },
+                },
+                select: {
+                    Activity: { select: { account_id: true } },
+                },
+            });
+            freeze.reportSkips(skippedRows
+                .map((row) => row.Activity?.account_id)
+                .filter((id) => id != null));
+        };
         if (pendingMessages.length === 0) {
+            await reportFrozenSkips();
             return {
                 success: true,
                 message: "No pending Inforu SMS messages to check",
@@ -80,6 +116,7 @@ async function checkInforuSmsStatus(prisma) {
                 await new Promise((resolve) => setTimeout(resolve, 200));
             }
         }
+        await reportFrozenSkips();
         return {
             success: true,
             message: `Processed ${summary.messagesProcessed} messages, ${summary.statusUpdates} status updates, ${summary.errors} errors`,

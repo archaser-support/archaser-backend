@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
-export declare function processNotificationRules(prisma: PrismaClient): Promise<{
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
+export declare function processNotificationRules(prisma: PrismaClient, freeze?: CronFrozenAccountGuard): Promise<{
     success: boolean;
     message: string;
     summary?: {

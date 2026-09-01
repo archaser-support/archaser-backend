@@ -10,14 +10,11 @@ export interface MaturityResult {
 export interface MaturityProgress {
     linked: number;
     totalCandidates: number;
-    /**
-     * What the pass is doing right now. Linking is only part of the wall time;
-     * currency alignment, extension closes and paid-total recalcs follow it.
-     */
+    /** Sub-step while linking, extension closes, or paid-total recalc runs. */
     detail?: MaturityProgressDetail;
 }
 export interface MaturityProgressDetail {
-    step: "link" | "align" | "close" | "recalc";
+    step: "link" | "close" | "recalc";
     processed?: number;
     total?: number;
 }
@@ -33,8 +30,8 @@ export declare function rawErpRowFromMaturedPayment(payment: {
 }): Record<string, unknown>;
 /**
  * Link deferred payments whose invoice now exists and whose payment_date has
- * matured. Groups links with updateMany per invoice_id, runs extension
- * afterPaymentLinked (virtual recon close), then batch-recalcs paid totals.
+ * matured. Matches in memory, bulk-links via UNNEST, runs extension closes,
+ * then batch-recalcs paid totals.
  */
 export declare function applyMaturedDeferredPayments(prisma: PrismaClient, accountId: number, asOf: Date, invoiceNumbers?: string[], options?: {
     onProgress?: (progress: MaturityProgress) => void;

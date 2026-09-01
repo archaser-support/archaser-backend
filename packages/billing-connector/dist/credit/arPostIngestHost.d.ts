@@ -19,6 +19,12 @@ export type ArPostIngestHostInput = {
         importType: "Invoice" | "Payment";
         entityIds: number[];
     };
+    /** Invoice / payment rows imported this sync (scopes live gap refresh). */
+    invoiceEntityIds?: number[];
+    paymentEntityIds?: number[];
+    affectedInvoiceIds?: number[];
+    /** Account MEP breach start date — narrows replay event load when set. */
+    mepBreachStartDate?: Date | null;
     /** Live per-customer progress for the sync progress panel. */
     onProgress?: (progress: ArPostIngestProgress) => void;
 };
@@ -64,10 +70,17 @@ export declare function refreshInsuranceTargetDatesViaHost(invoiceIds: number[],
  */
 export declare function runArPostIngestViaHost(input: ArPostIngestHostInput, prisma: PrismaClient): Promise<void>;
 export type DeferredArPostIngestStep = "replay" | "process_overdue" | "live_refresh";
+/** Heavy CI steps deferred to the worker. Process Overdue is a separate sync tail step. */
+export declare const DEFERRED_CI_POST_INGEST_STEPS: DeferredArPostIngestStep[];
+export type PostIngestDrainScheduleResult = {
+    queued: boolean;
+    reason?: string;
+};
 export type ConnectorPostIngestDeferOptions = {
     /**
-     * When true, enqueue replay/overdue/live-refresh on the worker instead of
-     * blocking the billing connector sync tail.
+     * When true, enqueue replay/live-refresh on the worker instead of blocking
+     * the billing connector sync tail. Process Overdue runs in its own tail
+     * step before post-ingest when the host wires onProcessOverdueCustomers.
      */
     deferPostIngest?: boolean;
     enqueueDeferredSteps?: (args: {
@@ -75,8 +88,11 @@ export type ConnectorPostIngestDeferOptions = {
         customerIds: number[];
         steps: DeferredArPostIngestStep[];
     }) => Promise<void>;
-    /** Ask the worker to drain the AR post-ingest retry queue soon. */
-    schedulePostIngestDrain?: () => Promise<void>;
+    /**
+     * Ask the worker to drain the AR post-ingest retry queue soon.
+     * Return `{ queued: false }` so the host can fall back to inline CI steps.
+     */
+    schedulePostIngestDrain?: () => Promise<PostIngestDrainScheduleResult | void>;
 };
 /**
  * Once after Invoice entity completion. Best-effort: errors are logged and do
@@ -92,6 +108,8 @@ export declare function invokeConnectorArPostIngest(params: {
     log: (message: string) => void;
     /** When true (payment-only fallback), run deferred-payment maturity. */
     runMaturity?: boolean;
+    /** When false, Process Overdue already ran in the sync tail step. Default true. */
+    runProcessOverdue?: boolean;
     /** Live per-customer progress for the sync progress panel. */
     onProgress?: (progress: ArPostIngestProgress) => void;
 } & ConnectorPostIngestDeferOptions): Promise<{

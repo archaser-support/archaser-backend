@@ -4,6 +4,7 @@ import {
     Histogram,
     type Registry,
 } from "prom-client";
+import { registerCronFrozenAccountMetrics } from "@archaser/cron-jobs";
 
 /**
  * Business / ops gauges historically exposed by Next `/api/metrics`.
@@ -79,6 +80,9 @@ export function createArchaserBusinessMetrics(register: Registry) {
         labelNames: ["job_name"],
         registers: [register],
     });
+
+    const { cronAccountsSkippedFrozenTotal } =
+        registerCronFrozenAccountMetrics(register);
 
     const cronJobLastRun = new Gauge({
     name: "archaser_cron_job_last_run_timestamp_seconds",
@@ -486,6 +490,7 @@ export function createArchaserBusinessMetrics(register: Registry) {
         cronJobSuccessCount30d,
         cronJobFailureCount30d,
         cronJobTimeoutCount30d,
+        cronAccountsSkippedFrozenTotal,
         cronJobLastRun,
         cronJobNextRun,
         emailsSent,

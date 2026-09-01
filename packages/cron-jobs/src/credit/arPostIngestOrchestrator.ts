@@ -73,6 +73,10 @@ export type RunArPostIngestOptions = {
         importType: "Invoice" | "Payment";
         entityIds: number[];
     };
+    /** Invoice ids imported this sync — limits capacity-gap recompute per customer. */
+    affectedInvoiceIds?: number[];
+    /** Narrows replay event load; open AR before this date is seeded from DB. */
+    mepBreachStartDate?: Date | null;
     /**
      * Per-customer progress for callers that show a live bar. `total` counts
      * every customer-step this run will perform, so it stays accurate whether
@@ -102,16 +106,25 @@ export type ArPostIngestDeps = {
     replayCustomer: (args: {
         customerId: number;
         accountId: number;
+        mepBreachStartDate?: Date | null;
         onProgress?: (progress: { processed: number; total: number }) => void;
     }) => Promise<ReplayCustomerSummary | void>;
     applyMaturity: (
         accountId: number,
         asOf: Date
     ) => Promise<MaturityResult | void>;
-    /** Full Process Overdue Invoices for one customer (daily-cron behavior). */
-    processOverdueCustomer: (customerId: number) => Promise<void>;
-    /** One customer at a time — same follow-up as triggerPostImportOverdueMetrics. */
-    liveRefreshCustomer: (customerId: number, asOf?: Date) => Promise<void>;
+    /** Full Process Overdue Invoices for touched customers (daily-cron behavior). */
+    processOverdueCustomers: (customerIds: number[]) => Promise<void>;
+    /**
+     * One customer at a time: live MEP/gap refresh, then restamp open-invoice
+     * CTV/terms (refreshTermsBreachFlags) so re-import does not leave stale
+     * ctv_customer_overdue_mep when overdue_block is already true.
+     */
+    liveRefreshCustomer: (
+        customerId: number,
+        asOf?: Date,
+        invoiceIds?: number[]
+    ) => Promise<void>;
     enqueueAsOfRewrite: (args: {
         accountId: number;
         importType: "Invoice" | "Payment";
@@ -152,17 +165,34 @@ export async function defaultAccountHasCreditInsurance(
 export function createDefaultArPostIngestDeps(): ArPostIngestDeps {
     return {
         accountHasCreditInsurance: defaultAccountHasCreditInsurance,
-        replayCustomer: ({ customerId, accountId, onProgress }) =>
-            replayCustomerArImport({ customerId, accountId, onProgress }),
+        replayCustomer: ({ customerId, accountId, mepBreachStartDate, onProgress }) =>
+            replayCustomerArImport({
+                customerId,
+                accountId,
+                mepBreachStartDate,
+                onProgress,
+            }),
         applyMaturity: (accountId, asOf) =>
             applyMaturedDeferredPayments(prisma, accountId, asOf),
-        processOverdueCustomer: async (customerId) => {
-            await handleOverdueInvoices(prisma, customerId);
+        processOverdueCustomers: async (customerIds) => {
+            if (customerIds.length === 0) {
+                return;
+            }
+            const scope =
+                customerIds.length === 1
+                    ? customerIds[0]
+                    : { customerIds };
+            await handleOverdueInvoices(prisma, scope);
         },
-        // Same follow-up as triggerPostImportOverdueMetrics (MEP + gap pipeline).
-        liveRefreshCustomer: (customerId, asOf) =>
+        // Live MEP/gap refresh, then always restamp open-invoice CTV/terms.
+        // Without refreshTermsBreachFlags, CTV only updates when overdue_block
+        // flips — re-import of already-blocked customers left stale
+        // ctv_customer_overdue_mep (false positives on historical invoices).
+        liveRefreshCustomer: (customerId, asOf, invoiceIds) =>
             syncCustomerInsuranceFields(customerId, {
                 runFollowUpEffects: true,
+                refreshTermsBreachFlags: true,
+                ...(invoiceIds?.length ? { invoiceIds } : {}),
                 ...(asOf ? { asOfDate: asOf } : {}),
             }),
         enqueueAsOfRewrite: (args) => enqueueRewriteForImport(args),
@@ -174,7 +204,8 @@ export function createDefaultArPostIngestDeps(): ArPostIngestDeps {
  * Run post-ingest AR refresh for affected customers.
  * Process Overdue runs for every account; replay / maturity / live refresh
  * (and in-orchestrator as-of) remain credit-insurance-gated.
- * Customers are processed one at a time for replay, overdue, and live refresh.
+ * Customers are processed one at a time for replay and live refresh.
+ * Process Overdue runs once per batch of touched customers.
  */
 export async function runArPostIngestForCustomers(
     options: RunArPostIngestOptions,
@@ -185,6 +216,20 @@ export async function runArPostIngestForCustomers(
     const customerIds = Array.from(
         new Set(options.customerIds.filter(Number.isFinite))
     );
+
+    const invoiceIdsByCustomer = new Map<number, number[]>();
+    if (options.affectedInvoiceIds?.length) {
+        const rows = await prisma.invoice.findMany({
+            where: { id: { in: options.affectedInvoiceIds } },
+            select: { id: true, customer_id: true },
+        });
+        for (const row of rows) {
+            if (row.customer_id == null) continue;
+            const list = invoiceIdsByCustomer.get(row.customer_id) ?? [];
+            list.push(row.id);
+            invoiceIdsByCustomer.set(row.customer_id, list);
+        }
+    }
 
     if (options.dryRun === true) {
         return {
@@ -257,6 +302,7 @@ export async function runArPostIngestForCustomers(
                 await deps.replayCustomer({
                     customerId,
                     accountId: options.accountId,
+                    mepBreachStartDate: options.mepBreachStartDate,
                     onProgress: (detail) =>
                         reportStepDetail("replay", customerId, detail),
                 });
@@ -303,26 +349,25 @@ export async function runArPostIngestForCustomers(
     }
 
     // --- All accounts: Process Overdue Invoices (default on) ---
-    if (runProcessOverdueStep) {
+    if (runProcessOverdueStep && customerIds.length > 0) {
+        try {
+            await deps.processOverdueCustomers(customerIds);
+        } catch (error) {
+            const message = errorMessage(error);
+            const stack = errorStack(error);
+            logError("process overdue failed", {
+                accountId: options.accountId,
+                customerIds,
+                message,
+                stack,
+            });
+            errors.push({
+                step: "process_overdue",
+                message,
+                ...(stack ? { stack } : {}),
+            });
+        }
         for (const customerId of customerIds) {
-            try {
-                await deps.processOverdueCustomer(customerId);
-            } catch (error) {
-                const message = errorMessage(error);
-                const stack = errorStack(error);
-                logError("process overdue failed", {
-                    accountId: options.accountId,
-                    customerId,
-                    message,
-                    stack,
-                });
-                errors.push({
-                    step: "process_overdue",
-                    customerId,
-                    message,
-                    ...(stack ? { stack } : {}),
-                });
-            }
             advanceProgress("process_overdue", customerId);
         }
     }
@@ -333,7 +378,8 @@ export async function runArPostIngestForCustomers(
             try {
                 await deps.liveRefreshCustomer(
                     customerId,
-                    options.liveRefreshAsOf
+                    options.liveRefreshAsOf,
+                    invoiceIdsByCustomer.get(customerId)
                 );
             } catch (error) {
                 const message = errorMessage(error);

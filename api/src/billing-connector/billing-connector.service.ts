@@ -55,7 +55,8 @@ import {
     upsertSyncRun,
     patchSyncRunEntityStats,
     createRunningExecution,
-    completeExecution,
+    createSyncProgressHeartbeat,
+    finalizeSyncHistoryAfterRun,
     markExecutionCancelled,
     listExecutionsForAccount,
     sweepStaleRunning,
@@ -80,7 +81,9 @@ import { recalculateCustomerAmounts } from "../customers/domain/recalculateCusto
 import { MetricsService } from "../metrics/metrics.service";
 import { CronQueueService } from "../queue/cron-queue.service";
 import {
+    countPendingArPostIngestCustomers,
     enqueueArPostIngestSteps,
+    handleOverdueInvoices,
     runArPostIngestForCustomers,
     type ArPostIngestStep,
 } from "@archaser/cron-jobs";
@@ -176,15 +179,8 @@ export class BillingConnectorApiService {
         });
     }
 
-    private shouldDeferPostIngest(mode: "backfill" | "incremental"): boolean {
-        const flag = process.env.BILLING_CONNECTOR_DEFER_POST_INGEST;
-        if (flag === "false") {
-            return false;
-        }
-        if (flag === "true") {
-            return true;
-        }
-        return mode === "backfill";
+    private shouldDeferPostIngest(_mode: "backfill" | "incremental"): boolean {
+        return process.env.BILLING_CONNECTOR_DEFER_POST_INGEST === "true";
     }
 
     private buildPostIngestDeferOptions(
@@ -211,13 +207,16 @@ export class BillingConnectorApiService {
             schedulePostIngestDrain: async () => {
                 const result = await this.cronQueue.enqueueArPostIngestDrain({
                     accountId,
-                    maxItems: 100,
+                    // Backfills can touch hundreds of customers; one drain pass
+                    // must cover the enqueue or CI steps stall until overnight.
+                    maxItems: 500,
                 });
                 if (!result.queued) {
                     this.logger.warn(
                         `[account ${accountId}] AR post-ingest drain not queued: ${result.reason ?? "unknown"}`
                     );
                 }
+                return result;
             },
         };
     }
@@ -247,6 +246,67 @@ export class BillingConnectorApiService {
             throw new ForbiddenException({ error: "Forbidden" });
         }
         return userInfo;
+    }
+
+    private connectorHasPartialBackfillProgress(
+        syncStates:
+            | Array<{
+                  backfill_completed: boolean;
+                  backfill_cursor: string | null;
+                  backfill_records_pulled: number;
+                  last_attempt_at: Date | null;
+              }>
+            | undefined
+    ): boolean {
+        if (!syncStates?.length) {
+            return false;
+        }
+        return syncStates.some(
+            (state) =>
+                state.backfill_cursor != null ||
+                state.backfill_records_pulled > 0 ||
+                (state.last_attempt_at != null && !state.backfill_completed)
+        );
+    }
+
+    /**
+     * Backfill runs before this field was written left `backfill_started_at` null
+     * while sync_state rows show progress — repair once on config read so the UI
+     * can offer Resume instead of Start.
+     */
+    private async repairBackfillStartedAtIfNeeded(connector: {
+        id: number;
+        backfill_started_at?: Date | null;
+        ConnectorSyncState?: Array<{
+            backfill_completed: boolean;
+            backfill_cursor: string | null;
+            backfill_records_pulled: number;
+            last_attempt_at: Date | null;
+        }>;
+    }): Promise<Date | null> {
+        if (connector.backfill_started_at != null) {
+            return connector.backfill_started_at;
+        }
+        if (
+            !this.connectorHasPartialBackfillProgress(
+                connector.ConnectorSyncState
+            )
+        ) {
+            return null;
+        }
+        const earliestAttempt = (connector.ConnectorSyncState ?? [])
+            .map((state) => state.last_attempt_at)
+            .filter((value): value is Date => value != null)
+            .sort((a, b) => a.getTime() - b.getTime())[0];
+        const startedAt = earliestAttempt ?? new Date();
+        await this.db.billingConnector.update({
+            where: { id: connector.id },
+            data: {
+                backfill_started_at: startedAt,
+                modified_at: new Date(),
+            },
+        });
+        return startedAt;
     }
 
     private async toPublicConfig(connector: {
@@ -306,6 +366,10 @@ export class BillingConnectorApiService {
             connector.modified_at
         );
         const preset = cronToPreset(connector.sync_cron_expression);
+        const pendingArPostIngestCustomers =
+            await countPendingArPostIngestCustomers(connector.account_id, {
+                dbClient: this.db as never,
+            });
 
         return {
             id: connector.id,
@@ -365,6 +429,7 @@ export class BillingConnectorApiService {
             daily_time_utc: preset.daily_time_utc,
             weekly_day: preset.weekly_day,
             schedule_warning: null,
+            pending_ar_post_ingest_customers: pendingArPostIngestCustomers,
             sync_states: (connector.ConnectorSyncState ?? []).map((state) => ({
                 entity_type: state.entity_type,
                 backfill_completed: state.backfill_completed,
@@ -391,6 +456,11 @@ export class BillingConnectorApiService {
         });
         if (!connector) {
             return { config: null };
+        }
+        const repairedStartedAt =
+            await this.repairBackfillStartedAtIfNeeded(connector);
+        if (repairedStartedAt) {
+            connector.backfill_started_at = repairedStartedAt;
         }
         return serializeBigInt({
             config: await this.toPublicConfig(connector),
@@ -853,6 +923,16 @@ export class BillingConnectorApiService {
 
         const executionId = randomUUID();
         const startedAt = new Date();
+
+        if (mode === "backfill" && connector.backfill_started_at == null) {
+            await this.db.billingConnector.update({
+                where: { id: connector.id },
+                data: {
+                    backfill_started_at: startedAt,
+                    modified_at: startedAt,
+                },
+            });
+        }
         const syncMode = mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
         const trigger = mode === "backfill" ? "backfill" : "manual";
         const runningSummary: ConnectorSyncRunSummary = {
@@ -953,6 +1033,7 @@ export class BillingConnectorApiService {
             onLog,
         } = params;
         try {
+            const heartbeat = createSyncProgressHeartbeat(executionId);
             const result = await runInProcessSync({
                 prisma: this.db,
                 accountId,
@@ -972,9 +1053,20 @@ export class BillingConnectorApiService {
                         entityStats,
                         runningSummary
                     );
+                    void heartbeat(entityStats);
                 },
                 onCustomerBalancesFinal: async (customerIds) => {
                     await recalculateCustomerAmounts(customerIds, this.db);
+                },
+                onProcessOverdueCustomers: async (customerIds) => {
+                    if (customerIds.length === 0) {
+                        return;
+                    }
+                    const scope =
+                        customerIds.length === 1
+                            ? customerIds[0]
+                            : { customerIds };
+                    await handleOverdueInvoices(this.db, scope);
                 },
                 onArPostIngest: async (input) => {
                     bindCreditInsurancePrisma(this.db);
@@ -997,6 +1089,18 @@ export class BillingConnectorApiService {
                                 input.enqueueAsOfRewrite === true,
                             dryRun: input.dryRun === true,
                             asOfRewrite: input.asOfRewrite,
+                            ...(input.affectedInvoiceIds !== undefined
+                                ? {
+                                      affectedInvoiceIds:
+                                          input.affectedInvoiceIds,
+                                  }
+                                : {}),
+                            ...(input.mepBreachStartDate !== undefined
+                                ? {
+                                      mepBreachStartDate:
+                                          input.mepBreachStartDate,
+                                  }
+                                : {}),
                             ...(input.onProgress
                                 ? { onProgress: input.onProgress }
                                 : {}),
@@ -1056,34 +1160,42 @@ export class BillingConnectorApiService {
                 resolveSyncErrorType(result, status) ??
                 (result.error ?? null);
             onLog(
-                `Finished ${mode}: ${status}${
-                    result.error ? ` — ${result.error}` : ""
-                }`
+                result.postIngestDeferred
+                    ? `Entity ingest finished; awaiting post-import drain (${status})`
+                    : `Finished ${mode}: ${status}${
+                          result.error ? ` — ${result.error}` : ""
+                      }`
             );
             upsertSyncRun(accountId, {
                 ...runningSummary,
-                status,
-                completed_at: completedAt.toISOString(),
-                duration_seconds: Math.max(
-                    1,
-                    Math.round(
-                        (completedAt.getTime() -
-                            new Date(runningSummary.started_at).getTime()) /
-                            1000
-                    )
-                ),
+                status: result.postIngestDeferred ? "RUNNING" : status,
+                completed_at: result.postIngestDeferred
+                    ? null
+                    : completedAt.toISOString(),
+                duration_seconds: result.postIngestDeferred
+                    ? null
+                    : Math.max(
+                          1,
+                          Math.round(
+                              (completedAt.getTime() -
+                                  new Date(
+                                      runningSummary.started_at
+                                  ).getTime()) /
+                                  1000
+                          )
+                      ),
                 entity_stats: result.entity_stats ?? {},
-                error_message: result.error ?? null,
-                error_type: errorType,
+                error_message: result.postIngestDeferred
+                    ? null
+                    : result.error ?? null,
+                error_type: result.postIngestDeferred ? null : errorType,
             });
             try {
-                await completeExecution(executionId, {
-                    status,
-                    entityStats: result.entity_stats ?? {},
-                    errorMessage: result.error ?? null,
-                    errorType,
-                    completedAt,
-                });
+                await finalizeSyncHistoryAfterRun(
+                    executionId,
+                    result,
+                    completedAt
+                );
             } catch (historyError) {
                 const historyMessage =
                     historyError instanceof Error
@@ -1116,12 +1228,28 @@ export class BillingConnectorApiService {
                 error_type: "unexpected",
             });
             try {
-                await completeExecution(executionId, {
-                    status: "FAILED",
-                    errorMessage: message,
-                    errorType: "unexpected",
-                    completedAt,
-                });
+                await finalizeSyncHistoryAfterRun(
+                    executionId,
+                    {
+                        ok: false,
+                        accountId,
+                        provider: runningSummary.sync_mode,
+                        stats: {
+                            customersProcessed: 0,
+                            contactsProcessed: 0,
+                            invoicesProcessed: 0,
+                            paymentsProcessed: 0,
+                            customersImported: 0,
+                            contactsImported: 0,
+                            invoicesImported: 0,
+                            paymentsImported: 0,
+                            importErrors: 0,
+                        },
+                        message,
+                        error: message,
+                    },
+                    completedAt
+                );
             } catch (historyError) {
                 const historyMessage =
                     historyError instanceof Error
@@ -1173,7 +1301,47 @@ export class BillingConnectorApiService {
     async listSyncRuns(user: JwtPayload, accountId: number, limitRaw?: string) {
         await this.assertAccess(user, accountId, "view_billing_connector");
         const limit = Number.parseInt(String(limitRaw ?? "25"), 10);
-        return { runs: listSyncRuns(accountId, Number.isFinite(limit) ? limit : 25) };
+        const memoryRuns = listSyncRuns(
+            accountId,
+            Number.isFinite(limit) ? limit : 25
+        );
+        try {
+            const mongoRuns = await listExecutionsForAccount(accountId, {
+                limit: Math.max(limit, 25),
+            });
+            const activeFromMongo = mongoRuns
+                .filter((doc) => doc.status === "RUNNING")
+                .map(syncHistoryExecutionToSummary);
+            if (activeFromMongo.length === 0) {
+                return { runs: memoryRuns };
+            }
+            const byId = new Map(memoryRuns.map((run) => [run.id, run]));
+            for (const run of activeFromMongo) {
+                const existing = byId.get(run.id);
+                byId.set(run.id, {
+                    ...(existing ?? run),
+                    ...run,
+                    cutover_options:
+                        existing?.cutover_options ?? run.cutover_options,
+                    cutover_summary:
+                        existing?.cutover_summary ?? run.cutover_summary,
+                });
+            }
+            return {
+                runs: Array.from(byId.values()).sort(
+                    (a, b) =>
+                        new Date(b.started_at).getTime() -
+                        new Date(a.started_at).getTime()
+                ),
+            };
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `[account ${accountId}] Failed to merge Mongo sync runs: ${message}`
+            );
+            return { runs: memoryRuns };
+        }
     }
 
     async listSyncHistory(user: JwtPayload, accountId: number) {
@@ -1233,6 +1401,7 @@ export class BillingConnectorApiService {
                     backfill_last_checkpoint_at: null,
                     backfill_total_records: null,
                     last_max_updated_at: null,
+                    last_attempt_at: null,
                     last_error: null,
                 },
             });
@@ -1258,6 +1427,7 @@ export class BillingConnectorApiService {
                 backfill_last_checkpoint_at: null,
                 backfill_total_records: null,
                 last_max_updated_at: null,
+                last_attempt_at: null,
                 last_error: null,
             },
         });

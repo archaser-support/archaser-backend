@@ -8,6 +8,10 @@ import type {
     ExtensionMappedBatch,
     ExtensionTransformContext,
 } from "../types";
+import {
+    countUniquePendingCloseInvoiceNumbers,
+    uniqueTrimmedInvoiceNumberSet,
+} from "../pendingCloseProgress";
 import { parseErpDateOnly } from "../../utils/connectorFieldUtils";
 import { deriveInvoiceFxRatio } from "../../payment/alignPaymentToInvoiceCurrency";
 import { applyHelamOffsetStampClosesForInvoiceNumbers } from "./helamOffsetClose";
@@ -608,14 +612,42 @@ export const account10149Extension: BillingAccountExtension = {
         const customerIds = new Set<number>();
 
         const offsetNumbers = ctx.helamOffsetInvoiceNumbers ?? [];
+        const total = countUniquePendingCloseInvoiceNumbers(
+            ctx.invoiceNumbers,
+            offsetNumbers
+        );
+        const report = (processed: number) => {
+            if (total <= 0) {
+                return;
+            }
+            ctx.onProgress?.({
+                processed: Math.min(processed, total),
+                total,
+            });
+        };
+        if (total > 0) {
+            report(0);
+        }
+
+        let processed = 0;
+
         if (offsetNumbers.length > 0) {
+            const helamBaseline = processed;
+            const helamQueued = uniqueTrimmedInvoiceNumberSet(offsetNumbers).size;
             const offsetResult =
                 await applyHelamOffsetStampClosesForInvoiceNumbers(
                     ctx.prisma,
                     ctx.accountId,
                     offsetNumbers,
-                    ctx.userId
+                    ctx.userId,
+                    {
+                        onProgress: ({ processed: helamProcessed }) => {
+                            report(helamBaseline + helamProcessed);
+                        },
+                    }
                 );
+            processed += helamQueued;
+            report(processed);
             for (const id of offsetResult.closedIds) {
                 closedIds.add(id);
             }
@@ -625,9 +657,7 @@ export const account10149Extension: BillingAccountExtension = {
         }
 
         // Virtual fill only for numbers not already stamp-closed as Helam offset.
-        const offsetSet = new Set(
-            offsetNumbers.map((value) => value.trim()).filter(Boolean)
-        );
+        const offsetSet = uniqueTrimmedInvoiceNumberSet(offsetNumbers);
         const virtualNumbers = ctx.invoiceNumbers.filter(
             (value) => !offsetSet.has(value.trim())
         );
@@ -639,6 +669,12 @@ export const account10149Extension: BillingAccountExtension = {
                 ctx.userId,
                 ctx.invoiceCloseDates
             );
+            processed += result.missingNumbers.length;
+            report(processed);
+
+            const recalcBaseline = processed;
+            const recalcTotal = result.touchedIds.length;
+
             if (result.touchedIds.length > 0) {
                 // Dynamic import avoids account_10149 ↔ extensions ↔ recalc cycle.
                 const { recalculateInvoicesFromLinkedPayments } = await import(
@@ -648,15 +684,27 @@ export const account10149Extension: BillingAccountExtension = {
                     ctx.prisma,
                     new Map(
                         result.touchedIds.map((invoiceId) => [invoiceId, {}])
-                    )
+                    ),
+                    {
+                        onProgress: ({ processed: recalcProcessed }) => {
+                            report(recalcBaseline + recalcProcessed);
+                        },
+                    }
                 );
             }
+            processed = recalcBaseline + recalcTotal;
+            report(processed);
+
             for (const id of result.touchedIds) {
                 closedIds.add(id);
             }
             for (const id of result.customerIds) {
                 customerIds.add(id);
             }
+        }
+
+        if (total > 0) {
+            report(total);
         }
 
         return {

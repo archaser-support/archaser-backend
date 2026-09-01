@@ -6,6 +6,7 @@ export interface SyncDueBillingConnectorsResult {
     processed: number;
     skipped: number;
     failed: number;
+    skippedFrozenAccountIds: number[];
     results: RunInProcessSyncResult[];
     durationMs: number;
 }
@@ -16,6 +17,8 @@ export interface SyncDueBillingConnectorsOptions {
     createExecutionId?: () => string;
     /** Clock for due checks + stale sweep (unit tests). */
     now?: Date;
+    /** Skip starting scheduled sync for these accounts (import/backfill freeze). */
+    excludeAccountIds?: ReadonlySet<number>;
     /** Prometheus sink + structured log hook for scheduled syncs. */
     observability?: RunInProcessSyncOptions["observability"];
     onLog?: (message: string) => void;

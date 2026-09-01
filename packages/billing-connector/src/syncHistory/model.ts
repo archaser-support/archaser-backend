@@ -4,6 +4,7 @@ import type {
     ConnectorExecutionStatus,
     ConnectorSyncTrigger,
     SyncHistoryEntityStats,
+    TerminalConnectorExecutionStatus,
 } from "./types";
 
 export interface IConnectorSyncExecutionDoc extends Document {
@@ -15,11 +16,16 @@ export interface IConnectorSyncExecutionDoc extends Document {
     sync_mode: string;
     status: ConnectorExecutionStatus;
     started_at: Date;
+    last_progress_at: Date;
     completed_at?: Date | null;
     duration_seconds?: number | null;
     entity_stats?: SyncHistoryEntityStats;
     error_message?: string | null;
     error_type?: string | null;
+    awaiting_post_ingest_drain?: boolean;
+    pending_terminal_status?: TerminalConnectorExecutionStatus | null;
+    pending_error_message?: string | null;
+    pending_error_type?: string | null;
     created_at: Date;
     modified_at: Date;
 }
@@ -43,12 +49,21 @@ const ConnectorSyncExecutionSchema = new Schema(
             index: true,
         },
         started_at: { type: Date, required: true, default: Date.now },
+        last_progress_at: { type: Date, required: true, default: Date.now },
         completed_at: { type: Date, default: null },
         duration_seconds: { type: Number, default: null },
         // Mixed so `_maturity` may carry status / sample_errors on finish.
         entity_stats: { type: Schema.Types.Mixed, default: {} },
         error_message: { type: String, default: null },
         error_type: { type: String, default: null },
+        awaiting_post_ingest_drain: { type: Boolean, default: false },
+        pending_terminal_status: {
+            type: String,
+            enum: ["SUCCESS", "FAILED", "PARTIAL", "TIMEOUT"],
+            default: null,
+        },
+        pending_error_message: { type: String, default: null },
+        pending_error_type: { type: String, default: null },
     },
     {
         timestamps: {
@@ -66,6 +81,11 @@ ConnectorSyncExecutionSchema.index(
 ConnectorSyncExecutionSchema.index({ connector_id: 1, started_at: -1 });
 ConnectorSyncExecutionSchema.index({ account_id: 1, started_at: -1 });
 ConnectorSyncExecutionSchema.index({ status: 1, started_at: 1 });
+ConnectorSyncExecutionSchema.index({ status: 1, last_progress_at: 1 });
+ConnectorSyncExecutionSchema.index(
+    { account_id: 1, status: 1, awaiting_post_ingest_drain: 1 },
+    { sparse: true }
+);
 ConnectorSyncExecutionSchema.index(
     { started_at: 1 },
     { expireAfterSeconds: 90 * 24 * 60 * 60 }

@@ -20,7 +20,7 @@ exports.processAutomatedCollectionPeriods = processAutomatedCollectionPeriods;
  * - Complex activity timeline logic
  * - CustomerService.calculateNextAutomatedActivityTime (complex date calc)
  */
-async function processAutomatedCollectionPeriods(prisma) {
+async function processAutomatedCollectionPeriods(prisma, freeze) {
     const start = Date.now();
     const summary = {
         phase0: {
@@ -50,6 +50,7 @@ async function processAutomatedCollectionPeriods(prisma) {
         const now = new Date();
         // Exclude credit-only customers helper
         const excludeCreditOnlyWhere = (extra) => ({
+            ...(freeze ? freeze.accountIdNotInFilter() : {}),
             Account: {
                 OR: [
                     { has_collection: true },
@@ -496,6 +497,30 @@ async function processAutomatedCollectionPeriods(prisma) {
                 });
                 summary.phase3.periodsSetup++;
             }
+        }
+        if (freeze && freeze.frozenAccountIds.size > 0) {
+            const skippedRows = await prisma.customerCollectionPeriod.findMany({
+                where: {
+                    period_end_date: null,
+                    current_category: "Automated",
+                    Customer: {
+                        account_id: { in: [...freeze.frozenAccountIds] },
+                        Account: {
+                            OR: [
+                                { has_collection: true },
+                                { has_credit_insurance: { not: true } },
+                            ],
+                        },
+                    },
+                },
+                select: {
+                    Customer: { select: { account_id: true } },
+                },
+                distinct: ["customer_id"],
+            });
+            freeze.reportSkips(skippedRows
+                .map((row) => row.Customer?.account_id)
+                .filter((id) => id != null));
         }
         const message = `Phase 0: ${summary.phase0.periodsReset}/${summary.phase0.periodsFound} periods reset. Phase 1: ${summary.phase1.activitiesMarked} activities, ${summary.phase1.periodsMarked} periods marked. Phase 2: ${summary.phase2.periodsEnabled}/${summary.phase2.periodsFound} periods enabled. Phase 3: ${summary.phase3.periodsSetup}/${summary.phase3.periodsFound} periods setup. Activity creation/email/SMS skipped (requires Activity Workflow Manager).`;
         return {

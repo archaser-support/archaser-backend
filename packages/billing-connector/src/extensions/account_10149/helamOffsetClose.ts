@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 
 import { commitOps } from "../../import/bulkWrite";
+import { PENDING_CLOSE_PROGRESS_CHUNK } from "../pendingCloseProgress";
 import { VIRTUAL_PAYMENT_METHOD } from "./reconciledVirtualClose";
 
 /** Priority Helam (חלמ) payment method label on cancel stamp lines. */
@@ -20,7 +21,10 @@ export async function applyHelamOffsetStampClosesForInvoiceNumbers(
     prisma: Pick<PrismaClient, "invoice" | "invoicePayment" | "$transaction">,
     accountId: number,
     invoiceNumbers: string[],
-    userId?: string
+    userId?: string,
+    options?: {
+        onProgress?: (progress: { processed: number; total: number }) => void;
+    }
 ): Promise<HelamOffsetStampResult> {
     const unique = Array.from(
         new Set(
@@ -106,7 +110,26 @@ export async function applyHelamOffsetStampClosesForInvoiceNumbers(
         });
     });
 
-    await commitOps(prisma, updates);
+    if (!options?.onProgress) {
+        await commitOps(prisma, updates);
+    } else {
+        options.onProgress({ processed: 0, total: invoices.length });
+        for (
+            let offset = 0;
+            offset < updates.length;
+            offset += PENDING_CLOSE_PROGRESS_CHUNK
+        ) {
+            const chunk = updates.slice(
+                offset,
+                offset + PENDING_CLOSE_PROGRESS_CHUNK
+            );
+            await commitOps(prisma, chunk);
+            options.onProgress({
+                processed: Math.min(offset + chunk.length, invoices.length),
+                total: invoices.length,
+            });
+        }
+    }
 
     return {
         closedIds: invoiceIds,

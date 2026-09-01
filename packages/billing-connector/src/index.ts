@@ -199,6 +199,13 @@ export {
 } from "./services/billingConnectorPullFilters";
 
 export {
+    AR_REPLAY_ENTITY_STATS_KEY,
+    LIVE_REFRESH_ENTITY_STATS_KEY,
+    MATURITY_ENTITY_STATS_KEY,
+    POST_INGEST_ENTITY_STATS_KEY,
+    PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    PENDING_CLOSES_ENTITY_STATS_KEY,
+    BALANCES_ENTITY_STATS_KEY,
     clearRunningSync,
     getRunningSync,
     listSyncRuns,
@@ -206,7 +213,6 @@ export {
     upsertSyncRun,
     patchSyncRunEntityStats,
     entityStatsFromCounts,
-    MATURITY_ENTITY_STATS_KEY,
     type ConnectorSyncRunSummary,
 } from "./sync/connectorSyncRuntime";
 
@@ -225,7 +231,14 @@ export {
 } from "./sync/stagedExtensionSync";
 
 export {
+    runInlineArPostIngestTailSteps,
+    AR_POST_INGEST_CUSTOMER_CHUNK,
+    type RunInlineArPostIngestTailStepsParams,
+} from "./sync/arPostIngestTailSteps";
+
+export {
     runArPostIngestViaHost,
+    DEFERRED_CI_POST_INGEST_STEPS,
     invokeConnectorArPostIngest,
     refreshInsuranceTargetDatesViaHost,
     registerArPostIngestOrchestrator,
@@ -235,6 +248,8 @@ export {
     type ArPostIngestHostInput,
     type ArPostIngestOrchestratorFn,
     type ArPostIngestOrchestratorResult,
+    type DeferredArPostIngestStep,
+    type PostIngestDrainScheduleResult,
 } from "./credit/arPostIngestHost";
 
 export {
@@ -251,16 +266,27 @@ export {
     createRunningExecution,
     completeExecution,
     markExecutionCancelled,
+    touchExecutionProgress,
+    deferExecutionCompletionUntilPostIngestDrain,
+    listAwaitingPostIngestDrainExecutions,
+    finalizeAwaitingPostIngestDrainExecutions,
+    createSyncProgressHeartbeat,
+    touchAwaitingPostIngestDrainProgress,
+    finalizeSyncHistoryAfterRun,
     listExecutionsForAccount,
+    listRunningSyncAccountIds,
     sweepStaleRunning,
     syncHistoryExecutionToSummary,
     useMemorySyncHistoryStoreForTests,
     resetSyncHistoryStoreForTests,
+    HEARTBEAT_INTERVAL_SECONDS,
     HISTORY_WINDOW_DAYS,
     STALE_RUNNING_HOURS,
     defaultSinceDate,
     type CompleteExecutionInput,
     type CreateRunningExecutionInput,
+    type DeferCompletionUntilPostIngestDrainInput,
+    type FinalizeAwaitingPostIngestDrainOptions,
     type ListExecutionsOptions,
     type MarkExecutionCancelledInput,
     type SweepStaleRunningOptions,
@@ -268,6 +294,7 @@ export {
     type ConnectorExecutionStatus,
     type ConnectorSyncTrigger,
     type SyncHistoryEntityStats,
+    type TouchProgressInput,
 } from "./syncHistory";
 
 export {
@@ -288,8 +315,13 @@ export {
 } from "./import/applyMaturedDeferredPayments";
 
 export {
+    bulkLinkDeferredPayments,
     linkDeferredPaymentAndRecalc,
+    linkDeferredPaymentsAndRecalcBatch,
     recalculateInvoicesFromLinkedPayments,
+    resolveInvoicePaidRecalcOptions,
+    type BulkDeferredPaymentLink,
+    type InvoicePaidRecalcOptions,
     type LinkDeferredPaymentAndRecalcResult,
 } from "./invoice/linkDeferredPaymentAndRecalc";
 

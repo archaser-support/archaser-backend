@@ -9,10 +9,12 @@ import {
 import type {
     CompleteExecutionInput,
     CreateRunningExecutionInput,
+    DeferCompletionUntilPostIngestDrainInput,
     ListExecutionsOptions,
     MarkExecutionCancelledInput,
     SweepStaleRunningOptions,
     SyncHistoryExecution,
+    TouchProgressInput,
 } from "./types";
 
 function toExecution(doc: {
@@ -24,11 +26,16 @@ function toExecution(doc: {
     sync_mode: string;
     status: SyncHistoryExecution["status"];
     started_at: Date;
+    last_progress_at?: Date;
     completed_at?: Date | null;
     duration_seconds?: number | null;
     entity_stats?: SyncHistoryExecution["entity_stats"] | null;
     error_message?: string | null;
     error_type?: string | null;
+    awaiting_post_ingest_drain?: boolean;
+    pending_terminal_status?: SyncHistoryExecution["pending_terminal_status"];
+    pending_error_message?: string | null;
+    pending_error_type?: string | null;
 }): SyncHistoryExecution {
     return {
         execution_id: doc.execution_id,
@@ -39,12 +46,24 @@ function toExecution(doc: {
         sync_mode: doc.sync_mode,
         status: doc.status,
         started_at: doc.started_at,
+        last_progress_at: doc.last_progress_at ?? doc.started_at,
         completed_at: doc.completed_at ?? null,
         duration_seconds: doc.duration_seconds ?? null,
         entity_stats: (doc.entity_stats ?? {}) as SyncHistoryExecution["entity_stats"],
         error_message: doc.error_message ?? null,
         error_type: doc.error_type ?? null,
+        awaiting_post_ingest_drain: doc.awaiting_post_ingest_drain === true,
+        pending_terminal_status: doc.pending_terminal_status ?? null,
+        pending_error_message: doc.pending_error_message ?? null,
+        pending_error_type: doc.pending_error_type ?? null,
     };
+}
+
+function progressIdleBefore(
+    completedAt: Date,
+    idleHours: number
+): Date {
+    return new Date(completedAt.getTime() - idleHours * 60 * 60 * 1000);
 }
 
 export const mongooseSyncHistoryStore: SyncHistoryStore = {
@@ -52,6 +71,7 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
         input: CreateRunningExecutionInput
     ): Promise<SyncHistoryExecution> {
         await ensureMongoConnection();
+        const startedAt = input.startedAt ?? new Date();
         const created = await ConnectorSyncExecutionModel.create({
             execution_id: input.executionId,
             connector_id: input.connectorId,
@@ -60,12 +80,17 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
             trigger: input.trigger,
             sync_mode: input.syncMode,
             status: "RUNNING",
-            started_at: input.startedAt ?? new Date(),
+            started_at: startedAt,
+            last_progress_at: startedAt,
             completed_at: null,
             duration_seconds: null,
             entity_stats: {},
             error_message: null,
             error_type: null,
+            awaiting_post_ingest_drain: false,
+            pending_terminal_status: null,
+            pending_error_message: null,
+            pending_error_type: null,
         });
         return toExecution(created);
     },
@@ -91,6 +116,10 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
                 existing.started_at,
                 completedAt
             ),
+            awaiting_post_ingest_drain: false,
+            pending_terminal_status: null,
+            pending_error_message: null,
+            pending_error_type: null,
         };
         if (input.entityStats !== undefined) {
             update.entity_stats = input.entityStats;
@@ -137,11 +166,76 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
                     error_message:
                         input?.errorMessage ?? "Sync stopped by operator",
                     error_type: "cancelled",
+                    awaiting_post_ingest_drain: false,
+                    pending_terminal_status: null,
+                    pending_error_message: null,
+                    pending_error_type: null,
                 },
             },
             { returnDocument: "after" }
         ).lean();
         return updated ? toExecution(updated) : null;
+    },
+
+    async touchProgressIfRunning(
+        executionId: string,
+        input?: TouchProgressInput
+    ): Promise<SyncHistoryExecution | null> {
+        await ensureMongoConnection();
+        const progressAt = input?.progressAt ?? new Date();
+        const update: Record<string, unknown> = {
+            last_progress_at: progressAt,
+        };
+        if (input?.entityStats !== undefined) {
+            update.entity_stats = input.entityStats;
+        }
+        const updated = await ConnectorSyncExecutionModel.findOneAndUpdate(
+            { execution_id: executionId, status: "RUNNING" },
+            { $set: update },
+            { returnDocument: "after" }
+        ).lean();
+        return updated ? toExecution(updated) : null;
+    },
+
+    async deferCompletionUntilPostIngestDrain(
+        executionId: string,
+        input: DeferCompletionUntilPostIngestDrainInput
+    ): Promise<SyncHistoryExecution | null> {
+        await ensureMongoConnection();
+        const progressAt = input.progressAt ?? new Date();
+        const update: Record<string, unknown> = {
+            awaiting_post_ingest_drain: true,
+            pending_terminal_status: input.pendingStatus,
+            pending_error_message: input.errorMessage ?? null,
+            pending_error_type: input.errorType ?? null,
+            last_progress_at: progressAt,
+        };
+        if (input.entityStats !== undefined) {
+            update.entity_stats = input.entityStats;
+        }
+        const updated = await ConnectorSyncExecutionModel.findOneAndUpdate(
+            { execution_id: executionId, status: "RUNNING" },
+            { $set: update },
+            { returnDocument: "after" }
+        ).lean();
+        return updated ? toExecution(updated) : null;
+    },
+
+    async listAwaitingPostIngestDrainExecutions(
+        accountId?: number
+    ): Promise<SyncHistoryExecution[]> {
+        await ensureMongoConnection();
+        const filter: Record<string, unknown> = {
+            status: "RUNNING",
+            awaiting_post_ingest_drain: true,
+        };
+        if (accountId !== undefined) {
+            filter.account_id = accountId;
+        }
+        const docs = await ConnectorSyncExecutionModel.find(filter)
+            .sort({ started_at: -1 })
+            .lean();
+        return docs.map(toExecution);
     },
 
     async listForAccount(
@@ -161,18 +255,33 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
         return docs.map(toExecution);
     },
 
+    async listRunningAccountIds(): Promise<number[]> {
+        await ensureMongoConnection();
+        const accountIds = await ConnectorSyncExecutionModel.distinct(
+            "account_id",
+            { status: "RUNNING" }
+        );
+        return accountIds
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id));
+    },
+
     async sweepStaleRunning(
         options?: SweepStaleRunningOptions
     ): Promise<number> {
         await ensureMongoConnection();
         const hours = options?.olderThanHours ?? STALE_RUNNING_HOURS;
         const completedAt = options?.completedAt ?? new Date();
-        const olderThan = new Date(
-            completedAt.getTime() - hours * 60 * 60 * 1000
-        );
+        const idleBefore = progressIdleBefore(completedAt, hours);
         const filter: Record<string, unknown> = {
             status: "RUNNING",
-            started_at: { $lt: olderThan },
+            $or: [
+                { last_progress_at: { $lt: idleBefore } },
+                {
+                    last_progress_at: { $exists: false },
+                    started_at: { $lt: idleBefore },
+                },
+            ],
         };
         if (options?.accountId !== undefined) {
             filter.account_id = options.accountId;
@@ -198,6 +307,10 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
                         error_message:
                             "Sync execution timed out (stale RUNNING sweeper)",
                         error_type: "timeout",
+                        awaiting_post_ingest_drain: false,
+                        pending_terminal_status: null,
+                        pending_error_message: null,
+                        pending_error_type: null,
                     },
                 }
             );

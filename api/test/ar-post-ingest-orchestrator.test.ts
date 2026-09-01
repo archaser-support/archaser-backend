@@ -34,8 +34,8 @@ function createDeps(
         applyMaturity: jest.fn(async () => {
             calls.push("maturity");
         }),
-        processOverdueCustomer: jest.fn(async (customerId) => {
-            calls.push(`overdue:${customerId}`);
+        processOverdueCustomers: jest.fn(async (customerIds) => {
+            calls.push(`overdue:${customerIds.join(",")}`);
         }),
         liveRefreshCustomer: jest.fn(async (customerId) => {
             calls.push(`live:${customerId}`);
@@ -189,7 +189,7 @@ describe("runArPostIngestForCustomers", () => {
             skipReason: "no_credit_insurance",
             errors: [],
         });
-        expect(deps.calls).toEqual(["overdue:1", "overdue:2"]);
+        expect(deps.calls).toEqual(["overdue:1,2"]);
         expect(deps.replayCustomer).not.toHaveBeenCalled();
         expect(deps.applyMaturity).not.toHaveBeenCalled();
         expect(deps.liveRefreshCustomer).not.toHaveBeenCalled();
@@ -217,8 +217,7 @@ describe("runArPostIngestForCustomers", () => {
             "replay:11",
             "replay:22",
             "maturity",
-            "overdue:11",
-            "overdue:22",
+            "overdue:11,22",
             "live:11",
             "live:22",
             "as_of",
@@ -268,7 +267,7 @@ describe("runArPostIngestForCustomers", () => {
         );
 
         expect(deps.calls).toEqual(["replay:5", "live:5"]);
-        expect(deps.processOverdueCustomer).not.toHaveBeenCalled();
+        expect(deps.processOverdueCustomers).not.toHaveBeenCalled();
     });
 
     it("dry-run skips overdue and all other side effects", async () => {
@@ -295,10 +294,10 @@ describe("runArPostIngestForCustomers", () => {
             errors: [],
         });
         expect(deps.calls).toEqual([]);
-        expect(deps.processOverdueCustomer).not.toHaveBeenCalled();
+        expect(deps.processOverdueCustomers).not.toHaveBeenCalled();
     });
 
-    it("processes customers sequentially for replay, overdue, and live refresh", async () => {
+    it("processes customers sequentially for replay and live refresh; overdue runs once per batch", async () => {
         let inFlight = 0;
         let maxInFlight = 0;
         const order: string[] = [];
@@ -315,8 +314,8 @@ describe("runArPostIngestForCustomers", () => {
             replayCustomer: jest.fn(async ({ customerId }) => {
                 await track(`replay:${customerId}`);
             }),
-            processOverdueCustomer: jest.fn(async (customerId) => {
-                await track(`overdue:${customerId}`);
+            processOverdueCustomers: jest.fn(async (customerIds) => {
+                await track(`overdue:${customerIds.join(",")}`);
             }),
             liveRefreshCustomer: jest.fn(async (customerId) => {
                 await track(`live:${customerId}`);
@@ -337,9 +336,7 @@ describe("runArPostIngestForCustomers", () => {
             "replay:1",
             "replay:2",
             "replay:3",
-            "overdue:1",
-            "overdue:2",
-            "overdue:3",
+            "overdue:1,2,3",
             "live:1",
             "live:2",
             "live:3",
@@ -349,10 +346,10 @@ describe("runArPostIngestForCustomers", () => {
 
     it("best-effort: continues after overdue failure and still runs live refresh", async () => {
         const deps = createDeps();
-        (deps.processOverdueCustomer as jest.Mock).mockImplementation(
-            async (customerId: number) => {
-                deps.calls.push(`overdue:${customerId}`);
-                if (customerId === 2) {
+        (deps.processOverdueCustomers as jest.Mock).mockImplementation(
+            async (customerIds: number[]) => {
+                deps.calls.push(`overdue:${customerIds.join(",")}`);
+                if (customerIds.includes(2)) {
                     throw new Error("overdue boom");
                 }
             }
@@ -377,9 +374,7 @@ describe("runArPostIngestForCustomers", () => {
             "replay:2",
             "replay:3",
             "maturity",
-            "overdue:1",
-            "overdue:2",
-            "overdue:3",
+            "overdue:1,2,3",
             "live:1",
             "live:2",
             "live:3",
@@ -389,7 +384,6 @@ describe("runArPostIngestForCustomers", () => {
             expect.arrayContaining([
                 expect.objectContaining({
                     step: "process_overdue",
-                    customerId: 2,
                     message: "overdue boom",
                 }),
             ])
@@ -406,8 +400,8 @@ describe("runArPostIngestForCustomers", () => {
                     throw new Error("replay boom");
                 }
             }),
-            processOverdueCustomer: jest.fn(async (customerId) => {
-                calls.push(`overdue:${customerId}`);
+            processOverdueCustomers: jest.fn(async (customerIds) => {
+                calls.push(`overdue:${customerIds.join(",")}`);
             }),
             liveRefreshCustomer: jest.fn(async (customerId) => {
                 calls.push(`live:${customerId}`);
@@ -442,9 +436,7 @@ describe("runArPostIngestForCustomers", () => {
             "replay:2",
             "replay:3",
             "maturity",
-            "overdue:1",
-            "overdue:2",
-            "overdue:3",
+            "overdue:1,2,3",
             "live:1",
             "live:2",
             "live:3",

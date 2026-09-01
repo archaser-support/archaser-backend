@@ -139,7 +139,12 @@ class NotificationRuleDeliveryService {
         let delivered = 0;
         let skipped = 0;
         let cleared = 0;
+        const skippedFrozenAccountIds = [];
         for (const account of accounts) {
+            if (input?.excludeAccountIds?.has(account.id)) {
+                skippedFrozenAccountIds.push(account.id);
+                continue;
+            }
             const enabledRuleCount = await this.prisma.notificationRuleSet.count({
                 where: {
                     account_id: account.id,
@@ -159,7 +164,13 @@ class NotificationRuleDeliveryService {
             skipped += result.skipped;
             cleared += result.cleared;
         }
-        return { accountsProcessed, delivered, skipped, cleared };
+        return {
+            accountsProcessed,
+            delivered,
+            skipped,
+            cleared,
+            skippedFrozenAccountIds,
+        };
     }
     static async createService(prisma) {
         (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);

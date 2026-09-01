@@ -12,6 +12,7 @@ exports.processDueNotifications = processDueNotifications;
 const scheduleDateTime_1 = require("./scheduling/scheduleDateTime");
 const processTemplateContent_1 = require("./templates/processTemplateContent");
 const getSystemUserId_1 = require("./users/getSystemUserId");
+const cronFrozenAccountGuard_1 = require("./accountFreeze/cronFrozenAccountGuard");
 const BATCH_SIZE = 100;
 const LOOK_AHEAD_DAYS = 15; // Pre-create activities for invoices due within the next 15 days
 async function processDueNotifications(prisma, options) {
@@ -38,7 +39,7 @@ async function processDueNotifications(prisma, options) {
             });
             customerAccountId = customer?.account_id ?? undefined;
         }
-        const dueSteps = await prisma.activitiesSequence.findMany({
+        const dueStepsRaw = await prisma.activitiesSequence.findMany({
             where: {
                 category: "Automated",
                 active: true,
@@ -57,6 +58,12 @@ async function processDueNotifications(prisma, options) {
             },
             orderBy: { days_before_due: "desc" },
         });
+        const { kept: dueSteps, skippedAccountIds } = options?.freeze
+            ? (0, cronFrozenAccountGuard_1.partitionByFrozenAccount)(dueStepsRaw, options.freeze.frozenAccountIds)
+            : { kept: dueStepsRaw, skippedAccountIds: [] };
+        if (options?.freeze && skippedAccountIds.length > 0) {
+            options.freeze.reportSkips(skippedAccountIds);
+        }
         if (dueSteps.length === 0) {
             return {
                 success: true,

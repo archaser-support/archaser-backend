@@ -12,12 +12,19 @@ export const MATURITY_ENTITY_STATS_KEY = "_maturity";
  * reason for the disabled buttons.
  */
 export const POST_INGEST_ENTITY_STATS_KEY = "_post_ingest";
+/** Chronological AR replay (limit_assessed_amount stamps). */
+export const AR_REPLAY_ENTITY_STATS_KEY = "_ar_replay";
+/** Live MEP, capacity gap, and insurance field refresh. */
+export const LIVE_REFRESH_ENTITY_STATS_KEY = "_live_refresh";
+export const PROCESS_OVERDUE_ENTITY_STATS_KEY = "_process_overdue";
 export const PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
 export const BALANCES_ENTITY_STATS_KEY = "_balances";
 
 export const TAIL_STEP_KEYS = [
-    POST_INGEST_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
+    PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    AR_REPLAY_ENTITY_STATS_KEY,
+    LIVE_REFRESH_ENTITY_STATS_KEY,
     BALANCES_ENTITY_STATS_KEY,
 ] as const;
 
@@ -93,7 +100,7 @@ export interface ConnectorSyncCounts {
     paymentLinkError?: string;
     /** What the linking pass is doing now (linking, aligning, recalculating). */
     paymentLinkDetail?: TailStepDetail;
-    /** Tail steps (AR post-ingest, pending closes, balance recalculation). */
+    /** Tail steps (pending closes, process overdue, AR post-ingest, balances). */
     tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
 }
 

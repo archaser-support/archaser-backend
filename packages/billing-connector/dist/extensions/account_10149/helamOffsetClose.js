@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.applyHelamOffsetStampClosesForInvoiceNumbers = applyHelamOffsetStampClosesForInvoiceNumbers;
 const bulkWrite_1 = require("../../import/bulkWrite");
+const pendingCloseProgress_1 = require("../pendingCloseProgress");
 const reconciledVirtualClose_1 = require("./reconciledVirtualClose");
 /** Priority Helam (חלמ) payment method label on cancel stamp lines. */
 const HELAM_PAYMENT_METHOD = "חלמ";
@@ -9,7 +10,7 @@ const HELAM_PAYMENT_METHOD = "חלמ";
  * Stamp Helam offset-pair invoices Paid from net (no virtual, no cancel payment).
  * Removes leftover virtual / Helam method payments so paid totals stay correct.
  */
-async function applyHelamOffsetStampClosesForInvoiceNumbers(prisma, accountId, invoiceNumbers, userId) {
+async function applyHelamOffsetStampClosesForInvoiceNumbers(prisma, accountId, invoiceNumbers, userId, options) {
     const unique = Array.from(new Set(invoiceNumbers
         .map((value) => value.trim())
         .filter((value) => value.length > 0)));
@@ -79,7 +80,20 @@ async function applyHelamOffsetStampClosesForInvoiceNumbers(prisma, accountId, i
             },
         });
     });
-    await (0, bulkWrite_1.commitOps)(prisma, updates);
+    if (!options?.onProgress) {
+        await (0, bulkWrite_1.commitOps)(prisma, updates);
+    }
+    else {
+        options.onProgress({ processed: 0, total: invoices.length });
+        for (let offset = 0; offset < updates.length; offset += pendingCloseProgress_1.PENDING_CLOSE_PROGRESS_CHUNK) {
+            const chunk = updates.slice(offset, offset + pendingCloseProgress_1.PENDING_CLOSE_PROGRESS_CHUNK);
+            await (0, bulkWrite_1.commitOps)(prisma, chunk);
+            options.onProgress({
+                processed: Math.min(offset + chunk.length, invoices.length),
+                total: invoices.length,
+            });
+        }
+    }
     return {
         closedIds: invoiceIds,
         customerIds: [...customerIds],
