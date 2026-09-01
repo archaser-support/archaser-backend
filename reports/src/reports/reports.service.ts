@@ -4,6 +4,7 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/jwt-payload";
 import { serializeBigInt } from "../common/serialize-bigint";
@@ -238,31 +239,52 @@ export class ReportsService {
                 .toLowerCase()
                 .replace(/[^a-z0-9_]+/g, "_")
                 .slice(0, 200) || `report_${Date.now()}`;
-        const unique_name = await this.resolveAvailableUniqueName(
+        let unique_name = await this.resolveAvailableUniqueName(
             accountId,
             baseUniqueName
         );
         const canManageSystem = this.access.isAdminAccount(userInfo.accountId);
-        const created = await this.db.report.create({
-            data: {
-                account_id: accountId,
-                name,
-                unique_name,
-                description: (body.description as string) || null,
-                report_config: (body.report_config as never) || {
-                    tables: [],
-                    fields: [],
-                    filters: [],
-                },
-                is_public: Boolean(body.is_public),
-                is_system: canManageSystem ? Boolean(body.is_system) : false,
-                is_default: Boolean(body.is_default),
-                context: (body.context as string) || null,
-                created_by: userId,
-                modified_by: userId,
+        const createData = {
+            account_id: accountId,
+            name,
+            unique_name,
+            description: (body.description as string) || null,
+            report_config: (body.report_config as never) || {
+                tables: [],
+                fields: [],
+                filters: [],
             },
-            include: REPORT_AUDIT_USERS_INCLUDE,
-        });
+            is_public: Boolean(body.is_public),
+            is_system: canManageSystem ? Boolean(body.is_system) : false,
+            is_default: Boolean(body.is_default),
+            context: (body.context as string) || null,
+            created_by: userId,
+            modified_by: userId,
+        };
+        let created;
+        try {
+            created = await this.db.report.create({
+                data: createData,
+                include: REPORT_AUDIT_USERS_INCLUDE,
+            });
+        } catch (error) {
+            if (this.isDuplicateReportUniqueNameError(error)) {
+                unique_name = await this.resolveAvailableUniqueName(
+                    accountId,
+                    baseUniqueName
+                );
+                try {
+                    created = await this.db.report.create({
+                        data: { ...createData, unique_name },
+                        include: REPORT_AUDIT_USERS_INCLUDE,
+                    });
+                } catch (retryError) {
+                    this.rethrowReportWriteError(retryError);
+                }
+            } else {
+                this.rethrowReportWriteError(error);
+            }
+        }
         return serializeBigInt({
             report: this.formatReportDates(created),
         });
@@ -302,11 +324,16 @@ export class ReportsService {
                 data[key] = body[key];
             }
         }
-        const updated = await this.db.report.update({
-            where: { id },
-            data: data as never,
-            include: REPORT_AUDIT_USERS_INCLUDE,
-        });
+        let updated;
+        try {
+            updated = await this.db.report.update({
+                where: { id },
+                data: data as never,
+                include: REPORT_AUDIT_USERS_INCLUDE,
+            });
+        } catch (error) {
+            this.rethrowReportWriteError(error);
+        }
         return serializeBigInt({
             report: this.formatReportDates(updated),
         });
@@ -718,5 +745,34 @@ export class ReportsService {
                 ? new Date(report.modified_at as string | Date).toISOString()
                 : null,
         };
+    }
+
+    private isDuplicateReportUniqueNameError(error: unknown): boolean {
+        if (
+            !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+            error.code !== "P2002"
+        ) {
+            return false;
+        }
+        const target = error.meta?.target;
+        if (!Array.isArray(target)) {
+            return false;
+        }
+        return (
+            target.includes("unique_name") ||
+            target.includes("account_id") ||
+            target.includes("idx_report_account_unique_name")
+        );
+    }
+
+    private rethrowReportWriteError(error: unknown): never {
+        if (this.isDuplicateReportUniqueNameError(error)) {
+            throw new BadRequestException({
+                message:
+                    "A report with this name already exists. Please choose a different name.",
+                errorCode: "DUPLICATE_REPORT_NAME",
+            });
+        }
+        throw error;
     }
 }
