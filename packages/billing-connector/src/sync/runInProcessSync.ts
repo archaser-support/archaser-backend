@@ -12,12 +12,17 @@ import { testPriorityConnection } from "../priority/PriorityClient";
 import { assertPriorityProvider } from "../provider";
 import { decryptCredentials } from "../utils/billingConnectorCrypto";
 import {
+    applyEntityImportResultToSyncStats,
+    type EntityImportStatKey,
+} from "../import/aggregateEntityImportStats";
+import {
     extractMaxUpdatedAt,
     importMappedEntityBatch,
     shouldSkipReportingBreachOnConnectorWrite,
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "../import/entityImporter";
+import { resolveSyncExecutionStatus } from "../observability/statusAndErrorType";
 import { parseMappingRules, type MappingRule } from "../utils/connectorFieldUtils";
 import { PRIORITY_RATE_LIMITS } from "../priority/priorityApiContract";
 import { odataSelectFieldsFromMapping } from "../priority/prioritySelectFields";
@@ -161,7 +166,20 @@ function emptyStats(): ConnectorSyncCounts {
         invoicesImported: 0,
         paymentsImported: 0,
         importErrors: 0,
+        mandatoryFieldSkips: 0,
+        entityImportStats: {},
     };
+}
+
+function buildSyncFinishOk(stats: ConnectorSyncCounts): boolean {
+    const entityStats = entityStatsFromCounts(stats);
+    return (
+        resolveSyncExecutionStatus({
+            ok: true,
+            stats,
+            entity_stats: entityStats,
+        }) === "SUCCESS"
+    );
 }
 
 async function finalizeLegacyCustomerBalances(
@@ -820,11 +838,21 @@ async function runInProcessSyncBody(
                     accountId,
                     mapping.mapping,
                     userId,
-                    { skipReportingBreach, onLog, shouldCancel: () => isCancelRequested(options) }
+                    {
+                        skipReportingBreach,
+                        enforceMandatoryFields: true,
+                        onLog,
+                        shouldCancel: () => isCancelRequested(options),
+                    }
                 );
                 (stats as unknown as Record<string, number>)[importedKey] =
                     importResult.success;
                 stats.importErrors += importResult.failed;
+                applyEntityImportResultToSyncStats(
+                    stats,
+                    entityType as EntityImportStatKey,
+                    importResult
+                );
                 if (entityType === "Payment" || entityType === "Invoice") {
                     for (const id of importResult.affectedCustomerIds) {
                         arAffectedCustomerIds.add(id);
@@ -944,7 +972,7 @@ async function runInProcessSyncBody(
         );
 
         return {
-            ok: stats.importErrors === 0,
+            ok: buildSyncFinishOk(stats),
             accountId,
             provider: connector.provider,
             stats,
@@ -952,7 +980,7 @@ async function runInProcessSyncBody(
             dry_run: false,
             message: `Synced via ${trigger}: imported ${imported} rows (${stats.importErrors} errors)`,
             error:
-                stats.importErrors > 0
+                stats.importErrors > 0 || (stats.mandatoryFieldSkips ?? 0) > 0
                     ? `${stats.importErrors} import error(s)`
                     : undefined,
         };

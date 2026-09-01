@@ -5,11 +5,16 @@ import {
     parseMappingRules,
     type MappingRule,
 } from "../utils/connectorFieldUtils";
+import { appendBatchImportIssue } from "./aggregateEntityImportStats";
 import { applyMaturedDeferredPayments } from "./applyMaturedDeferredPayments";
 import { commitOps, lastWinsByKey } from "./bulkWrite";
 import { importPayments } from "./importPaymentService";
 import { normalizeInvoiceImportInput } from "./normalizeInvoiceImportInput";
 import { toPaymentInput } from "./normalizePaymentInput";
+import {
+    formatImportIssueMessage,
+    validateConnectorLiveImportRow,
+} from "./validateConnectorLiveImportRow";
 import { sortInvoicesForImport } from "./sortInvoicesForImport";
 import { linkOrphanedCreditNotes } from "../invoice/linkOrphanedCreditNotes";
 import type { BillingAccountExtension } from "../extensions/types";
@@ -29,6 +34,8 @@ export interface EntityImportBatchResult {
     success: number;
     failed: number;
     skipped: number;
+    mandatoryFieldSkips?: number;
+    issueMessages?: string[];
     affectedCustomerIds: number[];
     entityIds: number[];
     errors: string[];
@@ -37,6 +44,8 @@ export interface EntityImportBatchResult {
 }
 
 export interface EntityImportBatchOptions {
+    /** Billing-connector live sync only — skip incomplete invoice/payment rows. */
+    enforceMandatoryFields?: boolean;
     skipReportingBreach?: boolean;
     /**
      * When true, skip deferred-payment maturity after this invoice batch.
@@ -92,6 +101,8 @@ function emptyBatchResult(): EntityImportBatchResult {
         success: 0,
         failed: 0,
         skipped: 0,
+        mandatoryFieldSkips: 0,
+        issueMessages: [],
         affectedCustomerIds: [],
         entityIds: [],
         errors: [],
@@ -901,7 +912,36 @@ async function importInvoiceBatch(
         success: false,
     }));
 
-    const normalized = rows.map((row, index) => ({
+    const validatedRows: Array<{ index: number; row: Record<string, unknown> }> =
+        [];
+    for (let index = 0; index < rows.length; index++) {
+        const row = rows[index];
+        if (options?.enforceMandatoryFields) {
+            const validation = validateConnectorLiveImportRow("Invoice", row);
+            if (!validation.ok) {
+                result.skipped += 1;
+                result.mandatoryFieldSkips =
+                    (result.mandatoryFieldSkips ?? 0) + 1;
+                const identifier =
+                    str(row.invoice_number) || `row-${index + 1}`;
+                const message = formatImportIssueMessage(
+                    identifier,
+                    validation.reason ?? "incomplete row"
+                );
+                appendBatchImportIssue(result, message);
+                rowResults[index] = {
+                    index,
+                    success: false,
+                    skipped: true,
+                    error: message,
+                };
+                continue;
+            }
+        }
+        validatedRows.push({ index, row });
+    }
+
+    const normalized = validatedRows.map(({ index, row }) => ({
         index,
         ...normalizeInvoiceImportInput(row, accountId),
     }));
@@ -911,11 +951,16 @@ async function importInvoiceBatch(
         const customerNumber = str(invoice.customer_number);
         if (!invoiceNumber || !customerNumber) {
             result.skipped += 1;
+            const message = formatImportIssueMessage(
+                invoiceNumber || `row-${invoice.index + 1}`,
+                "missing invoice_number or customer_number"
+            );
+            appendBatchImportIssue(result, message);
             rowResults[invoice.index] = {
                 index: invoice.index,
                 success: false,
                 skipped: true,
-                error: "missing invoice_number or customer_number",
+                error: message,
             };
         }
     }
@@ -989,9 +1034,13 @@ async function importInvoiceBatch(
         const customerNumber = str(invoice.customer_number);
         const customerId = customerByNumber.get(customerNumber);
         if (customerId == null) {
-            const message = `Customer not found for invoice: ${customerNumber}`;
+            const message = formatImportIssueMessage(
+                invoiceNumber,
+                `Customer ${customerNumber} not found`
+            );
             result.failed += 1;
             result.errors.push(message);
+            appendBatchImportIssue(result, message);
             options?.onLog?.(`Invoice ${invoiceNumber} failed: ${message}`);
             for (const row of valid) {
                 if (str(row.invoice_number) === invoiceNumber) {
@@ -1007,7 +1056,9 @@ async function importInvoiceBatch(
 
         const amount = invoice.amount ?? 0;
         const customerAmount = invoice.customer_amount ?? amount;
-        const currency = str(invoice.customer_currency) || "USD";
+        const currency = options?.enforceMandatoryFields
+            ? str(invoice.customer_currency)
+            : str(invoice.customer_currency) || "USD";
         const paymentsWin = invoiceNumbersWithPayments.has(invoiceNumber);
         const totalPaid = paymentsWin ? 0 : (invoice.total_paid ?? 0);
         const customerTotalPaid = paymentsWin
@@ -1170,17 +1221,9 @@ export async function importMappedEntityBatch(
     userId?: string,
     options?: EntityImportBatchOptions
 ): Promise<EntityImportBatchResult> {
-    const result: EntityImportBatchResult = {
-        success: 0,
-        failed: 0,
-        skipped: 0,
-        affectedCustomerIds: [],
-        entityIds: [],
-        errors: [],
-    };
     const rows =
         mappingJson == null ? records : mapRows(records, mappingJson);
-    if (rows.length === 0) return result;
+    if (rows.length === 0) return emptyBatchResult();
 
     if (importType === "Customer") {
         return importCustomerBatch(prisma, rows, accountId, userId, options);
@@ -1194,27 +1237,85 @@ export async function importMappedEntityBatch(
         return importInvoiceBatch(prisma, rows, accountId, userId, options);
     }
 
-    const payments = rows.map((row) => toPaymentInput(row, accountId));
+    const result = emptyBatchResult();
+    const rowResults: EntityImportRowResult[] = rows.map((_, index) => ({
+        index,
+        success: false,
+    }));
+    const paymentInputs: ReturnType<typeof toPaymentInput>[] = [];
+    const paymentInputIndices: number[] = [];
+
+    for (let index = 0; index < rows.length; index++) {
+        const row = rows[index];
+        if (options?.enforceMandatoryFields) {
+            const validation = validateConnectorLiveImportRow("Payment", row);
+            if (!validation.ok) {
+                result.skipped += 1;
+                result.mandatoryFieldSkips =
+                    (result.mandatoryFieldSkips ?? 0) + 1;
+                const identifier =
+                    str(row.reference) || str(row.invoice_number) || `row-${index + 1}`;
+                const message = formatImportIssueMessage(
+                    identifier,
+                    validation.reason ?? "incomplete row"
+                );
+                appendBatchImportIssue(result, message);
+                rowResults[index] = {
+                    index,
+                    success: false,
+                    skipped: true,
+                    error: message,
+                };
+                continue;
+            }
+        }
+        paymentInputs.push(toPaymentInput(row, accountId));
+        paymentInputIndices.push(index);
+    }
+
     const paymentResults = await importPayments(
         prisma,
-        payments,
+        paymentInputs,
         accountId,
         userId,
-        { extension: options?.extension }
+        {
+            extension: options?.extension,
+            enforceMandatoryFields: options?.enforceMandatoryFields,
+        }
     );
 
-    result.rowResults = paymentResults.map((paymentResult) => ({
-        index: paymentResult.index,
-        success: paymentResult.success,
-        skipped: paymentResult.skipped,
-        error: paymentResult.success ? undefined : paymentResult.message,
-        entityId: paymentResult.invoicePaymentId,
-        customerId: paymentResult.customerId,
-    }));
+    for (let paymentIndex = 0; paymentIndex < paymentResults.length; paymentIndex++) {
+        const paymentResult = paymentResults[paymentIndex];
+        const originalIndex = paymentInputIndices[paymentIndex];
+        const paymentRecord = paymentInputs[paymentIndex];
+        const identifier =
+            paymentRecord.reference?.trim() ||
+            paymentRecord.invoice_number?.trim() ||
+            `row-${originalIndex + 1}`;
 
-    for (const paymentResult of paymentResults) {
+        rowResults[originalIndex] = {
+            index: originalIndex,
+            success: paymentResult.success,
+            skipped: paymentResult.skipped,
+            error: paymentResult.success ? undefined : paymentResult.message,
+            entityId: paymentResult.invoicePaymentId,
+            customerId: paymentResult.customerId,
+        };
+
         if (paymentResult.skipped) {
             result.skipped += 1;
+            if (paymentResult.mandatoryFieldSkip) {
+                result.mandatoryFieldSkips =
+                    (result.mandatoryFieldSkips ?? 0) + 1;
+            }
+            const skipReason =
+                paymentResult.message === "import.results.paymentSkipped"
+                    ? "unchanged"
+                    : (paymentResult.message ?? "skipped");
+            appendBatchImportIssue(
+                result,
+                formatImportIssueMessage(identifier, skipReason)
+            );
             if (paymentResult.invoicePaymentId != null) {
                 result.entityIds.push(paymentResult.invoicePaymentId);
             }
@@ -1233,9 +1334,14 @@ export async function importMappedEntityBatch(
             result.failed += 1;
             if (paymentResult.message) {
                 result.errors.push(paymentResult.message);
+                appendBatchImportIssue(
+                    result,
+                    formatImportIssueMessage(identifier, paymentResult.message)
+                );
             }
         }
     }
 
+    result.rowResults = rowResults;
     return markCancelled(result, options);
 }

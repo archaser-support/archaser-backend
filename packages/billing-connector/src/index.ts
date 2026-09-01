@@ -167,6 +167,24 @@ export {
 
 export { fetchPriorityEntitySetCatalog } from "./priority/PriorityClient";
 
+export {
+    validateConnectorLiveImportRow,
+    formatImportIssueMessage,
+    type ConnectorLiveImportType,
+    type MandatoryFieldValidationResult,
+} from "./import/validateConnectorLiveImportRow";
+
+export {
+    appendEntityImportIssue,
+    appendBatchImportIssue,
+    accumulateBatchIntoEntityStats,
+    applyEntityImportResultToSyncStats,
+    emptyEntityImportStatsAccum,
+    SAMPLE_ERRORS_CAP,
+    type EntityImportStatsAccum,
+    type EntityImportStatKey,
+} from "./import/aggregateEntityImportStats";
+
 export { getImportEntityFieldCatalog } from "./utils/connectorFieldUtils";
 
 export {

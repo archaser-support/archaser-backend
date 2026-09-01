@@ -8,6 +8,10 @@ import type {
     ExtensionSyncWindow,
 } from "../extensions/types";
 import {
+    applyEntityImportResultToSyncStats,
+    type EntityImportStatKey,
+} from "../import/aggregateEntityImportStats";
+import {
     importMappedEntityBatch,
     extractMaxUpdatedAt,
     type EntityImportBatchOptions,
@@ -17,26 +21,29 @@ import {
 import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
 import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
 import {
-    BALANCES_ENTITY_STATS_KEY,
-    PENDING_CLOSES_ENTITY_STATS_KEY,
-    POST_INGEST_ENTITY_STATS_KEY,
-    type TailStepKey,
-    type TailStepDetail,
-    type TailStepState,
-} from "./connectorSyncRuntime";
-import {
     invokeConnectorArPostIngest,
     type ArPostIngestHostFn,
     type ConnectorPostIngestDeferOptions,
 } from "../credit/arPostIngestHost";
-import {
-    mapErpRecord,
-    type MappingRule,
-} from "../utils/connectorFieldUtils";
+import { resolveSyncExecutionStatus } from "../observability/statusAndErrorType";
 import { PRIORITY_RATE_LIMITS } from "../priority/priorityApiContract";
 import { odataSelectFieldsFromMapping } from "../priority/prioritySelectFields";
 import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
 import { resolveImportPullFilterOData } from "../services/billingConnectorPullFilters";
+import {
+    mapErpRecord,
+    type MappingRule,
+} from "../utils/connectorFieldUtils";
+import {
+    BALANCES_ENTITY_STATS_KEY,
+    PENDING_CLOSES_ENTITY_STATS_KEY,
+    POST_INGEST_ENTITY_STATS_KEY,
+    entityStatsFromCounts,
+    type ConnectorSyncCounts,
+    type TailStepKey,
+    type TailStepDetail,
+    type TailStepState,
+} from "./connectorSyncRuntime";
 
 export const STAGED_ENTITY_ORDER: ExtensionEntityType[] = [
     "Customer",
@@ -144,7 +151,7 @@ export interface RunStagedExtensionSyncResult {
     invoicePostIngestRan?: boolean;
 }
 
-function emptyStats() {
+function emptyStats(): ConnectorSyncCounts {
     return {
         customersProcessed: 0,
         contactsProcessed: 0,
@@ -155,6 +162,8 @@ function emptyStats() {
         invoicesImported: 0,
         paymentsImported: 0,
         importErrors: 0,
+        mandatoryFieldSkips: 0,
+        entityImportStats: {},
     };
 }
 
@@ -216,8 +225,8 @@ function bumpProcessedPage(
     entityType: ExtensionEntityType,
     count: number
 ): void {
-    (stats as Record<string, number>)[processedKey(entityType)] =
-        ((stats as Record<string, number>)[processedKey(entityType)] ?? 0) +
+    (stats as unknown as Record<string, number>)[processedKey(entityType)] =
+        ((stats as unknown as Record<string, number>)[processedKey(entityType)] ?? 0) +
         count;
 }
 
@@ -290,16 +299,20 @@ async function checkpointEntityPage(params: {
 function bumpImported(
     stats: ReturnType<typeof emptyStats>,
     entityType: ExtensionEntityType,
-    success: number,
-    failed: number
+    importResult: EntityImportBatchResult
 ): void {
     const key =
         `${entityType.toLowerCase()}sImported` as keyof ReturnType<
             typeof emptyStats
         >;
-    (stats as Record<string, number>)[key] =
-        ((stats as Record<string, number>)[key] ?? 0) + success;
-    stats.importErrors += failed;
+    (stats as unknown as Record<string, number>)[key] =
+        ((stats as unknown as Record<string, number>)[key] ?? 0) + importResult.success;
+    stats.importErrors += importResult.failed;
+    applyEntityImportResultToSyncStats(
+        stats,
+        entityType as EntityImportStatKey,
+        importResult
+    );
 }
 
 async function finalizeCustomerBalances(
@@ -720,17 +733,13 @@ export async function runStagedExtensionSync(
                                     options.skipReportingBreach === true,
                                 skipDeferredPaymentMaturity:
                                     entityType === "Invoice",
+                                enforceMandatoryFields: true,
                                 onLog: options.onLog,
                                 shouldCancel: options.shouldCancel,
                                 extension: options.extension,
                             }
                         );
-                        bumpImported(
-                            stats,
-                            entityType,
-                            importResult.success,
-                            importResult.failed
-                        );
+                        bumpImported(stats, entityType, importResult);
                         windowImported += importResult.success;
                         windowErrors += importResult.failed;
                         if (
@@ -766,7 +775,7 @@ export async function runStagedExtensionSync(
                                 prisma: options.prisma,
                                 connectorId: options.connectorId,
                                 entityType,
-                                pulled: (stats as Record<string, number>)[
+                                pulled: (stats as unknown as Record<string, number>)[
                                     processedKey(entityType)
                                 ],
                                 nextCursor: afterKey,
@@ -805,7 +814,7 @@ export async function runStagedExtensionSync(
                         prisma: options.prisma,
                         connectorId: options.connectorId,
                         entityType,
-                        pulled: (stats as Record<string, number>)[
+                        pulled: (stats as unknown as Record<string, number>)[
                             processedKey(entityType)
                         ],
                         nextCursor,
@@ -916,8 +925,14 @@ export async function runStagedExtensionSync(
     }
 
     const totalErrors = stats.importErrors;
+    const finishOk =
+        resolveSyncExecutionStatus({
+            ok: totalErrors === 0,
+            stats,
+            entity_stats: entityStatsFromCounts(stats),
+        }) === "SUCCESS";
     return finishWithBalances({
-        ok: totalErrors === 0,
+        ok: finishOk,
         windows,
         previewBatch,
         stats: resultStats(),
