@@ -37,7 +37,7 @@ isProject: false
 
 # Billing Connector Mandatory Field Validation
 
-**Status:** Ready for implementation  
+**Status:** Done (implemented on `be-import-extension`, commit `f7f5a0d`)  
 **Slug:** `billing-connector-mandatory-field-validation`  
 **Related:** [erp_billing_connector_22321e7a.plan.md](./erp_billing_connector_22321e7a.plan.md), [billing-connector-grafana-dashboard.plan.md](./billing-connector-grafana-dashboard.plan.md)
 
