@@ -157,6 +157,32 @@ let ReportsService = class ReportsService {
             report: this.formatReportDates(report),
         });
     }
+    /**
+     * Reports are unique per (account_id, unique_name); append a numeric
+     * suffix so two reports with the same name can coexist in an account.
+     */
+    async resolveAvailableUniqueName(accountId, base) {
+        const taken = await this.db.report.findMany({
+            where: {
+                account_id: accountId,
+                OR: [
+                    { unique_name: base },
+                    { unique_name: { startsWith: `${base}_` } },
+                ],
+            },
+            select: { unique_name: true },
+        });
+        const used = new Set(taken.map((r) => r.unique_name));
+        if (!used.has(base)) {
+            return base;
+        }
+        for (let suffix = 2;; suffix += 1) {
+            const candidate = `${base.slice(0, 200 - `_${suffix}`.length)}_${suffix}`;
+            if (!used.has(candidate)) {
+                return candidate;
+            }
+        }
+    }
     async create(user, body) {
         const userInfo = await this.access.resolveUserInfo(user);
         const accountId = this.access.getEffectiveAccountId(userInfo);
@@ -170,10 +196,11 @@ let ReportsService = class ReportsService {
         if (!name) {
             throw new common_1.BadRequestException("name is required");
         }
-        const unique_name = String(body.unique_name || name)
+        const baseUniqueName = String(body.unique_name || name)
             .toLowerCase()
             .replace(/[^a-z0-9_]+/g, "_")
             .slice(0, 200) || `report_${Date.now()}`;
+        const unique_name = await this.resolveAvailableUniqueName(accountId, baseUniqueName);
         const canManageSystem = this.access.isAdminAccount(userInfo.accountId);
         const created = await this.db.report.create({
             data: {

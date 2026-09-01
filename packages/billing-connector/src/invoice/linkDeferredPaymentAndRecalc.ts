@@ -40,6 +40,8 @@ type InvoiceForPaidRecalc = Pick<
     "id" | "net_amount" | "customer_net_amount" | "custom_code1" | "status"
 >;
 
+const RECALC_PROGRESS_CHUNK = 200;
+
 const LINKED_PAYMENT_RECALC_SELECT = {
     id: true,
     payment_date: true,
@@ -182,7 +184,10 @@ export async function recalculateInvoicesFromLinkedPayments(
         PrismaClient,
         "invoice" | "invoicePayment" | "billingConnector" | "$transaction"
     >,
-    targets: Map<number, InvoicePaidRecalcOptions>
+    targets: Map<number, InvoicePaidRecalcOptions>,
+    options?: {
+        onProgress?: (progress: { processed: number; total: number }) => void;
+    }
 ): Promise<void> {
     if (targets.size === 0) return;
 
@@ -242,27 +247,43 @@ export async function recalculateInvoicesFromLinkedPayments(
     }
 
     const modifiedAt = new Date();
-    await commitOps(
-        prisma,
-        invoices.map((invoice) =>
-            prisma.invoice.update({
-                where: { id: invoice.id },
-                data: buildInvoicePaidUpdate(
-                    invoice,
-                    paymentsByInvoiceId.get(invoice.id) ?? [],
-                    {
-                        ...targets.get(invoice.id),
-                        isForcePaidClose: forcePaidByAccount.get(
-                            invoice.account_id
-                        ),
-                    },
-                    modifiedAt,
-                    paidToleranceByAccount.get(invoice.account_id) ??
-                        INVOICE_PAID_TOLERANCE
-                ),
-            })
-        )
-    );
+    const buildUpdate = (invoice: (typeof invoices)[number]) =>
+        prisma.invoice.update({
+            where: { id: invoice.id },
+            data: buildInvoicePaidUpdate(
+                invoice,
+                paymentsByInvoiceId.get(invoice.id) ?? [],
+                {
+                    ...targets.get(invoice.id),
+                    isForcePaidClose: forcePaidByAccount.get(
+                        invoice.account_id
+                    ),
+                },
+                modifiedAt,
+                paidToleranceByAccount.get(invoice.account_id) ??
+                    INVOICE_PAID_TOLERANCE
+            ),
+        });
+
+    if (!options?.onProgress) {
+        await commitOps(prisma, invoices.map(buildUpdate));
+        return;
+    }
+
+    // Sliced so long recalcs can report progress instead of looking frozen.
+    options.onProgress({ processed: 0, total: invoices.length });
+    for (
+        let offset = 0;
+        offset < invoices.length;
+        offset += RECALC_PROGRESS_CHUNK
+    ) {
+        const chunk = invoices.slice(offset, offset + RECALC_PROGRESS_CHUNK);
+        await commitOps(prisma, chunk.map(buildUpdate));
+        options.onProgress({
+            processed: Math.min(offset + chunk.length, invoices.length),
+            total: invoices.length,
+        });
+    }
 }
 
 export async function linkDeferredPaymentAndRecalc(
