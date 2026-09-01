@@ -9,6 +9,7 @@ import type {
     ExtensionTransformContext,
 } from "../types";
 import { parseErpDateOnly } from "../../utils/connectorFieldUtils";
+import { deriveInvoiceFxRatio } from "../../payment/alignPaymentToInvoiceCurrency";
 import { applyHelamOffsetStampClosesForInvoiceNumbers } from "./helamOffsetClose";
 import {
     applyReconciledVirtualCloses,
@@ -116,10 +117,18 @@ function pickNonZeroAmount(...values: unknown[]): number | null {
     return null;
 }
 
+function roundCurrency(value: number): number {
+    return Math.round(value * 100) / 100;
+}
+
 /**
  * Priority IDG_ARFNCITEMS4 dual currency:
  * CODE + CREDIT1/DEBIT1 (primary) and CODE5 + CREDIT5/DEBIT5 (secondary).
  * Pick the side matching the invoice currency; keep the other as base amount.
+ *
+ * Receipt lines (FNCPATNAME "ק") carry only the primary side — Priority books
+ * the dual currency on the invoice/debit line — so when neither side matches the
+ * invoice we convert the primary amount with the invoice's own FX ratio.
  */
 export function alignAccount10149PaymentAmountsForInvoice(
     input: ExtensionAlignPaymentAmountsInput
@@ -147,6 +156,16 @@ export function alignAccount10149PaymentAmountsForInvoice(
     const invoiceCurrencyRaw =
         (input.invoiceCustomerCurrency ?? "").trim() ||
         input.customer_currency;
+    const invoiceFxRatio = deriveInvoiceFxRatio(
+        input.invoiceAmount,
+        input.invoiceCustomerAmount
+    );
+    // Only the primary side exists (no CODE5) and it is not the invoice currency.
+    const needsInvoiceFxConversion =
+        code !== invoiceCurrency &&
+        code5 === "" &&
+        amount1 !== null &&
+        invoiceFxRatio !== null;
 
     const aligned: ExtensionAlignedPaymentAmounts =
         code5 === invoiceCurrency && amount5 !== null
@@ -161,11 +180,19 @@ export function alignAccount10149PaymentAmountsForInvoice(
                     customer_amount: amount1,
                     customer_currency: invoiceCurrencyRaw,
                 }
-              : {
-                    amount: input.amount,
-                    customer_amount: input.customer_amount,
-                    customer_currency: input.customer_currency,
-                };
+              : needsInvoiceFxConversion
+                ? {
+                      amount: amount1!,
+                      customer_amount: roundCurrency(
+                          amount1! / invoiceFxRatio!
+                      ),
+                      customer_currency: invoiceCurrencyRaw,
+                  }
+                : {
+                      amount: input.amount,
+                      customer_amount: input.customer_amount,
+                      customer_currency: input.customer_currency,
+                  };
 
     return absAlignedCancelDebitAmounts(raw, aligned);
 }

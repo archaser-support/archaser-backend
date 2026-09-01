@@ -864,12 +864,10 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
     const followUpNumbers = sorted.flatMap((invoice) => [invoice.invoice_number, invoice.credit_for_invoice_number].filter((n) => Boolean(n)));
     if (followUpNumbers.length > 0) {
         try {
-            const creditStarted = Date.now();
-            const creditResult = await (0, linkOrphanedCreditNotes_1.linkOrphanedCreditNotes)(prisma, {
+            await (0, linkOrphanedCreditNotes_1.linkOrphanedCreditNotes)(prisma, {
                 accountId,
                 targetInvoiceNumbers: followUpNumbers,
             });
-            options?.onLog?.(`Invoice follow-up credit-link: ${creditResult.linkedCount} linked in ${Date.now() - creditStarted}ms`);
         }
         catch (error) {
             console.error("Failed to link orphaned credit notes:", error);

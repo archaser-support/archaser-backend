@@ -21,6 +21,7 @@ import {
     PENDING_CLOSES_ENTITY_STATS_KEY,
     POST_INGEST_ENTITY_STATS_KEY,
     type TailStepKey,
+    type TailStepDetail,
     type TailStepState,
 } from "./connectorSyncRuntime";
 import {
@@ -130,6 +131,7 @@ export interface RunStagedExtensionSyncResult {
         paymentsStillDeferred?: number;
         paymentsLinkTotal?: number;
         paymentLinkError?: string;
+        paymentLinkDetail?: TailStepDetail;
         tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
     };
     cancelled?: boolean;
@@ -162,6 +164,7 @@ type PaymentLinkProgress = {
     paymentsStillDeferred: number;
     paymentsLinkTotal: number;
     paymentLinkError?: string;
+    paymentLinkDetail?: TailStepDetail;
 };
 
 function emptyPaymentLinkProgress(): PaymentLinkProgress {
@@ -171,6 +174,7 @@ function emptyPaymentLinkProgress(): PaymentLinkProgress {
         paymentsStillDeferred: 0,
         paymentsLinkTotal: 0,
         paymentLinkError: undefined,
+        paymentLinkDetail: undefined,
     };
 }
 
@@ -838,7 +842,11 @@ export async function runStagedExtensionSync(
                         undefined,
                         {
                             userId: options.userId,
-                            onProgress: ({ linked, totalCandidates }) => {
+                            onProgress: ({
+                                linked,
+                                totalCandidates,
+                                detail,
+                            }) => {
                                 paymentLink.paymentLinkStatus = "running";
                                 paymentLink.paymentsLinked = linked;
                                 paymentLink.paymentsLinkTotal = totalCandidates;
@@ -846,6 +854,7 @@ export async function runStagedExtensionSync(
                                     0,
                                     totalCandidates - linked
                                 );
+                                paymentLink.paymentLinkDetail = detail;
                                 emitProgress();
                             },
                         }
@@ -854,6 +863,7 @@ export async function runStagedExtensionSync(
                         arAffectedCustomerIds.add(id);
                     }
                     paymentLink.paymentLinkStatus = "done";
+                    paymentLink.paymentLinkDetail = undefined;
                     paymentLink.paymentsLinked = maturityResult.matured;
                     paymentLink.paymentsStillDeferred =
                         maturityResult.deferredRemaining;
