@@ -43,6 +43,38 @@ function completedJob(overrides: Record<string, unknown> = {}) {
     };
 }
 
+function arCompleteDb(overrides: {
+    existing?: Record<string, unknown>;
+    jobId?: string;
+    importType?: "Invoice" | "Payment";
+}) {
+    const jobId = overrides.jobId ?? "job-1";
+    const importType = overrides.importType ?? "Invoice";
+    const update = jest
+        .fn()
+        .mockResolvedValue(
+            completedJob({ id: jobId, import_type: importType })
+        );
+    return {
+        db: {
+            importJob: {
+                findFirst: jest.fn().mockResolvedValue({
+                    id: jobId,
+                    import_type: importType,
+                    metadata: {
+                        asOfRewriteCustomerIds: [7, 8],
+                        asOfRewriteEntityIds: [101, 102],
+                    },
+                    ...overrides.existing,
+                }),
+                update,
+                findUnique: jest.fn().mockResolvedValue({ metadata: {} }),
+            },
+        },
+        update,
+    };
+}
+
 describe("ImportService completeJob post-ingest", () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -53,21 +85,7 @@ describe("ImportService completeJob post-ingest", () => {
     });
 
     it("Invoice complete invokes orchestrator with replay, live refresh, and as-of", async () => {
-        const db = {
-            importJob: {
-                findFirst: jest.fn().mockResolvedValue({
-                    id: "job-1",
-                    import_type: "Invoice",
-                    metadata: {
-                        asOfRewriteCustomerIds: [7, 8],
-                        asOfRewriteEntityIds: [101, 102],
-                    },
-                }),
-                update: jest.fn().mockResolvedValue(
-                    completedJob({ import_type: "Invoice" })
-                ),
-            },
-        };
+        const { db, update } = arCompleteDb({});
         const service = new ImportService(
             db as never,
             accessScope() as never,
@@ -93,24 +111,27 @@ describe("ImportService completeJob post-ingest", () => {
             [7, 8],
             db
         );
+        expect(update).toHaveBeenCalledTimes(1);
+        expect(update).toHaveBeenCalledWith({
+            where: { id: "job-1" },
+            data: expect.objectContaining({
+                status: "Completed",
+                completed_at: expect.any(Date),
+            }),
+        });
     });
 
     it("Payment complete invokes orchestrator with the same options shape", async () => {
-        const db = {
-            importJob: {
-                findFirst: jest.fn().mockResolvedValue({
-                    id: "job-pay",
-                    import_type: "Payment",
-                    metadata: {
-                        asOfRewriteCustomerIds: [3],
-                        asOfRewriteEntityIds: [501],
-                    },
-                }),
-                update: jest.fn().mockResolvedValue(
-                    completedJob({ id: "job-pay", import_type: "Payment" })
-                ),
+        const { db, update } = arCompleteDb({
+            jobId: "job-pay",
+            importType: "Payment",
+            existing: {
+                metadata: {
+                    asOfRewriteCustomerIds: [3],
+                    asOfRewriteEntityIds: [501],
+                },
             },
-        };
+        });
         const service = new ImportService(
             db as never,
             accessScope() as never,
@@ -130,27 +151,24 @@ describe("ImportService completeJob post-ingest", () => {
                 entityIds: [501],
             },
         });
+        expect(update).toHaveBeenCalledWith({
+            where: { id: "job-pay" },
+            data: expect.objectContaining({ status: "Completed" }),
+        });
     });
 
     it("keeps job Completed when post-ingest orchestrator throws", async () => {
         (runArPostIngestForCustomers as jest.Mock).mockRejectedValue(
             new Error("replay boom")
         );
-        const db = {
-            importJob: {
-                findFirst: jest.fn().mockResolvedValue({
-                    id: "job-1",
-                    import_type: "Invoice",
-                    metadata: {
-                        asOfRewriteCustomerIds: [7],
-                        asOfRewriteEntityIds: [101],
-                    },
-                }),
-                update: jest.fn().mockResolvedValue(
-                    completedJob({ import_type: "Invoice" })
-                ),
+        const { db, update } = arCompleteDb({
+            existing: {
+                metadata: {
+                    asOfRewriteCustomerIds: [7],
+                    asOfRewriteEntityIds: [101],
+                },
             },
-        };
+        });
         const service = new ImportService(
             db as never,
             accessScope() as never,
@@ -167,6 +185,10 @@ describe("ImportService completeJob post-ingest", () => {
             customerIds: [7],
         });
         expect(recalculateCustomerAmounts).toHaveBeenCalled();
+        expect(update).toHaveBeenCalledWith({
+            where: { id: "job-1" },
+            data: expect.objectContaining({ status: "Completed" }),
+        });
     });
 
     it("falls back to as-of enqueue when orchestrator skips (collection-only)", async () => {
@@ -175,21 +197,15 @@ describe("ImportService completeJob post-ingest", () => {
             skipReason: "no_credit_insurance",
             errors: [],
         });
-        const db = {
-            importJob: {
-                findFirst: jest.fn().mockResolvedValue({
-                    id: "job-1",
-                    import_type: "Payment",
-                    metadata: {
-                        asOfRewriteCustomerIds: [9],
-                        asOfRewriteEntityIds: [77],
-                    },
-                }),
-                update: jest.fn().mockResolvedValue(
-                    completedJob({ import_type: "Payment" })
-                ),
+        const { db, update } = arCompleteDb({
+            importType: "Payment",
+            existing: {
+                metadata: {
+                    asOfRewriteCustomerIds: [9],
+                    asOfRewriteEntityIds: [77],
+                },
             },
-        };
+        });
         const service = new ImportService(
             db as never,
             accessScope() as never,
@@ -206,5 +222,78 @@ describe("ImportService completeJob post-ingest", () => {
             customerIds: [9],
         });
         expect(recalculateCustomerAmounts).toHaveBeenCalledWith([9], db);
+        expect(update).toHaveBeenCalledWith({
+            where: { id: "job-1" },
+            data: expect.objectContaining({ status: "Completed" }),
+        });
+    });
+
+    it("Invoice complete sets Completed only after orchestrator resolves", async () => {
+        let resolveOrchestrator: (value: unknown) => void = () => {};
+        const orchestratorDone = new Promise((resolve) => {
+            resolveOrchestrator = resolve;
+        });
+        (runArPostIngestForCustomers as jest.Mock).mockReturnValue(
+            orchestratorDone
+        );
+
+        const { db, update } = arCompleteDb({});
+        const service = new ImportService(
+            db as never,
+            accessScope() as never,
+            {} as never
+        );
+
+        const completePromise = service.completeJob(user(), { jobId: "job-1" });
+
+        await Promise.resolve();
+        expect(update).not.toHaveBeenCalled();
+
+        resolveOrchestrator({ skipped: false, errors: [] });
+        const result = await completePromise;
+
+        expect(result.status).toBe("Completed");
+        expect(update).toHaveBeenCalledTimes(1);
+        expect(update).toHaveBeenCalledWith({
+            where: { id: "job-1" },
+            data: expect.objectContaining({
+                status: "Completed",
+                completed_at: expect.any(Date),
+            }),
+        });
+    });
+
+    it("Customer complete sets Completed immediately without orchestrator", async () => {
+        const update = jest.fn().mockResolvedValue(
+            completedJob({ import_type: "Customer" })
+        );
+        const db = {
+            importJob: {
+                findFirst: jest.fn().mockResolvedValue({
+                    id: "job-cust",
+                    import_type: "Customer",
+                    metadata: {},
+                }),
+                update,
+            },
+        };
+        const service = new ImportService(
+            db as never,
+            accessScope() as never,
+            {} as never
+        );
+
+        const result = await service.completeJob(user(), { jobId: "job-cust" });
+
+        expect(result.status).toBe("Completed");
+        expect(runArPostIngestForCustomers).not.toHaveBeenCalled();
+        expect(update).toHaveBeenCalledTimes(1);
+        expect(update).toHaveBeenCalledWith({
+            where: { id: "job-cust" },
+            data: expect.objectContaining({
+                status: "Completed",
+                completed_at: expect.any(Date),
+            }),
+        });
     });
 });

@@ -52,6 +52,22 @@ async function activityWorkflowManager(prisma, options) {
         await sendDueActivities(prisma, options, summary.phase1);
         // ===== PHASE 2: Generate next automated activities =====
         await generateNextActivities(prisma, options, summary.phase2);
+        if (options?.freeze && options.freeze.frozenAccountIds.size > 0) {
+            const now = new Date();
+            const skippedRows = await prisma.activity.findMany({
+                where: {
+                    status: "SCHEDULED",
+                    schedule_time: { lte: now },
+                    type: { in: ["SMS", "Email"] },
+                    account_id: { in: [...options.freeze.frozenAccountIds] },
+                },
+                select: { account_id: true },
+                distinct: ["account_id"],
+            });
+            options.freeze.reportSkips(skippedRows
+                .map((row) => row.account_id)
+                .filter((id) => id != null));
+        }
         const phase1DidWork = summary.phase1.activitiesProcessed > 0 ||
             summary.phase1.smsSent > 0 ||
             summary.phase1.emailSent > 0;
@@ -94,6 +110,7 @@ async function sendDueActivities(prisma, options, stats) {
         schedule_time: { lte: now },
         type: { in: ["SMS", "Email"] },
         Customer: {
+            ...(options?.freeze ? options.freeze.accountIdNotInFilter() : {}),
             Account: {
                 OR: [
                     { has_collection: true },
@@ -706,6 +723,7 @@ async function generateNextActivities(prisma, options, stats) {
         period_end_date: null,
         Customer: {
             automation_stuck_no_contacts: { not: true },
+            ...(options?.freeze ? options.freeze.accountIdNotInFilter() : {}),
             Account: {
                 OR: [
                     { has_collection: true },

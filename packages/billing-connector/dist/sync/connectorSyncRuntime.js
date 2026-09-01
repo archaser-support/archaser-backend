@@ -4,7 +4,7 @@
  * plus a short history of completed runs for GET /sync-runs polling.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TAIL_STEP_KEYS = exports.BALANCES_ENTITY_STATS_KEY = exports.PENDING_CLOSES_ENTITY_STATS_KEY = exports.POST_INGEST_ENTITY_STATS_KEY = exports.MATURITY_ENTITY_STATS_KEY = void 0;
+exports.TAIL_STEP_KEYS = exports.BALANCES_ENTITY_STATS_KEY = exports.PENDING_CLOSES_ENTITY_STATS_KEY = exports.PROCESS_OVERDUE_ENTITY_STATS_KEY = exports.LIVE_REFRESH_ENTITY_STATS_KEY = exports.AR_REPLAY_ENTITY_STATS_KEY = exports.POST_INGEST_ENTITY_STATS_KEY = exports.MATURITY_ENTITY_STATS_KEY = void 0;
 exports.entityStatsFromCounts = entityStatsFromCounts;
 exports.registerRunningSync = registerRunningSync;
 exports.getRunningSync = getRunningSync;
@@ -21,11 +21,18 @@ exports.MATURITY_ENTITY_STATS_KEY = "_maturity";
  * reason for the disabled buttons.
  */
 exports.POST_INGEST_ENTITY_STATS_KEY = "_post_ingest";
+/** Chronological AR replay (limit_assessed_amount stamps). */
+exports.AR_REPLAY_ENTITY_STATS_KEY = "_ar_replay";
+/** Live MEP, capacity gap, and insurance field refresh. */
+exports.LIVE_REFRESH_ENTITY_STATS_KEY = "_live_refresh";
+exports.PROCESS_OVERDUE_ENTITY_STATS_KEY = "_process_overdue";
 exports.PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
 exports.BALANCES_ENTITY_STATS_KEY = "_balances";
 exports.TAIL_STEP_KEYS = [
-    exports.POST_INGEST_ENTITY_STATS_KEY,
     exports.PENDING_CLOSES_ENTITY_STATS_KEY,
+    exports.PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    exports.AR_REPLAY_ENTITY_STATS_KEY,
+    exports.LIVE_REFRESH_ENTITY_STATS_KEY,
     exports.BALANCES_ENTITY_STATS_KEY,
 ];
 function entityStatsFromCounts(stats) {

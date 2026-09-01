@@ -22,11 +22,13 @@ export declare class NotificationRuleDeliveryService {
     processAllCreditInsuranceAccounts(input?: {
         now?: Date;
         accountId?: number;
+        excludeAccountIds?: ReadonlySet<number>;
     }): Promise<{
         accountsProcessed: number;
         delivered: number;
         skipped: number;
         cleared: number;
+        skippedFrozenAccountIds: number[];
     }>;
     static createService(prisma: PrismaClient): Promise<NotificationRuleDeliveryService>;
 }

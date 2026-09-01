@@ -72,14 +72,30 @@ async function defaultAccountHasCreditInsurance(accountId) {
 function createDefaultArPostIngestDeps() {
     return {
         accountHasCreditInsurance: defaultAccountHasCreditInsurance,
-        replayCustomer: ({ customerId, accountId, onProgress }) => (0, importArReplayService_1.replayCustomerArImport)({ customerId, accountId, onProgress }),
+        replayCustomer: ({ customerId, accountId, mepBreachStartDate, onProgress }) => (0, importArReplayService_1.replayCustomerArImport)({
+            customerId,
+            accountId,
+            mepBreachStartDate,
+            onProgress,
+        }),
         applyMaturity: (accountId, asOf) => (0, billing_connector_1.applyMaturedDeferredPayments)(credit_insurance_domain_1.creditInsurancePrisma, accountId, asOf),
-        processOverdueCustomer: async (customerId) => {
-            await (0, handleOverdueInvoices_1.handleOverdueInvoices)(credit_insurance_domain_1.creditInsurancePrisma, customerId);
+        processOverdueCustomers: async (customerIds) => {
+            if (customerIds.length === 0) {
+                return;
+            }
+            const scope = customerIds.length === 1
+                ? customerIds[0]
+                : { customerIds };
+            await (0, handleOverdueInvoices_1.handleOverdueInvoices)(credit_insurance_domain_1.creditInsurancePrisma, scope);
         },
-        // Same follow-up as triggerPostImportOverdueMetrics (MEP + gap pipeline).
-        liveRefreshCustomer: (customerId, asOf) => (0, credit_insurance_domain_1.syncCustomerInsuranceFields)(customerId, {
+        // Live MEP/gap refresh, then always restamp open-invoice CTV/terms.
+        // Without refreshTermsBreachFlags, CTV only updates when overdue_block
+        // flips — re-import of already-blocked customers left stale
+        // ctv_customer_overdue_mep (false positives on historical invoices).
+        liveRefreshCustomer: (customerId, asOf, invoiceIds) => (0, credit_insurance_domain_1.syncCustomerInsuranceFields)(customerId, {
             runFollowUpEffects: true,
+            refreshTermsBreachFlags: true,
+            ...(invoiceIds?.length ? { invoiceIds } : {}),
             ...(asOf ? { asOfDate: asOf } : {}),
         }),
         enqueueAsOfRewrite: (args) => (0, credit_insurance_domain_1.enqueueRewriteForImport)(args),
@@ -90,12 +106,27 @@ function createDefaultArPostIngestDeps() {
  * Run post-ingest AR refresh for affected customers.
  * Process Overdue runs for every account; replay / maturity / live refresh
  * (and in-orchestrator as-of) remain credit-insurance-gated.
- * Customers are processed one at a time for replay, overdue, and live refresh.
+ * Customers are processed one at a time for replay and live refresh.
+ * Process Overdue runs once per batch of touched customers.
  */
 async function runArPostIngestForCustomers(options, deps = createDefaultArPostIngestDeps()) {
     const errors = [];
     const logError = deps.logError ?? defaultLogError;
     const customerIds = Array.from(new Set(options.customerIds.filter(Number.isFinite)));
+    const invoiceIdsByCustomer = new Map();
+    if (options.affectedInvoiceIds?.length) {
+        const rows = await credit_insurance_domain_1.creditInsurancePrisma.invoice.findMany({
+            where: { id: { in: options.affectedInvoiceIds } },
+            select: { id: true, customer_id: true },
+        });
+        for (const row of rows) {
+            if (row.customer_id == null)
+                continue;
+            const list = invoiceIdsByCustomer.get(row.customer_id) ?? [];
+            list.push(row.id);
+            invoiceIdsByCustomer.set(row.customer_id, list);
+        }
+    }
     if (options.dryRun === true) {
         return {
             skipped: true,
@@ -155,6 +186,7 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
                 await deps.replayCustomer({
                     customerId,
                     accountId: options.accountId,
+                    mepBreachStartDate: options.mepBreachStartDate,
                     onProgress: (detail) => reportStepDetail("replay", customerId, detail),
                 });
             }
@@ -197,27 +229,26 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
         }
     }
     // --- All accounts: Process Overdue Invoices (default on) ---
-    if (runProcessOverdueStep) {
+    if (runProcessOverdueStep && customerIds.length > 0) {
+        try {
+            await deps.processOverdueCustomers(customerIds);
+        }
+        catch (error) {
+            const message = errorMessage(error);
+            const stack = errorStack(error);
+            logError("process overdue failed", {
+                accountId: options.accountId,
+                customerIds,
+                message,
+                stack,
+            });
+            errors.push({
+                step: "process_overdue",
+                message,
+                ...(stack ? { stack } : {}),
+            });
+        }
         for (const customerId of customerIds) {
-            try {
-                await deps.processOverdueCustomer(customerId);
-            }
-            catch (error) {
-                const message = errorMessage(error);
-                const stack = errorStack(error);
-                logError("process overdue failed", {
-                    accountId: options.accountId,
-                    customerId,
-                    message,
-                    stack,
-                });
-                errors.push({
-                    step: "process_overdue",
-                    customerId,
-                    message,
-                    ...(stack ? { stack } : {}),
-                });
-            }
             advanceProgress("process_overdue", customerId);
         }
     }
@@ -225,7 +256,7 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
     if (hasCreditInsurance && options.runLiveRefresh) {
         for (const customerId of customerIds) {
             try {
-                await deps.liveRefreshCustomer(customerId, options.liveRefreshAsOf);
+                await deps.liveRefreshCustomer(customerId, options.liveRefreshAsOf, invoiceIdsByCustomer.get(customerId));
             }
             catch (error) {
                 const message = errorMessage(error);

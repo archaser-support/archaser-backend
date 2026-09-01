@@ -840,6 +840,7 @@ export class AccountsNestedService {
                         backfill_last_checkpoint_at: null,
                         backfill_total_records: null,
                         last_max_updated_at: null,
+                        last_attempt_at: null,
                         last_error: null,
                     },
                 });

@@ -72,7 +72,11 @@ export {
     parseImportDateToLocalCalendarDate,
     shouldSetReportingBreach,
 } from "./credit-insurance/domain/invoiceInsuranceFields";
-export { stampInvoiceInsuranceFieldsAsOf } from "./credit-insurance/domain/stampInvoiceInsuranceFieldsAsOf";
+export {
+    stampInvoiceInsuranceFieldsAsOf,
+    stampInvoicesInsuranceFieldsAsOf,
+    type InvoiceInsuranceAsOfStamp,
+} from "./credit-insurance/domain/stampInvoiceInsuranceFieldsAsOf";
 export {
     resolveCreatedOverdueMepByInvoiceId,
     resolveCreatedOverdueMepForInvoice,
@@ -166,6 +170,7 @@ export { resolveCustomerHeaderOpenArAmounts } from "./credit-insurance/domain/op
 export {
     isActiveTopUp,
     resolveEffectiveApprovedLimit,
+    resolveTopUpTotalsForAsOfDates,
 } from "./credit-insurance/domain/resolveEffectiveApprovedLimit";
 export {
     isPrimaryPolicyAssignable,

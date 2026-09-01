@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.executeScheduledReports = executeScheduledReports;
 const accountSender_1 = require("./email/accountSender");
 const sendSmtpHtmlEmail_1 = require("./email/sendSmtpHtmlEmail");
+const cronFrozenAccountGuard_1 = require("./accountFreeze/cronFrozenAccountGuard");
 function computeNextRunAt(from, scheduleType, config) {
     const next = new Date(from);
     const type = scheduleType.toLowerCase();
@@ -43,10 +44,10 @@ function parseScheduleConfig(raw) {
  * Due report schedules: execute via reports Nest S2S when REPORTS_SERVICE_URL
  * is set; email CSV/Excel attachment to schedule_config.recipients when configured.
  */
-async function executeScheduledReports(prisma) {
+async function executeScheduledReports(prisma, freeze) {
     const start = Date.now();
     const now = new Date();
-    const due = await prisma.reportSchedule.findMany({
+    const dueRaw = await prisma.reportSchedule.findMany({
         where: {
             is_active: true,
             OR: [{ next_run_at: null }, { next_run_at: { lte: now } }],
@@ -63,6 +64,21 @@ async function executeScheduledReports(prisma) {
         },
         take: 50,
     });
+    const { kept: due, skippedAccountIds } = freeze
+        ? (0, cronFrozenAccountGuard_1.partitionByFrozenAccount)(dueRaw.map((schedule) => ({
+            ...schedule,
+            account_id: schedule.Report?.account_id ?? null,
+        })), freeze.frozenAccountIds)
+        : {
+            kept: dueRaw.map((schedule) => ({
+                ...schedule,
+                account_id: schedule.Report?.account_id ?? null,
+            })),
+            skippedAccountIds: [],
+        };
+    if (freeze && skippedAccountIds.length > 0) {
+        freeze.reportSkips(skippedAccountIds);
+    }
     const reportsBase = process.env.REPORTS_SERVICE_URL?.replace(/\/$/, "");
     const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
     const mode = reportsBase && internalSecret ? "s2s" : "timestamp_only";

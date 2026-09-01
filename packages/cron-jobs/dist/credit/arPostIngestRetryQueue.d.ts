@@ -10,9 +10,14 @@ type DbClient = {
 export type EnqueueArPostIngestRetryResult = {
     customersEnqueued: number;
 };
+/** Customers still waiting on deferred replay / live-refresh drain. */
+export declare function countPendingArPostIngestCustomers(accountId: number, options?: {
+    dbClient?: DbClient;
+}): Promise<number>;
 /**
  * Intentionally queue post-ingest steps (e.g. after billing connector backfill)
- * so replay/overdue/live-refresh run on the worker instead of blocking sync.
+ * so replay/live-refresh run on the worker instead of blocking sync.
+ * Process Overdue runs in the connector Process Overdue tail step before enqueue.
  */
 export declare function enqueueArPostIngestSteps(accountId: number, customerIds: number[], steps: ArPostIngestStep[], options?: {
     dbClient?: DbClient;
@@ -42,5 +47,7 @@ export declare function drainArPostIngestRetryQueue(options?: {
     }) => Promise<{
         errors: ArPostIngestError[];
     }>;
+    /** Called after each successfully drained customer (heartbeat / finalize hook). */
+    onItemProcessed?: (accountId: number) => void | Promise<void>;
 }): Promise<DrainArPostIngestRetryResult>;
 export {};

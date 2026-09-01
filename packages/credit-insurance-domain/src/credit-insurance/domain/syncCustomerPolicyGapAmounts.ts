@@ -362,19 +362,26 @@ export async function freezeCustomerPolicyGapOnDeactivation(
     });
 }
 
-export async function syncAllCustomerPolicyGapAmounts(): Promise<{
+export async function syncAllCustomerPolicyGapAmounts(options?: {
+    excludeAccountIds?: ReadonlySet<number>;
+}): Promise<{
     customersProcessed: number;
     customersUpdated: number;
     missingRates: number;
     rateDate: Date;
+    skippedAccountIds: number[];
 }> {
     const rateDate = startOfTodayUtc();
+    const excludeAccountIds = options?.excludeAccountIds;
 
     const customers = await prisma.customer.findMany({
         where: {
             collection_status: "Active",
             Account: {
                 has_credit_insurance: true,
+                ...(excludeAccountIds?.size
+                    ? { id: { notIn: [...excludeAccountIds] } }
+                    : {}),
             },
             CustomerPolicy: {
                 some: {
@@ -400,11 +407,36 @@ export async function syncAllCustomerPolicyGapAmounts(): Promise<{
         customersUpdated += 1;
     }
 
+    const skippedAccountIds =
+        excludeAccountIds && excludeAccountIds.size > 0
+            ? (
+                  await prisma.account.findMany({
+                      where: {
+                          id: { in: [...excludeAccountIds] },
+                          has_credit_insurance: true,
+                          Customer: {
+                              some: {
+                                  collection_status: "Active",
+                                  CustomerPolicy: {
+                                      some: {
+                                          is_active: true,
+                                          approved_limit: { not: null },
+                                      },
+                                  },
+                              },
+                          },
+                      },
+                      select: { id: true },
+                  })
+              ).map((row) => row.id)
+            : [];
+
     return {
         customersProcessed: customers.length,
         customersUpdated,
         missingRates,
         rateDate,
+        skippedAccountIds,
     };
 }
 

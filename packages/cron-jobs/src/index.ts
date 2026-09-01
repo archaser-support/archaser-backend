@@ -20,7 +20,10 @@ export { closeZeroOutstandingDebtInvoices } from "./closeZeroOutstandingDebtInvo
 export { fixClosedCollectionData } from "./fixClosedCollectionData";
 export { checkInforuSmsStatus } from "./inforuSmsStatusCheck";
 export { moveCollectionToNextCategory } from "./moveCollectionToNextCategory";
-export { handleOverdueInvoices } from "./handleOverdueInvoices";
+export {
+    handleOverdueInvoices,
+    type HandleOverdueInvoicesScope,
+} from "./handleOverdueInvoices";
 export { executeScheduledReports } from "./executeScheduledReports";
 export {
     EXPECTED_CRON_JOB_NAMES,
@@ -43,6 +46,7 @@ export {
     type RunArPostIngestOptions,
 } from "./credit/arPostIngestOrchestrator";
 export {
+    countPendingArPostIngestCustomers,
     drainArPostIngestRetryQueue,
     enqueueArPostIngestRetries,
     enqueueArPostIngestSteps,
@@ -66,3 +70,28 @@ export {
     type ReplaySimulationInvoice,
     type ReplaySimulationSummary,
 } from "./credit/importArReplayService";
+export {
+    getFrozenAccountIds,
+    isAccountFrozen,
+    type FrozenAccountResolverDeps,
+} from "./accountFreeze/frozenAccountResolver";
+export {
+    logFrozenAccountSkips,
+    recordFrozenAccountSkips,
+    reportFrozenAccountSkips,
+    type FrozenAccountSkipLogInput,
+} from "./accountFreeze/frozenAccountObservability";
+export {
+    registerCronFrozenAccountMetrics,
+    type CronFrozenAccountMetrics,
+} from "./accountFreeze/frozenAccountMetrics";
+export {
+    beginCronFrozenAccountGuard,
+    partitionByFrozenAccount,
+    type CronFrozenAccountGuard,
+    type CronFrozenAccountGuardOptions,
+} from "./accountFreeze/cronFrozenAccountGuard";
+export {
+    getDefaultCronFrozenAccountMetrics,
+    setDefaultCronFrozenAccountMetrics,
+} from "./accountFreeze/defaultCronFrozenAccountMetrics";

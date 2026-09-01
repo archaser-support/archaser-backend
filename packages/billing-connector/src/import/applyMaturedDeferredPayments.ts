@@ -2,9 +2,12 @@ import type { PrismaClient } from "@prisma/client";
 
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionPaymentLinkedCandidate } from "../extensions/types";
-import { recalculateInvoicesFromLinkedPayments } from "../invoice/linkDeferredPaymentAndRecalc";
+import {
+    bulkLinkDeferredPayments,
+    recalculateInvoicesFromLinkedPayments,
+    type BulkDeferredPaymentLink,
+} from "../invoice/linkDeferredPaymentAndRecalc";
 import { alignPaymentToInvoiceCurrency } from "../payment/alignPaymentToInvoiceCurrency";
-import { commitOps } from "./bulkWrite";
 
 export interface MaturityResult {
     matured: number;
@@ -18,21 +21,15 @@ export interface MaturityResult {
 export interface MaturityProgress {
     linked: number;
     totalCandidates: number;
-    /**
-     * What the pass is doing right now. Linking is only part of the wall time;
-     * currency alignment, extension closes and paid-total recalcs follow it.
-     */
+    /** Sub-step while linking, extension closes, or paid-total recalc runs. */
     detail?: MaturityProgressDetail;
 }
 
 export interface MaturityProgressDetail {
-    step: "link" | "align" | "close" | "recalc";
+    step: "link" | "close" | "recalc";
     processed?: number;
     total?: number;
 }
-
-const UPDATE_MANY_ID_CHUNK = 500;
-const CURRENCY_FIX_PROGRESS_CHUNK = 200;
 
 /**
  * Rebuild a minimal ERP-shaped row for extension hooks after maturity.
@@ -64,8 +61,8 @@ export function rawErpRowFromMaturedPayment(payment: {
 
 /**
  * Link deferred payments whose invoice now exists and whose payment_date has
- * matured. Groups links with updateMany per invoice_id, runs extension
- * afterPaymentLinked (virtual recon close), then batch-recalcs paid totals.
+ * matured. Matches in memory, bulk-links via UNNEST, runs extension closes,
+ * then batch-recalcs paid totals.
  */
 export async function applyMaturedDeferredPayments(
     prisma: PrismaClient,
@@ -180,16 +177,7 @@ export async function applyMaturedDeferredPayments(
         : undefined;
 
     const now = new Date();
-    const paymentIdsByInvoiceId = new Map<number, number[]>();
-    /**
-     * Deferred rows stored in the invoice's base currency: link and convert in
-     * one per-row update, since grouped updateMany cannot carry row amounts.
-     */
-    const currencyFixes: Array<{
-        id: number;
-        invoiceId: number;
-        data: Record<string, unknown>;
-    }> = [];
+    const bulkLinks: BulkDeferredPaymentLink[] = [];
     const linkCandidates: ExtensionPaymentLinkedCandidate[] = [];
 
     for (const row of deferredRows) {
@@ -206,21 +194,18 @@ export async function applyMaturedDeferredPayments(
             currencyOptions
         );
         if (alignment) {
-            currencyFixes.push({
-                id: row.id,
+            bulkLinks.push({
+                paymentId: row.id,
                 invoiceId,
-                data: {
-                    invoice_id: invoiceId,
-                    amount: alignment.amount,
-                    customer_amount: alignment.customer_amount,
-                    customer_currency: alignment.customer_currency,
-                    modified_at: now,
-                },
+                amount: alignment.amount,
+                customer_amount: alignment.customer_amount,
+                customer_currency: alignment.customer_currency,
             });
         } else {
-            const list = paymentIdsByInvoiceId.get(invoiceId) ?? [];
-            list.push(row.id);
-            paymentIdsByInvoiceId.set(invoiceId, list);
+            bulkLinks.push({
+                paymentId: row.id,
+                invoiceId,
+            });
         }
         linkCandidates.push({
             invoiceId,
@@ -257,69 +242,29 @@ export async function applyMaturedDeferredPayments(
 
     const invoiceIdsToRecalc = new Map<number, Record<string, never>>();
 
-    if (paymentIdsByInvoiceId.size > 0 || currencyFixes.length > 0) {
-        progressDetail = { step: "link" };
-        for (const [invoiceId, paymentIds] of paymentIdsByInvoiceId) {
-            for (
-                let offset = 0;
-                offset < paymentIds.length;
-                offset += UPDATE_MANY_ID_CHUNK
-            ) {
-                const idChunk = paymentIds.slice(
-                    offset,
-                    offset + UPDATE_MANY_ID_CHUNK
-                );
-                const updated = await prisma.invoicePayment.updateMany({
-                    where: {
-                        account_id: accountId,
-                        invoice_id: null,
-                        id: { in: idChunk },
-                    },
-                    data: {
-                        invoice_id: invoiceId,
-                        modified_at: now,
-                    },
-                });
-                matured += updated.count;
-                emitProgress();
+    if (bulkLinks.length > 0) {
+        progressDetail = { step: "link", total: bulkLinks.length };
+        emitProgress(true);
+        let linkedSoFar = 0;
+        matured = await bulkLinkDeferredPayments(
+            prisma,
+            accountId,
+            bulkLinks,
+            now,
+            {
+                onChunkLinked: (count) => {
+                    linkedSoFar += count;
+                    progressDetail = {
+                        step: "link",
+                        processed: Math.min(linkedSoFar, bulkLinks.length),
+                        total: bulkLinks.length,
+                    };
+                    emitProgress();
+                },
             }
-            invoiceIdsToRecalc.set(invoiceId, {});
-        }
-
-        // Committed in slices so the progress bar keeps moving: currency
-        // alignment needs one update per row and can dominate the pass.
-        for (
-            let offset = 0;
-            offset < currencyFixes.length;
-            offset += CURRENCY_FIX_PROGRESS_CHUNK
-        ) {
-            const chunk = currencyFixes.slice(
-                offset,
-                offset + CURRENCY_FIX_PROGRESS_CHUNK
-            );
-            await commitOps(
-                prisma,
-                chunk.map((row) =>
-                    prisma.invoicePayment.update({
-                        where: { id: row.id },
-                        data: row.data as never,
-                        select: { id: true },
-                    })
-                )
-            );
-            matured += chunk.length;
-            for (const row of chunk) {
-                invoiceIdsToRecalc.set(row.invoiceId, {});
-            }
-            progressDetail = {
-                step: "align",
-                processed: Math.min(
-                    offset + chunk.length,
-                    currencyFixes.length
-                ),
-                total: currencyFixes.length,
-            };
-            emitProgress();
+        );
+        for (const link of bulkLinks) {
+            invoiceIdsToRecalc.set(link.invoiceId, {});
         }
         progressDetail = undefined;
         emitProgress(true);

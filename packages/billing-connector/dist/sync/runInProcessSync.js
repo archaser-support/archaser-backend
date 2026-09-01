@@ -16,7 +16,7 @@ const connectorSyncCancelRegistry_1 = require("./connectorSyncCancelRegistry");
 const connectorSyncRuntime_1 = require("./connectorSyncRuntime");
 const stagedExtensionSync_1 = require("./stagedExtensionSync");
 const recalculateCustomerAmountsHost_1 = require("../customers/recalculateCustomerAmountsHost");
-const arPostIngestHost_1 = require("../credit/arPostIngestHost");
+const arPostIngestTailSteps_1 = require("./arPostIngestTailSteps");
 const observability_1 = require("../observability");
 const ENTITY_ORDER = [
     "Customer",
@@ -166,51 +166,23 @@ async function runInProcessSyncBody(options, obsRuntime) {
         stats.tailSteps = { ...(stats.tailSteps ?? {}), [key]: state };
         emitProgress(options.onProgress, stats);
     };
-    /** Wraps post-ingest so the UI shows it instead of freezing on the last entity. */
-    const runPostIngestWithProgress = async (args) => {
-        setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
-            status: "running",
-            total: args.customerIds.length,
+    /** Inline AR replay + insurance refresh tail steps for the progress panel. */
+    const runArTailWithProgress = async (args) => {
+        await (0, arPostIngestTailSteps_1.runInlineArPostIngestTailSteps)({
+            accountId,
+            customerIds: args.customerIds,
+            invoiceEntityIds: args.invoiceEntityIds,
+            paymentEntityIds: args.paymentEntityIds,
+            mepBreachStartDate: args.mepBreachStartDate,
+            prisma,
+            onArPostIngest: options.onArPostIngest,
+            log,
+            setTailStep,
+            separateOverdueStep: Boolean(options.onProcessOverdueCustomers),
+            onProcessOverdueCustomers: options.onProcessOverdueCustomers,
+            runMaturity: args.runMaturity,
+            importType: args.invoiceEntityIds.length > 0 ? "Invoice" : "Payment",
         });
-        try {
-            const postIngest = await (0, arPostIngestHost_1.invokeConnectorArPostIngest)({
-                accountId,
-                customerIds: args.customerIds,
-                invoiceEntityIds: args.invoiceEntityIds,
-                paymentEntityIds: args.paymentEntityIds,
-                prisma,
-                onArPostIngest: options.onArPostIngest,
-                log,
-                runMaturity: args.runMaturity,
-                deferPostIngest: options.deferPostIngest,
-                enqueueDeferredSteps: options.enqueueDeferredSteps,
-                schedulePostIngestDrain: options.schedulePostIngestDrain,
-                onProgress: ({ completed, total, step, detail }) => {
-                    setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
-                        status: "running",
-                        processed: completed,
-                        total,
-                        ...(step
-                            ? { detail: { step, ...(detail ?? {}) } }
-                            : {}),
-                    });
-                },
-            });
-            setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
-                status: postIngest.deferred ? "queued" : "done",
-                processed: args.customerIds.length,
-                total: args.customerIds.length,
-            });
-        }
-        catch (error) {
-            setTailStep(connectorSyncRuntime_1.POST_INGEST_ENTITY_STATS_KEY, {
-                status: "failed",
-                total: args.customerIds.length,
-                error: error instanceof Error
-                    ? error.message
-                    : "AR post-ingest failed",
-            });
-        }
     };
     try {
         const connector = await prisma.billingConnector.findUnique({
@@ -417,9 +389,12 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 shouldCancel: () => isCancelRequested(options),
                 onCustomerBalancesFinal: options.onCustomerBalancesFinal,
                 onArPostIngest: options.onArPostIngest,
+                onProcessOverdueCustomers: options.onProcessOverdueCustomers,
                 deferPostIngest: options.deferPostIngest,
                 enqueueDeferredSteps: options.enqueueDeferredSteps,
                 schedulePostIngestDrain: options.schedulePostIngestDrain,
+                mepBreachStartDate: options.mepBreachStartDate ??
+                    connector.mep_breach_start_date,
                 pullCreatedOnOrAfter: !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,
                 entitySets: connector.entity_sets,
@@ -441,6 +416,7 @@ async function runInProcessSyncBody(options, obsRuntime) {
             return {
                 ok: staged.ok,
                 cancelled: staged.cancelled,
+                postIngestDeferred: staged.postIngestDeferred,
                 accountId,
                 provider: connector.provider,
                 stats: staged.stats,
@@ -584,11 +560,13 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 emitProgress(options.onProgress, stats);
                 if (entityType === "Invoice") {
                     invoicePostIngestRan = true;
-                    await runPostIngestWithProgress({
+                    await runArTailWithProgress({
                         customerIds: Array.from(arAffectedCustomerIds),
                         invoiceEntityIds: Array.from(arAffectedInvoiceIds),
                         paymentEntityIds: Array.from(arAffectedPaymentIds),
                         runMaturity: false,
+                        mepBreachStartDate: options.mepBreachStartDate ??
+                            connector.mep_breach_start_date,
                     });
                 }
                 const maxUpdated = (0, entityImporter_1.extractMaxUpdatedAt)(pullResult.records) ?? new Date();
@@ -647,11 +625,13 @@ async function runInProcessSyncBody(options, obsRuntime) {
         }
         if (!invoicePostIngestRan &&
             paymentAffectedCustomerIds.size > 0) {
-            await runPostIngestWithProgress({
+            await runArTailWithProgress({
                 customerIds: Array.from(paymentAffectedCustomerIds),
                 invoiceEntityIds: [],
                 paymentEntityIds: Array.from(arAffectedPaymentIds),
                 runMaturity: true,
+                mepBreachStartDate: options.mepBreachStartDate ??
+                    connector.mep_breach_start_date,
             });
         }
         await finalizeLegacyCustomerBalances(arAffectedCustomerIds, prisma, options.onCustomerBalancesFinal, log, setTailStep);
@@ -662,6 +642,7 @@ async function runInProcessSyncBody(options, obsRuntime) {
         log(`Synced via ${trigger}: imported ${imported} rows (${stats.importErrors} errors)`);
         return {
             ok: stats.importErrors === 0,
+            postIngestDeferred: false,
             accountId,
             provider: connector.provider,
             stats,

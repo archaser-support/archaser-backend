@@ -2,16 +2,35 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleOverdueInvoices = handleOverdueInvoices;
 const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
+const cronFrozenAccountGuard_1 = require("./accountFreeze/cronFrozenAccountGuard");
 const customersDomain_1 = require("./customersDomain");
-async function getAllPastDueInvoices(prisma, customerId) {
+function resolveOverdueCustomerFilter(scope) {
+    if (typeof scope === "number") {
+        return { customerId: scope };
+    }
+    if (scope?.customerIds?.length) {
+        const customerIds = Array.from(new Set(scope.customerIds.filter(Number.isFinite)));
+        if (customerIds.length === 1) {
+            return { customerId: customerIds[0] };
+        }
+        if (customerIds.length > 1) {
+            return { customerIds };
+        }
+    }
+    return {};
+}
+async function getAllPastDueInvoices(prisma, filter) {
     const now = new Date();
+    const customerScope = filter.customerId != null
+        ? { customer_id: filter.customerId }
+        : filter.customerIds?.length
+            ? { customer_id: { in: filter.customerIds } }
+            : {};
     return prisma.invoice.findMany({
         where: {
             due_date: { lt: now },
             status: "Due",
-            ...(typeof customerId === "number"
-                ? { customer_id: customerId }
-                : {}),
+            ...customerScope,
             OR: [
                 { customer_outstanding_debt: { not: 0 } },
                 { amount: { lt: 0 } },
@@ -76,7 +95,7 @@ async function createOpenCollectionPeriods(prisma, customerData) {
  * Process overdue invoices: mark past-due Due invoices Overdue, recalc amounts,
  * activate inactive customers with debt, open collection periods when needed.
  */
-async function handleOverdueInvoices(prisma, customerId) {
+async function handleOverdueInvoices(prisma, scope, freeze) {
     const start = Date.now();
     const processStats = {
         totalInvoicesProcessed: 0,
@@ -86,7 +105,14 @@ async function handleOverdueInvoices(prisma, customerId) {
         dcpOldestOverdueDateRefreshed: 0,
         skippedCreditOnly: 0,
     };
-    const pastDueInvoices = await getAllPastDueInvoices(prisma, customerId);
+    const customerFilter = resolveOverdueCustomerFilter(scope);
+    const pastDueInvoicesRaw = await getAllPastDueInvoices(prisma, customerFilter);
+    const { kept: pastDueInvoices, skippedAccountIds } = freeze
+        ? (0, cronFrozenAccountGuard_1.partitionByFrozenAccount)(pastDueInvoicesRaw, freeze.frozenAccountIds)
+        : { kept: pastDueInvoicesRaw, skippedAccountIds: [] };
+    if (freeze && skippedAccountIds.length > 0) {
+        freeze.reportSkips(skippedAccountIds);
+    }
     processStats.totalInvoicesProcessed = pastDueInvoices.length;
     let affectedCustomerIds = [];
     if (pastDueInvoices.length > 0) {
@@ -105,11 +131,23 @@ async function handleOverdueInvoices(prisma, customerId) {
     // Refresh oldest overdue / overdue_block for open periods
     {
         (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
+        const openPeriodCustomerScope = customerFilter.customerId != null
+            ? { customer_id: customerFilter.customerId }
+            : customerFilter.customerIds?.length
+                ? { customer_id: { in: customerFilter.customerIds } }
+                : {};
         const openPeriods = await prisma.customerCollectionPeriod.findMany({
             where: {
                 period_end_date: null,
-                ...(typeof customerId === "number"
-                    ? { customer_id: customerId }
+                ...openPeriodCustomerScope,
+                ...(freeze && freeze.frozenAccountIds.size > 0
+                    ? {
+                        Customer: {
+                            account_id: {
+                                notIn: [...freeze.frozenAccountIds],
+                            },
+                        },
+                    }
                     : {}),
             },
             select: { customer_id: true },

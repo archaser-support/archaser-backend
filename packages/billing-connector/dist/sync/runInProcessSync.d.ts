@@ -4,6 +4,7 @@ import type { BillingAccountExtension, ExtensionMappedBatch, ExtensionSyncWindow
 import { type ConnectorEntityStats } from "./connectorSyncRuntime";
 import { type ImportBatchFn } from "./stagedExtensionSync";
 import { type ArPostIngestHostFn, type ConnectorPostIngestDeferOptions } from "../credit/arPostIngestHost";
+import type { ProcessOverdueCustomersFn } from "./processOverdueTailStep";
 import { type BillingConnectorObservabilityOptions } from "../observability";
 export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions {
     prisma: PrismaClient;
@@ -39,8 +40,15 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
      * refresh, as-of enqueue). Nest wires runArPostIngestForCustomers.
      */
     onArPostIngest?: ArPostIngestHostFn;
+    /**
+     * One batched Process Overdue pass for touched customers before AR
+     * post-ingest. Nest wires handleOverdueInvoices.
+     */
+    onProcessOverdueCustomers?: ProcessOverdueCustomersFn;
     /** Structured Loki JSON + Prometheus counters (start / finish / errors). */
     observability?: BillingConnectorObservabilityOptions;
+    /** Account MEP breach start date — narrows AR replay event load when set. */
+    mepBreachStartDate?: Date | null;
 }
 export interface RunInProcessSyncResult {
     ok: boolean;
@@ -60,6 +68,8 @@ export interface RunInProcessSyncResult {
     message: string;
     error?: string;
     cancelled?: boolean;
+    /** True when post-import was enqueued for worker drain (Mongo stays RUNNING). */
+    postIngestDeferred?: boolean;
     entity_stats?: Record<string, {
         pulled: number;
         success: number;

@@ -26,7 +26,6 @@ import { resolveImportPullFilterOData } from "../services/billingConnectorPullFi
 import { isConnectorSyncCancelRequested } from "./connectorSyncCancelRegistry";
 import {
     BALANCES_ENTITY_STATS_KEY,
-    POST_INGEST_ENTITY_STATS_KEY,
     entityStatsFromCounts,
     type ConnectorEntityStats,
     type ConnectorSyncCounts,
@@ -41,10 +40,11 @@ import {
 } from "./stagedExtensionSync";
 import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
 import {
-    invokeConnectorArPostIngest,
     type ArPostIngestHostFn,
     type ConnectorPostIngestDeferOptions,
 } from "../credit/arPostIngestHost";
+import { runInlineArPostIngestTailSteps } from "./arPostIngestTailSteps";
+import type { ProcessOverdueCustomersFn } from "./processOverdueTailStep";
 import {
     emitBillingConnectorSyncFinish,
     emitBillingConnectorSyncStart,
@@ -88,8 +88,15 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
      * refresh, as-of enqueue). Nest wires runArPostIngestForCustomers.
      */
     onArPostIngest?: ArPostIngestHostFn;
+    /**
+     * One batched Process Overdue pass for touched customers before AR
+     * post-ingest. Nest wires handleOverdueInvoices.
+     */
+    onProcessOverdueCustomers?: ProcessOverdueCustomersFn;
     /** Structured Loki JSON + Prometheus counters (start / finish / errors). */
     observability?: BillingConnectorObservabilityOptions;
+    /** Account MEP breach start date — narrows AR replay event load when set. */
+    mepBreachStartDate?: Date | null;
 }
 
 type SyncObsRuntime = {
@@ -118,6 +125,8 @@ export interface RunInProcessSyncResult {
     message: string;
     error?: string;
     cancelled?: boolean;
+    /** True when post-import was enqueued for worker drain (Mongo stays RUNNING). */
+    postIngestDeferred?: boolean;
     entity_stats?: Record<
         string,
         { pulled: number; success: number; failed: number; skipped: number }
@@ -344,56 +353,30 @@ async function runInProcessSyncBody(
         stats.tailSteps = { ...(stats.tailSteps ?? {}), [key]: state };
         emitProgress(options.onProgress, stats);
     };
-    /** Wraps post-ingest so the UI shows it instead of freezing on the last entity. */
-    const runPostIngestWithProgress = async (args: {
+    /** Inline AR replay + insurance refresh tail steps for the progress panel. */
+    const runArTailWithProgress = async (args: {
         customerIds: number[];
         invoiceEntityIds: number[];
         paymentEntityIds: number[];
         runMaturity: boolean;
+        mepBreachStartDate?: Date | null;
     }): Promise<void> => {
-        setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-            status: "running",
-            total: args.customerIds.length,
+        await runInlineArPostIngestTailSteps({
+            accountId,
+            customerIds: args.customerIds,
+            invoiceEntityIds: args.invoiceEntityIds,
+            paymentEntityIds: args.paymentEntityIds,
+            mepBreachStartDate: args.mepBreachStartDate,
+            prisma,
+            onArPostIngest: options.onArPostIngest,
+            log,
+            setTailStep,
+            separateOverdueStep: Boolean(options.onProcessOverdueCustomers),
+            onProcessOverdueCustomers: options.onProcessOverdueCustomers,
+            runMaturity: args.runMaturity,
+            importType:
+                args.invoiceEntityIds.length > 0 ? "Invoice" : "Payment",
         });
-        try {
-            const postIngest = await invokeConnectorArPostIngest({
-                accountId,
-                customerIds: args.customerIds,
-                invoiceEntityIds: args.invoiceEntityIds,
-                paymentEntityIds: args.paymentEntityIds,
-                prisma,
-                onArPostIngest: options.onArPostIngest,
-                log,
-                runMaturity: args.runMaturity,
-                deferPostIngest: options.deferPostIngest,
-                enqueueDeferredSteps: options.enqueueDeferredSteps,
-                schedulePostIngestDrain: options.schedulePostIngestDrain,
-                onProgress: ({ completed, total, step, detail }) => {
-                    setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-                        status: "running",
-                        processed: completed,
-                        total,
-                        ...(step
-                            ? { detail: { step, ...(detail ?? {}) } }
-                            : {}),
-                    });
-                },
-            });
-            setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-                status: postIngest.deferred ? "queued" : "done",
-                processed: args.customerIds.length,
-                total: args.customerIds.length,
-            });
-        } catch (error) {
-            setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-                status: "failed",
-                total: args.customerIds.length,
-                error:
-                    error instanceof Error
-                        ? error.message
-                        : "AR post-ingest failed",
-            });
-        }
     };
 
     try {
@@ -644,9 +627,13 @@ async function runInProcessSyncBody(
                 shouldCancel: () => isCancelRequested(options),
                 onCustomerBalancesFinal: options.onCustomerBalancesFinal,
                 onArPostIngest: options.onArPostIngest,
+                onProcessOverdueCustomers: options.onProcessOverdueCustomers,
                 deferPostIngest: options.deferPostIngest,
                 enqueueDeferredSteps: options.enqueueDeferredSteps,
                 schedulePostIngestDrain: options.schedulePostIngestDrain,
+                mepBreachStartDate:
+                    options.mepBreachStartDate ??
+                    connector.mep_breach_start_date,
                 pullCreatedOnOrAfter:
                     !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,
@@ -675,6 +662,7 @@ async function runInProcessSyncBody(
             return {
                 ok: staged.ok,
                 cancelled: staged.cancelled,
+                postIngestDeferred: staged.postIngestDeferred,
                 accountId,
                 provider: connector.provider,
                 stats: staged.stats,
@@ -844,11 +832,14 @@ async function runInProcessSyncBody(
 
                 if (entityType === "Invoice") {
                     invoicePostIngestRan = true;
-                    await runPostIngestWithProgress({
+                    await runArTailWithProgress({
                         customerIds: Array.from(arAffectedCustomerIds),
                         invoiceEntityIds: Array.from(arAffectedInvoiceIds),
                         paymentEntityIds: Array.from(arAffectedPaymentIds),
                         runMaturity: false,
+                        mepBreachStartDate:
+                            options.mepBreachStartDate ??
+                            connector.mep_breach_start_date,
                     });
                 }
 
@@ -917,11 +908,14 @@ async function runInProcessSyncBody(
             !invoicePostIngestRan &&
             paymentAffectedCustomerIds.size > 0
         ) {
-            await runPostIngestWithProgress({
+            await runArTailWithProgress({
                 customerIds: Array.from(paymentAffectedCustomerIds),
                 invoiceEntityIds: [],
                 paymentEntityIds: Array.from(arAffectedPaymentIds),
                 runMaturity: true,
+                mepBreachStartDate:
+                    options.mepBreachStartDate ??
+                    connector.mep_breach_start_date,
             });
         }
 
@@ -945,6 +939,7 @@ async function runInProcessSyncBody(
 
         return {
             ok: stats.importErrors === 0,
+            postIngestDeferred: false,
             accountId,
             provider: connector.provider,
             stats,

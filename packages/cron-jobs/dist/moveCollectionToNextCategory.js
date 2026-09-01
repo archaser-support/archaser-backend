@@ -9,7 +9,7 @@ const publishControlCenterUpdate_1 = require("./realtime/publishControlCenterUpd
  * Ported from frontend SHA 81bd37afa048ee2b07f5e2e1a67629567cbc174f
  * server/cron-jobs/MoveCollectionToNextCategory.ts
  */
-async function moveCollectionToNextCategory(prisma) {
+async function moveCollectionToNextCategory(prisma, freeze) {
     const start = Date.now();
     const summary = {
         phase1: {
@@ -26,18 +26,21 @@ async function moveCollectionToNextCategory(prisma) {
     try {
         const now = new Date();
         const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const customerScope = (extra) => ({
+            ...(freeze ? freeze.accountIdNotInFilter() : {}),
+            ...extra,
+            Account: {
+                OR: [
+                    { has_collection: true },
+                    { has_credit_insurance: { not: true } },
+                ],
+            },
+        });
         const expiredCollections = await prisma.customerCollectionPeriod.findMany({
             where: {
                 current_category: "Promise_to_pay",
                 promise_to_pay_date: { lte: last24Hours },
-                Customer: {
-                    Account: {
-                        OR: [
-                            { has_collection: true },
-                            { has_credit_insurance: { not: true } },
-                        ],
-                    },
-                },
+                Customer: customerScope(),
             },
             select: {
                 id: true,
@@ -66,14 +69,7 @@ async function moveCollectionToNextCategory(prisma) {
             where: {
                 next_category: { not: null },
                 next_category_date: { lte: now },
-                Customer: {
-                    Account: {
-                        OR: [
-                            { has_collection: true },
-                            { has_credit_insurance: { not: true } },
-                        ],
-                    },
-                },
+                Customer: customerScope(),
             },
             include: {
                 Customer: {
@@ -134,6 +130,37 @@ async function moveCollectionToNextCategory(prisma) {
                 excludeFromNotifications: true,
                 source: "automated",
             });
+        }
+        if (freeze && freeze.frozenAccountIds.size > 0) {
+            const skippedRows = await prisma.customerCollectionPeriod.findMany({
+                where: {
+                    OR: [
+                        {
+                            current_category: "Promise_to_pay",
+                            promise_to_pay_date: { lte: last24Hours },
+                        },
+                        {
+                            next_category: { not: null },
+                            next_category_date: { lte: now },
+                        },
+                    ],
+                    Customer: {
+                        account_id: { in: [...freeze.frozenAccountIds] },
+                        Account: {
+                            OR: [
+                                { has_collection: true },
+                                { has_credit_insurance: { not: true } },
+                            ],
+                        },
+                    },
+                },
+                select: {
+                    Customer: { select: { account_id: true } },
+                },
+            });
+            freeze.reportSkips(skippedRows
+                .map((row) => row.Customer.account_id)
+                .filter((id) => id != null));
         }
         const message = `Phase 1: ${summary.phase1.promisesUpdated}/${summary.phase1.expiredPromisesFound} expired promises updated. Phase 2: ${summary.phase2.collectionsProcessed}/${summary.phase2.collectionsFound} collections processed (${summary.phase2.collectionsFailed} failed)`;
         return {

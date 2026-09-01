@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AR_POST_INGEST_RETRY_MAX_ATTEMPTS = exports.AR_POST_INGEST_RETRY_STALE_PROCESSING_MS = void 0;
+exports.countPendingArPostIngestCustomers = countPendingArPostIngestCustomers;
 exports.enqueueArPostIngestSteps = enqueueArPostIngestSteps;
 exports.enqueueArPostIngestRetries = enqueueArPostIngestRetries;
 exports.drainArPostIngestRetryQueue = drainArPostIngestRetryQueue;
@@ -56,6 +57,17 @@ const RETRYABLE_STEPS = [
     "process_overdue",
     "live_refresh",
 ];
+/** Customers still waiting on deferred replay / live-refresh drain. */
+async function countPendingArPostIngestCustomers(accountId, options) {
+    const db = options?.dbClient ?? credit_insurance_domain_1.creditInsurancePrisma;
+    const rows = await db.$queryRaw `
+        SELECT COUNT(*)::bigint AS count
+        FROM "ArPostIngestRetryQueue"
+        WHERE account_id = ${accountId}
+          AND status IN ('pending', 'processing')
+    `;
+    return Number(rows[0]?.count ?? 0);
+}
 /**
  * Records per-customer failures for retry. Account-level failures (maturity,
  * as-of enqueue) are skipped: they carry no customer and the as-of path needs
@@ -79,7 +91,8 @@ async function upsertArPostIngestRetrySteps(db, accountId, customerId, steps, no
 }
 /**
  * Intentionally queue post-ingest steps (e.g. after billing connector backfill)
- * so replay/overdue/live-refresh run on the worker instead of blocking sync.
+ * so replay/live-refresh run on the worker instead of blocking sync.
+ * Process Overdue runs in the connector Process Overdue tail step before enqueue.
  */
 async function enqueueArPostIngestSteps(accountId, customerIds, steps, options) {
     const db = options?.dbClient ?? credit_insurance_domain_1.creditInsurancePrisma;
@@ -176,6 +189,7 @@ async function drainArPostIngestRetryQueue(options) {
                 WHERE id = ${item.id}
             `;
             itemsProcessed += 1;
+            await options?.onItemProcessed?.(item.account_id);
         }
         catch (error) {
             failures += 1;

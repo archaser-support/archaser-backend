@@ -4,6 +4,7 @@ import type { BillingAccountExtension, ExtensionEntityType, ExtensionMappedBatch
 import { type EntityImportBatchOptions, type EntityImportBatchResult, type ImportEntityType } from "../import/entityImporter";
 import { type TailStepKey, type TailStepDetail, type TailStepState } from "./connectorSyncRuntime";
 import { type ArPostIngestHostFn, type ConnectorPostIngestDeferOptions } from "../credit/arPostIngestHost";
+import type { ProcessOverdueCustomersFn } from "./processOverdueTailStep";
 import { type MappingRule } from "../utils/connectorFieldUtils";
 export declare const STAGED_ENTITY_ORDER: ExtensionEntityType[];
 export type ImportBatchFn = (prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string, options?: EntityImportBatchOptions) => Promise<EntityImportBatchResult>;
@@ -48,6 +49,11 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
      */
     onArPostIngest?: ArPostIngestHostFn;
     /**
+     * One batched Process Overdue pass for touched customers before AR
+     * post-ingest. Nest wires handleOverdueInvoices.
+     */
+    onProcessOverdueCustomers?: ProcessOverdueCustomersFn;
+    /**
      * Backfill cutover: Invoice/Payment $filter by created date (IVDATE/PAYDATE).
      * Customers and contacts still pull full history.
      */
@@ -60,6 +66,8 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
     dateFieldByType?: Map<string, string | null>;
     /** Incremental watermark overlap (minutes). */
     overlapMinutes?: number;
+    /** Account MEP breach start date — narrows AR replay event load when set. */
+    mepBreachStartDate?: Date | null;
 }
 export interface RunStagedExtensionSyncResult {
     ok: boolean;
@@ -86,11 +94,8 @@ export interface RunStagedExtensionSyncResult {
     };
     cancelled?: boolean;
     error?: string;
-    /**
-     * True when Invoice entity finished and post-Invoice orchestration was
-     * reached (even with zero customers). Used to skip payment-only fallback
-     * so Payment→Invoice syncs do not double-run post-ingest.
-     */
+    /** True when post-import was enqueued for worker drain (Mongo stays RUNNING). */
+    postIngestDeferred?: boolean;
     invoicePostIngestRan?: boolean;
 }
 /**

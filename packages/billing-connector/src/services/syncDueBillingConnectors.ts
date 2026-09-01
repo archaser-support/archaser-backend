@@ -7,10 +7,11 @@ import {
     type RunInProcessSyncResult,
 } from "../sync/runInProcessSync";
 import {
-    completeExecution,
     createRunningExecution,
+    createSyncProgressHeartbeat,
     sweepStaleRunning,
 } from "../syncHistory";
+import { finalizeSyncHistoryAfterRun } from "../syncHistory/finalizeSyncHistoryAfterRun";
 
 const MAX_CONNECTORS_PER_RUN = Number.parseInt(
     process.env.BILLING_CONNECTOR_MAX_CONNECTORS_PER_RUN ?? "5",
@@ -23,6 +24,7 @@ export interface SyncDueBillingConnectorsResult {
     processed: number;
     skipped: number;
     failed: number;
+    skippedFrozenAccountIds: number[];
     results: RunInProcessSyncResult[];
     durationMs: number;
 }
@@ -36,6 +38,8 @@ export interface SyncDueBillingConnectorsOptions {
     createExecutionId?: () => string;
     /** Clock for due checks + stale sweep (unit tests). */
     now?: Date;
+    /** Skip starting scheduled sync for these accounts (import/backfill freeze). */
+    excludeAccountIds?: ReadonlySet<number>;
     /** Prometheus sink + structured log hook for scheduled syncs. */
     observability?: RunInProcessSyncOptions["observability"];
     onLog?: (message: string) => void;
@@ -58,6 +62,7 @@ export async function syncDueBillingConnectors(
     let processed = 0;
     let skipped = 0;
     let failed = 0;
+    const skippedFrozenAccountIds = new Set<number>();
 
     const runSync = options?.runSync ?? runInProcessSync;
     const createExecutionId = options?.createExecutionId ?? randomUUID;
@@ -73,6 +78,12 @@ export async function syncDueBillingConnectors(
     });
 
     for (const connector of connectors) {
+        if (options?.excludeAccountIds?.has(connector.account_id)) {
+            skipped += 1;
+            skippedFrozenAccountIds.add(connector.account_id);
+            continue;
+        }
+
         if (connector.sync_mode === "INCREMENTAL") {
             const lastSuccess = await prisma.connectorSyncState.findFirst({
                 where: {
@@ -114,6 +125,7 @@ export async function syncDueBillingConnectors(
         }
 
         try {
+            const heartbeat = createSyncProgressHeartbeat(executionId);
             const result = await runSync({
                 prisma,
                 accountId: connector.account_id,
@@ -121,28 +133,21 @@ export async function syncDueBillingConnectors(
                 executionId,
                 onLog: options?.onLog,
                 observability: options?.observability,
+                onProgress: (entityStats) => {
+                    void heartbeat(entityStats);
+                },
             });
             results.push(result);
             processed += 1;
             if (!result.ok) failed += 1;
 
             const completedAt = new Date();
-            const status = result.cancelled
-                ? "TIMEOUT"
-                : result.ok
-                  ? "SUCCESS"
-                  : "FAILED";
-            const errorType = result.cancelled
-                ? "cancelled"
-                : result.error ?? null;
             try {
-                await completeExecution(executionId, {
-                    status,
-                    entityStats: result.entity_stats ?? {},
-                    errorMessage: result.error ?? null,
-                    errorType,
-                    completedAt,
-                });
+                await finalizeSyncHistoryAfterRun(
+                    executionId,
+                    result,
+                    completedAt
+                );
             } catch {
                 // Best-effort history complete.
             }
@@ -152,12 +157,28 @@ export async function syncDueBillingConnectors(
             const message =
                 error instanceof Error ? error.message : String(error);
             try {
-                await completeExecution(executionId, {
-                    status: "FAILED",
-                    errorMessage: message,
-                    errorType: "unexpected",
-                    completedAt: new Date(),
-                });
+                await finalizeSyncHistoryAfterRun(
+                    executionId,
+                    {
+                        ok: false,
+                        accountId: connector.account_id,
+                        provider: connector.provider,
+                        stats: {
+                            customersProcessed: 0,
+                            contactsProcessed: 0,
+                            invoicesProcessed: 0,
+                            paymentsProcessed: 0,
+                            customersImported: 0,
+                            contactsImported: 0,
+                            invoicesImported: 0,
+                            paymentsImported: 0,
+                            importErrors: 0,
+                        },
+                        message,
+                        error: message,
+                    },
+                    new Date()
+                );
             } catch {
                 // Best-effort history complete; hard crash leaves RUNNING for sweeper.
             }
@@ -181,6 +202,9 @@ export async function syncDueBillingConnectors(
         processed,
         skipped,
         failed,
+        skippedFrozenAccountIds: [...skippedFrozenAccountIds].sort(
+            (a, b) => a - b
+        ),
         results,
         durationMs,
     };

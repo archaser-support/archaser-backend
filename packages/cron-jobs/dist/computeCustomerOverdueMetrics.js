@@ -18,9 +18,17 @@ function scheduleTimeOnApprovedLimitExpirationDate(expiration) {
  * - Approved-limit expiration: reset approved_limit once expiration date is in the past.
  * - Insurance policy status maintenance.
  */
-async function computeCustomerOverdueMetrics(prisma, customerIdFilter) {
+async function computeCustomerOverdueMetrics(prisma, customerIdFilter, freeze) {
     const start = Date.now();
     (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
+    const frozenAccountFilter = freeze && freeze.frozenAccountIds.size > 0
+        ? {
+            Account: {
+                has_credit_insurance: true,
+                id: { notIn: [...freeze.frozenAccountIds] },
+            },
+        }
+        : { Account: { has_credit_insurance: true } };
     let customersSynced = 0;
     let limitExpirationsProcessed = 0;
     let reportingBreachesPromoted = 0;
@@ -31,7 +39,7 @@ async function computeCustomerOverdueMetrics(prisma, customerIdFilter) {
         const chunk = await prisma.customer.findMany({
             where: {
                 id: { gt: lastCustomerId },
-                Account: { has_credit_insurance: true },
+                ...frozenAccountFilter,
                 ...(typeof customerIdFilter === "number"
                     ? { id: customerIdFilter }
                     : {}),
@@ -64,7 +72,7 @@ async function computeCustomerOverdueMetrics(prisma, customerIdFilter) {
                 reporting_breach: false,
                 OR: [{ amount: null }, { amount: { gte: 0 } }],
                 Customer: {
-                    Account: { has_credit_insurance: true },
+                    ...frozenAccountFilter,
                 },
                 ...(typeof customerIdFilter === "number"
                     ? { customer_id: customerIdFilter }
@@ -93,7 +101,7 @@ async function computeCustomerOverdueMetrics(prisma, customerIdFilter) {
                 ? { customer_id: customerIdFilter }
                 : {}),
             Customer: {
-                Account: { has_credit_insurance: true },
+                ...frozenAccountFilter,
             },
             approved_limit_expiration_date: {
                 not: null,
@@ -142,6 +150,16 @@ async function computeCustomerOverdueMetrics(prisma, customerIdFilter) {
         limitExpirationsProcessed += 1;
     }
     const policyStatus = await (0, credit_insurance_domain_1.runInsurancePolicyStatusMaintenance)();
+    if (freeze && freeze.frozenAccountIds.size > 0) {
+        const skippedAccounts = await prisma.account.findMany({
+            where: {
+                id: { in: [...freeze.frozenAccountIds] },
+                has_credit_insurance: true,
+            },
+            select: { id: true },
+        });
+        freeze.reportSkips(skippedAccounts.map((row) => row.id));
+    }
     const durationMs = Date.now() - start;
     const summary = {
         customersSynced,

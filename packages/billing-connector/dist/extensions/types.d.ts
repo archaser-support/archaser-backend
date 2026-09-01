@@ -119,6 +119,11 @@ export interface BillingAccountExtension {
         /** ERP CURDATE per invoice number for virtual-close payment dates. */
         invoiceCloseDates?: Map<string, Date>;
         helamOffsetInvoiceNumbers?: string[];
+        /** Live progress for the Settle closed invoices tail step. */
+        onProgress?: (progress: {
+            processed: number;
+            total: number;
+        }) => void;
     }): Promise<{
         closedIds: number[];
         customerIds?: number[];
