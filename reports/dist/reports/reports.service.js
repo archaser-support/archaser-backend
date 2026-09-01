@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportsService = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
 const access_scope_service_1 = require("../auth/access-scope.service");
 const serialize_bigint_1 = require("../common/serialize-bigint");
 const database_service_1 = require("../database/database.service");
@@ -200,28 +201,49 @@ let ReportsService = class ReportsService {
             .toLowerCase()
             .replace(/[^a-z0-9_]+/g, "_")
             .slice(0, 200) || `report_${Date.now()}`;
-        const unique_name = await this.resolveAvailableUniqueName(accountId, baseUniqueName);
+        let unique_name = await this.resolveAvailableUniqueName(accountId, baseUniqueName);
         const canManageSystem = this.access.isAdminAccount(userInfo.accountId);
-        const created = await this.db.report.create({
-            data: {
-                account_id: accountId,
-                name,
-                unique_name,
-                description: body.description || null,
-                report_config: body.report_config || {
-                    tables: [],
-                    fields: [],
-                    filters: [],
-                },
-                is_public: Boolean(body.is_public),
-                is_system: canManageSystem ? Boolean(body.is_system) : false,
-                is_default: Boolean(body.is_default),
-                context: body.context || null,
-                created_by: userId,
-                modified_by: userId,
+        const createData = {
+            account_id: accountId,
+            name,
+            unique_name,
+            description: body.description || null,
+            report_config: body.report_config || {
+                tables: [],
+                fields: [],
+                filters: [],
             },
-            include: REPORT_AUDIT_USERS_INCLUDE,
-        });
+            is_public: Boolean(body.is_public),
+            is_system: canManageSystem ? Boolean(body.is_system) : false,
+            is_default: Boolean(body.is_default),
+            context: body.context || null,
+            created_by: userId,
+            modified_by: userId,
+        };
+        let created;
+        try {
+            created = await this.db.report.create({
+                data: createData,
+                include: REPORT_AUDIT_USERS_INCLUDE,
+            });
+        }
+        catch (error) {
+            if (this.isDuplicateReportUniqueNameError(error)) {
+                unique_name = await this.resolveAvailableUniqueName(accountId, baseUniqueName);
+                try {
+                    created = await this.db.report.create({
+                        data: { ...createData, unique_name },
+                        include: REPORT_AUDIT_USERS_INCLUDE,
+                    });
+                }
+                catch (retryError) {
+                    this.rethrowReportWriteError(retryError);
+                }
+            }
+            else {
+                this.rethrowReportWriteError(error);
+            }
+        }
         return (0, serialize_bigint_1.serializeBigInt)({
             report: this.formatReportDates(created),
         });
@@ -256,11 +278,17 @@ let ReportsService = class ReportsService {
                 data[key] = body[key];
             }
         }
-        const updated = await this.db.report.update({
-            where: { id },
-            data: data,
-            include: REPORT_AUDIT_USERS_INCLUDE,
-        });
+        let updated;
+        try {
+            updated = await this.db.report.update({
+                where: { id },
+                data: data,
+                include: REPORT_AUDIT_USERS_INCLUDE,
+            });
+        }
+        catch (error) {
+            this.rethrowReportWriteError(error);
+        }
         return (0, serialize_bigint_1.serializeBigInt)({
             report: this.formatReportDates(updated),
         });
@@ -565,6 +593,28 @@ let ReportsService = class ReportsService {
                 ? new Date(report.modified_at).toISOString()
                 : null,
         };
+    }
+    isDuplicateReportUniqueNameError(error) {
+        if (!(error instanceof client_1.Prisma.PrismaClientKnownRequestError) ||
+            error.code !== "P2002") {
+            return false;
+        }
+        const target = error.meta?.target;
+        if (!Array.isArray(target)) {
+            return false;
+        }
+        return (target.includes("unique_name") ||
+            target.includes("account_id") ||
+            target.includes("idx_report_account_unique_name"));
+    }
+    rethrowReportWriteError(error) {
+        if (this.isDuplicateReportUniqueNameError(error)) {
+            throw new common_1.BadRequestException({
+                message: "A report with this name already exists. Please choose a different name.",
+                errorCode: "DUPLICATE_REPORT_NAME",
+            });
+        }
+        throw error;
     }
 };
 exports.ReportsService = ReportsService;
