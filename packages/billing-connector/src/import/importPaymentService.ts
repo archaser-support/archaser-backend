@@ -481,6 +481,8 @@ export async function importPayments(
             extension?.alignPaymentAmountsForInvoice?.({
                 ...paymentAmountRow,
                 invoiceCustomerCurrency: invoice.customer_currency,
+                invoiceAmount: invoice.amount,
+                invoiceCustomerAmount: invoice.customer_amount,
                 rawErpRow,
             }) ?? paymentAmountRow;
         const amountResolution = resolvePaymentImportAmounts(

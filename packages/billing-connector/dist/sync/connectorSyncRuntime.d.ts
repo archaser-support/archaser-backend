@@ -77,6 +77,8 @@ export interface ConnectorSyncCounts {
     /** Eligible deferred payments at the start of the linking pass. */
     paymentsLinkTotal?: number;
     paymentLinkError?: string;
+    /** What the linking pass is doing now (linking, aligning, recalculating). */
+    paymentLinkDetail?: TailStepDetail;
     /** Tail steps (AR post-ingest, pending closes, balance recalculation). */
     tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
 }

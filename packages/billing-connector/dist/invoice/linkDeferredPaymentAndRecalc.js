@@ -12,6 +12,7 @@ Object.defineProperty(exports, "INVOICE_PAID_TOLERANCE", { enumerable: true, get
 Object.defineProperty(exports, "isWithinPaidTolerance", { enumerable: true, get: function () { return invoicePaidTolerance_2.isWithinPaidTolerance; } });
 Object.defineProperty(exports, "normalizeInvoicePaidTolerance", { enumerable: true, get: function () { return invoicePaidTolerance_2.normalizeInvoicePaidTolerance; } });
 Object.defineProperty(exports, "resolveInvoicePaidTolerance", { enumerable: true, get: function () { return invoicePaidTolerance_2.resolveInvoicePaidTolerance; } });
+const RECALC_PROGRESS_CHUNK = 200;
 const LINKED_PAYMENT_RECALC_SELECT = {
     id: true,
     payment_date: true,
@@ -100,7 +101,7 @@ async function recalculateInvoiceFromLinkedPayments(tx, invoiceId, options) {
  * Recalculate many invoices with two reads and chunked writes instead of
  * three round-trips per invoice.
  */
-async function recalculateInvoicesFromLinkedPayments(prisma, targets) {
+async function recalculateInvoicesFromLinkedPayments(prisma, targets, options) {
     if (targets.size === 0)
         return;
     const invoiceIds = [...targets.keys()];
@@ -144,14 +145,28 @@ async function recalculateInvoicesFromLinkedPayments(prisma, targets) {
         }
     }
     const modifiedAt = new Date();
-    await (0, bulkWrite_1.commitOps)(prisma, invoices.map((invoice) => prisma.invoice.update({
+    const buildUpdate = (invoice) => prisma.invoice.update({
         where: { id: invoice.id },
         data: buildInvoicePaidUpdate(invoice, paymentsByInvoiceId.get(invoice.id) ?? [], {
             ...targets.get(invoice.id),
             isForcePaidClose: forcePaidByAccount.get(invoice.account_id),
         }, modifiedAt, paidToleranceByAccount.get(invoice.account_id) ??
             invoicePaidTolerance_1.INVOICE_PAID_TOLERANCE),
-    })));
+    });
+    if (!options?.onProgress) {
+        await (0, bulkWrite_1.commitOps)(prisma, invoices.map(buildUpdate));
+        return;
+    }
+    // Sliced so long recalcs can report progress instead of looking frozen.
+    options.onProgress({ processed: 0, total: invoices.length });
+    for (let offset = 0; offset < invoices.length; offset += RECALC_PROGRESS_CHUNK) {
+        const chunk = invoices.slice(offset, offset + RECALC_PROGRESS_CHUNK);
+        await (0, bulkWrite_1.commitOps)(prisma, chunk.map(buildUpdate));
+        options.onProgress({
+            processed: Math.min(offset + chunk.length, invoices.length),
+            total: invoices.length,
+        });
+    }
 }
 async function linkDeferredPaymentAndRecalc(prisma, params) {
     const { invoicePaymentId, invoiceId, forceRecalc = false } = params;
