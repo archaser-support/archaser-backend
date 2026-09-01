@@ -453,6 +453,62 @@
             ],
             "title": "Start lines / RUNNING",
             "type": "logs"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "Prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "color": { "mode": "palette-classic" },
+                    "unit": "short"
+                }
+            },
+            "gridPos": { "h": 6, "w": 12, "x": 0, "y": 43 },
+            "id": 18,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "horizontal",
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                    "editorMode": "code",
+                    "expr": "sum by (entity_type) (increase(archaser_billing_connector_records_processed_total{instance=\"Staging\", result=~\"failed|skipped\"}[24h]))",
+                    "legendFormat": "{{entity_type}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Failed + skipped (24h) by entity_type",
+            "type": "stat"
+        },
+        {
+            "datasource": { "type": "loki", "uid": "Loki" },
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 43 },
+            "id": 19,
+            "options": {
+                "showTime": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending",
+                "wrapLogMessage": true
+            },
+            "targets": [
+                {
+                    "datasource": { "type": "loki", "uid": "Loki" },
+                    "editorMode": "code",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"api|connectors|worker\"} |= \"billing_connector.sync\" | json | source=\"billing_connector.sync\" | status=~\"PARTIAL|FAILED\" | error_type=\"import_validation\" | account_id=~\"$account_id\"",
+                    "queryType": "range",
+                    "refId": "A"
+                }
+            ],
+            "title": "Import row issues (finish lines)",
+            "type": "logs"
         }
     ],
     "refresh": "30s",

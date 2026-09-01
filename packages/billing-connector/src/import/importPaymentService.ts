@@ -15,6 +15,7 @@ export interface ImportPaymentResult {
     index: number;
     success: boolean;
     skipped?: boolean;
+    mandatoryFieldSkip?: boolean;
     deferred?: boolean;
     invoicePaymentId?: number;
     customerId?: number;
@@ -129,7 +130,10 @@ export async function importPayments(
     paymentRecords: InvoicePaymentInput[],
     accountId: number,
     userId?: string,
-    options?: { extension?: BillingAccountExtension }
+    options?: {
+        extension?: BillingAccountExtension;
+        enforceMandatoryFields?: boolean;
+    }
 ): Promise<ImportPaymentResult[]> {
     const results: ImportPaymentResult[] = paymentRecords.map((_, index) => ({
         index,

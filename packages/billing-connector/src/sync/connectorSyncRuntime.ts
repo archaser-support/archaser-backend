@@ -3,6 +3,11 @@
  * plus a short history of completed runs for GET /sync-runs polling.
  */
 
+import type {
+    EntityImportStatKey,
+    EntityImportStatsAccum,
+} from "../import/aggregateEntityImportStats";
+
 /** Orchestration step after Invoice — links deferred payments to invoices. */
 export const MATURITY_ENTITY_STATS_KEY = "_maturity";
 
@@ -45,6 +50,7 @@ export type ConnectorEntityStatSlice = {
     success: number;
     failed: number;
     skipped: number;
+    mandatoryFieldSkips?: number;
     sample_errors?: string[];
     /** Present for `_maturity` while linking / after it finishes. */
     status?: "running" | "done" | "failed" | "queued";
@@ -84,6 +90,8 @@ export interface ConnectorSyncCounts {
     invoicesImported: number;
     paymentsImported: number;
     importErrors: number;
+    mandatoryFieldSkips?: number;
+    entityImportStats?: Partial<Record<EntityImportStatKey, EntityImportStatsAccum>>;
     /** Deferred payment → invoice linking (after Invoice ingest). */
     paymentLinkStatus?: "running" | "done" | "failed";
     paymentsLinked?: number;
@@ -100,30 +108,39 @@ export interface ConnectorSyncCounts {
 export function entityStatsFromCounts(
     stats: ConnectorSyncCounts
 ): ConnectorEntityStats {
+    const sliceFor = (key: EntityImportStatKey) => {
+        const accum = stats.entityImportStats?.[key];
+        return {
+            failed: accum?.failed ?? 0,
+            skipped: accum?.skipped ?? 0,
+            mandatoryFieldSkips: accum?.mandatoryFieldSkips,
+            sample_errors:
+                accum?.sample_errors && accum.sample_errors.length > 0
+                    ? accum.sample_errors
+                    : undefined,
+        };
+    };
+
     const entityStats: ConnectorEntityStats = {
         Customer: {
             pulled: stats.customersProcessed,
             success: stats.customersImported,
-            failed: 0,
-            skipped: 0,
+            ...sliceFor("Customer"),
         },
         Contact: {
             pulled: stats.contactsProcessed,
             success: stats.contactsImported,
-            failed: 0,
-            skipped: 0,
+            ...sliceFor("Contact"),
         },
         Invoice: {
             pulled: stats.invoicesProcessed,
             success: stats.invoicesImported,
-            failed: 0,
-            skipped: 0,
+            ...sliceFor("Invoice"),
         },
         Payment: {
             pulled: stats.paymentsProcessed,
             success: stats.paymentsImported,
-            failed: 0,
-            skipped: 0,
+            ...sliceFor("Payment"),
         },
     };
 

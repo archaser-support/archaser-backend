@@ -13,6 +13,7 @@ import {
     parseMappingRules,
     validateMappedRow,
 } from "../utils/connectorFieldUtils";
+import { validateConnectorLiveImportRow } from "../import/validateConnectorLiveImportRow";
 import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
 import { resolveEntityPullFilterOData } from "../services/billingConnectorPullFilters";
 import {
@@ -170,9 +171,21 @@ export async function runPreviewSync(params: {
                 unknown
             >;
             mappedRows.push(mapped);
-            validationErrors.push(
-                ...validateMappedRow(importType, mapped, index)
-            );
+            if (importType === "Invoice" || importType === "Payment") {
+                const validation = validateConnectorLiveImportRow(
+                    importType,
+                    mapped
+                );
+                if (!validation.ok) {
+                    validationErrors.push(
+                        `Row ${index + 1}: ${validation.reason ?? "incomplete row"}`
+                    );
+                }
+            } else {
+                validationErrors.push(
+                    ...validateMappedRow(importType, mapped, index)
+                );
+            }
         });
 
         const sortedPreview =
