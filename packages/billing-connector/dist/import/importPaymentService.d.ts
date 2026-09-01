@@ -5,6 +5,7 @@ export interface ImportPaymentResult {
     index: number;
     success: boolean;
     skipped?: boolean;
+    mandatoryFieldSkip?: boolean;
     deferred?: boolean;
     invoicePaymentId?: number;
     customerId?: number;
@@ -12,4 +13,5 @@ export interface ImportPaymentResult {
 }
 export declare function importPayments(prisma: PrismaClient, paymentRecords: InvoicePaymentInput[], accountId: number, userId?: string, options?: {
     extension?: BillingAccountExtension;
+    enforceMandatoryFields?: boolean;
 }): Promise<ImportPaymentResult[]>;

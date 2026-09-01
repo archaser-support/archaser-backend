@@ -13,6 +13,8 @@ export interface EntityImportBatchResult {
     success: number;
     failed: number;
     skipped: number;
+    mandatoryFieldSkips?: number;
+    issueMessages?: string[];
     affectedCustomerIds: number[];
     entityIds: number[];
     errors: string[];
@@ -20,6 +22,8 @@ export interface EntityImportBatchResult {
     rowResults?: EntityImportRowResult[];
 }
 export interface EntityImportBatchOptions {
+    /** Billing-connector live sync only — skip incomplete invoice/payment rows. */
+    enforceMandatoryFields?: boolean;
     skipReportingBreach?: boolean;
     /**
      * When true, skip deferred-payment maturity after this invoice batch.

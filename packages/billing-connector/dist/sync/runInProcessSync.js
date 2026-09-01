@@ -6,7 +6,9 @@ const PriorityProviderClient_1 = require("../priority/PriorityProviderClient");
 const PriorityClient_1 = require("../priority/PriorityClient");
 const provider_1 = require("../provider");
 const billingConnectorCrypto_1 = require("../utils/billingConnectorCrypto");
+const aggregateEntityImportStats_1 = require("../import/aggregateEntityImportStats");
 const entityImporter_1 = require("../import/entityImporter");
+const statusAndErrorType_1 = require("../observability/statusAndErrorType");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 const priorityApiContract_1 = require("../priority/priorityApiContract");
 const prioritySelectFields_1 = require("../priority/prioritySelectFields");
@@ -38,7 +40,17 @@ function emptyStats() {
         invoicesImported: 0,
         paymentsImported: 0,
         importErrors: 0,
+        mandatoryFieldSkips: 0,
+        entityImportStats: {},
     };
+}
+function buildSyncFinishOk(stats) {
+    const entityStats = (0, connectorSyncRuntime_1.entityStatsFromCounts)(stats);
+    return ((0, statusAndErrorType_1.resolveSyncExecutionStatus)({
+        ok: true,
+        stats,
+        entity_stats: entityStats,
+    }) === "SUCCESS");
 }
 async function finalizeLegacyCustomerBalances(customerIds, prisma, onCustomerBalancesFinal, log, setStep) {
     if (customerIds.size === 0) {
@@ -561,10 +573,16 @@ async function runInProcessSyncBody(options, obsRuntime) {
                 stats[processedKey] =
                     pullResult.records.length;
                 emitProgress(options.onProgress, stats);
-                const importResult = await importBatch(prisma, entityType, pullResult.records, accountId, mapping.mapping, userId, { skipReportingBreach, onLog, shouldCancel: () => isCancelRequested(options) });
+                const importResult = await importBatch(prisma, entityType, pullResult.records, accountId, mapping.mapping, userId, {
+                    skipReportingBreach,
+                    enforceMandatoryFields: true,
+                    onLog,
+                    shouldCancel: () => isCancelRequested(options),
+                });
                 stats[importedKey] =
                     importResult.success;
                 stats.importErrors += importResult.failed;
+                (0, aggregateEntityImportStats_1.applyEntityImportResultToSyncStats)(stats, entityType, importResult);
                 if (entityType === "Payment" || entityType === "Invoice") {
                     for (const id of importResult.affectedCustomerIds) {
                         arAffectedCustomerIds.add(id);
@@ -661,14 +679,14 @@ async function runInProcessSyncBody(options, obsRuntime) {
             stats.paymentsImported;
         log(`Synced via ${trigger}: imported ${imported} rows (${stats.importErrors} errors)`);
         return {
-            ok: stats.importErrors === 0,
+            ok: buildSyncFinishOk(stats),
             accountId,
             provider: connector.provider,
             stats,
             extension_key: null,
             dry_run: false,
             message: `Synced via ${trigger}: imported ${imported} rows (${stats.importErrors} errors)`,
-            error: stats.importErrors > 0
+            error: stats.importErrors > 0 || (stats.mandatoryFieldSkips ?? 0) > 0
                 ? `${stats.importErrors} import error(s)`
                 : undefined,
         };

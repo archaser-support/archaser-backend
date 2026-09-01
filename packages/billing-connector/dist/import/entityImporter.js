@@ -4,11 +4,13 @@ exports.shouldSkipReportingBreachOnConnectorWrite = shouldSkipReportingBreachOnC
 exports.extractMaxUpdatedAt = extractMaxUpdatedAt;
 exports.importMappedEntityBatch = importMappedEntityBatch;
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
+const aggregateEntityImportStats_1 = require("./aggregateEntityImportStats");
 const applyMaturedDeferredPayments_1 = require("./applyMaturedDeferredPayments");
 const bulkWrite_1 = require("./bulkWrite");
 const importPaymentService_1 = require("./importPaymentService");
 const normalizeInvoiceImportInput_1 = require("./normalizeInvoiceImportInput");
 const normalizePaymentInput_1 = require("./normalizePaymentInput");
+const validateConnectorLiveImportRow_1 = require("./validateConnectorLiveImportRow");
 const sortInvoicesForImport_1 = require("./sortInvoicesForImport");
 const linkOrphanedCreditNotes_1 = require("../invoice/linkOrphanedCreditNotes");
 function shouldSkipReportingBreachOnConnectorWrite(params) {
@@ -48,6 +50,8 @@ function emptyBatchResult() {
         success: 0,
         failed: 0,
         skipped: 0,
+        mandatoryFieldSkips: 0,
+        issueMessages: [],
         affectedCustomerIds: [],
         entityIds: [],
         errors: [],
@@ -679,7 +683,30 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
         index,
         success: false,
     }));
-    const normalized = rows.map((row, index) => ({
+    const validatedRows = [];
+    for (let index = 0; index < rows.length; index++) {
+        const row = rows[index];
+        if (options?.enforceMandatoryFields) {
+            const validation = (0, validateConnectorLiveImportRow_1.validateConnectorLiveImportRow)("Invoice", row);
+            if (!validation.ok) {
+                result.skipped += 1;
+                result.mandatoryFieldSkips =
+                    (result.mandatoryFieldSkips ?? 0) + 1;
+                const identifier = str(row.invoice_number) || `row-${index + 1}`;
+                const message = (0, validateConnectorLiveImportRow_1.formatImportIssueMessage)(identifier, validation.reason ?? "incomplete row");
+                (0, aggregateEntityImportStats_1.appendBatchImportIssue)(result, message);
+                rowResults[index] = {
+                    index,
+                    success: false,
+                    skipped: true,
+                    error: message,
+                };
+                continue;
+            }
+        }
+        validatedRows.push({ index, row });
+    }
+    const normalized = validatedRows.map(({ index, row }) => ({
         index,
         ...(0, normalizeInvoiceImportInput_1.normalizeInvoiceImportInput)(row, accountId),
     }));
@@ -688,11 +715,13 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
         const customerNumber = str(invoice.customer_number);
         if (!invoiceNumber || !customerNumber) {
             result.skipped += 1;
+            const message = (0, validateConnectorLiveImportRow_1.formatImportIssueMessage)(invoiceNumber || `row-${invoice.index + 1}`, "missing invoice_number or customer_number");
+            (0, aggregateEntityImportStats_1.appendBatchImportIssue)(result, message);
             rowResults[invoice.index] = {
                 index: invoice.index,
                 success: false,
                 skipped: true,
-                error: "missing invoice_number or customer_number",
+                error: message,
             };
         }
     }
@@ -747,9 +776,10 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
         const customerNumber = str(invoice.customer_number);
         const customerId = customerByNumber.get(customerNumber);
         if (customerId == null) {
-            const message = `Customer not found for invoice: ${customerNumber}`;
+            const message = (0, validateConnectorLiveImportRow_1.formatImportIssueMessage)(invoiceNumber, `Customer ${customerNumber} not found`);
             result.failed += 1;
             result.errors.push(message);
+            (0, aggregateEntityImportStats_1.appendBatchImportIssue)(result, message);
             options?.onLog?.(`Invoice ${invoiceNumber} failed: ${message}`);
             for (const row of valid) {
                 if (str(row.invoice_number) === invoiceNumber) {
@@ -764,7 +794,9 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
         }
         const amount = invoice.amount ?? 0;
         const customerAmount = invoice.customer_amount ?? amount;
-        const currency = str(invoice.customer_currency) || "USD";
+        const currency = options?.enforceMandatoryFields
+            ? str(invoice.customer_currency)
+            : str(invoice.customer_currency) || "USD";
         const paymentsWin = invoiceNumbersWithPayments.has(invoiceNumber);
         const totalPaid = paymentsWin ? 0 : (invoice.total_paid ?? 0);
         const customerTotalPaid = paymentsWin
@@ -891,17 +923,9 @@ async function importInvoiceBatch(prisma, rows, accountId, userId, options) {
  * Prisma-native entity upsert for connector sync and manual import.
  */
 async function importMappedEntityBatch(prisma, importType, records, accountId, mappingJson, userId, options) {
-    const result = {
-        success: 0,
-        failed: 0,
-        skipped: 0,
-        affectedCustomerIds: [],
-        entityIds: [],
-        errors: [],
-    };
     const rows = mappingJson == null ? records : mapRows(records, mappingJson);
     if (rows.length === 0)
-        return result;
+        return emptyBatchResult();
     if (importType === "Customer") {
         return importCustomerBatch(prisma, rows, accountId, userId, options);
     }
@@ -911,19 +935,65 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
     if (importType === "Invoice") {
         return importInvoiceBatch(prisma, rows, accountId, userId, options);
     }
-    const payments = rows.map((row) => (0, normalizePaymentInput_1.toPaymentInput)(row, accountId));
-    const paymentResults = await (0, importPaymentService_1.importPayments)(prisma, payments, accountId, userId, { extension: options?.extension });
-    result.rowResults = paymentResults.map((paymentResult) => ({
-        index: paymentResult.index,
-        success: paymentResult.success,
-        skipped: paymentResult.skipped,
-        error: paymentResult.success ? undefined : paymentResult.message,
-        entityId: paymentResult.invoicePaymentId,
-        customerId: paymentResult.customerId,
+    const result = emptyBatchResult();
+    const rowResults = rows.map((_, index) => ({
+        index,
+        success: false,
     }));
-    for (const paymentResult of paymentResults) {
+    const paymentInputs = [];
+    const paymentInputIndices = [];
+    for (let index = 0; index < rows.length; index++) {
+        const row = rows[index];
+        if (options?.enforceMandatoryFields) {
+            const validation = (0, validateConnectorLiveImportRow_1.validateConnectorLiveImportRow)("Payment", row);
+            if (!validation.ok) {
+                result.skipped += 1;
+                result.mandatoryFieldSkips =
+                    (result.mandatoryFieldSkips ?? 0) + 1;
+                const identifier = str(row.reference) || str(row.invoice_number) || `row-${index + 1}`;
+                const message = (0, validateConnectorLiveImportRow_1.formatImportIssueMessage)(identifier, validation.reason ?? "incomplete row");
+                (0, aggregateEntityImportStats_1.appendBatchImportIssue)(result, message);
+                rowResults[index] = {
+                    index,
+                    success: false,
+                    skipped: true,
+                    error: message,
+                };
+                continue;
+            }
+        }
+        paymentInputs.push((0, normalizePaymentInput_1.toPaymentInput)(row, accountId));
+        paymentInputIndices.push(index);
+    }
+    const paymentResults = await (0, importPaymentService_1.importPayments)(prisma, paymentInputs, accountId, userId, {
+        extension: options?.extension,
+        enforceMandatoryFields: options?.enforceMandatoryFields,
+    });
+    for (let paymentIndex = 0; paymentIndex < paymentResults.length; paymentIndex++) {
+        const paymentResult = paymentResults[paymentIndex];
+        const originalIndex = paymentInputIndices[paymentIndex];
+        const paymentRecord = paymentInputs[paymentIndex];
+        const identifier = paymentRecord.reference?.trim() ||
+            paymentRecord.invoice_number?.trim() ||
+            `row-${originalIndex + 1}`;
+        rowResults[originalIndex] = {
+            index: originalIndex,
+            success: paymentResult.success,
+            skipped: paymentResult.skipped,
+            error: paymentResult.success ? undefined : paymentResult.message,
+            entityId: paymentResult.invoicePaymentId,
+            customerId: paymentResult.customerId,
+        };
         if (paymentResult.skipped) {
             result.skipped += 1;
+            if (paymentResult.mandatoryFieldSkip) {
+                result.mandatoryFieldSkips =
+                    (result.mandatoryFieldSkips ?? 0) + 1;
+            }
+            const skipReason = paymentResult.message === "import.results.paymentSkipped"
+                ? "unchanged"
+                : (paymentResult.message ?? "skipped");
+            (0, aggregateEntityImportStats_1.appendBatchImportIssue)(result, (0, validateConnectorLiveImportRow_1.formatImportIssueMessage)(identifier, skipReason));
             if (paymentResult.invoicePaymentId != null) {
                 result.entityIds.push(paymentResult.invoicePaymentId);
             }
@@ -944,8 +1014,10 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
             result.failed += 1;
             if (paymentResult.message) {
                 result.errors.push(paymentResult.message);
+                (0, aggregateEntityImportStats_1.appendBatchImportIssue)(result, (0, validateConnectorLiveImportRow_1.formatImportIssueMessage)(identifier, paymentResult.message));
             }
         }
     }
+    result.rowResults = rowResults;
     return markCancelled(result, options);
 }

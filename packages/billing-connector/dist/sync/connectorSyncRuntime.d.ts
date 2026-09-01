@@ -2,6 +2,7 @@
  * In-process registry of the connector sync currently running in this process,
  * plus a short history of completed runs for GET /sync-runs polling.
  */
+import type { EntityImportStatKey, EntityImportStatsAccum } from "../import/aggregateEntityImportStats";
 /** Orchestration step after Invoice — links deferred payments to invoices. */
 export declare const MATURITY_ENTITY_STATS_KEY = "_maturity";
 /**
@@ -34,6 +35,7 @@ export type ConnectorEntityStatSlice = {
     success: number;
     failed: number;
     skipped: number;
+    mandatoryFieldSkips?: number;
     sample_errors?: string[];
     /** Present for `_maturity` while linking / after it finishes. */
     status?: "running" | "done" | "failed" | "queued";
@@ -70,6 +72,8 @@ export interface ConnectorSyncCounts {
     invoicesImported: number;
     paymentsImported: number;
     importErrors: number;
+    mandatoryFieldSkips?: number;
+    entityImportStats?: Partial<Record<EntityImportStatKey, EntityImportStatsAccum>>;
     /** Deferred payment → invoice linking (after Invoice ingest). */
     paymentLinkStatus?: "running" | "done" | "failed";
     paymentsLinked?: number;

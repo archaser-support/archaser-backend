@@ -326,6 +326,26 @@ function extractComputedFieldValue(primaryTable, field, row) {
             const company = row.Company;
             return company?.company_number ?? null;
         }
+        if (field === "open_receivable_amount") {
+            const raw = row.open_receivable_amount;
+            if (raw === null || raw === undefined) {
+                return undefined;
+            }
+            if (typeof raw === "number") {
+                return Number.isNaN(raw) ? null : raw;
+            }
+            if (typeof raw === "object" && raw !== null && "toNumber" in raw) {
+                try {
+                    const n = raw.toNumber();
+                    return Number.isFinite(n) ? n : null;
+                }
+                catch {
+                    return null;
+                }
+            }
+            const n = parseFloat(String(raw));
+            return Number.isNaN(n) ? null : n;
+        }
         return undefined;
     }
     return undefined;

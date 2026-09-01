@@ -3,16 +3,18 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.STAGED_ENTITY_ORDER = void 0;
 exports.runStagedExtensionSync = runStagedExtensionSync;
 exports.planDefaultSyncWindows = planDefaultSyncWindows;
+const aggregateEntityImportStats_1 = require("../import/aggregateEntityImportStats");
 const entityImporter_1 = require("../import/entityImporter");
 const applyMaturedDeferredPayments_1 = require("../import/applyMaturedDeferredPayments");
 const recalculateCustomerAmountsHost_1 = require("../customers/recalculateCustomerAmountsHost");
-const connectorSyncRuntime_1 = require("./connectorSyncRuntime");
 const arPostIngestHost_1 = require("../credit/arPostIngestHost");
-const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
+const statusAndErrorType_1 = require("../observability/statusAndErrorType");
 const priorityApiContract_1 = require("../priority/priorityApiContract");
 const prioritySelectFields_1 = require("../priority/prioritySelectFields");
 const billingConnectorEntitySets_1 = require("../services/billingConnectorEntitySets");
 const billingConnectorPullFilters_1 = require("../services/billingConnectorPullFilters");
+const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
+const connectorSyncRuntime_1 = require("./connectorSyncRuntime");
 exports.STAGED_ENTITY_ORDER = [
     "Customer",
     "Payment",
@@ -30,6 +32,8 @@ function emptyStats() {
         invoicesImported: 0,
         paymentsImported: 0,
         importErrors: 0,
+        mandatoryFieldSkips: 0,
+        entityImportStats: {},
     };
 }
 function emptyPaymentLinkProgress() {
@@ -122,11 +126,12 @@ async function checkpointEntityPage(params) {
         },
     });
 }
-function bumpImported(stats, entityType, success, failed) {
+function bumpImported(stats, entityType, importResult) {
     const key = `${entityType.toLowerCase()}sImported`;
     stats[key] =
-        (stats[key] ?? 0) + success;
-    stats.importErrors += failed;
+        (stats[key] ?? 0) + importResult.success;
+    stats.importErrors += importResult.failed;
+    (0, aggregateEntityImportStats_1.applyEntityImportResultToSyncStats)(stats, entityType, importResult);
 }
 async function finalizeCustomerBalances(customerIds, prisma, onCustomerBalancesFinal, log, setStep) {
     if (customerIds.size === 0) {
@@ -473,11 +478,12 @@ async function runStagedExtensionSync(options) {
                         const importResult = await importFn(options.prisma, entityType, pageRows, options.accountId, null, options.userId, {
                             skipReportingBreach: options.skipReportingBreach === true,
                             skipDeferredPaymentMaturity: entityType === "Invoice",
+                            enforceMandatoryFields: true,
                             onLog: options.onLog,
                             shouldCancel: options.shouldCancel,
                             extension: options.extension,
                         });
-                        bumpImported(stats, entityType, importResult.success, importResult.failed);
+                        bumpImported(stats, entityType, importResult);
                         windowImported += importResult.success;
                         windowErrors += importResult.failed;
                         if (entityType === "Payment" ||
@@ -626,8 +632,13 @@ async function runStagedExtensionSync(options) {
         });
     }
     const totalErrors = stats.importErrors;
-    return finishWithBalances({
+    const finishOk = (0, statusAndErrorType_1.resolveSyncExecutionStatus)({
         ok: totalErrors === 0,
+        stats,
+        entity_stats: (0, connectorSyncRuntime_1.entityStatsFromCounts)(stats),
+    }) === "SUCCESS";
+    return finishWithBalances({
+        ok: finishOk,
         windows,
         previewBatch,
         stats: resultStats(),

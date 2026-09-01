@@ -39,6 +39,7 @@ const PriorityClient_1 = require("../priority/PriorityClient");
 const priorityApiContract_1 = require("../priority/priorityApiContract");
 const billingConnectorCrypto_1 = require("../utils/billingConnectorCrypto");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
+const validateConnectorLiveImportRow_1 = require("../import/validateConnectorLiveImportRow");
 const billingConnectorEntitySets_1 = require("../services/billingConnectorEntitySets");
 const billingConnectorPullFilters_1 = require("../services/billingConnectorPullFilters");
 const billingConnectorPreviewPasses_1 = require("../services/billingConnectorPreviewPasses");
@@ -125,7 +126,15 @@ async function runPreviewSync(params) {
         fetchResult.records.forEach((record, index) => {
             const mapped = (0, connectorFieldUtils_1.mapErpRecord)(record, rules);
             mappedRows.push(mapped);
-            validationErrors.push(...(0, connectorFieldUtils_1.validateMappedRow)(importType, mapped, index));
+            if (importType === "Invoice" || importType === "Payment") {
+                const validation = (0, validateConnectorLiveImportRow_1.validateConnectorLiveImportRow)(importType, mapped);
+                if (!validation.ok) {
+                    validationErrors.push(`Row ${index + 1}: ${validation.reason ?? "incomplete row"}`);
+                }
+            }
+            else {
+                validationErrors.push(...(0, connectorFieldUtils_1.validateMappedRow)(importType, mapped, index));
+            }
         });
         const sortedPreview = importType !== "Invoice" || mappedRows.length > 0;
         entities.push({

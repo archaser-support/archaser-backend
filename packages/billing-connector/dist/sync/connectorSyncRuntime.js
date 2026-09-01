@@ -29,30 +29,37 @@ exports.TAIL_STEP_KEYS = [
     exports.BALANCES_ENTITY_STATS_KEY,
 ];
 function entityStatsFromCounts(stats) {
+    const sliceFor = (key) => {
+        const accum = stats.entityImportStats?.[key];
+        return {
+            failed: accum?.failed ?? 0,
+            skipped: accum?.skipped ?? 0,
+            mandatoryFieldSkips: accum?.mandatoryFieldSkips,
+            sample_errors: accum?.sample_errors && accum.sample_errors.length > 0
+                ? accum.sample_errors
+                : undefined,
+        };
+    };
     const entityStats = {
         Customer: {
             pulled: stats.customersProcessed,
             success: stats.customersImported,
-            failed: 0,
-            skipped: 0,
+            ...sliceFor("Customer"),
         },
         Contact: {
             pulled: stats.contactsProcessed,
             success: stats.contactsImported,
-            failed: 0,
-            skipped: 0,
+            ...sliceFor("Contact"),
         },
         Invoice: {
             pulled: stats.invoicesProcessed,
             success: stats.invoicesImported,
-            failed: 0,
-            skipped: 0,
+            ...sliceFor("Invoice"),
         },
         Payment: {
             pulled: stats.paymentsProcessed,
             success: stats.paymentsImported,
-            failed: 0,
-            skipped: 0,
+            ...sliceFor("Payment"),
         },
     };
     if (stats.paymentLinkStatus) {

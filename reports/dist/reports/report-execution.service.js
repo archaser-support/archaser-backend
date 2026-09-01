@@ -159,10 +159,16 @@ let ReportExecutionService = class ReportExecutionService {
             (config.sorting?.[0]?.direction?.toLowerCase() === "asc"
                 ? "asc"
                 : "desc");
-        const needsInMemorySort = report.context === "dashboard_credit_customers" &&
-            !!effectiveSortField &&
-            ((0, credit_insurance_domain_1.isCreditDashboardEnrichedSortField)(effectiveSortField) ||
-                (0, credit_insurance_domain_2.isCustomerPolicyBackedReportField)(effectiveSortField));
+        const needsCreditEnrichment = primaryTable === "Customer" &&
+            (0, credit_insurance_domain_1.reportConfigNeedsCreditDashboardEnrichment)(fields);
+        const normalizedSortField = effectiveSortField?.includes(".")
+            ? effectiveSortField.split(".").pop()
+            : effectiveSortField;
+        const needsInMemorySort = !!effectiveSortField &&
+            ((needsCreditEnrichment &&
+                (0, credit_insurance_domain_1.isCreditDashboardEnrichedSortField)(normalizedSortField)) ||
+                (report.context === "dashboard_credit_customers" &&
+                    (0, credit_insurance_domain_2.isCustomerPolicyBackedReportField)(effectiveSortField)));
         const orderBy = needsInMemorySort
             ? []
             : this.buildOrderBy(primaryTable, body.sortField, body.sortDirection, config.sorting);
@@ -177,9 +183,7 @@ let ReportExecutionService = class ReportExecutionService {
             delegate.findMany(findArgs),
             delegate.count({ where }),
         ]);
-        if (report.context === "dashboard_credit_customers" &&
-            primaryTable === "Customer" &&
-            (0, credit_insurance_domain_1.reportConfigNeedsCreditDashboardEnrichment)(fields)) {
+        if (needsCreditEnrichment) {
             const requestedCustomerFields = fields
                 .filter((f) => f.table === "Customer" && f.field)
                 .map((f) => f.field);
