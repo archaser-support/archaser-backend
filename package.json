@@ -31,7 +31,7 @@
     "npm": ">=9.0.0"
   },
   "scripts": {
-    "postinstall": "prisma generate --schema=./prisma/schema.prisma && node ./scripts/sync-prisma-client.js",
+    "setup": "prisma generate --schema=./prisma/schema.prisma && node ./scripts/sync-prisma-client.js",
     "dev:all": "bash ./scripts/startup/dev-microservices.sh",
     "dev:api": "npm run start:dev -w @archaser/api",
     "start:api": "npm run start:prod -w @archaser/api",
