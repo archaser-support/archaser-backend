@@ -155,6 +155,7 @@ export {
     resolveAccountCustomerById,
     resolveAccountCustomerByNumber,
     resolveClearBeforeImportTargets,
+    searchAccountCustomers,
     type ClearBeforeImportDeletedCounts,
     type ClearBeforeImportEntity,
     type ClearBeforeImportOptions,
@@ -229,6 +230,7 @@ export {
     pullFiltersToPrismaJson,
     resolveEntityPullFilterOData,
     resolveImportPullFilterOData,
+    resolveRuntimeCustomerScopeOData,
     toPublicPullFilters,
     type PullFiltersMap,
 } from "./services/billingConnectorPullFilters";
@@ -240,6 +242,7 @@ export {
     PURGE_ENTITY_STATS_KEY,
     POST_INGEST_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    INSURANCE_TARGETS_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
     BALANCES_ENTITY_STATS_KEY,
     clearRunningSync,
@@ -248,7 +251,9 @@ export {
     registerRunningSync,
     upsertSyncRun,
     patchSyncRunEntityStats,
+    patchSyncRunProgress,
     entityStatsFromCounts,
+    type ConnectorSyncProgressPatch,
     type ConnectorSyncRunSummary,
 } from "./sync/connectorSyncRuntime";
 

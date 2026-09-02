@@ -123,6 +123,25 @@ export function parseCustomerNumberForClearBeforeImport(
     return id != null ? String(id) : null;
 }
 
+function customerDisplayName(customer: {
+    customer_number?: string | null;
+    Company?: { name?: string | null } | null;
+    Person?: {
+        first_name?: string | null;
+        last_name?: string | null;
+    } | null;
+}): string {
+    const company = customer.Company?.name?.trim();
+    if (company) {
+        return company;
+    }
+    const person = [customer.Person?.first_name, customer.Person?.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+    return person || customer.customer_number?.trim() || "";
+}
+
 /**
  * Look up a customer on the account by Archaser `customer_id`.
  */
@@ -130,7 +149,7 @@ export async function resolveAccountCustomerById(params: {
     prisma: PrismaClient;
     accountId: number;
     customerId: number;
-}): Promise<{ id: number; customer_number: string } | null> {
+}): Promise<{ id: number; customer_number: string; name: string } | null> {
     const customerId = parseCustomerIdForClearBeforeImport(params.customerId);
     if (customerId == null) {
         return null;
@@ -140,12 +159,119 @@ export async function resolveAccountCustomerById(params: {
             account_id: params.accountId,
             id: customerId,
         },
-        select: { id: true, customer_number: true },
+        select: {
+            id: true,
+            customer_number: true,
+            Company: { select: { name: true } },
+            Person: { select: { first_name: true, last_name: true } },
+        },
     });
     if (!row?.customer_number) {
         return null;
     }
-    return { id: row.id, customer_number: row.customer_number };
+    return {
+        id: row.id,
+        customer_number: row.customer_number,
+        name: customerDisplayName(row),
+    };
+}
+
+/** Typeahead search for customers on an account (Start backfill customer scope). */
+export async function searchAccountCustomers(params: {
+    prisma: PrismaClient;
+    accountId: number;
+    q?: string;
+    take?: number;
+}): Promise<
+    Array<{ id: number; customer_number: string; name: string; type: string }>
+> {
+    const q = (params.q ?? "").trim();
+    const take = Math.min(Math.max(params.take ?? 50, 1), 50);
+    const andClause: Record<string, unknown>[] = [
+        { account_id: params.accountId },
+    ];
+    if (q) {
+        const orClause: Record<string, unknown>[] = [
+            {
+                customer_number: {
+                    contains: q,
+                    mode: "insensitive",
+                },
+            },
+            {
+                Person: {
+                    OR: [
+                        {
+                            first_name: {
+                                contains: q,
+                                mode: "insensitive",
+                            },
+                        },
+                        {
+                            last_name: {
+                                contains: q,
+                                mode: "insensitive",
+                            },
+                        },
+                        {
+                            full_name: {
+                                contains: q,
+                                mode: "insensitive",
+                            },
+                        },
+                    ],
+                },
+            },
+            {
+                Company: {
+                    name: { contains: q, mode: "insensitive" },
+                },
+            },
+        ];
+        if (/^\d+$/.test(q)) {
+            const id = Number.parseInt(q, 10);
+            if (Number.isFinite(id) && id > 0) {
+                orClause.unshift({ id });
+            }
+        }
+        andClause.push({ OR: orClause });
+    }
+
+    const rows = await params.prisma.customer.findMany({
+        where: { AND: andClause },
+        select: {
+            id: true,
+            customer_number: true,
+            type: true,
+            Company: { select: { name: true } },
+            Person: {
+                select: {
+                    first_name: true,
+                    last_name: true,
+                    full_name: true,
+                },
+            },
+        },
+        orderBy: [{ customer_number: "asc" }, { id: "asc" }],
+        take,
+    });
+
+    return rows
+        .filter((row) => Boolean(row.customer_number))
+        .map((row) => ({
+            id: row.id,
+            customer_number: row.customer_number as string,
+            name:
+                row.type === "Person"
+                    ? row.Person?.full_name?.trim() ||
+                      [row.Person?.first_name, row.Person?.last_name]
+                          .filter(Boolean)
+                          .join(" ")
+                          .trim() ||
+                      customerDisplayName(row)
+                    : customerDisplayName(row),
+            type: row.type,
+        }));
 }
 
 /**
