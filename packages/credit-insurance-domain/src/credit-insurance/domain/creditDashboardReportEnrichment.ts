@@ -16,6 +16,7 @@ import {
     type LimitWarningRow,
 } from "./creditInsuranceDashboardService";
 import { getTopUpExpiringReport } from "./creditInsuranceTopUpDashboardService";
+import { fetchAsOfUtilizationByCustomerIds } from "./utilizationBinReport";
 
 const CLOSED_INVOICE_STATUS: invoice_status[] = [
     InvoiceStatus.Paid,
@@ -34,6 +35,8 @@ export const CREDIT_DASHBOARD_ENRICHED_CUSTOMER_FIELDS = new Set([
     "top_up_resolved_amount",
     "top_up_end_date",
     "top_up_days_left",
+    "as_of_utilization_pct",
+    "as_of_usage_amount",
 ]);
 
 export function isCreditDashboardEnrichedCustomerField(
@@ -215,6 +218,8 @@ export interface CreditDashboardEnrichmentOptions {
     accountLanguage?: string | null;
     requestedFields: string[];
     limitWarningByCustomerId?: Map<number, LimitWarningRow>;
+    /** YYYY-MM-DD; required when as_of_* fields are requested. */
+    asOfDate?: string;
 }
 
 export async function enrichCreditDashboardCustomerRows(
@@ -238,12 +243,15 @@ export async function enrichCreditDashboardCustomerRows(
         fields.has("policy_risk_allocated");
     const needsPolicyRisk = fields.has("policy_risk_allocated");
     const needsWarningSummary = fields.has("limit_warning_summary");
+    const needsAsOfUtilization =
+        fields.has("as_of_utilization_pct") || fields.has("as_of_usage_amount");
 
     const [
         openArByCustomer,
         openInvoiceByCustomer,
         termsOutstandingByCustomer,
         termsForAtRiskByCustomer,
+        asOfByCustomer,
     ] = await Promise.all([
         needsOpenAr || needsPolicyRisk
             ? fetchOpenReceivableByCustomerMap(
@@ -272,6 +280,19 @@ export async function enrichCreditDashboardCustomerRows(
                   true
               )
             : Promise.resolve(new Map<number, number>()),
+        needsAsOfUtilization && options.asOfDate
+            ? fetchAsOfUtilizationByCustomerIds({
+                  accountId: options.accountId,
+                  asOfDate: options.asOfDate,
+                  customerIds,
+                  policyId: options.policyId,
+              })
+            : Promise.resolve(
+                  new Map<
+                      number,
+                      { utilizationPct: number; usageAmount: number }
+                  >()
+              ),
     ]);
 
     return rows.map((row) => {
@@ -315,6 +336,15 @@ export async function enrichCreditDashboardCustomerRows(
                       options.accountLanguage
                   )
                 : "";
+        }
+        if (needsAsOfUtilization) {
+            const asOf = asOfByCustomer.get(customerId);
+            if (fields.has("as_of_utilization_pct")) {
+                enriched.as_of_utilization_pct = asOf?.utilizationPct ?? null;
+            }
+            if (fields.has("as_of_usage_amount")) {
+                enriched.as_of_usage_amount = asOf?.usageAmount ?? null;
+            }
         }
 
         return enriched;
@@ -407,6 +437,8 @@ const ENRICHED_IN_MEMORY_SORT_FIELDS = new Set([
     "top_up_days_left",
     "top_up_value",
     "top_up_resolved_amount",
+    "as_of_utilization_pct",
+    "as_of_usage_amount",
 ]);
 
 export function isCreditDashboardEnrichedSortField(

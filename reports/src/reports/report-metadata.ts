@@ -388,6 +388,20 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
                     translationNamespace: "dashboard",
                 },
                 {
+                    name: "as_of_utilization_pct",
+                    type: "number",
+                    label: "As-of utilization %",
+                    translationKey: "as_of_utilization_pct",
+                    translationNamespace: "dashboard",
+                },
+                {
+                    name: "as_of_usage_amount",
+                    type: "number",
+                    label: "As-of usage",
+                    translationKey: "as_of_usage_amount",
+                    translationNamespace: "dashboard",
+                },
+                {
                     name: "top_up_type",
                     type: "string",
                     label: "Top-Up Type",

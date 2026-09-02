@@ -8,6 +8,9 @@ import {
     isPendingReviewExclusion,
     normalizePolicyExclusionReason,
     type TermsBreachByReasonSnapshotKey,
+    UTILIZATION_DISTRIBUTION_BIN_KEYS,
+    assignUtilizationDistributionBin,
+    type UtilizationDistributionBinKey,
 } from "@archaser/credit-insurance-domain";
 import { parsePortfolioHealthDateRange } from "./shared/portfolioHealthDateRange";
 import {
@@ -112,16 +115,12 @@ export type PortfolioNoCoverageSection = {
     accountCurrency: string;
 };
 
-export const UTILIZATION_DISTRIBUTION_BIN_KEYS = [
-    "0_10",
-    "10_20",
-    "20_50",
-    "50_75",
-    "75_plus",
-] as const;
-
-export type UtilizationDistributionBinKey =
-    (typeof UTILIZATION_DISTRIBUTION_BIN_KEYS)[number];
+/** Re-export shared bin keys / assigner for API consumers and tests. */
+export {
+    UTILIZATION_DISTRIBUTION_BIN_KEYS,
+    assignUtilizationDistributionBin,
+    type UtilizationDistributionBinKey,
+};
 
 export type PortfolioUtilizationDailyPoint = {
     snapshotDate: string;
@@ -157,6 +156,10 @@ export type PortfolioUtilizationDistributionBin = {
     bin: UtilizationDistributionBinKey;
     customerCount: number;
     customerPct: number;
+    /** Sum of usage_amount for customers in this bin. */
+    usageAmount: number;
+    /** Share of total usage_amount among included customers (sums ~100%). */
+    usagePct: number;
 };
 
 export type PortfolioUtilizationSection = {
@@ -190,6 +193,10 @@ export type PortfolioUtilizationSection = {
     efficiencyB: number | null;
     distribution: PortfolioUtilizationDistributionBin[];
     distributionCustomerCount: number;
+    /** Total usage_amount among distribution customers (tooltip / share denom). */
+    distributionUsageTotal: number;
+    /** ISO currency code from the account (e.g. ILS, USD) for distribution tooltips. */
+    accountCurrency: string;
     /** Daily portfolio / DCL / Named utilization for the Utilization chart. */
     daily: PortfolioUtilizationDailyPoint[];
     /** Snapshot day used for top customers and distribution; null when none. */
@@ -818,48 +825,46 @@ export function computeDailyTopUpUtilizationPct(
     return (100 * Math.max(0, weightedUsageSum)) / topUpTotalSum;
 }
 
-/** Exclusive utilization distribution bins. Boundaries: [0,10), [10,20), [20,50), [50,75), [75,∞). */
-export function assignUtilizationDistributionBin(
-    utilizationPct: number
-): UtilizationDistributionBinKey {
-    if (utilizationPct < 10) {
-        return "0_10";
-    }
-    if (utilizationPct < 20) {
-        return "10_20";
-    }
-    if (utilizationPct < 50) {
-        return "20_50";
-    }
-    if (utilizationPct < 75) {
-        return "50_75";
-    }
-    return "75_plus";
-}
+/**
+ * Exclusive utilization distribution bins — see
+ * `@archaser/credit-insurance-domain` `assignUtilizationDistributionBin`.
+ */
 
 export function buildUtilizationDistribution(
-    customers: Array<{ utilizationPct: number }>
+    customers: Array<{ utilizationPct: number; usageAmount: number }>
 ): {
     bins: PortfolioUtilizationDistributionBin[];
     customerCount: number;
+    usageTotal: number;
 } {
     const counts = Object.fromEntries(
         UTILIZATION_DISTRIBUTION_BIN_KEYS.map((key) => [key, 0])
     ) as Record<UtilizationDistributionBinKey, number>;
+    const usageSums = Object.fromEntries(
+        UTILIZATION_DISTRIBUTION_BIN_KEYS.map((key) => [key, 0])
+    ) as Record<UtilizationDistributionBinKey, number>;
 
     for (const customer of customers) {
-        counts[assignUtilizationDistributionBin(customer.utilizationPct)] += 1;
+        const bin = assignUtilizationDistributionBin(customer.utilizationPct);
+        counts[bin] += 1;
+        usageSums[bin] += Math.max(0, Number(customer.usageAmount) || 0);
     }
 
     const customerCount = customers.length;
+    const usageTotal = UTILIZATION_DISTRIBUTION_BIN_KEYS.reduce(
+        (sum, bin) => sum + usageSums[bin],
+        0
+    );
     const bins = UTILIZATION_DISTRIBUTION_BIN_KEYS.map((bin) => ({
         bin,
         customerCount: counts[bin],
         customerPct:
             customerCount > 0 ? (100 * counts[bin]) / customerCount : 0,
+        usageAmount: usageSums[bin],
+        usagePct: usageTotal > 0 ? (100 * usageSums[bin]) / usageTotal : 0,
     }));
 
-    return { bins, customerCount };
+    return { bins, customerCount, usageTotal };
 }
 
 export function computePolicyEfficiency(
@@ -1102,7 +1107,10 @@ export function computeUtilizationPeriodMetrics(
     };
 }
 
-export function emptyUtilizationSection(): PortfolioUtilizationSection {
+export function emptyUtilizationSection(
+    accountCurrency = "USD"
+): PortfolioUtilizationSection {
+    const currency = accountCurrency.trim().toUpperCase() || "USD";
     return {
         averageUtilizationPct: 0,
         pctDaysAbove100: 0,
@@ -1128,8 +1136,12 @@ export function emptyUtilizationSection(): PortfolioUtilizationSection {
             bin,
             customerCount: 0,
             customerPct: 0,
+            usageAmount: 0,
+            usagePct: 0,
         })),
         distributionCustomerCount: 0,
+        distributionUsageTotal: 0,
+        accountCurrency: currency,
         daily: [],
         asOfDate: null,
     };
@@ -1139,16 +1151,22 @@ export function buildUtilizationSection(input: {
     daily: PortfolioUtilizationDailyPoint[];
     healthAverageA: number;
     topCustomers: PortfolioUtilizationTopCustomer[];
-    distributionCustomers: Array<{ utilizationPct: number }>;
+    distributionCustomers: Array<{
+        utilizationPct: number;
+        usageAmount: number;
+    }>;
     periodActiveTopUpCount: number;
     periodCustomersWithTopUp: number;
     asOfDate?: string | null;
+    accountCurrency?: string;
 }): PortfolioUtilizationSection {
     const period = computeUtilizationPeriodMetrics(input.daily);
     const footprints = computeDclVsNamedFootprints(input.daily);
     const distribution = buildUtilizationDistribution(
         input.distributionCustomers
     );
+    const currency =
+        (input.accountCurrency ?? "USD").trim().toUpperCase() || "USD";
 
     return {
         averageUtilizationPct: period.averageUtilizationPct,
@@ -1178,6 +1196,8 @@ export function buildUtilizationSection(input: {
         efficiencyB: null,
         distribution: distribution.bins,
         distributionCustomerCount: distribution.customerCount,
+        distributionUsageTotal: distribution.usageTotal,
+        accountCurrency: currency,
         daily: [...input.daily].sort((a, b) =>
             a.snapshotDate.localeCompare(b.snapshotDate)
         ),
@@ -1765,6 +1785,7 @@ type CptTopCustomerRow = {
 type CptDistributionRow = {
     customer_id: number;
     utilization_pct: number | string;
+    usage_amount: number | string;
 };
 
 type CptCostInputRow = {
@@ -2351,12 +2372,13 @@ async function fetchCptUtilizationDistribution(
         scopedCustomerIds: number[] | null;
         includeNoPolicyExposure: boolean;
     }
-): Promise<Array<{ utilizationPct: number }>> {
+): Promise<Array<{ utilizationPct: number; usageAmount: number }>> {
     const pendingReviewLiteral = "pending review";
 
     const rows = await prisma.$queryRaw<CptDistributionRow[]>`
         SELECT
             t.customer_id,
+            COALESCE(t.usage_amount, 0)::float8 AS usage_amount,
             CASE
                 WHEN t.effective_usage_pct IS NOT NULL THEN t.effective_usage_pct
                 ELSE (t.usage_amount / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8) * 100
@@ -2384,6 +2406,7 @@ async function fetchCptUtilizationDistribution(
 
     return rows.map((row) => ({
         utilizationPct: toNumber(row.utilization_pct),
+        usageAmount: toNumber(row.usage_amount),
     }));
 }
 
@@ -2413,7 +2436,7 @@ export async function getCreditPortfolioHealth(
             daysInRange: parsed.daysInRange,
             portfolioHealth: buildPortfolioHealthSection([], []),
             noCoverage: buildNoCoverageSection([], accountCurrency),
-            utilization: emptyUtilizationSection(),
+            utilization: emptyUtilizationSection(accountCurrency),
             costs: emptyCostsSection(accountCurrency),
         };
     }
@@ -2536,6 +2559,7 @@ export async function getCreditPortfolioHealth(
             periodActiveTopUpCount: periodTopUps.periodActiveTopUpCount,
             periodCustomersWithTopUp: periodTopUps.periodCustomersWithTopUp,
             asOfDate,
+            accountCurrency,
         }),
         costs: buildCostsSection({
             periodCost: rangeCost.periodCost,
