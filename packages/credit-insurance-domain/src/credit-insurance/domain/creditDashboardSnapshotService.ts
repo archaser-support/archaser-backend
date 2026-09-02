@@ -408,20 +408,29 @@ export async function takeCreditDashboardDailySnapshotsForAccount(
     return { scopesProcessed };
 }
 
-export async function takeCreditDashboardDailySnapshots(): Promise<{
+export async function takeCreditDashboardDailySnapshots(options?: {
+    excludeAccountIds?: ReadonlySet<number>;
+}): Promise<{
     scopesProcessed: number;
+    skippedAccountIds: number[];
 }> {
     await runInsurancePolicyStatusMaintenance();
 
     const snapshotDate = startOfTodayUtc();
     const scopes = await listSnapshotScopes(snapshotDate);
+    const excludeAccountIds = options?.excludeAccountIds;
 
     let scopesProcessed = 0;
+    const skippedAccountIds: number[] = [];
 
     const accountIds = Array.from(
         new Set(scopes.map((scope) => scope.accountId))
     );
     for (const accountId of accountIds) {
+        if (excludeAccountIds?.has(accountId)) {
+            skippedAccountIds.push(accountId);
+            continue;
+        }
         const accountScopes = scopes.filter(
             (scope) => scope.accountId === accountId
         );
@@ -432,7 +441,7 @@ export async function takeCreditDashboardDailySnapshots(): Promise<{
         );
     }
 
-    return { scopesProcessed };
+    return { scopesProcessed, skippedAccountIds };
 }
 
 function addUtcCalendarDays(d: Date, deltaDays: number): Date {

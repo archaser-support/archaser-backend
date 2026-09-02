@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { ImportService } from "../src/import/import.service";
 import { importMappedEntityBatch } from "@archaser/billing-connector";
 
@@ -22,6 +23,10 @@ function accessScope() {
 }
 
 describe("ImportService importLeaf bulk batch", () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
     it("sends the full invoice batch to the importer in one call", async () => {
         (importMappedEntityBatch as jest.Mock).mockResolvedValue({
             success: 2,
@@ -38,12 +43,15 @@ describe("ImportService importLeaf bulk batch", () => {
 
         const db = {
             importJob: {
-                findFirst: jest.fn().mockResolvedValue({
-                    id: "job-1",
-                    import_type: "Invoice",
-                    status: "Pending",
-                    metadata: {},
-                }),
+                findFirst: jest
+                    .fn()
+                    .mockResolvedValueOnce({
+                        id: "job-1",
+                        import_type: "Invoice",
+                        status: "Pending",
+                        metadata: {},
+                    })
+                    .mockResolvedValueOnce(null),
                 update: jest.fn().mockResolvedValue({}),
             },
             importRecord: {
@@ -80,5 +88,67 @@ describe("ImportService importLeaf bulk batch", () => {
         expect(db.importRecord.createMany).toHaveBeenCalledTimes(1);
         expect(result.successful).toBe(2);
         expect(result.processed).toBe(2);
+    });
+
+    it("importLeaf rejects when another job is Processing on the account", async () => {
+        const db = {
+            importJob: {
+                findFirst: jest
+                    .fn()
+                    .mockResolvedValueOnce({
+                        id: "job-2",
+                        import_type: "Customer",
+                        status: "Pending",
+                        metadata: {},
+                    })
+                    .mockResolvedValueOnce({ id: "job-other" }),
+            },
+        };
+        const service = new ImportService(
+            db as never,
+            accessScope() as never,
+            {} as never
+        );
+
+        await expect(
+            service.importLeaf("customer", user() as never, {
+                jobId: "job-2",
+                customers: [{ customer_number: "C1" }],
+            })
+        ).rejects.toMatchObject({
+            response: {
+                code: "IMPORT_IN_PROGRESS",
+                error: expect.any(String),
+            },
+        });
+        expect(importMappedEntityBatch).not.toHaveBeenCalled();
+    });
+
+    it("importLeaf throws ConflictException for unrelated Processing job", async () => {
+        const db = {
+            importJob: {
+                findFirst: jest
+                    .fn()
+                    .mockResolvedValueOnce({
+                        id: "job-2",
+                        import_type: "Invoice",
+                        status: "Pending",
+                        metadata: {},
+                    })
+                    .mockResolvedValueOnce({ id: "job-other" }),
+            },
+        };
+        const service = new ImportService(
+            db as never,
+            accessScope() as never,
+            {} as never
+        );
+
+        await expect(
+            service.importLeaf("invoice", user() as never, {
+                jobId: "job-2",
+                invoices: [{ invoice_number: "INV-1" }],
+            })
+        ).rejects.toBeInstanceOf(ConflictException);
     });
 });

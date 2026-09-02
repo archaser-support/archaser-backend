@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { CronJobResult } from "./handlers";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 
 /**
  * Process Automated Collection Periods
@@ -21,7 +22,8 @@ import type { CronJobResult } from "./handlers";
  * - CustomerService.calculateNextAutomatedActivityTime (complex date calc)
  */
 export async function processAutomatedCollectionPeriods(
-    prisma: PrismaClient
+    prisma: PrismaClient,
+    freeze?: CronFrozenAccountGuard
 ): Promise<CronJobResult> {
     const start = Date.now();
     const summary = {
@@ -53,7 +55,8 @@ export async function processAutomatedCollectionPeriods(
         const now = new Date();
 
         // Exclude credit-only customers helper
-        const excludeCreditOnlyWhere = (extra?: any) => ({
+        const excludeCreditOnlyWhere = (extra?: Record<string, unknown>) => ({
+            ...(freeze ? freeze.accountIdNotInFilter() : {}),
             Account: {
                 OR: [
                     { has_collection: true },
@@ -596,6 +599,33 @@ export async function processAutomatedCollectionPeriods(
 
                 summary.phase3.periodsSetup++;
             }
+        }
+
+        if (freeze && freeze.frozenAccountIds.size > 0) {
+            const skippedRows = await prisma.customerCollectionPeriod.findMany({
+                where: {
+                    period_end_date: null,
+                    current_category: "Automated",
+                    Customer: {
+                        account_id: { in: [...freeze.frozenAccountIds] },
+                        Account: {
+                            OR: [
+                                { has_collection: true },
+                                { has_credit_insurance: { not: true } },
+                            ],
+                        },
+                    },
+                },
+                select: {
+                    Customer: { select: { account_id: true } },
+                },
+                distinct: ["customer_id"],
+            });
+            freeze.reportSkips(
+                skippedRows
+                    .map((row) => row.Customer?.account_id)
+                    .filter((id): id is number => id != null)
+            );
         }
 
         const message = `Phase 0: ${summary.phase0.periodsReset}/${summary.phase0.periodsFound} periods reset. Phase 1: ${summary.phase1.activitiesMarked} activities, ${summary.phase1.periodsMarked} periods marked. Phase 2: ${summary.phase2.periodsEnabled}/${summary.phase2.periodsFound} periods enabled. Phase 3: ${summary.phase3.periodsSetup}/${summary.phase3.periodsFound} periods setup. Activity creation/email/SMS skipped (requires Activity Workflow Manager).`;

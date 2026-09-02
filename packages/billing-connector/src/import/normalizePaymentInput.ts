@@ -28,6 +28,40 @@ function toOptionalPaymentNumber(value: unknown): number | undefined {
     return Number.isFinite(n) ? n : undefined;
 }
 
+function asTrimmedString(value: unknown): string {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return String(value).trim();
+    }
+    if (typeof value !== "string") {
+        return "";
+    }
+    return value.trim();
+}
+
+/** Avoid String(null) → "null"; fall back to Priority CUSTNAME on the ERP row. */
+export function resolvePaymentCustomerNumber(
+    record: Record<string, unknown>,
+    rawErpRow?: Record<string, unknown>
+): string {
+    const raw = rawErpRow ?? (record._rawRecord as Record<string, unknown> | undefined);
+    const direct = asTrimmedString(record.customer_number);
+    if (direct) {
+        return direct;
+    }
+    if (raw) {
+        const fromErp =
+            asTrimmedString(raw.CUSTNAME) ||
+            asTrimmedString(raw.IDG_CUSTNAME);
+        if (fromErp) {
+            return fromErp;
+        }
+    }
+    return "";
+}
+
 export function normalizePaymentInput(
     record: Record<string, unknown>
 ): InvoicePaymentInput {
@@ -39,10 +73,12 @@ export function normalizePaymentInput(
         paymentDateStr = toErpDateOnly(record.payment_date);
     }
 
+    const raw = record._rawRecord as Record<string, unknown> | undefined;
+
     return {
         account_id: Number(record.account_id),
         company_code: String(record.company_code ?? "").trim(),
-        customer_number: String(record.customer_number),
+        customer_number: resolvePaymentCustomerNumber(record, raw),
         invoice_number: String(
             record.invoice_number ??
                 record.FNCIREF1 ??

@@ -19,19 +19,25 @@ import {
     PrismaClient,
 } from "@archaser/database";
 import type { Response } from "express";
+import { bindCreditInsurancePrisma } from "@archaser/credit-insurance-domain";
+import {
+    createBillingConnectorMetricsSinkFromProm,
+    finalizeAwaitingPostIngestDrainExecutions,
+    registerArPostIngestOrchestrator,
+    setDefaultBillingConnectorMetricsSink,
+    touchAwaitingPostIngestDrainProgress,
+} from "@archaser/billing-connector";
 import {
     computeNextRunAt,
+    countPendingArPostIngestCustomers,
     drainArPostIngestRetryQueue,
     executeNamedCronJob,
     recordCronJobRun,
+    registerCronFrozenAccountMetrics,
     runArPostIngestForCustomers,
+    setDefaultCronFrozenAccountMetrics,
     type CronJobResult,
 } from "@archaser/cron-jobs";
-import {
-    createBillingConnectorMetricsSinkFromProm,
-    registerArPostIngestOrchestrator,
-    setDefaultBillingConnectorMetricsSink,
-} from "@archaser/billing-connector";
 import { registerBillingConnectorSyncCounters } from "./billing-connector-sync-counters";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
@@ -73,6 +79,10 @@ class WorkerRuntimeService implements OnModuleDestroy {
         this.register.setDefaultLabels({ service: "archaser-worker" });
         this.register.registerMetric(cronJobExecutionsTotal);
         this.register.registerMetric(cronJobDurationSeconds);
+        const frozenAccountMetrics = registerCronFrozenAccountMetrics(
+            this.register
+        );
+        setDefaultCronFrozenAccountMetrics(frozenAccountMetrics);
         const billingCounters = registerBillingConnectorSyncCounters(
             this.register
         );
@@ -112,6 +122,7 @@ class WorkerRuntimeService implements OnModuleDestroy {
                     process.env.CONNECTION_LIMIT_WORKER || 5
                 ),
             });
+            bindCreditInsurancePrisma(this.prisma);
         } catch (error) {
             this.logger.warn(
                 `Prisma not available yet: ${
@@ -153,10 +164,52 @@ class WorkerRuntimeService implements OnModuleDestroy {
         }
 
         if (job.name === "ar-post-ingest-drain") {
-            const data = job.data as { maxItems?: number };
+            if (!this.prisma) {
+                throw new Error("database unavailable");
+            }
+            bindCreditInsurancePrisma(this.prisma);
+            const data = job.data as {
+                accountId?: number;
+                maxItems?: number;
+            };
             const result = await drainArPostIngestRetryQueue({
                 maxItems: data.maxItems ?? 100,
+                onItemProcessed: async (accountId) => {
+                    await touchAwaitingPostIngestDrainProgress(accountId, {
+                        countPendingForAccount:
+                            countPendingArPostIngestCustomers,
+                    });
+                    await finalizeAwaitingPostIngestDrainExecutions({
+                        accountId,
+                        countPendingForAccount:
+                            countPendingArPostIngestCustomers,
+                    });
+                },
             });
+            await finalizeAwaitingPostIngestDrainExecutions({
+                countPendingForAccount: countPendingArPostIngestCustomers,
+            });
+            if (data.accountId != null) {
+                const remaining = await countPendingArPostIngestCustomers(
+                    data.accountId
+                );
+                if (remaining > 0 && this.queue) {
+                    await this.queue.add(
+                        "ar-post-ingest-drain",
+                        {
+                            accountId: data.accountId,
+                            maxItems: data.maxItems ?? 500,
+                        },
+                        {
+                            removeOnComplete: 100,
+                            removeOnFail: 200,
+                        }
+                    );
+                    this.logger.log(
+                        `AR post-ingest drain re-queued for account ${data.accountId} (${remaining} customer(s) remaining)`
+                    );
+                }
+            }
             this.logger.log(
                 `AR post-ingest drain: ${result.itemsProcessed} processed, ${result.failures} failures, ${result.givenUp} given up`
             );

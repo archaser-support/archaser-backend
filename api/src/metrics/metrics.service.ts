@@ -14,6 +14,7 @@ import {
     createBillingConnectorMetricsSinkFromProm,
     setDefaultBillingConnectorMetricsSink,
 } from "@archaser/billing-connector";
+import { setDefaultCronFrozenAccountMetrics } from "@archaser/cron-jobs";
 
 @Injectable()
 export class MetricsService implements OnModuleInit {
@@ -51,6 +52,10 @@ export class MetricsService implements OnModuleInit {
                 recordsProcessed: this.business.billingConnectorRecordsProcessed,
             })
         );
+        setDefaultCronFrozenAccountMetrics({
+            cronAccountsSkippedFrozenTotal:
+                this.business.cronAccountsSkippedFrozenTotal,
+        });
     }
 
     onModuleInit() {

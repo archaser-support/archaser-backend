@@ -66,11 +66,10 @@ import {
     isComputedReportField,
     isPrismaListRelation,
     isPrismaScalarField,
+    resolveComputedSortTarget,
+    sortFormattedReportRows,
 } from "./report-virtual-fields.util";
-import {
-    REPORT_METADATA,
-    resolveReportFieldType,
-} from "./report-metadata";
+import { REPORT_METADATA } from "./report-metadata";
 import {
     applyFormulasToRows,
     mergeFormulaOperandFieldsIntoConfig,
@@ -78,11 +77,9 @@ import {
 import {
     FormulaWarningSummary,
     ReportFormula,
+    FORMULA_OUTPUT_KEY_PREFIX,
 } from "./report-formula/types";
-import {
-    formatReportDate,
-    formatReportDateTime,
-} from "./report-datetime.util";
+import { formatReportDateTime } from "./report-datetime.util";
 
 type ReportConfig = {
     tables?: string[];
@@ -323,18 +320,19 @@ export class ReportExecutionService {
             (config.sorting?.[0]?.direction?.toLowerCase() === "asc"
                 ? "asc"
                 : "desc");
-        const needsCreditEnrichment =
-            primaryTable === "Customer" &&
-            reportConfigNeedsCreditDashboardEnrichment(fields);
-        const normalizedSortField = effectiveSortField?.includes(".")
-            ? effectiveSortField.split(".").pop()
-            : effectiveSortField;
-        const needsInMemorySort =
+        const computedSortTarget = resolveComputedSortTarget(
+            effectiveSortField,
+            primaryTable,
+            fields
+        );
+        const needsComputedFormattedSort = computedSortTarget != null;
+        const needsCreditDashboardInMemorySort =
+            report.context === "dashboard_credit_customers" &&
             !!effectiveSortField &&
-            ((needsCreditEnrichment &&
-                isCreditDashboardEnrichedSortField(normalizedSortField)) ||
-                (report.context === "dashboard_credit_customers" &&
-                    isCustomerPolicyBackedReportField(effectiveSortField)));
+            (isCreditDashboardEnrichedSortField(effectiveSortField) ||
+                isCustomerPolicyBackedReportField(effectiveSortField));
+        const needsInMemorySort =
+            needsCreditDashboardInMemorySort || needsComputedFormattedSort;
 
         const orderBy = needsInMemorySort
             ? []
@@ -358,7 +356,11 @@ export class ReportExecutionService {
             delegate.count({ where }),
         ]);
 
-        if (needsCreditEnrichment) {
+        if (
+            report.context === "dashboard_credit_customers" &&
+            primaryTable === "Customer" &&
+            reportConfigNeedsCreditDashboardEnrichment(fields)
+        ) {
             const requestedCustomerFields = fields
                 .filter((f) => f.table === "Customer" && f.field)
                 .map((f) => f.field as string);
@@ -389,7 +391,7 @@ export class ReportExecutionService {
             });
         }
 
-        if (needsInMemorySort && effectiveSortField) {
+        if (needsCreditDashboardInMemorySort && effectiveSortField) {
             rows = sortCreditDashboardEnrichedRows(
                 rows,
                 effectiveSortField,
@@ -416,8 +418,19 @@ export class ReportExecutionService {
             metadataTables: REPORT_METADATA.tables,
         });
 
+        let resultRows = formulaResult.rows;
+        if (needsComputedFormattedSort && computedSortTarget) {
+            resultRows = sortFormattedReportRows(
+                resultRows,
+                computedSortTarget.outputKey,
+                effectiveSortDirection === "desc" ? "desc" : "asc"
+            );
+            totalRecords = resultRows.length;
+            resultRows = resultRows.slice(skip, skip + limit);
+        }
+
         return serializeBigInt({
-            data: formulaResult.rows,
+            data: resultRows,
             totalRecords,
             ...(formulaResult.warnings.length
                 ? { formulaWarnings: formulaResult.warnings }
@@ -1076,6 +1089,11 @@ export class ReportExecutionService {
             return null;
         }
 
+        // Formula results are computed after fetch; they cannot drive SQL ORDER BY.
+        if (raw.startsWith(FORMULA_OUTPUT_KEY_PREFIX)) {
+            return null;
+        }
+
         // Normalize "Customer.name" → compare as field on primary
         const normalized =
             raw.startsWith(`${primaryTable}.`) && raw.split(".").length === 2
@@ -1236,8 +1254,7 @@ export class ReportExecutionService {
                 value,
                 f.field,
                 locale,
-                timezone,
-                resolveReportFieldType(f.table, f.field)
+                timezone
             );
             // dispute_number aliases the primary key. Override display to
             // "DIS-000726" so formatValue's thousands separator does not turn
@@ -1688,8 +1705,7 @@ export class ReportExecutionService {
         value: unknown,
         field: string,
         locale: string,
-        timezone?: string,
-        metadataType?: string
+        timezone?: string
     ): string | null {
         if (value == null) {
             return null;
@@ -1699,9 +1715,6 @@ export class ReportExecutionService {
                 value instanceof Date ? value : new Date(String(value));
             if (!Number.isNaN(d.getTime())) {
                 try {
-                    if (this.shouldFormatAsDateOnly(field, metadataType)) {
-                        return formatReportDate(d, locale);
-                    }
                     return formatReportDateTime(d, locale, timezone);
                 } catch {
                     return d.toISOString();
@@ -1739,38 +1752,12 @@ export class ReportExecutionService {
         }
     }
 
-    private shouldFormatAsDateOnly(
-        field: string,
-        metadataType?: string
-    ): boolean {
-        const normalized = metadataType?.toLowerCase();
-        if (normalized === "date") {
-            return true;
-        }
-        if (
-            normalized === "datetime" ||
-            normalized === "timestamp"
-        ) {
-            return false;
-        }
-        // Fallback when metadata is missing: *_date calendar fields vs event stamps.
-        if (field.includes("_at") || field === "schedule_time") {
-            return false;
-        }
-        return (
-            field.includes("_date") ||
-            field === "due_date" ||
-            field === "date_of_birth"
-        );
-    }
-
     private looksLikeDateField(field: string, value: unknown): boolean {
         if (
             field.includes("_at") ||
             field.includes("_date") ||
             field === "due_date" ||
-            field === "schedule_time" ||
-            field === "date_of_birth"
+            field === "schedule_time"
         ) {
             return true;
         }

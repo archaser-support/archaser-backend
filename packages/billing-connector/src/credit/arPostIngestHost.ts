@@ -25,6 +25,12 @@ export type ArPostIngestHostInput = {
         importType: "Invoice" | "Payment";
         entityIds: number[];
     };
+    /** Invoice / payment rows imported this sync (scopes live gap refresh). */
+    invoiceEntityIds?: number[];
+    paymentEntityIds?: number[];
+    affectedInvoiceIds?: number[];
+    /** Account MEP breach start date — narrows replay event load when set. */
+    mepBreachStartDate?: Date | null;
     /** Live per-customer progress for the sync progress panel. */
     onProgress?: (progress: ArPostIngestProgress) => void;
 };
@@ -130,6 +136,12 @@ export async function runArPostIngestViaHost(
         enqueueAsOfRewrite: input.enqueueAsOfRewrite === true,
         dryRun: input.dryRun === true,
         asOfRewrite: input.asOfRewrite,
+        ...(input.invoiceEntityIds?.length
+            ? { affectedInvoiceIds: input.affectedInvoiceIds ?? input.invoiceEntityIds }
+            : {}),
+        ...(input.mepBreachStartDate !== undefined
+            ? { mepBreachStartDate: input.mepBreachStartDate }
+            : {}),
         ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     });
 
@@ -163,10 +175,22 @@ export type DeferredArPostIngestStep =
     | "process_overdue"
     | "live_refresh";
 
+/** Heavy CI steps deferred to the worker. Process Overdue is a separate sync tail step. */
+export const DEFERRED_CI_POST_INGEST_STEPS: DeferredArPostIngestStep[] = [
+    "replay",
+    "live_refresh",
+];
+
+export type PostIngestDrainScheduleResult = {
+    queued: boolean;
+    reason?: string;
+};
+
 export type ConnectorPostIngestDeferOptions = {
     /**
-     * When true, enqueue replay/overdue/live-refresh on the worker instead of
-     * blocking the billing connector sync tail.
+     * When true, enqueue replay/live-refresh on the worker instead of blocking
+     * the billing connector sync tail. Process Overdue runs in its own tail
+     * step before post-ingest when the host wires onProcessOverdueCustomers.
      */
     deferPostIngest?: boolean;
     enqueueDeferredSteps?: (args: {
@@ -174,8 +198,13 @@ export type ConnectorPostIngestDeferOptions = {
         customerIds: number[];
         steps: DeferredArPostIngestStep[];
     }) => Promise<void>;
-    /** Ask the worker to drain the AR post-ingest retry queue soon. */
-    schedulePostIngestDrain?: () => Promise<void>;
+    /**
+     * Ask the worker to drain the AR post-ingest retry queue soon.
+     * Return `{ queued: false }` so the host can fall back to inline CI steps.
+     */
+    schedulePostIngestDrain?: () => Promise<
+        PostIngestDrainScheduleResult | void
+    >;
 };
 
 /**
@@ -192,6 +221,8 @@ export async function invokeConnectorArPostIngest(params: {
     log: (message: string) => void;
     /** When true (payment-only fallback), run deferred-payment maturity. */
     runMaturity?: boolean;
+    /** When false, Process Overdue already ran in the sync tail step. Default true. */
+    runProcessOverdue?: boolean;
     /** Live per-customer progress for the sync progress panel. */
     onProgress?: (progress: ArPostIngestProgress) => void;
 } & ConnectorPostIngestDeferOptions): Promise<{ deferred: boolean }> {
@@ -230,7 +261,60 @@ export async function invokeConnectorArPostIngest(params: {
                   entityIds: paymentEntityIds,
               };
 
+    const run =
+        params.onArPostIngest ??
+        ((input) => runArPostIngestViaHost(input, params.prisma));
+
+    const runSteps = async (args: {
+        label: string;
+        runReplay: boolean;
+        runProcessOverdue: boolean;
+        runLiveRefresh: boolean;
+        runMaturity: boolean;
+        enqueueAsOfRewrite: boolean;
+    }): Promise<void> => {
+        params.log(
+            `AR post-ingest ${args.label} for ${customerIds.length} customer(s)…`
+        );
+        try {
+            await run({
+                accountId: params.accountId,
+                customerIds,
+                runReplay: args.runReplay,
+                runMaturity: args.runMaturity,
+                runProcessOverdue: args.runProcessOverdue,
+                runLiveRefresh: args.runLiveRefresh,
+                enqueueAsOfRewrite: args.enqueueAsOfRewrite,
+                ...(args.enqueueAsOfRewrite ? { asOfRewrite } : {}),
+                ...(params.onProgress ? { onProgress: params.onProgress } : {}),
+            });
+            params.log(
+                `AR post-ingest ${args.label} finished for ${customerIds.length} customer(s)`
+            );
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "AR post-ingest failed";
+            params.log(`AR post-ingest ${args.label} failed: ${message}`);
+        }
+    };
+
+    const runProcessOverdue =
+        params.runProcessOverdue !== undefined
+            ? params.runProcessOverdue
+            : true;
+
     if (params.deferPostIngest === true) {
+        if (runProcessOverdue) {
+            await runSteps({
+                label: "process-overdue (inline fallback)",
+                runReplay: false,
+                runProcessOverdue: true,
+                runLiveRefresh: false,
+                runMaturity: params.runMaturity === true,
+                enqueueAsOfRewrite: false,
+            });
+        }
+
         try {
             await enqueueRewriteForImport({
                 accountId: params.accountId,
@@ -244,16 +328,11 @@ export async function invokeConnectorArPostIngest(params: {
             params.log(`As-of rewrite enqueue failed: ${message}`);
         }
 
-        const deferredSteps: DeferredArPostIngestStep[] = [
-            "replay",
-            "process_overdue",
-            "live_refresh",
-        ];
         if (params.enqueueDeferredSteps) {
             await params.enqueueDeferredSteps({
                 accountId: params.accountId,
                 customerIds,
-                steps: deferredSteps,
+                steps: [...DEFERRED_CI_POST_INGEST_STEPS],
             });
         } else {
             params.log(
@@ -261,48 +340,52 @@ export async function invokeConnectorArPostIngest(params: {
             );
         }
 
+        let drainQueued = false;
+        let drainReason: string | undefined;
         if (params.schedulePostIngestDrain) {
             try {
-                await params.schedulePostIngestDrain();
+                const drainResult = await params.schedulePostIngestDrain();
+                drainQueued = drainResult?.queued === true;
+                drainReason = drainResult?.reason;
             } catch (error) {
-                const message =
+                drainReason =
                     error instanceof Error ? error.message : String(error);
                 params.log(
-                    `Failed to schedule AR post-ingest worker drain: ${message}`
+                    `Failed to schedule AR post-ingest worker drain: ${drainReason}`
                 );
             }
+        } else {
+            drainReason = "schedulePostIngestDrain is not configured";
+        }
+
+        if (!drainQueued) {
+            params.log(
+                `AR post-ingest drain not queued (${drainReason ?? "unknown"}); running replay/live-refresh inline`
+            );
+            await runSteps({
+                label: "replay/live-refresh (inline fallback)",
+                runReplay: true,
+                runProcessOverdue: false,
+                runLiveRefresh: true,
+                runMaturity: false,
+                enqueueAsOfRewrite: false,
+            });
+            return { deferred: false };
         }
 
         params.log(
-            `AR post-ingest deferred for ${customerIds.length} customer(s) — worker will process replay/overdue/live-refresh`
+            `Deferred replay/live-refresh for ${customerIds.length} customer(s) — worker will drain`
         );
         return { deferred: true };
     }
 
-    const run =
-        params.onArPostIngest ??
-        ((input) => runArPostIngestViaHost(input, params.prisma));
-    params.log(
-        `AR post-ingest starting for ${customerIds.length} customer(s)…`
-    );
-    try {
-        await run({
-            accountId: params.accountId,
-            customerIds,
-            runReplay: true,
-            runMaturity: params.runMaturity === true,
-            runLiveRefresh: true,
-            enqueueAsOfRewrite: true,
-            asOfRewrite,
-            ...(params.onProgress ? { onProgress: params.onProgress } : {}),
-        });
-        params.log(
-            `AR post-ingest finished for ${customerIds.length} customer(s)`
-        );
-    } catch (error) {
-        const message =
-            error instanceof Error ? error.message : "AR post-ingest failed";
-        params.log(`AR post-ingest failed: ${message}`);
-    }
+    await runSteps({
+        label: "full",
+        runReplay: true,
+        runProcessOverdue,
+        runLiveRefresh: true,
+        runMaturity: params.runMaturity === true,
+        enqueueAsOfRewrite: true,
+    });
     return { deferred: false };
 }

@@ -3,41 +3,41 @@ name: Billing Connector Mandatory Field Validation
 overview: "Enforce mandatory invoice/payment fields on billing-connector live sync: skip incomplete rows (never insert or overwrite with defaults), keep good stored data on incomplete re-pulls, shared preview validator (D18), mandatoryFieldSkips-driven PARTIAL/FAILED status (D12–D15), surface all skips in sample_errors + Grafana + Billing sync history grid."
 todos:
   - id: shared-validator
-    content: "Add validateConnectorLiveImportRow (pre-normalization) for Invoice + Payment mandatory sets"
-    status: pending
+    content: Add validateConnectorLiveImportRow (pre-normalization) for Invoice + Payment mandatory sets
+    status: completed
   - id: invoice-guard
-    content: "Wire validator into importInvoiceBatch — skip insert/update, block silent defaults (0, USD, today)"
-    status: pending
+    content: Wire validator into importInvoiceBatch — skip insert/update, block silent defaults (0, USD, today)
+    status: completed
   - id: payment-guard
-    content: "Wire validator into importPayments — skip insert/update, require invoice_number + payment_date"
-    status: pending
+    content: Wire validator into importPayments — skip insert/update, require invoice_number + payment_date
+    status: completed
   - id: sync-flag
-    content: "Pass enforceMandatoryFields from runInProcessSync + stagedExtensionSync only (not file upload)"
-    status: pending
+    content: Pass enforceMandatoryFields from runInProcessSync + stagedExtensionSync only (not file upload)
+    status: completed
   - id: entity-stats
-    content: "Aggregate per-entity failed/skipped + sample_errors (3 unique, id + reason) on finish lines and Mongo sync history"
-    status: pending
+    content: Aggregate per-entity failed/skipped + sample_errors (3 unique, id + reason) on finish lines and Mongo sync history
+    status: completed
   - id: observability
-    content: "mandatoryFieldSkips → PARTIAL status, import_validation metric; optional per-row import_skip Loki lines"
-    status: pending
+    content: mandatoryFieldSkips → PARTIAL status, import_validation metric; optional per-row import_skip Loki lines
+    status: completed
   - id: grafana-panels
-    content: "Staging dashboard — Loki import-issues panel + 24h failed+skipped stat per entity_type"
-    status: pending
+    content: Staging dashboard — Loki import-issues panel + 24h failed+skipped stat per entity_type
+    status: completed
   - id: frontend-sync-history
-    content: "Billing tab grid — pulled/success/failed/skipped columns + Tooltip with sample_errors"
-    status: pending
+    content: Billing tab grid — pulled/success/failed/skipped columns + Tooltip with sample_errors
+    status: completed
   - id: preview-validator
-    content: "Wire validateConnectorLiveImportRow into runPreviewSync; align catalog (due_date, currency, OR amount rule)"
-    status: pending
+    content: Wire validateConnectorLiveImportRow into runPreviewSync; align catalog (due_date, currency, OR amount rule)
+    status: completed
   - id: status-semantics
-    content: "mandatoryFieldSkips drives PARTIAL/FAILED; duplicate skips do not; fix ok flag + resolveSyncExecutionStatus"
-    status: pending
+    content: mandatoryFieldSkips drives PARTIAL/FAILED; duplicate skips do not; fix ok flag + resolveSyncExecutionStatus
+    status: completed
 isProject: false
 ---
 
 # Billing Connector Mandatory Field Validation
 
-**Status:** Ready for implementation  
+**Status:** Done (implemented on `be-import-extension`, commit `f7f5a0d`)  
 **Slug:** `billing-connector-mandatory-field-validation`  
 **Related:** [erp_billing_connector_22321e7a.plan.md](./erp_billing_connector_22321e7a.plan.md), [billing-connector-grafana-dashboard.plan.md](./billing-connector-grafana-dashboard.plan.md)
 

@@ -1,31 +1,20 @@
 #!/bin/bash
 
 # Quick wrapper script to run penetration tests with authentication
-# Usage:
-#   TEST_EMAIL=user@example.com TEST_PASSWORD=secret ./scripts/security/run-penetration-test.sh
-# Or run without env vars to be prompted interactively.
-
-set -euo pipefail
+# Usage: ./scripts/security/run-penetration-test.sh
 
 echo "Archaser Penetration Testing with Authentication"
 echo "================================================"
 echo ""
+echo "Please provide test credentials:"
+echo ""
 
-if [ -z "${TEST_EMAIL:-}" ]; then
-    read -r -p "Email: " TEST_EMAIL
-fi
-if [ -z "${TEST_PASSWORD:-}" ]; then
-    read -r -sp "Password: " TEST_PASSWORD
-    echo ""
-fi
+read -p "Email: " TEST_EMAIL
+read -sp "Password: " TEST_PASSWORD
+echo ""
 
-if [ -z "${TEST_EMAIL:-}" ] || [ -z "${TEST_PASSWORD:-}" ]; then
-    echo "Error: TEST_EMAIL and TEST_PASSWORD are required."
-    echo "Set them in the environment or enter them when prompted."
-    exit 1
-fi
-
-export TEST_EMAIL TEST_PASSWORD
+export TEST_EMAIL="dori.stopper+88@gmail.com"
+export TEST_PASSWORD="Dori@1971"
 
 echo ""
 echo "Running penetration tests..."
@@ -36,3 +25,4 @@ echo ""
   -e "$TEST_EMAIL" \
   -p "$TEST_PASSWORD" \
   -v
+

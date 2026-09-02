@@ -21,7 +21,7 @@ Options:
   --skip-build         Skip backend workspace builds
   --skip-git-pull      Skip git fetch + reset to origin (use if you already synced)
   --no-grafana         Skip monitoring stack compose
-  --skip-prisma        Skip npm run setup (prisma generate + sync-prisma-client)
+  --skip-prisma        Skip prisma generate + sync-prisma-client
   -h, --help           Show this help
 
 Examples:
@@ -238,9 +238,13 @@ fi
 if [[ -f "$APP_DIR/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
     ROOT_DIR="$APP_DIR"
     BACKEND_DIR="$APP_DIR"
+    PRISMA_SCHEMA="prisma/schema.prisma"
+    SYNC_SCRIPT="scripts/sync-prisma-client.js"
 elif [[ -f "$APP_DIR/backend/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
     ROOT_DIR="$APP_DIR"
     BACKEND_DIR="$APP_DIR/backend"
+    PRISMA_SCHEMA="backend/prisma/schema.prisma"
+    SYNC_SCRIPT="backend/scripts/sync-prisma-client.js"
 else
     echo "Error: app dir not found or missing compose file: $APP_DIR"
     exit 1
@@ -288,12 +292,13 @@ else
     log "Skipping npm ci (--skip-install)"
 fi
 
-# npm ci uses --ignore-scripts (also set in .npmrc). Run setup before workspace tsc.
+# npm ci uses --ignore-scripts, so generate before any workspace tsc that imports PrismaClient.
 if [[ "$SKIP_PRISMA" != "true" ]]; then
-    log "Running backend setup (prisma generate + sync-prisma-client)"
-    (cd "$BACKEND_DIR" && npm run setup)
+    log "Generating Prisma client"
+    npx prisma generate --schema="$PRISMA_SCHEMA"
+    node "$SYNC_SCRIPT"
 else
-    log "Skipping backend setup (--skip-prisma)"
+    log "Skipping prisma generate (--skip-prisma)"
 fi
 
 if [[ "$SKIP_BUILD" != "true" ]]; then
@@ -302,9 +307,8 @@ if [[ "$SKIP_BUILD" != "true" ]]; then
     npm run build -w @archaser/auth
     npm run build -w @archaser/sms-send
     npm run build -w @archaser/credit-insurance-domain
-    # billing-connector before cron-jobs (cron-jobs imports @archaser/billing-connector)
-    npm run build -w @archaser/billing-connector
     npm run build -w @archaser/cron-jobs
+    npm run build -w @archaser/billing-connector
     npm run build -w @archaser/api
     npm run build -w @archaser/worker
     npm run build -w @archaser/sms

@@ -29,6 +29,9 @@ import { isInvoiceInMepBreachScope } from "./shared/mepBreachScope";
 import { syncCreditInsuranceGapPipelineForCustomer } from "./syncCreditInsuranceGapPipeline";
 import { syncZeroLimitAlertFlagsForCustomer } from "./syncZeroLimitAlertFlags";
 
+/** Default Prisma interactive tx cap is 5s; cron per-customer sync can exceed that under load. */
+const SYNC_CUSTOMER_INSURANCE_TRANSACTION_TIMEOUT_MS = 30_000;
+
 export type SyncCustomerInsuranceFieldsOptions = {
     dbClient?: DbClient;
     /** Follow-up effects need a committed client, so they default off inside a transaction. */
@@ -208,12 +211,6 @@ async function syncCustomerInsuranceFieldsCore(
         });
     }
 
-    await syncZeroLimitAlertFlagsForCustomer({
-        customerId,
-        dbClient,
-        validateZeroLimitDate,
-    });
-
     return {
         accountId: customerRow?.account_id ?? null,
         previousBlock,
@@ -249,15 +246,23 @@ export async function syncCustomerInsuranceFields(
             asOfDate
         );
     } else {
-        coreResult = await prisma.$transaction(async (tx) =>
-            syncCustomerInsuranceFieldsCore(
-                customerId,
-                tx as DbClient,
-                validateZeroLimitDate,
-                asOfDate
-            )
+        coreResult = await prisma.$transaction(
+            async (tx) =>
+                syncCustomerInsuranceFieldsCore(
+                    customerId,
+                    tx as DbClient,
+                    validateZeroLimitDate,
+                    asOfDate
+                ),
+            { timeout: SYNC_CUSTOMER_INSURANCE_TRANSACTION_TIMEOUT_MS }
         );
     }
+
+    await syncZeroLimitAlertFlagsForCustomer({
+        customerId,
+        dbClient,
+        validateZeroLimitDate,
+    });
 
     if (!runFollowUpEffects) {
         return;

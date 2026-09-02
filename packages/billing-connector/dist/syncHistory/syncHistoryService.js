@@ -1,0 +1,131 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.defaultSinceDate = exports.STALE_RUNNING_HOURS = exports.HISTORY_WINDOW_DAYS = exports.HEARTBEAT_INTERVAL_SECONDS = void 0;
+exports.useMemorySyncHistoryStoreForTests = useMemorySyncHistoryStoreForTests;
+exports.resetSyncHistoryStoreForTests = resetSyncHistoryStoreForTests;
+exports.createRunningExecution = createRunningExecution;
+exports.completeExecution = completeExecution;
+exports.markExecutionCancelled = markExecutionCancelled;
+exports.touchExecutionProgress = touchExecutionProgress;
+exports.deferExecutionCompletionUntilPostIngestDrain = deferExecutionCompletionUntilPostIngestDrain;
+exports.listAwaitingPostIngestDrainExecutions = listAwaitingPostIngestDrainExecutions;
+exports.finalizeAwaitingPostIngestDrainExecutions = finalizeAwaitingPostIngestDrainExecutions;
+exports.listExecutionsForAccount = listExecutionsForAccount;
+exports.listRunningSyncAccountIds = listRunningSyncAccountIds;
+exports.sweepStaleRunning = sweepStaleRunning;
+exports.syncHistoryExecutionToSummary = syncHistoryExecutionToSummary;
+const memoryStore_1 = require("./memoryStore");
+const mongooseStore_1 = require("./mongooseStore");
+const postIngestDrainEntityStats_1 = require("./postIngestDrainEntityStats");
+const store_1 = require("./store");
+Object.defineProperty(exports, "defaultSinceDate", { enumerable: true, get: function () { return store_1.defaultSinceDate; } });
+Object.defineProperty(exports, "HEARTBEAT_INTERVAL_SECONDS", { enumerable: true, get: function () { return store_1.HEARTBEAT_INTERVAL_SECONDS; } });
+Object.defineProperty(exports, "HISTORY_WINDOW_DAYS", { enumerable: true, get: function () { return store_1.HISTORY_WINDOW_DAYS; } });
+Object.defineProperty(exports, "STALE_RUNNING_HOURS", { enumerable: true, get: function () { return store_1.STALE_RUNNING_HOURS; } });
+let activeStore = mongooseStore_1.mongooseSyncHistoryStore;
+let memoryStoreForTests = null;
+function store() {
+    return activeStore;
+}
+/** Swap to in-memory store for unit tests. */
+function useMemorySyncHistoryStoreForTests() {
+    memoryStoreForTests = (0, memoryStore_1.createMemorySyncHistoryStore)();
+    activeStore = memoryStoreForTests;
+    return memoryStoreForTests;
+}
+function resetSyncHistoryStoreForTests() {
+    memoryStoreForTests?.reset();
+    memoryStoreForTests = null;
+    activeStore = mongooseStore_1.mongooseSyncHistoryStore;
+}
+async function createRunningExecution(input) {
+    return store().createRunning(input);
+}
+/**
+ * Finalize a run. Refuses to overwrite if the execution is no longer RUNNING
+ * (e.g. Stop already marked TIMEOUT / cancelled).
+ */
+async function completeExecution(executionId, input) {
+    return store().completeIfRunning(executionId, input);
+}
+async function markExecutionCancelled(executionId, input) {
+    return store().markCancelledIfRunning(executionId, input);
+}
+async function touchExecutionProgress(executionId, input) {
+    return store().touchProgressIfRunning(executionId, input);
+}
+async function deferExecutionCompletionUntilPostIngestDrain(executionId, input) {
+    return store().deferCompletionUntilPostIngestDrain(executionId, input);
+}
+async function listAwaitingPostIngestDrainExecutions(accountId) {
+    return store().listAwaitingPostIngestDrainExecutions(accountId);
+}
+/**
+ * Completes RUNNING executions that deferred terminal status until the worker
+ * post-import drain queue is empty for their account.
+ */
+async function finalizeAwaitingPostIngestDrainExecutions(options) {
+    const awaiting = await store().listAwaitingPostIngestDrainExecutions(options?.accountId);
+    if (awaiting.length === 0) {
+        return 0;
+    }
+    let completed = 0;
+    for (const execution of awaiting) {
+        if (!options?.countPendingForAccount) {
+            continue;
+        }
+        const pending = await options.countPendingForAccount(execution.account_id);
+        if (pending > 0) {
+            continue;
+        }
+        const pendingStatus = execution.pending_terminal_status;
+        if (!pendingStatus) {
+            continue;
+        }
+        const finalized = await store().completeIfRunning(execution.execution_id, {
+            status: pendingStatus,
+            entityStats: (0, postIngestDrainEntityStats_1.applyPostIngestDrainProgressToEntityStats)(execution.entity_stats, 0),
+            errorMessage: execution.pending_error_message ?? null,
+            errorType: execution.pending_error_type ?? null,
+        });
+        if (finalized) {
+            completed += 1;
+        }
+    }
+    return completed;
+}
+async function listExecutionsForAccount(accountId, options) {
+    return store().listForAccount(accountId, {
+        since: options?.since ?? (0, store_1.defaultSinceDate)(),
+        limit: options?.limit,
+    });
+}
+async function listRunningSyncAccountIds() {
+    return store().listRunningAccountIds();
+}
+async function sweepStaleRunning(options) {
+    return store().sweepStaleRunning({
+        olderThanHours: options?.olderThanHours ?? store_1.STALE_RUNNING_HOURS,
+        accountId: options?.accountId,
+        completedAt: options?.completedAt,
+    });
+}
+/** Map Mongo history row → API / progress summary shape (`id` = execution_id). */
+function syncHistoryExecutionToSummary(doc) {
+    return {
+        id: doc.execution_id,
+        trigger: doc.trigger,
+        sync_mode: doc.sync_mode,
+        status: doc.status,
+        started_at: doc.started_at.toISOString(),
+        completed_at: doc.completed_at
+            ? doc.completed_at.toISOString()
+            : null,
+        duration_seconds: doc.duration_seconds,
+        entity_stats: doc.entity_stats ?? {},
+        error_message: doc.error_message,
+        error_type: doc.error_type,
+        cutover_options: null,
+        cutover_summary: null,
+    };
+}

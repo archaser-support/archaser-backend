@@ -6,18 +6,28 @@
 /** Orchestration step after Invoice — links deferred payments to invoices. */
 export const MATURITY_ENTITY_STATS_KEY = "_maturity";
 
+/** Start backfill clear-before-import purge phase (before entity pull/import). */
+export const PURGE_ENTITY_STATS_KEY = "_purge";
+
 /**
  * Tail steps after entity ingest. They run while the sync is still RUNNING, so
  * without their own stat keys the UI froze on the last entity row and gave no
  * reason for the disabled buttons.
  */
 export const POST_INGEST_ENTITY_STATS_KEY = "_post_ingest";
+/** Chronological AR replay (limit_assessed_amount stamps). */
+export const AR_REPLAY_ENTITY_STATS_KEY = "_ar_replay";
+/** Live MEP, capacity gap, and insurance field refresh. */
+export const LIVE_REFRESH_ENTITY_STATS_KEY = "_live_refresh";
+export const PROCESS_OVERDUE_ENTITY_STATS_KEY = "_process_overdue";
 export const PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
 export const BALANCES_ENTITY_STATS_KEY = "_balances";
 
 export const TAIL_STEP_KEYS = [
-    POST_INGEST_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
+    PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    AR_REPLAY_ENTITY_STATS_KEY,
+    LIVE_REFRESH_ENTITY_STATS_KEY,
     BALANCES_ENTITY_STATS_KEY,
 ] as const;
 
@@ -45,6 +55,8 @@ export type ConnectorEntityStatSlice = {
     success: number;
     failed: number;
     skipped: number;
+    /** Rows removed during Start backfill clear-before-import purge. */
+    deleted?: number;
     sample_errors?: string[];
     /** Present for `_maturity` while linking / after it finishes. */
     status?: "running" | "done" | "failed" | "queued";
@@ -84,6 +96,17 @@ export interface ConnectorSyncCounts {
     invoicesImported: number;
     paymentsImported: number;
     importErrors: number;
+    /** Clear-before-import purge counts (Start backfill only). */
+    customersDeleted?: number;
+    contactsDeleted?: number;
+    invoicesDeleted?: number;
+    paymentsDeleted?: number;
+    /** Rows to delete at purge start (for determinate Deleting… progress). */
+    purgeTotal?: number;
+    /** Clear-before-import purge phase (Start backfill only). */
+    purgeStatus?: "running" | "done" | "cancelled";
+    /** Which entity is being purged right now (for progress detail). */
+    purgeDetail?: TailStepDetail;
     /** Deferred payment → invoice linking (after Invoice ingest). */
     paymentLinkStatus?: "running" | "done" | "failed";
     paymentsLinked?: number;
@@ -93,8 +116,17 @@ export interface ConnectorSyncCounts {
     paymentLinkError?: string;
     /** What the linking pass is doing now (linking, aligning, recalculating). */
     paymentLinkDetail?: TailStepDetail;
-    /** Tail steps (AR post-ingest, pending closes, balance recalculation). */
+    /** Tail steps (pending closes, process overdue, AR post-ingest, balances). */
     tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
+    /** Live-sync rows skipped for missing mandatory fields (Invoice/Payment). */
+    mandatoryFieldSkips?: number;
+    /** Per-entity import failures/skips with capped sample_errors. */
+    entityImportStats?: Partial<
+        Record<
+            string,
+            import("../import/aggregateEntityImportStats").EntityImportStatsAccum
+        >
+    >;
 }
 
 export function entityStatsFromCounts(
@@ -106,26 +138,66 @@ export function entityStatsFromCounts(
             success: stats.customersImported,
             failed: 0,
             skipped: 0,
+            ...(stats.customersDeleted != null
+                ? { deleted: stats.customersDeleted }
+                : {}),
         },
         Contact: {
             pulled: stats.contactsProcessed,
             success: stats.contactsImported,
             failed: 0,
             skipped: 0,
+            ...(stats.contactsDeleted != null
+                ? { deleted: stats.contactsDeleted }
+                : {}),
         },
         Invoice: {
             pulled: stats.invoicesProcessed,
             success: stats.invoicesImported,
             failed: 0,
             skipped: 0,
+            ...(stats.invoicesDeleted != null
+                ? { deleted: stats.invoicesDeleted }
+                : {}),
         },
         Payment: {
             pulled: stats.paymentsProcessed,
             success: stats.paymentsImported,
             failed: 0,
             skipped: 0,
+            ...(stats.paymentsDeleted != null
+                ? { deleted: stats.paymentsDeleted }
+                : {}),
         },
     };
+
+    if (stats.purgeStatus) {
+        const deletedTotal =
+            (stats.customersDeleted ?? 0) +
+            (stats.contactsDeleted ?? 0) +
+            (stats.invoicesDeleted ?? 0) +
+            (stats.paymentsDeleted ?? 0);
+        const purgeTotal =
+            stats.purgeTotal != null && stats.purgeTotal > 0
+                ? stats.purgeTotal
+                : deletedTotal;
+        entityStats[PURGE_ENTITY_STATS_KEY] = {
+            // `pulled` = planned total (like link-payments); `success` = deleted so far.
+            pulled: purgeTotal,
+            success: deletedTotal,
+            failed: 0,
+            skipped: 0,
+            status:
+                stats.purgeStatus === "cancelled"
+                    ? "done"
+                    : stats.purgeStatus,
+            detail: {
+                step: stats.purgeDetail?.step ?? "deleting",
+                processed: deletedTotal,
+                total: purgeTotal,
+            },
+        };
+    }
 
     if (stats.paymentLinkStatus) {
         const linked = stats.paymentsLinked ?? 0;
@@ -206,6 +278,18 @@ export function upsertSyncRun(
     historyByAccount.set(accountId, next.slice(0, MAX_HISTORY));
 }
 
+function isTerminalSyncRunSummary(run: ConnectorSyncRunSummary): boolean {
+    if (run.completed_at) {
+        return true;
+    }
+    return (
+        run.status === "SUCCESS" ||
+        run.status === "FAILED" ||
+        run.status === "PARTIAL" ||
+        (run.status === "TIMEOUT" && run.error_type === "cancelled")
+    );
+}
+
 /** Live progress must not clobber a cancelled / finished status. */
 export function patchSyncRunEntityStats(
     accountId: number,
@@ -216,6 +300,9 @@ export function patchSyncRunEntityStats(
     const existing = listSyncRuns(accountId).find(
         (run) => run.id === executionId
     );
+    if (existing && isTerminalSyncRunSummary(existing)) {
+        return;
+    }
     upsertSyncRun(accountId, {
         ...(existing ?? fallback),
         entity_stats: entityStats,

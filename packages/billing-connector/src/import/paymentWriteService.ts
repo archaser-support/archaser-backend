@@ -48,14 +48,9 @@ export interface UpdatePaymentData {
     modified_by?: string | null;
 }
 
-export interface PaymentWriteOptions {
-    normalizeNegativePaymentsForCreditClose?: boolean;
-}
-
 export async function createLinkedInvoicePayment(
     prisma: PrismaClient,
-    data: CreatePaymentData,
-    options?: PaymentWriteOptions
+    data: CreatePaymentData
 ): Promise<{ invoicePayment: InvoicePayment; updatedInvoice: Invoice }> {
     return prisma.$transaction(async (tx) => {
         let invoiceNumber =
@@ -89,11 +84,7 @@ export async function createLinkedInvoicePayment(
 
         const updatedInvoice = await recalculateInvoiceFromLinkedPayments(
             tx,
-            data.invoice_id,
-            {
-                normalizeNegativePaymentsForCreditClose:
-                    options?.normalizeNegativePaymentsForCreditClose,
-            }
+            data.invoice_id
         );
 
         return { invoicePayment: createdPayment, updatedInvoice };
@@ -124,8 +115,7 @@ export async function createDeferredInvoicePayment(
 
 export async function updateInvoicePayment(
     prisma: PrismaClient,
-    data: UpdatePaymentData,
-    options?: PaymentWriteOptions
+    data: UpdatePaymentData
 ): Promise<{ invoicePayment: InvoicePayment }> {
     return prisma.$transaction(async (tx) => {
         const existing = await tx.invoicePayment.findUnique({
@@ -172,18 +162,11 @@ export async function updateInvoicePayment(
         ) {
             await recalculateInvoiceFromLinkedPayments(
                 tx,
-                previousInvoiceId,
-                {
-                    normalizeNegativePaymentsForCreditClose:
-                        options?.normalizeNegativePaymentsForCreditClose,
-                }
+                previousInvoiceId
             );
         }
         if (newInvoiceId != null) {
-            await recalculateInvoiceFromLinkedPayments(tx, newInvoiceId, {
-                normalizeNegativePaymentsForCreditClose:
-                    options?.normalizeNegativePaymentsForCreditClose,
-            });
+            await recalculateInvoiceFromLinkedPayments(tx, newInvoiceId);
         }
 
         return { invoicePayment: updatedPayment };

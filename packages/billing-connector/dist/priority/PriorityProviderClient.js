@@ -1,0 +1,272 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PriorityProviderClient = void 0;
+const BillingProviderClient_1 = require("../billing/BillingProviderClient");
+const priorityApiContract_1 = require("./priorityApiContract");
+const connectorPaymentSynthetics_1 = require("../payment/connectorPaymentSynthetics");
+const resolveTablePullShape_1 = require("./resolveTablePullShape");
+const PriorityClient_1 = require("./PriorityClient");
+function normalizeServiceRoot(baseUrl) {
+    return baseUrl.replace(/\/+$/, "");
+}
+function buildAuthorizationHeader(authType, credentials) {
+    if (authType === "API_KEY") {
+        const token = credentials.token;
+        if (!token || typeof token !== "string") {
+            throw new Error("API key token is required");
+        }
+        const encoded = Buffer.from(`${token}:PAT`, "utf8").toString("base64");
+        return `Basic ${encoded}`;
+    }
+    if (authType === "BASIC") {
+        const username = credentials.username;
+        const password = credentials.password;
+        if (!username || !password) {
+            throw new Error("Username and password are required");
+        }
+        const encoded = Buffer.from(`${String(username)}:${String(password)}`, "utf8").toString("base64");
+        return `Basic ${encoded}`;
+    }
+    const accessToken = credentials.access_token;
+    if (accessToken && typeof accessToken === "string") {
+        return `Bearer ${accessToken}`;
+    }
+    throw new Error("OAuth2 access token is required");
+}
+function buildQueryString(params) {
+    const search = new URLSearchParams(params);
+    return search.toString();
+}
+function summarizePriorityHttpError(status, body) {
+    const trimmed = body.trim();
+    if (!trimmed) {
+        return `HTTP ${status}`;
+    }
+    if (/^<!DOCTYPE/i.test(trimmed) || /^<html/i.test(trimmed)) {
+        return `HTTP ${status} HTML gateway error`;
+    }
+    return trimmed.slice(0, 200);
+}
+function andODataFilters(...parts) {
+    const cleaned = parts
+        .map((part) => (typeof part === "string" ? part.trim() : ""))
+        .filter((part) => part.length > 0);
+    if (cleaned.length === 0) {
+        return undefined;
+    }
+    if (cleaned.length === 1) {
+        return cleaned[0];
+    }
+    return cleaned.map((part) => `(${part})`).join(" and ");
+}
+function recordFieldValue(record, field) {
+    const raw = record[field];
+    if (raw == null) {
+        return null;
+    }
+    const text = String(raw).trim();
+    return text.length > 0 ? text : null;
+}
+function recordKeysetCursor(record, orderBy, tieBreaker) {
+    const primary = recordFieldValue(record, orderBy);
+    if (primary == null) {
+        return null;
+    }
+    if (!tieBreaker) {
+        return primary;
+    }
+    const secondary = recordFieldValue(record, tieBreaker);
+    return (0, resolveTablePullShape_1.encodeKeysetCursor)(primary, secondary);
+}
+function dateGeIso(date, overlapMinutes) {
+    const ms = date.getTime() - overlapMinutes * 60 * 1000;
+    return new Date(ms).toISOString();
+}
+class PriorityProviderClient {
+    constructor(config) {
+        this.tableColumnsByKey = new Map();
+        this.config = config;
+    }
+    supportsFeature(feature) {
+        switch (feature) {
+            case BillingProviderClient_1.ConnectorFeature.TOTAL_COUNT:
+            case BillingProviderClient_1.ConnectorFeature.DELETED_RECORDS:
+            case BillingProviderClient_1.ConnectorFeature.DATE_WINDOW:
+            case BillingProviderClient_1.ConnectorFeature.TOKEN_REFRESH:
+                return false;
+            default:
+                return false;
+        }
+    }
+    async testConnection() {
+        const result = await (0, PriorityClient_1.testPriorityConnection)(this.config);
+        if (!result.ok) {
+            const error = new Error(result.error ?? "Connection failed");
+            error.statusCode = result.statusCode;
+            throw error;
+        }
+    }
+    async discoverFields(entity) {
+        if (!(0, priorityApiContract_1.isPriorityEntityImportType)(entity)) {
+            throw new Error(`Unsupported entity: ${entity}`);
+        }
+        const discovered = await (0, PriorityClient_1.discoverPriorityFields)(this.config, entity, 5);
+        if (!discovered.ok) {
+            const error = new Error(discovered.error ?? "Failed to discover fields");
+            error.statusCode = discovered.statusCode;
+            throw error;
+        }
+        return discovered.rawHeaders.map((path) => ({
+            path,
+            example: discovered.exampleValues[path],
+        }));
+    }
+    async pull(entity, options) {
+        if (!(0, priorityApiContract_1.isPriorityEntityImportType)(entity)) {
+            throw new Error(`Unsupported entity: ${entity}`);
+        }
+        const pageSize = options.pageSize ?? priorityApiContract_1.PRIORITY_RATE_LIMITS.recommendedPageSize;
+        const skip = options.cursor ? Number.parseInt(options.cursor, 10) : 0;
+        const safeSkip = Number.isFinite(skip) && skip >= 0 ? skip : 0;
+        const serviceRoot = normalizeServiceRoot(this.config.baseUrl);
+        const collectionUrl = (0, priorityApiContract_1.buildEntityCollectionUrl)(serviceRoot, entity, options.entitySet);
+        const columns = (0, resolveTablePullShape_1.columnNameSet)(await this.columnsForTable(entity, options.entitySet));
+        const endpoint = (0, priorityApiContract_1.getPriorityEntityEndpoint)(entity);
+        const orderBy = (0, resolveTablePullShape_1.pickOrderByField)(endpoint.defaultOrderBy, columns);
+        const tieBreaker = (0, resolveTablePullShape_1.pickKeysetTieBreaker)(columns, orderBy);
+        const needsDate = options.createdOnOrAfter != null || options.since != null;
+        const dateField = (0, resolveTablePullShape_1.pickDateField)(options.preferredDateField, columns);
+        if (needsDate && !dateField) {
+            throw new Error("No date column on this table");
+        }
+        const selectFields = (0, resolveTablePullShape_1.intersectSelectFields)([
+            orderBy,
+            ...(tieBreaker ? [tieBreaker] : []),
+            ...(dateField ? [dateField] : []),
+            ...(options.select ?? []),
+        ], columns, [
+            orderBy,
+            ...(tieBreaker ? [tieBreaker] : []),
+            ...(dateField ? [dateField] : []),
+        ]);
+        const params = { $top: String(pageSize) };
+        // Do not $expand CINVOICESCONT_SUBFORM on list pulls. Priority/idigital
+        // returns HTTP 502 (HTML gateway page) after ~2 minutes on that query.
+        // credit_for still maps from parent CREDITFOR / PIVNUM when present.
+        const useKeyset = options.pagination === "keyset" || Boolean(options.afterKey?.trim());
+        if (!useKeyset && safeSkip > 0) {
+            params.$skip = String(safeSkip);
+        }
+        params.$orderby = (0, resolveTablePullShape_1.formatOrderByClause)(orderBy, tieBreaker);
+        if (options.select != null && selectFields.length > 0) {
+            params.$select = selectFields.join(",");
+        }
+        const afterKey = options.afterKey?.trim();
+        const keysetFilter = useKeyset && afterKey
+            ? (0, resolveTablePullShape_1.buildKeysetFilter)(orderBy, afterKey, tieBreaker)
+            : null;
+        const dateBound = options.createdOnOrAfter ?? options.since;
+        const overlapMinutes = options.createdOnOrAfter == null && options.since
+            ? (options.overlapMinutes ?? 0)
+            : 0;
+        const dateFilter = dateField && dateBound
+            ? `${dateField} ge ${dateGeIso(dateBound, overlapMinutes)}`
+            : null;
+        (0, resolveTablePullShape_1.assertFilterFieldsExist)(options.filter, columns);
+        const combinedFilter = andODataFilters(options.filter, dateFilter, keysetFilter);
+        if (combinedFilter) {
+            params.$filter = combinedFilter;
+        }
+        const url = `${collectionUrl}?${buildQueryString(params)}`;
+        const payload = await this.fetchJson(url);
+        const value = payload.value;
+        if (!Array.isArray(value)) {
+            throw new Error("Unexpected Priority response shape (missing value array)");
+        }
+        const rawRecords = value.filter((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+        const records = entity === "Payment"
+            ? (0, connectorPaymentSynthetics_1.applyPaymentSyntheticsToRecords)(rawRecords)
+            : rawRecords;
+        const hasMore = records.length === pageSize;
+        const lastKey = records.length
+            ? recordKeysetCursor(records[records.length - 1], orderBy, tieBreaker)
+            : null;
+        const nextCursor = useKeyset
+            ? hasMore
+                ? lastKey
+                : null
+            : hasMore
+                ? String(safeSkip + records.length)
+                : null;
+        return {
+            records,
+            nextCursor,
+            hasMore,
+        };
+    }
+    async columnsForTable(entity, entitySet) {
+        if (!(0, priorityApiContract_1.isPriorityEntityImportType)(entity)) {
+            throw new Error(`Unsupported entity: ${entity}`);
+        }
+        const key = `${entity}:${entitySet?.trim() ?? ""}`;
+        const cached = this.tableColumnsByKey.get(key);
+        if (cached) {
+            return cached;
+        }
+        this.config.onLog?.(`Sampling ${entity} columns (${entitySet?.trim() || "default table"})…`);
+        const sampled = await (0, PriorityClient_1.fetchPriorityTableColumns)(this.config, entity, {
+            entitySet,
+        });
+        if (!sampled.ok) {
+            throw new Error(sampled.error ?? "Failed to sample Priority table columns");
+        }
+        if (sampled.columns.length === 0) {
+            throw new Error("This table returned no columns; cannot build a safe request");
+        }
+        this.tableColumnsByKey.set(key, sampled.columns);
+        return sampled.columns;
+    }
+    async fetchJson(url) {
+        const authorization = buildAuthorizationHeader(this.config.authType, this.config.credentials);
+        const timeoutSeconds = priorityApiContract_1.PRIORITY_RATE_LIMITS.requestTimeoutSeconds;
+        const startedAt = Date.now();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+        let response;
+        try {
+            response = await fetch(url, {
+                method: "GET",
+                headers: {
+                    Accept: "application/json",
+                    Authorization: authorization,
+                },
+                signal: controller.signal,
+            });
+        }
+        catch (err) {
+            const elapsedMs = Date.now() - startedAt;
+            if (controller.signal.aborted) {
+                const message = `Priority request timed out after ${elapsedMs}ms (${timeoutSeconds}s limit)`;
+                this.config.onLog?.(message);
+                throw new Error(message);
+            }
+            const message = err instanceof Error ? err.message : String(err);
+            this.config.onLog?.(`Priority request failed after ${elapsedMs}ms: ${message}`);
+            throw err;
+        }
+        finally {
+            clearTimeout(timeout);
+        }
+        const elapsedMs = Date.now() - startedAt;
+        if (!response.ok) {
+            const body = await response.text().catch(() => "");
+            const summary = summarizePriorityHttpError(response.status, body);
+            this.config.onLog?.(`Priority HTTP ${response.status} after ${elapsedMs}ms: ${summary}`);
+            const error = new Error(`Priority returned ${response.status}: ${summary}`);
+            error.statusCode = response.status;
+            throw error;
+        }
+        return response.json();
+    }
+}
+exports.PriorityProviderClient = PriorityProviderClient;

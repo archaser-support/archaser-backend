@@ -26,13 +26,18 @@ import {
     processTemplateContent,
 } from "./templates/processTemplateContent";
 import { getSystemUserId } from "./users/getSystemUserId";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 
 const BATCH_SIZE = 50;
 const CONCURRENCY_LIMIT = 5;
 
 export async function activityWorkflowManager(
     prisma: PrismaClient,
-    options?: { skipSmsSend?: boolean; customerId?: number }
+    options?: {
+        skipSmsSend?: boolean;
+        customerId?: number;
+        freeze?: CronFrozenAccountGuard;
+    }
 ): Promise<{
     success: boolean;
     message: string;
@@ -66,6 +71,25 @@ export async function activityWorkflowManager(
 
         // ===== PHASE 2: Generate next automated activities =====
         await generateNextActivities(prisma, options, summary.phase2);
+
+        if (options?.freeze && options.freeze.frozenAccountIds.size > 0) {
+            const now = new Date();
+            const skippedRows = await prisma.activity.findMany({
+                where: {
+                    status: "SCHEDULED",
+                    schedule_time: { lte: now },
+                    type: { in: ["SMS", "Email"] },
+                    account_id: { in: [...options.freeze.frozenAccountIds] },
+                },
+                select: { account_id: true },
+                distinct: ["account_id"],
+            });
+            options.freeze.reportSkips(
+                skippedRows
+                    .map((row) => row.account_id)
+                    .filter((id): id is number => id != null)
+            );
+        }
 
         const phase1DidWork =
             summary.phase1.activitiesProcessed > 0 ||
@@ -112,7 +136,13 @@ export async function activityWorkflowManager(
  */
 async function sendDueActivities(
     prisma: PrismaClient,
-    options: { skipSmsSend?: boolean; customerId?: number } | undefined,
+    options:
+        | {
+              skipSmsSend?: boolean;
+              customerId?: number;
+              freeze?: CronFrozenAccountGuard;
+          }
+        | undefined,
     stats: {
         activitiesFound: number;
         activitiesProcessed: number;
@@ -132,6 +162,7 @@ async function sendDueActivities(
         schedule_time: { lte: now },
         type: { in: ["SMS", "Email"] },
         Customer: {
+            ...(options?.freeze ? options.freeze.accountIdNotInFilter() : {}),
             Account: {
                 OR: [
                     { has_collection: true },
@@ -929,7 +960,9 @@ async function resolveSmsVendor(
  */
 async function generateNextActivities(
     prisma: PrismaClient,
-    options: { customerId?: number } | undefined,
+    options:
+        | { customerId?: number; freeze?: CronFrozenAccountGuard }
+        | undefined,
     stats: {
         periodsFound: number;
         activitiesCreated: number;
@@ -944,6 +977,7 @@ async function generateNextActivities(
         period_end_date: null,
         Customer: {
             automation_stuck_no_contacts: { not: true },
+            ...(options?.freeze ? options.freeze.accountIdNotInFilter() : {}),
             Account: {
                 OR: [
                     { has_collection: true },

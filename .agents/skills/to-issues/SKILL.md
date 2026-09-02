@@ -72,8 +72,9 @@ Break the plan into **tracer bullet** issues. Each issue is a thin vertical slic
 
 <vertical-slice-rules>
 
-- Each slice delivers a narrow but COMPLETE path through every layer (schema, API, UI, tests)
-- A completed slice is demoable or verifiable on its own
+- Each slice delivers a narrow but COMPLETE path through every layer needed for the demo (schema, API, UI as applicable)
+- A completed slice is demoable or verifiable on its own (via **How to test** — manual steps are fine)
+- Do **not** require new automated tests in a slice; `/implement-next` and implementers must not add/expand tests unless the user explicitly asks
 - Any prefactoring should be done first
 
 </vertical-slice-rules>
