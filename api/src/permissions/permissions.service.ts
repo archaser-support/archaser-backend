@@ -70,6 +70,9 @@ const LOCKED_UAM_KEYS = [
 
 const ADMIN_ACCOUNT_ID = 10013;
 
+/** UI kill-switch: hide file-import permissions from the role matrix (routes/APIs remain). */
+const FILE_IMPORT_UI_VISIBLE = false;
+
 const PERMISSIONS_BY_CATEGORY: Record<string, Record<string, string[]>> = {
     customer_data_management: {
         customers: ["create_customer", "edit_customer", "delete_customer"],
@@ -212,6 +215,7 @@ export class PermissionsService {
             (account as { has_collection?: boolean } | null)
                 ?.has_collection === false && hasCreditInsurance;
         const hasFileImport =
+            FILE_IMPORT_UI_VISIBLE &&
             (account as { has_file_import?: boolean } | null)
                 ?.has_file_import !== false;
 
