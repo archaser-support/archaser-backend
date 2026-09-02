@@ -28,11 +28,13 @@ const PAYMENT_ALWAYS_SELECT_SOURCES = [
     "BAL",
     "CODE",
     "CODE5",
+    "COMPANYNAME",
     "CREDIT1",
     "CREDIT5",
     "DEBIT1",
     "DEBIT5",
     "CURDATE",
+    "IDG_CUSTNAME",
     ...SYNTHETIC_SOURCE_FIELDS.PAY_REFERENCE,
 ];
 /**
