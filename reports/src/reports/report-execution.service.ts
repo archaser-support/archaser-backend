@@ -69,7 +69,10 @@ import {
     resolveComputedSortTarget,
     sortFormattedReportRows,
 } from "./report-virtual-fields.util";
-import { REPORT_METADATA } from "./report-metadata";
+import {
+    REPORT_METADATA,
+    resolveReportFieldType,
+} from "./report-metadata";
 import {
     applyFormulasToRows,
     mergeFormulaOperandFieldsIntoConfig,
@@ -79,7 +82,10 @@ import {
     ReportFormula,
     FORMULA_OUTPUT_KEY_PREFIX,
 } from "./report-formula/types";
-import { formatReportDateTime } from "./report-datetime.util";
+import {
+    formatReportDate,
+    formatReportDateTime,
+} from "./report-datetime.util";
 
 type ReportConfig = {
     tables?: string[];
@@ -1254,7 +1260,8 @@ export class ReportExecutionService {
                 value,
                 f.field,
                 locale,
-                timezone
+                timezone,
+                resolveReportFieldType(f.table, f.field)
             );
             // dispute_number aliases the primary key. Override display to
             // "DIS-000726" so formatValue's thousands separator does not turn
@@ -1705,7 +1712,8 @@ export class ReportExecutionService {
         value: unknown,
         field: string,
         locale: string,
-        timezone?: string
+        timezone?: string,
+        metadataType?: string
     ): string | null {
         if (value == null) {
             return null;
@@ -1715,6 +1723,9 @@ export class ReportExecutionService {
                 value instanceof Date ? value : new Date(String(value));
             if (!Number.isNaN(d.getTime())) {
                 try {
+                    if (this.shouldFormatAsDateOnly(field, metadataType)) {
+                        return formatReportDate(d, locale);
+                    }
                     return formatReportDateTime(d, locale, timezone);
                 } catch {
                     return d.toISOString();
@@ -1752,12 +1763,38 @@ export class ReportExecutionService {
         }
     }
 
+    private shouldFormatAsDateOnly(
+        field: string,
+        metadataType?: string
+    ): boolean {
+        const normalized = metadataType?.toLowerCase();
+        if (normalized === "date") {
+            return true;
+        }
+        if (
+            normalized === "datetime" ||
+            normalized === "timestamp"
+        ) {
+            return false;
+        }
+        // Fallback when metadata is missing: *_date calendar fields vs event stamps.
+        if (field.includes("_at") || field === "schedule_time") {
+            return false;
+        }
+        return (
+            field.includes("_date") ||
+            field === "due_date" ||
+            field === "date_of_birth"
+        );
+    }
+
     private looksLikeDateField(field: string, value: unknown): boolean {
         if (
             field.includes("_at") ||
             field.includes("_date") ||
             field === "due_date" ||
-            field === "schedule_time"
+            field === "schedule_time" ||
+            field === "date_of_birth"
         ) {
             return true;
         }
