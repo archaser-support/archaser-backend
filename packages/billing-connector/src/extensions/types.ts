@@ -158,6 +158,17 @@ export interface BillingAccountExtension {
     alignPaymentAmountsForInvoice?(
         input: ExtensionAlignPaymentAmountsInput
     ): ExtensionAlignedPaymentAmounts;
+    /**
+     * Extra ERP customer-number values for Start customer-scoped pulls
+     * (OR'd with the Archaser customer_number). Account-specific — e.g.
+     * IDG_ARFNCITEMS IDG_CUSTNAME = customer + company suffix.
+     */
+    expandRuntimeCustomerScopeNumbers?(params: {
+        customerNumber: string;
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string[];
 }
 
 export type ExtensionAttachmentUpsertInput = {

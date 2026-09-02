@@ -14,6 +14,7 @@ import {
     isPriorityEntityImportType,
 } from "./priorityApiContract";
 import { applyPaymentSyntheticsToRecords } from "../payment/connectorPaymentSynthetics";
+import { tracePaymentImportByRaw } from "../import/paymentImportTrace";
 import {
     assertFilterFieldsExist,
     buildKeysetFilter,
@@ -278,10 +279,26 @@ export class PriorityProviderClient implements BillingProviderClient {
             (item): item is Record<string, unknown> =>
                 Boolean(item) && typeof item === "object" && !Array.isArray(item)
         );
+        if (entity === "Payment") {
+            for (const row of rawRecords) {
+                tracePaymentImportByRaw("erp_pull_raw", row, {
+                    pageSize,
+                });
+            }
+        }
         const records =
             entity === "Payment"
                 ? applyPaymentSyntheticsToRecords(rawRecords)
                 : rawRecords;
+
+        if (entity === "Payment") {
+            for (const row of records) {
+                tracePaymentImportByRaw("erp_pull_after_synthetics", row, {
+                    pageSize,
+                    recordCount: records.length,
+                });
+            }
+        }
 
         const hasMore = records.length === pageSize;
         const lastKey = records.length
