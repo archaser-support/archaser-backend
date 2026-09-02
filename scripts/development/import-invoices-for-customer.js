@@ -9,7 +9,10 @@
  * Usage:
  *   node scripts/development/import-invoices-for-customer.js \
  *       --customer=4036 --invoices=SI240003534,CR250000836 [--dry-run] [--user=<userId>]
+ *   node scripts/development/import-invoices-for-customer.js \
+ *       --customer=4036 --all [--dry-run] [--user=<userId>]
  *
+ * --all pulls every Invoice and Payment for the customer's ERP CUSTNAME (no invoice list).
  * --dry-run stops before any write and prints what the ERP returned.
  * --wide-payment-filter drops the connector's stored Payment filter. Only use it when
  * you have confirmed the extra AR lines are real receipts and not invoice journal legs.
@@ -60,6 +63,7 @@ const prisma = new PrismaClient();
 
 const LOG = '[import-invoices]';
 const INVOICE_NUMBER_FIELD = 'IVNUM';
+const CUSTOMER_NUMBER_FIELD = 'CUSTNAME';
 /** Payment rows point at the settled invoice through FNCIREF1; IVNUM is the document itself. */
 const PAYMENT_INVOICE_REF_FIELDS = ['IVNUM', 'FNCIREF1'];
 
@@ -67,6 +71,7 @@ function parseArgs(argv) {
     const args = {
         dryRun: false,
         widePaymentFilter: false,
+        allForCustomer: false,
         customerId: null,
         invoiceNumbers: [],
         userId: undefined,
@@ -74,6 +79,8 @@ function parseArgs(argv) {
     for (const raw of argv) {
         if (raw === '--dry-run') {
             args.dryRun = true;
+        } else if (raw === '--all') {
+            args.allForCustomer = true;
         } else if (raw === '--wide-payment-filter') {
             args.widePaymentFilter = true;
         } else if (raw.startsWith('--customer=')) {
@@ -107,11 +114,11 @@ function andFilters(...filters) {
     return present.map((filter) => `(${filter})`).join(' and ');
 }
 
-async function pullAll(client, entityType, pullOptions) {
+async function pullAll(client, entityType, pullOptions, maxPages = 20) {
     const records = [];
     let afterKey = null;
     // Keyset paging, same as the staged sync; the targeted filter keeps this tiny.
-    for (let guard = 0; guard < 20; guard += 1) {
+    for (let guard = 0; guard < maxPages; guard += 1) {
         const page = await client.pull(entityType, {
             ...pullOptions,
             pagination: 'keyset',
@@ -126,9 +133,17 @@ async function pullAll(client, entityType, pullOptions) {
 
 async function main() {
     const args = parseArgs(process.argv.slice(2));
-    if (!Number.isFinite(args.customerId) || args.invoiceNumbers.length === 0) {
+    const hasInvoiceList = args.invoiceNumbers.length > 0;
+    if (
+        !Number.isFinite(args.customerId) ||
+        (!args.allForCustomer && !hasInvoiceList) ||
+        (args.allForCustomer && hasInvoiceList)
+    ) {
         console.error(
             `${LOG} Usage: node scripts/development/import-invoices-for-customer.js --customer=<id> --invoices=<A,B,C> [--dry-run] [--user=<userId>]`
+        );
+        console.error(
+            `${LOG}    or: node scripts/development/import-invoices-for-customer.js --customer=<id> --all [--dry-run] [--user=<userId>]`
         );
         process.exitCode = 1;
         return;
@@ -187,16 +202,17 @@ async function main() {
         skipReportingBreachOnBackfill: connector.skip_reporting_breach_on_backfill === true,
     });
 
-    const invoiceFilter = anyOfFilter([INVOICE_NUMBER_FIELD], args.invoiceNumbers);
-    // The stored Payment filter is what separates real receipts from an invoice's own
-    // journal legs (VAT lines share the invoice number but have null IDG_CUSTNAME).
-    // Dropping it pulls those legs in and would wrongly settle open invoices.
-    const paymentFilter = andFilters(
-        args.widePaymentFilter
-            ? null
-            : resolveImportPullFilterOData(connector.pull_filters, 'Payment'),
-        anyOfFilter(PAYMENT_INVOICE_REF_FIELDS, args.invoiceNumbers)
-    );
+    const customerFilter = `${CUSTOMER_NUMBER_FIELD} eq ${quoteOData(customer.customer_number)}`;
+    const invoiceFilter = args.allForCustomer
+        ? andFilters(
+              resolveImportPullFilterOData(connector.pull_filters, 'Invoice'),
+              customerFilter
+          )
+        : anyOfFilter([INVOICE_NUMBER_FIELD], args.invoiceNumbers);
+    const paymentPullFilter = args.widePaymentFilter
+        ? null
+        : resolveImportPullFilterOData(connector.pull_filters, 'Payment');
+    const maxPullPages = args.allForCustomer ? 200 : 20;
 
     console.log(`${LOG} Target:`, {
         customerId: customer.id,
@@ -209,11 +225,11 @@ async function main() {
         paymentEntitySet: entitySets.Payment ?? null,
         skipReportingBreach,
         widePaymentFilter: args.widePaymentFilter,
-        invoiceCount: args.invoiceNumbers.length,
+        invoiceCount: args.allForCustomer ? 'all (CUSTNAME filter)' : args.invoiceNumbers.length,
+        allForCustomer: args.allForCustomer,
         dryRun: args.dryRun,
     });
     console.log(`${LOG} Invoice filter:`, invoiceFilter);
-    console.log(`${LOG} Payment filter:`, paymentFilter ?? 'none');
 
     const client = new PriorityProviderClient({
         baseUrl: connector.base_url,
@@ -229,23 +245,30 @@ async function main() {
     const pullAndTransform = async (entityType, mappingRow, filter) => {
         if (!mappingRow || !filter) return [];
         const rules = parseMappingRules(mappingRow.mapping);
-        const raw = await pullAll(client, entityType, {
-            since: null,
-            entitySet: entitySets[entityType] ?? null,
-            filter,
-            select: odataSelectFieldsFromMapping({
-                mappingRules: rules,
-                extraFields: ['UDATE'],
-                entityType,
-            }),
-        });
+        const raw = await pullAll(
+            client,
+            entityType,
+            {
+                since: null,
+                entitySet: entitySets[entityType] ?? null,
+                filter,
+                select: odataSelectFieldsFromMapping({
+                    mappingRules: rules,
+                    extraFields: ['UDATE'],
+                    entityType,
+                }),
+            },
+            maxPullPages
+        );
         const mapped = raw.map((record) => mapErpRecord(record, rules));
         console.log(`${LOG} ${entityType} pull:`, {
             returned: raw.length,
             mapped: mapped.length,
         });
-        for (const record of raw) {
-            console.log(`${LOG} ${entityType} ERP row:`, record);
+        if (!args.allForCustomer) {
+            for (const record of raw) {
+                console.log(`${LOG} ${entityType} ERP row:`, record);
+            }
         }
         if (!extension || mapped.length === 0) return mapped;
 
@@ -268,36 +291,78 @@ async function main() {
     };
 
     const invoiceRows = await pullAndTransform('Invoice', invoiceMapping, invoiceFilter);
-    const pulledNumbers = invoiceRows.map((row) => row.invoice_number);
-    const missing = args.invoiceNumbers.filter((number) => !pulledNumbers.includes(number));
-    for (const row of invoiceRows) {
-        console.log(`${LOG} Invoice mapped row:`, {
-            invoiceNumber: row.invoice_number,
-            customerNumber: row.customer_number,
-            invoiceDate: row.invoice_date,
-            dueDate: row.due_date,
-            invoiceAmount: row.invoice_amount,
-            baseAmount: row.base_amount,
-            currency: row.currency,
-            customCode1: row.custom_code1,
-            creditForInvoiceNumber: row.credit_for_invoice_number ?? 'none',
+    const pulledNumbers = [
+        ...new Set(
+            invoiceRows
+                .map((row) => row.invoice_number)
+                .filter((value) => typeof value === 'string' && value.trim())
+        ),
+    ];
+    const missing = args.allForCustomer
+        ? []
+        : args.invoiceNumbers.filter((number) => !pulledNumbers.includes(number));
+    if (!args.allForCustomer) {
+        for (const row of invoiceRows) {
+            console.log(`${LOG} Invoice mapped row:`, {
+                invoiceNumber: row.invoice_number,
+                customerNumber: row.customer_number,
+                invoiceDate: row.invoice_date,
+                dueDate: row.due_date,
+                invoiceAmount: row.invoice_amount,
+                baseAmount: row.base_amount,
+                currency: row.currency,
+                customCode1: row.custom_code1,
+                creditForInvoiceNumber: row.credit_for_invoice_number ?? 'none',
+            });
+        }
+    } else {
+        console.log(`${LOG} Invoice pull summary:`, {
+            mapped: invoiceRows.length,
+            uniqueInvoiceNumbers: pulledNumbers.length,
         });
     }
     if (missing.length > 0) {
         console.log(`${LOG} Invoices not returned by ERP:`, missing.join(', '));
     }
 
-    const paymentRows = await pullAndTransform('Payment', paymentMapping, paymentFilter);
-    for (const row of paymentRows) {
-        console.log(`${LOG} Payment mapped row:`, {
-            invoiceNumber: row.invoice_number,
-            reference: row.reference,
-            paymentDate: row.payment_date,
-            amount: row.amount,
-            customerAmount: row.customer_amount,
-            customerCurrency: row.customer_currency,
-            paymentMethod: row.payment_method,
-        });
+    const pullPaymentsForInvoiceNumbers = async (invoiceNumbers) => {
+        const paymentFilter = andFilters(
+            paymentPullFilter,
+            anyOfFilter(PAYMENT_INVOICE_REF_FIELDS, invoiceNumbers)
+        );
+        console.log(`${LOG} Payment filter (${invoiceNumbers.length} invoices):`, paymentFilter ?? 'none');
+        return pullAndTransform('Payment', paymentMapping, paymentFilter);
+    };
+
+    let paymentRows = [];
+    if (args.allForCustomer) {
+        const batchSize = 10;
+        for (let offset = 0; offset < pulledNumbers.length; offset += batchSize) {
+            const batch = pulledNumbers.slice(offset, offset + batchSize);
+            const batchRows = await pullPaymentsForInvoiceNumbers(batch);
+            paymentRows.push(...batchRows);
+            console.log(`${LOG} Payment batch:`, {
+                offset,
+                batchSize: batch.length,
+                batchReturned: batchRows.length,
+                totalPayments: paymentRows.length,
+            });
+        }
+    } else {
+        paymentRows = await pullPaymentsForInvoiceNumbers(args.invoiceNumbers);
+    }
+    if (!args.allForCustomer) {
+        for (const row of paymentRows) {
+            console.log(`${LOG} Payment mapped row:`, {
+                invoiceNumber: row.invoice_number,
+                reference: row.reference,
+                paymentDate: row.payment_date,
+                amount: row.amount,
+                customerAmount: row.customer_amount,
+                customerCurrency: row.customer_currency,
+                paymentMethod: row.payment_method,
+            });
+        }
     }
     console.log(`${LOG} Extension pending closes:`, {
         virtualCloses: [...pendingInvoiceCloses].join(', ') || 'none',

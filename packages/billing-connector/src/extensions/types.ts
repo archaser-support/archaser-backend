@@ -54,12 +54,6 @@ export type ExtensionLinkedPayment = {
     reference?: string | null;
 };
 
-export type ExtensionCreditPaymentCloseInput = {
-    rawErpRow: Record<string, unknown>;
-    invoiceCustomCode1: string | null | undefined;
-    customerAmount: number;
-};
-
 /** Map payment amounts onto the linked invoice's currency using ERP dual-currency fields. */
 export type ExtensionAlignPaymentAmountsInput = {
     amount?: number;
@@ -155,12 +149,6 @@ export interface BillingAccountExtension {
             total: number;
         }) => void;
     }): Promise<{ closedIds: number[]; customerIds?: number[] }>;
-    /**
-     * Use absolute payment amounts when closing a credit invoice.
-     */
-    shouldNormalizeNegativeCreditPayments?(
-        row: ExtensionCreditPaymentCloseInput
-    ): boolean;
     /** Canonicalize payment vs invoice currency before attach. */
     normalizePaymentCurrency?(currency: string | null | undefined): string;
     /**

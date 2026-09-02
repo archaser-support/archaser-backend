@@ -1,7 +1,7 @@
 import type { BillingAccountExtension, ExtensionAttachmentUpsertInput, ExtensionAttachmentUpsertPatch } from "./types";
 export { ACCOUNT_10149_EXTENSION_KEY } from "./account_10149";
 export { SAMPLE_NOOP_EXTENSION_KEY } from "./sample_noop";
-export type { BillingAccountExtension, ExtensionAfterPaymentLinkedContext, ExtensionAfterPaymentLinkedResult, ExtensionAlignPaymentAmountsInput, ExtensionAlignedPaymentAmounts, ExtensionAttachmentUpsertInput, ExtensionAttachmentUpsertPatch, ExtensionCreditPaymentCloseInput, ExtensionEntityType, ExtensionLinkedPayment, ExtensionMappedBatch, ExtensionPaymentLinkedCandidate, ExtensionSyncWindow, ExtensionTransformContext, } from "./types";
+export type { BillingAccountExtension, ExtensionAfterPaymentLinkedContext, ExtensionAfterPaymentLinkedResult, ExtensionAlignPaymentAmountsInput, ExtensionAlignedPaymentAmounts, ExtensionAttachmentUpsertInput, ExtensionAttachmentUpsertPatch, ExtensionEntityType, ExtensionLinkedPayment, ExtensionMappedBatch, ExtensionPaymentLinkedCandidate, ExtensionSyncWindow, ExtensionTransformContext, } from "./types";
 export declare function listRegisteredExtensionKeys(): string[];
 export declare function getRegisteredExtension(key: string): BillingAccountExtension | undefined;
 export declare function isRegisteredExtensionKey(key: string): boolean;

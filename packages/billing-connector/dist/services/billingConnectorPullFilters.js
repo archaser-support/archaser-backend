@@ -9,6 +9,7 @@ exports.toPublicPullFilters = toPublicPullFilters;
 exports.resolveEntityPullFilterOData = resolveEntityPullFilterOData;
 exports.resolveRelatedCustomerPullFilterOData = resolveRelatedCustomerPullFilterOData;
 exports.resolveImportPullFilterOData = resolveImportPullFilterOData;
+exports.compileRuntimeCustomerNumberOData = compileRuntimeCustomerNumberOData;
 const billingConnectorPullFilterCompile_1 = require("./billingConnectorPullFilterCompile");
 exports.PULL_FILTER_OPERATORS = [
     "eq",
@@ -193,6 +194,10 @@ function resolveRelatedCustomerPullFilterOData(raw) {
  * OData $filter for a live import pull: the entity's own pull filter, plus a
  * CUSTNAME-only Customer filter on related entities so invoices/payments/
  * contacts stay inside the same customer subset.
+ *
+ * Start backfill customer scope is **not** applied here — it uses Archaser
+ * `customer_id` for purge and post-map filtering by our `customer_number`, so
+ * custom ERP tables without CUSTNAME (e.g. IDG_ARFNCITEMS4) do not break.
  */
 function resolveImportPullFilterOData(raw, importType) {
     const entityFilter = resolveEntityPullFilterOData(raw, importType);
@@ -202,4 +207,18 @@ function resolveImportPullFilterOData(raw, importType) {
         return entityFilter;
     }
     return (0, billingConnectorPullFilterCompile_1.andODataFilters)(resolveRelatedCustomerPullFilterOData(raw), entityFilter);
+}
+/**
+ * @deprecated Start backfill scopes by Archaser customer_id / customer_number
+ * after mapping — do not AND ERP customer columns onto live pulls.
+ */
+function compileRuntimeCustomerNumberOData(customerNumber) {
+    if (typeof customerNumber !== "string") {
+        return null;
+    }
+    const trimmed = customerNumber.trim();
+    if (!trimmed) {
+        return null;
+    }
+    return `CUSTNAME eq ${(0, billingConnectorPullFilterCompile_1.escapeODataStringLiteral)(trimmed)}`;
 }

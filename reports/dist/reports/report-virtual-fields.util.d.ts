@@ -40,3 +40,17 @@ export declare function applyComputedFieldSelect(primaryTable: string, field: st
 export declare function extractComputedFieldValue(primaryTable: string, field: string, row: Record<string, unknown>): unknown;
 /** True when sorting/filtering by this primary field must not hit Prisma. */
 export declare function isComputedReportField(primaryTable: string, field: string): boolean;
+export type ReportFieldRef = {
+    table: string;
+    field: string;
+    alias?: string;
+};
+export type ComputedSortTarget = {
+    table: string;
+    field: string;
+    outputKey: string;
+};
+/** Match a client sort field to a computed column that must sort after formatRow. */
+export declare function resolveComputedSortTarget(sortField: string | undefined, primaryTable: string, fields: ReportFieldRef[]): ComputedSortTarget | null;
+/** Sort formatted report rows by a column output key (computed / display values). */
+export declare function sortFormattedReportRows(rows: Record<string, unknown>[], outputKey: string, direction?: "asc" | "desc"): Record<string, unknown>[];

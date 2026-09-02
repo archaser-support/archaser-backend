@@ -61,9 +61,14 @@ import {
     listExecutionsForAccount,
     sweepStaleRunning,
     syncHistoryExecutionToSummary,
+    listMergedInProcessSyncRuns,
     createBillingConnectorMetricsSinkFromProm,
     resolveSyncExecutionStatus,
     resolveSyncErrorType,
+    parseClearBeforeImport,
+    parseCustomerIdForClearBeforeImport,
+    resolveAccountCustomerById,
+    type ClearBeforeImportEntity,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
     type PullFiltersMap,
@@ -251,22 +256,37 @@ export class BillingConnectorApiService {
     private connectorHasPartialBackfillProgress(
         syncStates:
             | Array<{
+                  entity_type: string;
                   backfill_completed: boolean;
                   backfill_cursor: string | null;
                   backfill_records_pulled: number;
                   last_attempt_at: Date | null;
               }>
-            | undefined
+            | undefined,
+        enabledEntities?: string[]
     ): boolean {
         if (!syncStates?.length) {
             return false;
         }
-        return syncStates.some(
-            (state) =>
+        const enabled = enabledEntities?.length
+            ? new Set(enabledEntities)
+            : null;
+        const scoped = enabled
+            ? syncStates.filter((state) => enabled.has(state.entity_type))
+            : syncStates;
+        if (!scoped.length) {
+            return false;
+        }
+        return scoped.some((state) => {
+            if (state.backfill_completed) {
+                return false;
+            }
+            return (
                 state.backfill_cursor != null ||
                 state.backfill_records_pulled > 0 ||
-                (state.last_attempt_at != null && !state.backfill_completed)
-        );
+                state.last_attempt_at != null
+            );
+        });
     }
 
     /**
@@ -277,7 +297,9 @@ export class BillingConnectorApiService {
     private async repairBackfillStartedAtIfNeeded(connector: {
         id: number;
         backfill_started_at?: Date | null;
+        enabled_entities?: unknown;
         ConnectorSyncState?: Array<{
+            entity_type: string;
             backfill_completed: boolean;
             backfill_cursor: string | null;
             backfill_records_pulled: number;
@@ -289,7 +311,8 @@ export class BillingConnectorApiService {
         }
         if (
             !this.connectorHasPartialBackfillProgress(
-                connector.ConnectorSyncState
+                connector.ConnectorSyncState,
+                parseEnabledEntities(connector.enabled_entities)
             )
         ) {
             return null;
@@ -465,6 +488,33 @@ export class BillingConnectorApiService {
         return serializeBigInt({
             config: await this.toPublicConfig(connector),
         });
+    }
+
+    async lookupCustomerById(
+        user: JwtPayload,
+        accountId: number,
+        customerIdRaw: string | undefined
+    ) {
+        await this.assertAccess(user, accountId, "manage_billing_connector");
+        const customerId = parseCustomerIdForClearBeforeImport(customerIdRaw);
+        if (customerId == null) {
+            throw new BadRequestException({
+                error: "customer_id is required",
+                code: "CUSTOMER_ID_REQUIRED",
+            });
+        }
+        const customer = await resolveAccountCustomerById({
+            prisma: this.db,
+            accountId,
+            customerId,
+        });
+        if (!customer) {
+            throw new NotFoundException({
+                error: `Customer not found on this account: id ${customerId}`,
+                code: "CUSTOMER_NOT_FOUND",
+            });
+        }
+        return serializeBigInt({ customer });
     }
 
     async upsertConfig(
@@ -854,7 +904,8 @@ export class BillingConnectorApiService {
         user: JwtPayload,
         accountId: number,
         modeRaw: string | undefined,
-        importTypeRaw?: string
+        importTypeRaw?: string,
+        body?: Record<string, unknown>
     ) {
         const userInfo = await this.assertAccess(
             user,
@@ -890,6 +941,9 @@ export class BillingConnectorApiService {
 
         const connector = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
+            include: {
+                ConnectorSyncState: true,
+            },
         });
         if (!connector) {
             throw new NotFoundException({
@@ -919,6 +973,35 @@ export class BillingConnectorApiService {
                 error: "A sync is already running for this account",
                 code: "SYNC_IN_PROGRESS",
             });
+        }
+
+        // Start backfill only — Resume / incremental ignore clear options.
+        const isResumeBackfill =
+            mode === "backfill" &&
+            this.connectorHasPartialBackfillProgress(
+                connector.ConnectorSyncState,
+                parseEnabledEntities(connector.enabled_entities)
+            );
+        const clearBeforeImport =
+            mode === "backfill" && !isResumeBackfill
+                ? parseClearBeforeImport(body?.clear_before_import)
+                : [];
+        const customerId =
+            mode === "backfill" && !isResumeBackfill
+                ? parseCustomerIdForClearBeforeImport(body?.customer_id)
+                : null;
+        if (customerId != null) {
+            const customer = await resolveAccountCustomerById({
+                prisma: this.db,
+                accountId,
+                customerId,
+            });
+            if (!customer) {
+                throw new BadRequestException({
+                    error: `Customer not found on this account: id ${customerId}`,
+                    code: "CUSTOMER_NOT_FOUND",
+                });
+            }
         }
 
         const executionId = randomUUID();
@@ -999,6 +1082,8 @@ export class BillingConnectorApiService {
             syncMode,
             runningSummary,
             onLog,
+            clearBeforeImport,
+            customerId,
         });
 
         return {
@@ -1022,6 +1107,8 @@ export class BillingConnectorApiService {
         syncMode: string;
         runningSummary: ConnectorSyncRunSummary;
         onLog: (message: string) => void;
+        clearBeforeImport?: ClearBeforeImportEntity[];
+        customerId?: number | null;
     }) {
         const {
             accountId,
@@ -1031,6 +1118,8 @@ export class BillingConnectorApiService {
             trigger,
             runningSummary,
             onLog,
+            clearBeforeImport,
+            customerId,
         } = params;
         try {
             const heartbeat = createSyncProgressHeartbeat(executionId);
@@ -1041,12 +1130,33 @@ export class BillingConnectorApiService {
                 userId: actor,
                 executionId,
                 mode,
+                ...(clearBeforeImport?.length
+                    ? { clearBeforeImport }
+                    : {}),
+                ...(customerId != null ? { customerId } : {}),
                 onLog,
                 ...this.buildPostIngestDeferOptions(accountId, mode),
                 observability: {
                     metrics: this.syncMetrics,
                 },
                 onProgress: (entityStats) => {
+                    const pulledSummary = [
+                        "Customer",
+                        "Payment",
+                        "Invoice",
+                        "Contact",
+                    ]
+                        .map((entity) => {
+                            const slice = entityStats[entity];
+                            return slice
+                                ? `${entity}=${slice.pulled ?? 0}`
+                                : null;
+                        })
+                        .filter(Boolean)
+                        .join(" ");
+                    onLog(
+                        `[progress-debug] sync-run patch ${executionId}: ${pulledSummary || "no entity slices"}`
+                    );
                     patchSyncRunEntityStats(
                         accountId,
                         executionId,
@@ -1271,13 +1381,20 @@ export class BillingConnectorApiService {
             return { result: { cancelled: false, execution_id: null } };
         }
         requestConnectorSyncCancel(running.executionId);
+        const cancelledAt = new Date();
         const existing = listSyncRuns(accountId).find(
             (run: ConnectorSyncRunSummary) => run.id === running.executionId
         );
         if (existing) {
+            const startedMs = new Date(existing.started_at).getTime();
             upsertSyncRun(accountId, {
                 ...existing,
                 status: "TIMEOUT",
+                completed_at: cancelledAt.toISOString(),
+                duration_seconds: Math.max(
+                    1,
+                    Math.round((cancelledAt.getTime() - startedMs) / 1000)
+                ),
                 error_message: "Sync stopped by operator",
                 error_type: "cancelled",
             });
@@ -1301,47 +1418,12 @@ export class BillingConnectorApiService {
     async listSyncRuns(user: JwtPayload, accountId: number, limitRaw?: string) {
         await this.assertAccess(user, accountId, "view_billing_connector");
         const limit = Number.parseInt(String(limitRaw ?? "25"), 10);
-        const memoryRuns = listSyncRuns(
+        const runs = await listMergedInProcessSyncRuns(
             accountId,
-            Number.isFinite(limit) ? limit : 25
+            Number.isFinite(limit) ? limit : 25,
+            (message) => this.logger.warn(message)
         );
-        try {
-            const mongoRuns = await listExecutionsForAccount(accountId, {
-                limit: Math.max(limit, 25),
-            });
-            const activeFromMongo = mongoRuns
-                .filter((doc) => doc.status === "RUNNING")
-                .map(syncHistoryExecutionToSummary);
-            if (activeFromMongo.length === 0) {
-                return { runs: memoryRuns };
-            }
-            const byId = new Map(memoryRuns.map((run) => [run.id, run]));
-            for (const run of activeFromMongo) {
-                const existing = byId.get(run.id);
-                byId.set(run.id, {
-                    ...(existing ?? run),
-                    ...run,
-                    cutover_options:
-                        existing?.cutover_options ?? run.cutover_options,
-                    cutover_summary:
-                        existing?.cutover_summary ?? run.cutover_summary,
-                });
-            }
-            return {
-                runs: Array.from(byId.values()).sort(
-                    (a, b) =>
-                        new Date(b.started_at).getTime() -
-                        new Date(a.started_at).getTime()
-                ),
-            };
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : String(error);
-            this.logger.warn(
-                `[account ${accountId}] Failed to merge Mongo sync runs: ${message}`
-            );
-            return { runs: memoryRuns };
-        }
+        return { runs };
     }
 
     async listSyncHistory(user: JwtPayload, accountId: number) {

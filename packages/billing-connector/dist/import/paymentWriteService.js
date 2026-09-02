@@ -4,7 +4,7 @@ exports.createLinkedInvoicePayment = createLinkedInvoicePayment;
 exports.createDeferredInvoicePayment = createDeferredInvoicePayment;
 exports.updateInvoicePayment = updateInvoicePayment;
 const linkDeferredPaymentAndRecalc_1 = require("../invoice/linkDeferredPaymentAndRecalc");
-async function createLinkedInvoicePayment(prisma, data, options) {
+async function createLinkedInvoicePayment(prisma, data) {
     return prisma.$transaction(async (tx) => {
         let invoiceNumber = typeof data.invoice_number === "string"
             ? data.invoice_number.trim()
@@ -32,9 +32,7 @@ async function createLinkedInvoicePayment(prisma, data, options) {
                 modified_by: data.modified_by ?? null,
             },
         });
-        const updatedInvoice = await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoiceFromLinkedPayments)(tx, data.invoice_id, {
-            normalizeNegativePaymentsForCreditClose: options?.normalizeNegativePaymentsForCreditClose,
-        });
+        const updatedInvoice = await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoiceFromLinkedPayments)(tx, data.invoice_id);
         return { invoicePayment: createdPayment, updatedInvoice };
     });
 }
@@ -56,7 +54,7 @@ async function createDeferredInvoicePayment(prisma, data) {
         },
     });
 }
-async function updateInvoicePayment(prisma, data, options) {
+async function updateInvoicePayment(prisma, data) {
     return prisma.$transaction(async (tx) => {
         const existing = await tx.invoicePayment.findUnique({
             where: { id: data.id },
@@ -94,14 +92,10 @@ async function updateInvoicePayment(prisma, data, options) {
         const newInvoiceId = data.invoice_id;
         if (previousInvoiceId != null &&
             previousInvoiceId !== newInvoiceId) {
-            await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoiceFromLinkedPayments)(tx, previousInvoiceId, {
-                normalizeNegativePaymentsForCreditClose: options?.normalizeNegativePaymentsForCreditClose,
-            });
+            await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoiceFromLinkedPayments)(tx, previousInvoiceId);
         }
         if (newInvoiceId != null) {
-            await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoiceFromLinkedPayments)(tx, newInvoiceId, {
-                normalizeNegativePaymentsForCreditClose: options?.normalizeNegativePaymentsForCreditClose,
-            });
+            await (0, linkDeferredPaymentAndRecalc_1.recalculateInvoiceFromLinkedPayments)(tx, newInvoiceId);
         }
         return { invoicePayment: updatedPayment };
     });

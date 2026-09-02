@@ -11,6 +11,7 @@ type ExecuteReportResult = {
 export declare class ReportExecutionService {
     private readonly db;
     private readonly access;
+    private readonly logger;
     constructor(db: DatabaseService, access: AccessScopeService);
     execute(user: JwtPayload, reportId: number, body: ExecuteReportDto): Promise<ExecuteReportResult>;
     private assertExecutePermission;

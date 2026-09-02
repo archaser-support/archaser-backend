@@ -20,7 +20,7 @@ The route most work travels. You have an idea and want it built.
    - **`/prototype`** to answer the question with throwaway code,
    - **`/handoff`** back what you learned, and reference it from the original idea thread.
 3. **Branch — is this a multi-session build?**
-   - **Yes** → **`/to-prd`** (turn the thread into a PRD) → **`/to-issues`** (split the PRD into independently-grabbable issues). Then run **`/implement-next <feature-slug>`** in a fresh orchestrator chat — it claims each unblocked slice, spawns a **fresh agent per issue**, runs automated seam tests, flips `Status` to `done`, and chains until blocked.
+   - **Yes** → **`/to-prd`** (turn the thread into a PRD) → **`/to-issues`** (split the PRD into independently-grabbable issues). Then run **`/implement-next <feature-slug>`** in a fresh orchestrator chat — it claims each unblocked slice, spawns a **fresh agent per issue**, verifies acceptance (runs **existing** automated checks only; does **not** add tests unless you ask), flips `Status` to `done`, and chains until blocked.
    - **No** → implement right here, in the same context window (no `/implement-next` needed).
 
 ### Context hygiene

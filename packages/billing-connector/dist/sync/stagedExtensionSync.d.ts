@@ -2,9 +2,9 @@ import type { PrismaClient } from "@prisma/client";
 import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionEntityType, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
 import { type EntityImportBatchOptions, type EntityImportBatchResult, type ImportEntityType } from "../import/entityImporter";
-import { type TailStepKey, type TailStepDetail, type TailStepState } from "./connectorSyncRuntime";
+import { type ConnectorSyncCounts } from "./connectorSyncRuntime";
 import { type ArPostIngestHostFn, type ConnectorPostIngestDeferOptions } from "../credit/arPostIngestHost";
-import type { ProcessOverdueCustomersFn } from "./processOverdueTailStep";
+import { type ProcessOverdueCustomersFn } from "./processOverdueTailStep";
 import { type MappingRule } from "../utils/connectorFieldUtils";
 export declare const STAGED_ENTITY_ORDER: ExtensionEntityType[];
 export type ImportBatchFn = (prisma: PrismaClient, importType: ImportEntityType, records: Record<string, unknown>[], accountId: number, mappingJson: unknown, userId?: string, options?: EntityImportBatchOptions) => Promise<EntityImportBatchResult>;
@@ -60,6 +60,12 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
     pullCreatedOnOrAfter?: boolean;
     /** Stored BillingConnector.pull_filters — applied on every live pull. */
     pullFilters?: unknown;
+    /**
+     * Start backfill only: Archaser customer_number for the resolved
+     * customer_id. Used to keep mapped rows for that customer after pull —
+     * not written to connector pull_filters and not ANDed as ERP OData.
+     */
+    runtimeCustomerNumber?: string | null;
     /** Stored BillingConnector.entity_sets — overrides TOTARPAY / etc. */
     entitySets?: unknown;
     /** Per-entity mapping pull_date_field (admin pick). */
@@ -74,24 +80,8 @@ export interface RunStagedExtensionSyncResult {
     windows: StagedWindowOutcome[];
     /** Aggregated post-plugin batches (preview / dry-run). */
     previewBatch: ExtensionMappedBatch;
-    stats: {
-        customersProcessed: number;
-        contactsProcessed: number;
-        invoicesProcessed: number;
-        paymentsProcessed: number;
-        customersImported: number;
-        contactsImported: number;
-        invoicesImported: number;
-        paymentsImported: number;
-        importErrors: number;
-        paymentLinkStatus?: "running" | "done" | "failed";
-        paymentsLinked?: number;
-        paymentsStillDeferred?: number;
-        paymentsLinkTotal?: number;
-        paymentLinkError?: string;
-        paymentLinkDetail?: TailStepDetail;
-        tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
-    };
+    /** Includes optional clear-before-import deleted/purge fields when merged by callers. */
+    stats: ConnectorSyncCounts;
     cancelled?: boolean;
     error?: string;
     /** True when post-import was enqueued for worker drain (Mongo stays RUNNING). */

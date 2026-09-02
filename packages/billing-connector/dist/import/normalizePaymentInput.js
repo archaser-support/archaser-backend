@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.resolvePaymentCustomerNumber = resolvePaymentCustomerNumber;
 exports.normalizePaymentInput = normalizePaymentInput;
 exports.toPaymentInput = toPaymentInput;
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
@@ -15,6 +16,34 @@ function toOptionalPaymentNumber(value) {
     const n = typeof value === "number" ? value : Number(value);
     return Number.isFinite(n) ? n : undefined;
 }
+function asTrimmedString(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return String(value).trim();
+    }
+    if (typeof value !== "string") {
+        return "";
+    }
+    return value.trim();
+}
+/** Avoid String(null) → "null"; fall back to Priority CUSTNAME on the ERP row. */
+function resolvePaymentCustomerNumber(record, rawErpRow) {
+    const raw = rawErpRow ?? record._rawRecord;
+    const direct = asTrimmedString(record.customer_number);
+    if (direct) {
+        return direct;
+    }
+    if (raw) {
+        const fromErp = asTrimmedString(raw.CUSTNAME) ||
+            asTrimmedString(raw.IDG_CUSTNAME);
+        if (fromErp) {
+            return fromErp;
+        }
+    }
+    return "";
+}
 function normalizePaymentInput(record) {
     let paymentDateStr = "";
     if (typeof record.payment_date === "number") {
@@ -23,10 +52,11 @@ function normalizePaymentInput(record) {
     else {
         paymentDateStr = (0, connectorFieldUtils_1.toErpDateOnly)(record.payment_date);
     }
+    const raw = record._rawRecord;
     return {
         account_id: Number(record.account_id),
         company_code: String(record.company_code ?? "").trim(),
-        customer_number: String(record.customer_number),
+        customer_number: resolvePaymentCustomerNumber(record, raw),
         invoice_number: String(record.invoice_number ??
             record.FNCIREF1 ??
             record.PAY_INVOICE_NUMBER ??

@@ -75,8 +75,22 @@ export class BillingConnectorController {
             user,
             accountId,
             mode,
-            importType ?? bodyImportType
+            importType ?? bodyImportType,
+            body
         );
+    }
+
+    @Get("customers/by-id")
+    @ApiOperation({
+        summary:
+            "Look up a customer by Archaser customer_id on this account (Start backfill scope validation)",
+    })
+    async lookupCustomerById(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number,
+        @Query("customer_id") customerId?: string
+    ) {
+        return this.service.lookupCustomerById(user, accountId, customerId);
     }
 
     @Post("sync/cancel")

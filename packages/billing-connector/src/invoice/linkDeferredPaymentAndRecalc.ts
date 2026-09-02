@@ -21,7 +21,6 @@ export {
 } from "./invoicePaidTolerance";
 
 export type InvoicePaidRecalcOptions = {
-    normalizeNegativePaymentsForCreditClose?: boolean;
     isForcePaidClose?: (payment: ExtensionLinkedPayment) => boolean;
     /** When set, skips a BillingConnector lookup inside the transaction. */
     paidTolerance?: number;
@@ -141,23 +140,12 @@ function buildInvoicePaidUpdate(
         };
     }
 
-    const useAbsPaidTotals =
-        options?.normalizeNegativePaymentsForCreditClose === true &&
-        invoice.custom_code1 === "C";
-
     let totalPaid = 0;
     let totalCustomerPaid = 0;
 
-    if (useAbsPaidTotals) {
-        for (const payment of linkedPayments) {
-            totalPaid += Math.abs(payment.amount ?? 0);
-            totalCustomerPaid += Math.abs(payment.customer_amount ?? 0);
-        }
-    } else {
-        for (const payment of linkedPayments) {
-            totalPaid += payment.amount ?? 0;
-            totalCustomerPaid += payment.customer_amount ?? 0;
-        }
+    for (const payment of linkedPayments) {
+        totalPaid += payment.amount ?? 0;
+        totalCustomerPaid += payment.customer_amount ?? 0;
     }
 
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;

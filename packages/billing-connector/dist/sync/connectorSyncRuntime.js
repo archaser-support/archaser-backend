@@ -4,7 +4,7 @@
  * plus a short history of completed runs for GET /sync-runs polling.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TAIL_STEP_KEYS = exports.BALANCES_ENTITY_STATS_KEY = exports.PENDING_CLOSES_ENTITY_STATS_KEY = exports.PROCESS_OVERDUE_ENTITY_STATS_KEY = exports.LIVE_REFRESH_ENTITY_STATS_KEY = exports.AR_REPLAY_ENTITY_STATS_KEY = exports.POST_INGEST_ENTITY_STATS_KEY = exports.MATURITY_ENTITY_STATS_KEY = void 0;
+exports.TAIL_STEP_KEYS = exports.BALANCES_ENTITY_STATS_KEY = exports.PENDING_CLOSES_ENTITY_STATS_KEY = exports.PROCESS_OVERDUE_ENTITY_STATS_KEY = exports.LIVE_REFRESH_ENTITY_STATS_KEY = exports.AR_REPLAY_ENTITY_STATS_KEY = exports.POST_INGEST_ENTITY_STATS_KEY = exports.PURGE_ENTITY_STATS_KEY = exports.MATURITY_ENTITY_STATS_KEY = void 0;
 exports.entityStatsFromCounts = entityStatsFromCounts;
 exports.registerRunningSync = registerRunningSync;
 exports.getRunningSync = getRunningSync;
@@ -15,6 +15,8 @@ exports.listSyncRuns = listSyncRuns;
 exports.resetConnectorSyncRuntimeForTests = resetConnectorSyncRuntimeForTests;
 /** Orchestration step after Invoice — links deferred payments to invoices. */
 exports.MATURITY_ENTITY_STATS_KEY = "_maturity";
+/** Start backfill clear-before-import purge phase (before entity pull/import). */
+exports.PURGE_ENTITY_STATS_KEY = "_purge";
 /**
  * Tail steps after entity ingest. They run while the sync is still RUNNING, so
  * without their own stat keys the UI froze on the last entity row and gave no
@@ -42,26 +44,62 @@ function entityStatsFromCounts(stats) {
             success: stats.customersImported,
             failed: 0,
             skipped: 0,
+            ...(stats.customersDeleted != null
+                ? { deleted: stats.customersDeleted }
+                : {}),
         },
         Contact: {
             pulled: stats.contactsProcessed,
             success: stats.contactsImported,
             failed: 0,
             skipped: 0,
+            ...(stats.contactsDeleted != null
+                ? { deleted: stats.contactsDeleted }
+                : {}),
         },
         Invoice: {
             pulled: stats.invoicesProcessed,
             success: stats.invoicesImported,
             failed: 0,
             skipped: 0,
+            ...(stats.invoicesDeleted != null
+                ? { deleted: stats.invoicesDeleted }
+                : {}),
         },
         Payment: {
             pulled: stats.paymentsProcessed,
             success: stats.paymentsImported,
             failed: 0,
             skipped: 0,
+            ...(stats.paymentsDeleted != null
+                ? { deleted: stats.paymentsDeleted }
+                : {}),
         },
     };
+    if (stats.purgeStatus) {
+        const deletedTotal = (stats.customersDeleted ?? 0) +
+            (stats.contactsDeleted ?? 0) +
+            (stats.invoicesDeleted ?? 0) +
+            (stats.paymentsDeleted ?? 0);
+        const purgeTotal = stats.purgeTotal != null && stats.purgeTotal > 0
+            ? stats.purgeTotal
+            : deletedTotal;
+        entityStats[exports.PURGE_ENTITY_STATS_KEY] = {
+            // `pulled` = planned total (like link-payments); `success` = deleted so far.
+            pulled: purgeTotal,
+            success: deletedTotal,
+            failed: 0,
+            skipped: 0,
+            status: stats.purgeStatus === "cancelled"
+                ? "done"
+                : stats.purgeStatus,
+            detail: {
+                step: stats.purgeDetail?.step ?? "deleting",
+                processed: deletedTotal,
+                total: purgeTotal,
+            },
+        };
+    }
     if (stats.paymentLinkStatus) {
         const linked = stats.paymentsLinked ?? 0;
         const deferred = stats.paymentsStillDeferred ?? 0;
@@ -118,9 +156,21 @@ function upsertSyncRun(accountId, summary) {
     next.unshift(summary);
     historyByAccount.set(accountId, next.slice(0, MAX_HISTORY));
 }
+function isTerminalSyncRunSummary(run) {
+    if (run.completed_at) {
+        return true;
+    }
+    return (run.status === "SUCCESS" ||
+        run.status === "FAILED" ||
+        run.status === "PARTIAL" ||
+        (run.status === "TIMEOUT" && run.error_type === "cancelled"));
+}
 /** Live progress must not clobber a cancelled / finished status. */
 function patchSyncRunEntityStats(accountId, executionId, entityStats, fallback) {
     const existing = listSyncRuns(accountId).find((run) => run.id === executionId);
+    if (existing && isTerminalSyncRunSummary(existing)) {
+        return;
+    }
     upsertSyncRun(accountId, {
         ...(existing ?? fallback),
         entity_stats: entityStats,

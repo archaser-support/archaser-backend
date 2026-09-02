@@ -433,6 +433,12 @@ function mapErpRecord(erpRecord, rules) {
                 value = rawCreditFor.trim();
             }
         }
+        if (rule.archaserField === "customer_number" && isEmptyMappedValue(value)) {
+            const rawCust = extractNestedValue(erpRecord, "CUSTNAME");
+            if (!isEmptyMappedValue(rawCust)) {
+                value = applyConnectorTransform(rawCust, rule.transform ?? "trim");
+            }
+        }
         if (isEmptyMappedValue(value) &&
             rule.defaultValue !== undefined &&
             rule.defaultValue.trim() !== "") {

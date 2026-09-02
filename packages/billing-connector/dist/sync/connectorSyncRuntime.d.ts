@@ -4,6 +4,8 @@
  */
 /** Orchestration step after Invoice — links deferred payments to invoices. */
 export declare const MATURITY_ENTITY_STATS_KEY = "_maturity";
+/** Start backfill clear-before-import purge phase (before entity pull/import). */
+export declare const PURGE_ENTITY_STATS_KEY = "_purge";
 /**
  * Tail steps after entity ingest. They run while the sync is still RUNNING, so
  * without their own stat keys the UI froze on the last entity row and gave no
@@ -39,6 +41,8 @@ export type ConnectorEntityStatSlice = {
     success: number;
     failed: number;
     skipped: number;
+    /** Rows removed during Start backfill clear-before-import purge. */
+    deleted?: number;
     sample_errors?: string[];
     /** Present for `_maturity` while linking / after it finishes. */
     status?: "running" | "done" | "failed" | "queued";
@@ -75,6 +79,17 @@ export interface ConnectorSyncCounts {
     invoicesImported: number;
     paymentsImported: number;
     importErrors: number;
+    /** Clear-before-import purge counts (Start backfill only). */
+    customersDeleted?: number;
+    contactsDeleted?: number;
+    invoicesDeleted?: number;
+    paymentsDeleted?: number;
+    /** Rows to delete at purge start (for determinate Deleting… progress). */
+    purgeTotal?: number;
+    /** Clear-before-import purge phase (Start backfill only). */
+    purgeStatus?: "running" | "done" | "cancelled";
+    /** Which entity is being purged right now (for progress detail). */
+    purgeDetail?: TailStepDetail;
     /** Deferred payment → invoice linking (after Invoice ingest). */
     paymentLinkStatus?: "running" | "done" | "failed";
     paymentsLinked?: number;

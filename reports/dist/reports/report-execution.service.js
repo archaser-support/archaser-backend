@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var ReportExecutionService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportExecutionService = void 0;
 const common_1 = require("@nestjs/common");
@@ -28,11 +29,13 @@ const report_scope_util_1 = require("./report-scope.util");
 const report_virtual_fields_util_1 = require("./report-virtual-fields.util");
 const report_metadata_1 = require("./report-metadata");
 const formula_execution_1 = require("./report-formula/formula-execution");
+const types_1 = require("./report-formula/types");
 const report_datetime_util_1 = require("./report-datetime.util");
-let ReportExecutionService = class ReportExecutionService {
+let ReportExecutionService = ReportExecutionService_1 = class ReportExecutionService {
     constructor(db, access) {
         this.db = db;
         this.access = access;
+        this.logger = new common_1.Logger(ReportExecutionService_1.name);
         (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(this.db);
     }
     async execute(user, reportId, body) {
@@ -159,10 +162,16 @@ let ReportExecutionService = class ReportExecutionService {
             (config.sorting?.[0]?.direction?.toLowerCase() === "asc"
                 ? "asc"
                 : "desc");
-        const needsInMemorySort = report.context === "dashboard_credit_customers" &&
+        const computedSortTarget = (0, report_virtual_fields_util_1.resolveComputedSortTarget)(effectiveSortField, primaryTable, fields);
+        const needsComputedFormattedSort = computedSortTarget != null;
+        const needsCreditDashboardInMemorySort = report.context === "dashboard_credit_customers" &&
             !!effectiveSortField &&
             ((0, credit_insurance_domain_1.isCreditDashboardEnrichedSortField)(effectiveSortField) ||
                 (0, credit_insurance_domain_2.isCustomerPolicyBackedReportField)(effectiveSortField));
+        const needsInMemorySort = needsCreditDashboardInMemorySort || needsComputedFormattedSort;
+        if (needsComputedFormattedSort && computedSortTarget) {
+            this.logger.debug(`In-memory sort for computed field ${computedSortTarget.table}.${computedSortTarget.field} (outputKey=${computedSortTarget.outputKey}); SQL ORDER BY cannot use this column`);
+        }
         const orderBy = needsInMemorySort
             ? []
             : this.buildOrderBy(primaryTable, body.sortField, body.sortDirection, config.sorting);
@@ -195,7 +204,7 @@ let ReportExecutionService = class ReportExecutionService {
                 limitWarningByCustomerId,
             });
         }
-        if (needsInMemorySort && effectiveSortField) {
+        if (needsCreditDashboardInMemorySort && effectiveSortField) {
             rows = (0, credit_insurance_domain_1.sortCreditDashboardEnrichedRows)(rows, effectiveSortField, effectiveSortDirection);
             totalRecords = rows.length;
             rows = rows.slice(skip, skip + limit);
@@ -207,8 +216,14 @@ let ReportExecutionService = class ReportExecutionService {
             locale,
             metadataTables: report_metadata_1.REPORT_METADATA.tables,
         });
+        let resultRows = formulaResult.rows;
+        if (needsComputedFormattedSort && computedSortTarget) {
+            resultRows = (0, report_virtual_fields_util_1.sortFormattedReportRows)(resultRows, computedSortTarget.outputKey, effectiveSortDirection === "desc" ? "desc" : "asc");
+            totalRecords = resultRows.length;
+            resultRows = resultRows.slice(skip, skip + limit);
+        }
         return (0, serialize_bigint_1.serializeBigInt)({
-            data: formulaResult.rows,
+            data: resultRows,
             totalRecords,
             ...(formulaResult.warnings.length
                 ? { formulaWarnings: formulaResult.warnings }
@@ -682,6 +697,10 @@ let ReportExecutionService = class ReportExecutionService {
     parseSortField(sortField, primaryTable) {
         const raw = (sortField || "").trim();
         if (!raw) {
+            return null;
+        }
+        // Formula results are computed after fetch; they cannot drive SQL ORDER BY.
+        if (raw.startsWith(types_1.FORMULA_OUTPUT_KEY_PREFIX)) {
             return null;
         }
         // Normalize "Customer.name" → compare as field on primary
@@ -1158,7 +1177,7 @@ let ReportExecutionService = class ReportExecutionService {
     }
 };
 exports.ReportExecutionService = ReportExecutionService;
-exports.ReportExecutionService = ReportExecutionService = __decorate([
+exports.ReportExecutionService = ReportExecutionService = ReportExecutionService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
         access_scope_service_1.AccessScopeService])

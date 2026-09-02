@@ -2,18 +2,33 @@ import {
     BadRequestException,
     ConflictException,
     ForbiddenException,
+    HttpException,
     Injectable,
     Logger,
     NotFoundException,
 } from "@nestjs/common";
+import type { ImportType } from "@prisma/client";
+import { randomUUID } from "crypto";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/jwt-payload";
 import {
+    allEnabledEntitiesPreviewPassed,
+    cancelInProcessSyncRun,
+    createInProcessSyncHistoryStub,
     decryptCredentials,
+    getRunningSync,
+    isPriorityEntityImportType,
+    listDurableSyncHistoryRuns,
+    listMergedInProcessSyncRuns,
     normalizeInvoicePaidTolerance,
+    registerAcceptedInProcessSync,
+    requestConnectorSyncCancel,
     resolveExtensionAttachmentInput,
-    runInProcessSync,
+    runAcceptedInProcessSync,
+    runPreviewSync,
     testBillingConnectorConnection,
+    upsertSyncRun,
+    type ConnectorSyncRunSummary,
 } from "@archaser/billing-connector";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
@@ -28,6 +43,40 @@ import {
 
 const ADMIN_ACCOUNT_ID = 10013;
 const CREDIT_PRODUCT = "credit_insurance" as const;
+
+const ENTITY_KEYS: ImportType[] = [
+    "Customer",
+    "Contact",
+    "Invoice",
+    "Payment",
+];
+
+function parseEnabledEntities(raw: unknown): ImportType[] {
+    if (!Array.isArray(raw)) {
+        return [...ENTITY_KEYS];
+    }
+    return raw.filter((value): value is ImportType => {
+        return (
+            typeof value === "string" &&
+            isPriorityEntityImportType(value as ImportType)
+        );
+    });
+}
+
+function rethrowCoded(error: unknown): never {
+    const err = error as {
+        statusCode?: number;
+        message?: string;
+        code?: string;
+    };
+    if (err?.statusCode) {
+        throw new HttpException(
+            { error: err.message, code: err.code },
+            err.statusCode
+        );
+    }
+    throw error;
+}
 
 const GENERIC_ENTITIES = ["customer", "contact", "invoice"] as const;
 const GENERIC_FIELDS = [
@@ -729,30 +778,25 @@ export class AccountsNestedService {
     async billingConnectorAction(
         user: JwtPayload,
         accountId: number,
-        action: "test" | "sync" | "sync-runs" | "backfill-reset",
+        action: "test" | "backfill-reset",
         body?: Record<string, unknown>
     ) {
         await this.assertAccountAccess(
             user,
             accountId,
-            action === "sync-runs"
-                ? "view_billing_connector"
+            action === "backfill-reset"
+                ? "manage_billing_connector"
                 : "manage_billing_connector"
         );
         const connector = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
         });
-        if (!connector && action !== "sync-runs") {
+        if (!connector) {
             throw new NotFoundException({
                 error: "Billing connector not configured",
             });
         }
         if (action === "test") {
-            if (!connector) {
-                throw new NotFoundException({
-                    error: "Billing connector not configured",
-                });
-            }
             try {
                 if (!connector.credentials_encrypted || !connector.base_url) {
                     throw new Error("Missing base_url or credentials");
@@ -801,61 +845,247 @@ export class AccountsNestedService {
                 return { ok: false, success: false, error: message };
             }
         }
-        if (action === "sync") {
-            const mode =
-                typeof body?.mode === "string" ? body.mode : undefined;
-            const dryRun = mode === "preview";
-            const trigger =
-                typeof body?.trigger === "string"
-                    ? body.trigger
-                    : dryRun
-                      ? "preview"
-                      : mode === "backfill"
-                        ? "backfill"
-                        : "manual";
-            const result = await runInProcessSync({
-                prisma: this.db,
-                accountId,
-                trigger,
-                dryRun,
-                onLog: (message) =>
-                    this.logger.log(`[account ${accountId}] ${message}`),
-            });
-            return {
-                queued: false,
-                inProcess: true,
-                result,
-                ...result,
-            };
-        }
         if (action === "backfill-reset") {
-            if (connector) {
-                await this.db.connectorSyncState.updateMany({
-                    where: { connector_id: connector.id },
-                    data: {
-                        backfill_completed: false,
-                        backfill_completed_at: null,
-                        backfill_cursor: null,
-                        backfill_records_pulled: 0,
-                        backfill_last_checkpoint_at: null,
-                        backfill_total_records: null,
-                        last_max_updated_at: null,
-                        last_attempt_at: null,
-                        last_error: null,
-                    },
-                });
-                await this.db.billingConnector.update({
-                    where: { id: connector.id },
-                    data: {
-                        sync_mode: "BACKFILL",
-                        backfill_started_at: null,
-                        modified_at: new Date(),
-                    },
-                });
+            const running = getRunningSync(accountId);
+            if (running) {
+                requestConnectorSyncCancel(running.executionId);
             }
+            await this.db.connectorSyncState.updateMany({
+                where: { connector_id: connector.id },
+                data: {
+                    backfill_completed: false,
+                    backfill_completed_at: null,
+                    backfill_cursor: null,
+                    backfill_records_pulled: 0,
+                    backfill_last_checkpoint_at: null,
+                    backfill_total_records: null,
+                    last_max_updated_at: null,
+                    last_attempt_at: null,
+                    last_error: null,
+                },
+            });
+            await this.db.billingConnector.update({
+                where: { id: connector.id },
+                data: {
+                    sync_mode: "BACKFILL",
+                    backfill_started_at: null,
+                    modified_at: new Date(),
+                },
+            });
             return { ok: true, reset: true };
         }
-        return { runs: [] };
+        throw new BadRequestException({ error: "Unknown billing connector action" });
+    }
+
+    async runBillingConnectorSync(
+        user: JwtPayload,
+        accountId: number,
+        modeRaw: string | undefined,
+        importTypeRaw?: string
+    ) {
+        const userInfo = await this.assertAccountAccess(
+            user,
+            accountId,
+            "manage_billing_connector"
+        );
+        const mode = String(modeRaw ?? "").toLowerCase();
+        const actor = this.accessScope.getEffectiveUserId(userInfo);
+
+        if (mode === "preview") {
+            const importType =
+                typeof importTypeRaw === "string" && importTypeRaw.trim()
+                    ? (importTypeRaw.trim() as ImportType)
+                    : undefined;
+            try {
+                const result = await runPreviewSync({
+                    prisma: this.db,
+                    accountId,
+                    importType,
+                });
+                return { result };
+            } catch (error) {
+                rethrowCoded(error);
+            }
+        }
+
+        if (!["backfill", "incremental"].includes(mode)) {
+            throw new BadRequestException({
+                error: "mode must be preview, backfill, or incremental",
+                code: "INVALID_SYNC_MODE",
+            });
+        }
+
+        const connector = await this.db.billingConnector.findUnique({
+            where: { account_id: accountId },
+        });
+        if (!connector) {
+            throw new NotFoundException({
+                error: "Billing connector not configured",
+            });
+        }
+
+        const previewBypassed =
+            areBackfillOptionsLocked(connector.backfill_started_at) ||
+            connector.sync_mode === "INCREMENTAL";
+        if (
+            mode === "backfill" &&
+            !previewBypassed &&
+            !allEnabledEntitiesPreviewPassed(
+                parseEnabledEntities(connector.enabled_entities),
+                connector.preview_passes
+            )
+        ) {
+            throw new BadRequestException({
+                error: "Preview every enabled entity before the first backfill",
+                code: "PREVIEW_REQUIRED",
+            });
+        }
+
+        if (getRunningSync(accountId)) {
+            throw new ConflictException({
+                error: "A sync is already running for this account",
+                code: "SYNC_IN_PROGRESS",
+            });
+        }
+
+        const executionId = randomUUID();
+        const startedAt = new Date();
+
+        if (mode === "backfill" && connector.backfill_started_at == null) {
+            await this.db.billingConnector.update({
+                where: { id: connector.id },
+                data: {
+                    backfill_started_at: startedAt,
+                    modified_at: startedAt,
+                },
+            });
+        }
+
+        const syncMode = mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
+        const trigger = mode === "backfill" ? "backfill" : "manual";
+        const runningSummary: ConnectorSyncRunSummary = {
+            id: executionId,
+            trigger,
+            sync_mode: syncMode,
+            status: "RUNNING",
+            started_at: startedAt.toISOString(),
+            completed_at: null,
+            duration_seconds: null,
+            entity_stats: {},
+            error_message: null,
+            error_type: null,
+            cutover_options: {
+                backfill_start_date: formatBackfillStartDateForApi(
+                    connector.backfill_start_date
+                ),
+                mep_breach_start_date: formatBackfillStartDateForApi(
+                    connector.mep_breach_start_date
+                ),
+                include_older_open_invoices:
+                    connector.include_older_open_invoices ?? true,
+                skip_reporting_breach_on_backfill:
+                    connector.skip_reporting_breach_on_backfill ?? false,
+            },
+            cutover_summary: null,
+        };
+
+        registerAcceptedInProcessSync({
+            accountId,
+            executionId,
+            startedAt,
+            mode: mode as "backfill" | "incremental",
+            trigger,
+            runningSummary,
+        });
+        upsertSyncRun(accountId, runningSummary);
+
+        await createInProcessSyncHistoryStub({
+            executionId,
+            accountId,
+            connectorId: connector.id,
+            provider: connector.provider,
+            trigger: trigger as "backfill" | "manual",
+            syncMode,
+            startedAt,
+            onError: (message) => this.logger.error(message),
+        });
+
+        const onLog = (message: string) => {
+            this.logger.log(`[account ${accountId}] ${message}`);
+        };
+        onLog(`Starting ${mode} (execution ${executionId})`);
+
+        void runAcceptedInProcessSync({
+            prisma: this.db,
+            accountId,
+            executionId,
+            mode: mode as "backfill" | "incremental",
+            trigger,
+            userId: actor,
+            runningSummary,
+            onLog,
+            onError: (message) => this.logger.error(message),
+        });
+
+        return {
+            result: {
+                ok: true,
+                accepted: true,
+                execution_id: executionId,
+                status: "RUNNING",
+                sync_mode: syncMode,
+                trigger,
+            },
+        };
+    }
+
+    async cancelBillingConnectorSync(user: JwtPayload, accountId: number) {
+        await this.assertAccountAccess(
+            user,
+            accountId,
+            "manage_billing_connector"
+        );
+        const result = await cancelInProcessSyncRun({
+            accountId,
+            onError: (message) => this.logger.error(message),
+        });
+        return { result };
+    }
+
+    async listBillingConnectorSyncRuns(
+        user: JwtPayload,
+        accountId: number,
+        limitRaw?: string
+    ) {
+        await this.assertAccountAccess(
+            user,
+            accountId,
+            "view_billing_connector"
+        );
+        const limit = Number.parseInt(String(limitRaw ?? "25"), 10);
+        const runs = await listMergedInProcessSyncRuns(
+            accountId,
+            Number.isFinite(limit) ? limit : 25,
+            (message) => this.logger.warn(message)
+        );
+        return { runs };
+    }
+
+    async listBillingConnectorSyncHistory(user: JwtPayload, accountId: number) {
+        await this.assertAccountAccess(
+            user,
+            accountId,
+            "view_billing_connector"
+        );
+        try {
+            const runs = await listDurableSyncHistoryRuns(
+                accountId,
+                (message) => this.logger.error(message)
+            );
+            return { runs };
+        } catch (error) {
+            throw error;
+        }
     }
 
     async getBillingMappings(

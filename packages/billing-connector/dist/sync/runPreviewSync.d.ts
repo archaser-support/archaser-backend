@@ -1,15 +1,6 @@
 import type { ImportType, PrismaClient } from "@prisma/client";
-export interface PreviewEntityResult {
-    import_type: ImportType;
-    pulled: number;
-    match_count: number;
-    match_count_capped: boolean;
-    sample_rows: Record<string, unknown>[];
-    validation_errors: string[];
-    sorted_preview: boolean;
-    pull_phases: string[];
-    effective_filter: string | null;
-}
+import { type PreviewEntityResult } from "./previewEntityPipeline";
+export type { PreviewEntityResult } from "./previewEntityPipeline";
 export interface PreviewSyncResult {
     mode: "preview";
     started_at: string;

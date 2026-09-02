@@ -9,6 +9,7 @@ const applyMaturedDeferredPayments_1 = require("../import/applyMaturedDeferredPa
 const recalculateCustomerAmountsHost_1 = require("../customers/recalculateCustomerAmountsHost");
 const connectorSyncRuntime_1 = require("./connectorSyncRuntime");
 const arPostIngestTailSteps_1 = require("./arPostIngestTailSteps");
+const processOverdueTailStep_1 = require("./processOverdueTailStep");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 const priorityApiContract_1 = require("../priority/priorityApiContract");
 const prioritySelectFields_1 = require("../priority/prioritySelectFields");
@@ -184,11 +185,19 @@ async function runStagedExtensionSync(options) {
     const dryRun = options.dryRun === true;
     const tailSteps = {};
     const log = (message) => options.onLog?.(message);
-    const emitProgress = () => options.onProgress?.({
-        ...stats,
-        ...paymentLink,
-        tailSteps: { ...tailSteps },
-    });
+    let lastProgressEmitSignature = "";
+    const emitProgress = () => {
+        const signature = `cust=${stats.customersProcessed} pay=${stats.paymentsProcessed} inv=${stats.invoicesProcessed} contact=${stats.contactsProcessed}`;
+        if (signature !== lastProgressEmitSignature) {
+            lastProgressEmitSignature = signature;
+            log(`[progress-debug] emitProgress ${signature}`);
+        }
+        options.onProgress?.({
+            ...stats,
+            ...paymentLink,
+            tailSteps: { ...tailSteps },
+        });
+    };
     const resultStats = () => ({
         ...stats,
         ...paymentLink,
@@ -277,8 +286,19 @@ async function runStagedExtensionSync(options) {
             });
         }
     };
-    /** Inline AR replay + insurance refresh tail steps for the progress panel. */
+    /** Inline Process Overdue → AR replay → insurance refresh for the progress panel. */
     const runArTailWithProgress = async (args) => {
+        // Nest wires onProcessOverdueCustomers as its own step; skip overdue inside
+        // runInlineArPostIngestTailSteps (separateOverdueStep) and run it here first.
+        if (options.onProcessOverdueCustomers &&
+            args.customerIds.length > 0) {
+            await (0, processOverdueTailStep_1.runProcessOverdueTailStep)({
+                customerIds: args.customerIds,
+                onProcessOverdueCustomers: options.onProcessOverdueCustomers,
+                log,
+                setTailStep: (state) => setTailStep(connectorSyncRuntime_1.PROCESS_OVERDUE_ENTITY_STATS_KEY, state),
+            });
+        }
         await (0, arPostIngestTailSteps_1.runInlineArPostIngestTailSteps)({
             accountId: options.accountId,
             customerIds: args.customerIds,
@@ -296,13 +316,12 @@ async function runStagedExtensionSync(options) {
         });
     };
     const finishWithBalances = async (result) => {
-        if (!dryRun) {
+        if (!dryRun && !result.cancelled) {
             await flushExtensionPendingCloses("finalize");
             // Payment-only (or Invoice-not-orchestrated) fallback: same
             // orchestrator as post-Invoice, including deferred maturity.
             // Skip when Invoice already ran post-ingest in this sync.
-            if (!result.cancelled &&
-                !invoicePostIngestRan &&
+            if (!invoicePostIngestRan &&
                 paymentAffectedCustomerIds.size > 0) {
                 await runArTailWithProgress({
                     customerIds: Array.from(paymentAffectedCustomerIds),
@@ -313,7 +332,13 @@ async function runStagedExtensionSync(options) {
             }
             await finalizeCustomerBalances(arAffectedCustomerIds, options.prisma, options.onCustomerBalancesFinal, log, setTailStep);
         }
-        return { ...result, invoicePostIngestRan, postIngestDeferred: false };
+        return {
+            ...result,
+            // Refresh after balances / late AR tail so finish logs include them.
+            stats: resultStats(),
+            invoicePostIngestRan,
+            postIngestDeferred: false,
+        };
     };
     for (const window of options.windows) {
         log(window.start || window.end
@@ -341,6 +366,7 @@ async function runStagedExtensionSync(options) {
                     },
                 });
                 afterKey = syncState?.backfill_cursor ?? null;
+                log(`[progress-debug] ${entityType} entity start: backfill_completed=${Boolean(syncState?.backfill_completed)} pulled=${syncState?.backfill_records_pulled ?? 0} cursor=${afterKey ? "yes" : "no"} last_attempt_at=${syncState?.last_attempt_at?.toISOString?.() ?? "null"}`);
                 // Clear completion before sampling/pull so the UI stays on
                 // Running until every page for this entity is fetched. Otherwise
                 // a prior-run backfill_completed + first live page looks "Done".
@@ -358,6 +384,7 @@ async function runStagedExtensionSync(options) {
                         },
                     });
                     afterKey = null;
+                    log(`[progress-debug] Cleared stale ${entityType} completion (zeroed pulled/cursor) before this run's pull`);
                 }
             }
             let guard = 0;
@@ -369,6 +396,10 @@ async function runStagedExtensionSync(options) {
             const usesDatePull = entityType === "Invoice" || entityType === "Payment";
             const applyDateWindow = Boolean(windowCutover) && usesDatePull;
             const entityPullFilter = (0, billingConnectorPullFilters_1.resolveImportPullFilterOData)(options.pullFilters, entityType);
+            const scopedCustomerNumber = typeof options.runtimeCustomerNumber === "string"
+                ? options.runtimeCustomerNumber.trim()
+                : "";
+            const scopeToCustomer = scopedCustomerNumber.length > 0;
             while (guard < 200) {
                 if (options.shouldCancel?.()) {
                     log(`Stopped by operator before ${entityType} page ${guard}`);
@@ -388,6 +419,9 @@ async function runStagedExtensionSync(options) {
                     });
                 }
                 guard += 1;
+                if (guard === 1) {
+                    log(`[progress-debug] ${entityType} page 1 pull starting (includes column sampling)`);
+                }
                 const page = await options.provider.pull(entityType, {
                     since: usesDatePull && !applyDateWindow ? window.start : null,
                     createdOnOrAfter: applyDateWindow ? windowCutover : null,
@@ -413,7 +447,14 @@ async function runStagedExtensionSync(options) {
                         !recordInWindow(raw, window)) {
                         continue;
                     }
-                    mappedPage.push((0, connectorFieldUtils_1.mapErpRecord)(raw, rules));
+                    const mapped = (0, connectorFieldUtils_1.mapErpRecord)(raw, rules);
+                    if (scopeToCustomer) {
+                        const rowCustomer = String(mapped.customer_number ?? "").trim();
+                        if (rowCustomer !== scopedCustomerNumber) {
+                            continue;
+                        }
+                    }
+                    mappedPage.push(mapped);
                 }
                 bumpProcessedPage(stats, entityType, mappedPage.length);
                 emitProgress();
@@ -547,6 +588,9 @@ async function runStagedExtensionSync(options) {
                         pageSize: entityPageSize,
                         providerTotalCount: page.totalCount,
                     });
+                    if (exhausted) {
+                        log(`[progress-debug] ${entityType} fetch complete: pulled=${stats[processedKey(entityType)]} backfill_completed=true`);
+                    }
                 }
                 if (exhausted) {
                     break;

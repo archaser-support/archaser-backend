@@ -1203,7 +1203,10 @@ export async function importMappedEntityBatch(
         payments,
         accountId,
         userId,
-        { extension: options?.extension }
+        {
+            extension: options?.extension,
+            shouldCancel: options?.shouldCancel,
+        }
     );
 
     result.rowResults = paymentResults.map((paymentResult) => ({

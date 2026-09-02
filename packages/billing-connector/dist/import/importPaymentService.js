@@ -72,7 +72,9 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
     const extension = options?.extension ??
         (await (0, extensions_1.resolveAccountBillingExtension)(prisma, accountId));
     const customerNumbers = [
-        ...new Set(paymentRecords.map((p) => p.customer_number)),
+        ...new Set(paymentRecords
+            .map((record) => record.customer_number.trim())
+            .filter((value) => value.length > 0)),
     ];
     const customers = await prisma.customer.findMany({
         where: {
@@ -89,13 +91,27 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
     }
     const prepared = [];
     for (let i = 0; i < paymentRecords.length; i++) {
+        if (i > 0 && i % 25 === 0 && options?.shouldCancel?.()) {
+            break;
+        }
         const record = { ...paymentRecords[i], account_id: accountId };
-        const customerId = customerByNumber.get(record.customer_number);
+        const customerNumber = record.customer_number.trim();
+        if (!customerNumber) {
+            results[i] = {
+                index: i,
+                success: false,
+                skipped: true,
+                message: "missing customer_number",
+            };
+            continue;
+        }
+        const customerId = customerByNumber.get(customerNumber);
         if (customerId === undefined) {
             results[i] = {
                 index: i,
                 success: false,
-                message: `Customer ${record.customer_number} not found`,
+                skipped: true,
+                message: `Customer ${customerNumber} not found`,
             };
             continue;
         }
@@ -217,13 +233,10 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
     const skippedIds = new Map();
     const failedIds = new Map();
     const invoiceIdsToRecalc = new Map();
-    const markRecalc = (invoiceId, normalizeNegative) => {
+    const markRecalc = (invoiceId) => {
         if (invoiceId == null)
             return;
-        const prev = invoiceIdsToRecalc.get(invoiceId) ?? {};
         invoiceIdsToRecalc.set(invoiceId, {
-            normalizeNegativePaymentsForCreditClose: prev.normalizeNegativePaymentsForCreditClose === true ||
-                normalizeNegative === true,
             isForcePaidClose: extension?.isForcePaidClose,
         });
     };
@@ -374,11 +387,6 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
             });
             continue;
         }
-        const normalizeNegative = extension?.shouldNormalizeNegativeCreditPayments?.({
-            rawErpRow,
-            invoiceCustomCode1: invoice.custom_code1,
-            customerAmount: amountResolution.customer_amount,
-        }) === true;
         const nextSnapshot = {
             amount: amountResolution.amount,
             customer_amount: amountResolution.customer_amount,
@@ -401,7 +409,7 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
                 });
                 queueAfterPaymentLinked(winner, invoice.id);
                 // Recon force-paid / virtual close still need a recalc pass.
-                markRecalc(invoice.id, normalizeNegative);
+                markRecalc(invoice.id);
                 continue;
             }
             updates.push({
@@ -410,7 +418,6 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
                 newInvoiceId: invoice.id,
                 winner,
                 deferred: false,
-                normalizeNegative,
                 data: {
                     invoice_id: invoice.id,
                     invoice_number: winner.targetInvoiceNumber || null,
@@ -445,7 +452,6 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
             winner,
             deferred: false,
             invoiceId: invoice.id,
-            normalizeNegative,
         });
         queueAfterPaymentLinked(winner, invoice.id);
     }
@@ -492,7 +498,7 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
             customerId: row.winner.customerId,
             message: row.deferred ? "import.results.paymentDeferred" : undefined,
         });
-        markRecalc(row.invoiceId, row.normalizeNegative);
+        markRecalc(row.invoiceId);
     }
     for (const row of updates) {
         const key = `${row.winner.customerId}::${row.winner.effectiveReference}`;
@@ -504,8 +510,8 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
             customerId: row.winner.customerId,
             message: row.deferred ? "import.results.paymentDeferred" : undefined,
         });
-        markRecalc(row.previousInvoiceId, row.normalizeNegative);
-        markRecalc(row.newInvoiceId, row.normalizeNegative);
+        markRecalc(row.previousInvoiceId);
+        markRecalc(row.newInvoiceId);
     }
     if (extension?.afterPaymentLinked &&
         afterLinkCandidates.length > 0) {

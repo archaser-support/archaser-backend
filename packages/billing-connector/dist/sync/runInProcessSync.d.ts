@@ -1,10 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
+import { type ClearBeforeImportEntity } from "../purge/clearBeforeImport";
 import { type ConnectorEntityStats } from "./connectorSyncRuntime";
 import { type ImportBatchFn } from "./stagedExtensionSync";
 import { type ArPostIngestHostFn, type ConnectorPostIngestDeferOptions } from "../credit/arPostIngestHost";
-import type { ProcessOverdueCustomersFn } from "./processOverdueTailStep";
+import { type ProcessOverdueCustomersFn } from "./processOverdueTailStep";
 import { type BillingConnectorObservabilityOptions } from "../observability";
 export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions {
     prisma: PrismaClient;
@@ -16,6 +17,16 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
     /** In-process cancel / sync-run id (API cancel endpoint). */
     executionId?: string;
     mode?: "backfill" | "incremental";
+    /**
+     * Start backfill only: entities to purge before ERP pull/import.
+     * Ignored for incremental, preview/dryRun, and when the host omits them on Resume.
+     */
+    clearBeforeImport?: ClearBeforeImportEntity[];
+    /**
+     * Start backfill only: optional Archaser customer_id scope for purge + pull.
+     * Ignored for incremental, preview/dryRun, and Resume (host must omit).
+     */
+    customerId?: number | null;
     /** Override window plan (multi-window backfills / tests). */
     windows?: ExtensionSyncWindow[];
     /** Injected provider (skips live Priority client construction). */
