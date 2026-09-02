@@ -66,6 +66,8 @@ import {
     isComputedReportField,
     isPrismaListRelation,
     isPrismaScalarField,
+    resolveComputedSortTarget,
+    sortFormattedReportRows,
 } from "./report-virtual-fields.util";
 import { REPORT_METADATA } from "./report-metadata";
 import {
@@ -75,6 +77,7 @@ import {
 import {
     FormulaWarningSummary,
     ReportFormula,
+    FORMULA_OUTPUT_KEY_PREFIX,
 } from "./report-formula/types";
 import { formatReportDateTime } from "./report-datetime.util";
 
@@ -317,11 +320,19 @@ export class ReportExecutionService {
             (config.sorting?.[0]?.direction?.toLowerCase() === "asc"
                 ? "asc"
                 : "desc");
-        const needsInMemorySort =
+        const computedSortTarget = resolveComputedSortTarget(
+            effectiveSortField,
+            primaryTable,
+            fields
+        );
+        const needsComputedFormattedSort = computedSortTarget != null;
+        const needsCreditDashboardInMemorySort =
             report.context === "dashboard_credit_customers" &&
             !!effectiveSortField &&
             (isCreditDashboardEnrichedSortField(effectiveSortField) ||
                 isCustomerPolicyBackedReportField(effectiveSortField));
+        const needsInMemorySort =
+            needsCreditDashboardInMemorySort || needsComputedFormattedSort;
 
         const orderBy = needsInMemorySort
             ? []
@@ -380,7 +391,7 @@ export class ReportExecutionService {
             });
         }
 
-        if (needsInMemorySort && effectiveSortField) {
+        if (needsCreditDashboardInMemorySort && effectiveSortField) {
             rows = sortCreditDashboardEnrichedRows(
                 rows,
                 effectiveSortField,
@@ -407,8 +418,19 @@ export class ReportExecutionService {
             metadataTables: REPORT_METADATA.tables,
         });
 
+        let resultRows = formulaResult.rows;
+        if (needsComputedFormattedSort && computedSortTarget) {
+            resultRows = sortFormattedReportRows(
+                resultRows,
+                computedSortTarget.outputKey,
+                effectiveSortDirection === "desc" ? "desc" : "asc"
+            );
+            totalRecords = resultRows.length;
+            resultRows = resultRows.slice(skip, skip + limit);
+        }
+
         return serializeBigInt({
-            data: formulaResult.rows,
+            data: resultRows,
             totalRecords,
             ...(formulaResult.warnings.length
                 ? { formulaWarnings: formulaResult.warnings }
@@ -1064,6 +1086,11 @@ export class ReportExecutionService {
     ): ((dir: "asc" | "desc") => PrismaWhere) | null {
         const raw = (sortField || "").trim();
         if (!raw) {
+            return null;
+        }
+
+        // Formula results are computed after fetch; they cannot drive SQL ORDER BY.
+        if (raw.startsWith(FORMULA_OUTPUT_KEY_PREFIX)) {
             return null;
         }
 

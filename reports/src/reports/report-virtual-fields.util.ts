@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { getCustomerPolicyRow } from "@archaser/credit-insurance-domain";
 import { mergeActiveCustomerPolicySelect } from "@archaser/credit-insurance-domain";
+import { getFieldOutputKey } from "./report.constants";
 
 /** Report table name → Prisma DMMF model name. */
 const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
@@ -483,4 +484,105 @@ export function isComputedReportField(
         );
     }
     return false;
+}
+
+export type ReportFieldRef = {
+    table: string;
+    field: string;
+    alias?: string;
+};
+
+export type ComputedSortTarget = {
+    table: string;
+    field: string;
+    outputKey: string;
+};
+
+/** Match a client sort field to a computed column that must sort after formatRow. */
+export function resolveComputedSortTarget(
+    sortField: string | undefined,
+    primaryTable: string,
+    fields: ReportFieldRef[]
+): ComputedSortTarget | null {
+    const raw = (sortField || "").trim();
+    if (!raw) {
+        return null;
+    }
+
+    for (const f of fields) {
+        const outputKey = getFieldOutputKey(f);
+        const matches =
+            outputKey === raw ||
+            f.field === raw ||
+            `${f.table}.${f.field}` === raw ||
+            (raw.startsWith(`${primaryTable}.`) &&
+                raw.slice(primaryTable.length + 1) === f.field);
+        if (matches && isComputedReportField(f.table, f.field)) {
+            return { table: f.table, field: f.field, outputKey };
+        }
+    }
+
+    const normalized =
+        raw.startsWith(`${primaryTable}.`) && raw.split(".").length === 2
+            ? raw.slice(primaryTable.length + 1)
+            : raw;
+    if (
+        !normalized.includes(".") &&
+        isComputedReportField(primaryTable, normalized)
+    ) {
+        const match = fields.find(
+            (f) => f.table === primaryTable && f.field === normalized
+        );
+        return {
+            table: primaryTable,
+            field: normalized,
+            outputKey: match ? getFieldOutputKey(match) : normalized,
+        };
+    }
+
+    return null;
+}
+
+function compareSortValues(a: unknown, b: unknown): number {
+    if (a == null && b == null) {
+        return 0;
+    }
+    if (a == null) {
+        return 1;
+    }
+    if (b == null) {
+        return -1;
+    }
+    if (typeof a === "number" && typeof b === "number") {
+        if (Number.isNaN(a) && Number.isNaN(b)) {
+            return 0;
+        }
+        if (Number.isNaN(a)) {
+            return 1;
+        }
+        if (Number.isNaN(b)) {
+            return -1;
+        }
+        return a - b;
+    }
+    return String(a).localeCompare(String(b), undefined, {
+        numeric: true,
+        sensitivity: "base",
+    });
+}
+
+/** Sort formatted report rows by a column output key (computed / display values). */
+export function sortFormattedReportRows(
+    rows: Record<string, unknown>[],
+    outputKey: string,
+    direction: "asc" | "desc" = "asc"
+): Record<string, unknown>[] {
+    const factor = direction === "desc" ? -1 : 1;
+    return [...rows].sort((left, right) => {
+        const leftValue =
+            left[outputKey] ?? left[`___formatted_${outputKey}`];
+        const rightValue =
+            right[outputKey] ?? right[`___formatted_${outputKey}`];
+        return factor * compareSortValues(leftValue, rightValue);
+    });
 }
