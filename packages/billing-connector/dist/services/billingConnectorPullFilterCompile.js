@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.andODataFilters = andODataFilters;
+exports.escapeODataStringLiteral = escapeODataStringLiteral;
 exports.compileEntityPullFilter = compileEntityPullFilter;
 function andODataFilters(...parts) {
     const cleaned = parts

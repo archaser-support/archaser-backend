@@ -4,7 +4,6 @@ import type {
     ExtensionAfterPaymentLinkedResult,
     ExtensionAlignPaymentAmountsInput,
     ExtensionAlignedPaymentAmounts,
-    ExtensionCreditPaymentCloseInput,
     ExtensionMappedBatch,
     ExtensionTransformContext,
 } from "../types";
@@ -20,7 +19,7 @@ import {
     applyReconciledVirtualClosesForInvoiceNumbers,
 } from "./reconciledVirtualClose";
 
-/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp, credit abs payments. */
+/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp. */
 export const ACCOUNT_10149_EXTENSION_KEY = "account_10149";
 export const ACCOUNT_10149_ID = 10149;
 export const ILS_CURRENCY_CODE = "ILS";
@@ -238,12 +237,6 @@ function hasFreconnum(raw: Record<string, unknown>): boolean {
     return typeof freconnum === "string" && freconnum.trim().length > 0;
 }
 
-function isIdigitalPaymentRow(raw: Record<string, unknown>): boolean {
-    const fncnum = asNonEmptyString(raw.FNCNUM);
-    const fnciref1 = asNonEmptyString(raw.FNCIREF1);
-    return (fncnum != null && fnciref1 != null) || hasFreconnum(raw);
-}
-
 function pickInvoiceNumber(
     raw: Record<string, unknown>,
     row: Record<string, unknown>
@@ -389,16 +382,6 @@ export function isAccount10149ReconciledReceiptClose(
     rawErpRow: Record<string, unknown>
 ): boolean {
     return isAccount10149ReconciledClose(rawErpRow);
-}
-
-export function shouldNormalizeAccount10149NegativeCreditPayments(
-    row: ExtensionCreditPaymentCloseInput
-): boolean {
-    return (
-        isIdigitalPaymentRow(row.rawErpRow) &&
-        row.invoiceCustomCode1 === "C" &&
-        row.customerAmount < 0
-    );
 }
 
 function rewriteRowCurrencies(
@@ -712,8 +695,6 @@ export const account10149Extension: BillingAccountExtension = {
             customerIds: [...customerIds],
         };
     },
-    shouldNormalizeNegativeCreditPayments:
-        shouldNormalizeAccount10149NegativeCreditPayments,
     normalizePaymentCurrency: normalizeAccount10149PaymentCurrency,
     alignPaymentAmountsForInvoice: alignAccount10149PaymentAmountsForInvoice,
 };

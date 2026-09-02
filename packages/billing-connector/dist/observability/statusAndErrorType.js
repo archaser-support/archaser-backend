@@ -29,7 +29,7 @@ function resolveSyncErrorType(result, status) {
         return null;
     }
     if (result.cancelled || status === "TIMEOUT") {
-        return "timeout";
+        return result.cancelled ? "cancelled" : "timeout";
     }
     if (result.error === "CONNECTOR_NOT_FOUND") {
         return "unknown";

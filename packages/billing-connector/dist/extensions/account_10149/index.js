@@ -44,7 +44,6 @@ exports.isAccount10149HelamOffsetCancelRow = isAccount10149HelamOffsetCancelRow;
 exports.collectHelamOffsetPairTargets = collectHelamOffsetPairTargets;
 exports.isAccount10149ReconciledClose = isAccount10149ReconciledClose;
 exports.isAccount10149ReconciledReceiptClose = isAccount10149ReconciledReceiptClose;
-exports.shouldNormalizeAccount10149NegativeCreditPayments = shouldNormalizeAccount10149NegativeCreditPayments;
 exports.isAccount10149CreditInvoiceNumber = isAccount10149CreditInvoiceNumber;
 exports.transformAccount10149Batch = transformAccount10149Batch;
 exports.afterAccount10149PaymentLinked = afterAccount10149PaymentLinked;
@@ -53,7 +52,7 @@ const connectorFieldUtils_1 = require("../../utils/connectorFieldUtils");
 const alignPaymentToInvoiceCurrency_1 = require("../../payment/alignPaymentToInvoiceCurrency");
 const helamOffsetClose_1 = require("./helamOffsetClose");
 const reconciledVirtualClose_1 = require("./reconciledVirtualClose");
-/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp, credit abs payments. */
+/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp. */
 exports.ACCOUNT_10149_EXTENSION_KEY = "account_10149";
 exports.ACCOUNT_10149_ID = 10149;
 exports.ILS_CURRENCY_CODE = "ILS";
@@ -226,11 +225,6 @@ function hasFreconnum(raw) {
     }
     return typeof freconnum === "string" && freconnum.trim().length > 0;
 }
-function isIdigitalPaymentRow(raw) {
-    const fncnum = asNonEmptyString(raw.FNCNUM);
-    const fnciref1 = asNonEmptyString(raw.FNCIREF1);
-    return (fncnum != null && fnciref1 != null) || hasFreconnum(raw);
-}
 function pickInvoiceNumber(raw, row) {
     return (asNonEmptyString(raw.IVNUM) ??
         asNonEmptyString(row.invoice_number) ??
@@ -335,11 +329,6 @@ function isAccount10149ReconciledClose(rawErpRow) {
 /** @deprecated Use {@link isAccount10149ReconciledClose}. */
 function isAccount10149ReconciledReceiptClose(rawErpRow) {
     return isAccount10149ReconciledClose(rawErpRow);
-}
-function shouldNormalizeAccount10149NegativeCreditPayments(row) {
-    return (isIdigitalPaymentRow(row.rawErpRow) &&
-        row.invoiceCustomCode1 === "C" &&
-        row.customerAmount < 0);
 }
 function rewriteRowCurrencies(row) {
     let changed = false;
@@ -567,7 +556,6 @@ exports.account10149Extension = {
             customerIds: [...customerIds],
         };
     },
-    shouldNormalizeNegativeCreditPayments: shouldNormalizeAccount10149NegativeCreditPayments,
     normalizePaymentCurrency: normalizeAccount10149PaymentCurrency,
     alignPaymentAmountsForInvoice: alignAccount10149PaymentAmountsForInvoice,
 };

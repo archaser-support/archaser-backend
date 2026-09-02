@@ -40,15 +40,8 @@ const priorityApiContract_1 = require("../priority/priorityApiContract");
 const billingConnectorCrypto_1 = require("../utils/billingConnectorCrypto");
 const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 const billingConnectorEntitySets_1 = require("../services/billingConnectorEntitySets");
-const billingConnectorPullFilters_1 = require("../services/billingConnectorPullFilters");
 const billingConnectorPreviewPasses_1 = require("../services/billingConnectorPreviewPasses");
-const PREVIEW_SAMPLE_TOP = 50;
-const ENTITY_ORDER = [
-    "Customer",
-    "Invoice",
-    "Payment",
-    "Contact",
-];
+const previewEntityPipeline_1 = require("./previewEntityPipeline");
 function formatBackfillStartDate(value) {
     if (!value) {
         return null;
@@ -60,7 +53,7 @@ function formatBackfillStartDate(value) {
 }
 function parseEnabledEntities(raw) {
     if (!Array.isArray(raw)) {
-        return ENTITY_ORDER;
+        return [...previewEntityPipeline_1.PREVIEW_ENTITY_ORDER];
     }
     return raw.filter((value) => {
         return (typeof value === "string" &&
@@ -89,56 +82,26 @@ async function runPreviewSync(params) {
     if (!connection.ok) {
         throw Object.assign(new Error(connection.error ?? "Connection test failed"), { statusCode: 400, code: "CONNECTION_FAILED" });
     }
-    const entitySets = (0, billingConnectorEntitySets_1.parseEntitySetsMap)(connector.entity_sets);
     const enabled = parseEnabledEntities(connector.enabled_entities);
-    const targets = params.importType
-        ? enabled.filter((entity) => entity === params.importType)
-        : enabled;
+    const targets = (0, previewEntityPipeline_1.resolvePreviewTargets)(enabled, params.importType);
     const mappingByType = new Map(connector.ConnectorFieldMapping.map((row) => [row.import_type, row]));
+    const connectorPreviewContext = {
+        extension_key: connector.extension_key,
+        extension_config: connector.extension_config,
+        pull_filters: connector.pull_filters,
+        entity_sets: connector.entity_sets,
+    };
     const entities = [];
     for (const importType of targets) {
-        if (!(0, priorityApiContract_1.isPriorityEntityImportType)(importType)) {
-            continue;
-        }
-        const filter = (0, billingConnectorPullFilters_1.resolveEntityPullFilterOData)(connector.pull_filters, importType);
-        const fetchResult = await (0, PriorityClient_1.fetchPriorityEntitySamples)(config, importType, PREVIEW_SAMPLE_TOP, { entitySet: entitySets[importType] ?? null, filter });
-        if (!fetchResult.ok) {
-            entities.push({
-                import_type: importType,
-                pulled: 0,
-                match_count: 0,
-                match_count_capped: false,
-                sample_rows: [],
-                validation_errors: [
-                    fetchResult.error ?? "Failed to pull preview samples",
-                ],
-                sorted_preview: importType !== "Invoice",
-                pull_phases: ["preview"],
-                effective_filter: filter,
-            });
-            continue;
-        }
         const mappingRow = mappingByType.get(importType);
         const rules = (0, connectorFieldUtils_1.parseMappingRules)(mappingRow?.mapping);
-        const mappedRows = [];
-        const validationErrors = [];
-        fetchResult.records.forEach((record, index) => {
-            const mapped = (0, connectorFieldUtils_1.mapErpRecord)(record, rules);
-            mappedRows.push(mapped);
-            validationErrors.push(...(0, connectorFieldUtils_1.validateMappedRow)(importType, mapped, index));
-        });
-        const sortedPreview = importType !== "Invoice" || mappedRows.length > 0;
-        entities.push({
-            import_type: importType,
-            pulled: fetchResult.records.length,
-            match_count: fetchResult.records.length,
-            match_count_capped: fetchResult.records.length >= PREVIEW_SAMPLE_TOP,
-            sample_rows: mappedRows.slice(0, 20),
-            validation_errors: validationErrors.slice(0, 25),
-            sorted_preview: sortedPreview,
-            pull_phases: ["preview"],
-            effective_filter: filter,
-        });
+        entities.push(await (0, previewEntityPipeline_1.previewEntityFromConnector)({
+            importType,
+            accountId: params.accountId,
+            config,
+            connector: connectorPreviewContext,
+            mappingRules: rules,
+        }));
     }
     const requiredFieldErrors = entities.reduce((sum, entity) => sum + entity.validation_errors.length, 0);
     const entityPasses = entities.map((entity) => ({
@@ -174,10 +137,10 @@ async function runPreviewSync(params) {
             checks: [
                 {
                     id: "samples",
-                    label: "Sample rows pulled",
-                    passed: entities.every((entity) => entity.pulled > 0),
+                    label: "Importable sample rows",
+                    passed: entities.every((entity) => entity.importable_count > 0),
                     detail: entities
-                        .map((entity) => `${entity.import_type}:${entity.pulled}`)
+                        .map((entity) => `${entity.import_type}:${entity.importable_count}/${entity.pulled}`)
                         .join(", "),
                 },
                 {
@@ -185,7 +148,7 @@ async function runPreviewSync(params) {
                     label: "Required fields present",
                     passed: requiredFieldErrors === 0,
                     detail: requiredFieldErrors === 0
-                        ? "All required fields mapped"
+                        ? "All required fields mapped on importable rows"
                         : `${requiredFieldErrors} validation error(s)`,
                 },
                 {

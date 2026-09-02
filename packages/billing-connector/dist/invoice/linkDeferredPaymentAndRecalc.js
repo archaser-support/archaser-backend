@@ -70,21 +70,11 @@ function buildInvoicePaidUpdate(invoice, linkedPayments, options, modifiedAt, pa
             modified_at: modifiedAt,
         };
     }
-    const useAbsPaidTotals = options?.normalizeNegativePaymentsForCreditClose === true &&
-        invoice.custom_code1 === "C";
     let totalPaid = 0;
     let totalCustomerPaid = 0;
-    if (useAbsPaidTotals) {
-        for (const payment of linkedPayments) {
-            totalPaid += Math.abs(payment.amount ?? 0);
-            totalCustomerPaid += Math.abs(payment.customer_amount ?? 0);
-        }
-    }
-    else {
-        for (const payment of linkedPayments) {
-            totalPaid += payment.amount ?? 0;
-            totalCustomerPaid += payment.customer_amount ?? 0;
-        }
+    for (const payment of linkedPayments) {
+        totalPaid += payment.amount ?? 0;
+        totalCustomerPaid += payment.customer_amount ?? 0;
     }
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;
     const newCustomerOutstanding = (invoice.customer_net_amount ?? 0) - totalCustomerPaid;

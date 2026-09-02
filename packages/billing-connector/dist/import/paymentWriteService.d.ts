@@ -41,14 +41,11 @@ export interface UpdatePaymentData {
     created_by?: string | null;
     modified_by?: string | null;
 }
-export interface PaymentWriteOptions {
-    normalizeNegativePaymentsForCreditClose?: boolean;
-}
-export declare function createLinkedInvoicePayment(prisma: PrismaClient, data: CreatePaymentData, options?: PaymentWriteOptions): Promise<{
+export declare function createLinkedInvoicePayment(prisma: PrismaClient, data: CreatePaymentData): Promise<{
     invoicePayment: InvoicePayment;
     updatedInvoice: Invoice;
 }>;
 export declare function createDeferredInvoicePayment(prisma: PrismaClient, data: CreateDeferredPaymentData): Promise<InvoicePayment>;
-export declare function updateInvoicePayment(prisma: PrismaClient, data: UpdatePaymentData, options?: PaymentWriteOptions): Promise<{
+export declare function updateInvoicePayment(prisma: PrismaClient, data: UpdatePaymentData): Promise<{
     invoicePayment: InvoicePayment;
 }>;

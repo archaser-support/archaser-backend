@@ -7,7 +7,6 @@ export type LinkDeferredPaymentAndRecalcResult = {
 };
 export { INVOICE_PAID_TOLERANCE, isWithinPaidTolerance, normalizeInvoicePaidTolerance, resolveInvoicePaidTolerance, } from "./invoicePaidTolerance";
 export type InvoicePaidRecalcOptions = {
-    normalizeNegativePaymentsForCreditClose?: boolean;
     isForcePaidClose?: (payment: ExtensionLinkedPayment) => boolean;
     /** When set, skips a BillingConnector lookup inside the transaction. */
     paidTolerance?: number;

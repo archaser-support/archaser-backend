@@ -497,6 +497,16 @@ export function mapErpRecord(
             }
         }
 
+        if (rule.archaserField === "customer_number" && isEmptyMappedValue(value)) {
+            const rawCust = extractNestedValue(erpRecord, "CUSTNAME");
+            if (!isEmptyMappedValue(rawCust)) {
+                value = applyConnectorTransform(
+                    rawCust,
+                    rule.transform ?? "trim"
+                );
+            }
+        }
+
         if (
             isEmptyMappedValue(value) &&
             rule.defaultValue !== undefined &&

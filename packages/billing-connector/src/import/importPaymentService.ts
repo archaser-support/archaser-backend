@@ -129,7 +129,10 @@ export async function importPayments(
     paymentRecords: InvoicePaymentInput[],
     accountId: number,
     userId?: string,
-    options?: { extension?: BillingAccountExtension }
+    options?: {
+        extension?: BillingAccountExtension;
+        shouldCancel?: () => boolean;
+    }
 ): Promise<ImportPaymentResult[]> {
     const results: ImportPaymentResult[] = paymentRecords.map((_, index) => ({
         index,
@@ -140,7 +143,11 @@ export async function importPayments(
         (await resolveAccountBillingExtension(prisma, accountId));
 
     const customerNumbers = [
-        ...new Set(paymentRecords.map((p) => p.customer_number)),
+        ...new Set(
+            paymentRecords
+                .map((record) => record.customer_number.trim())
+                .filter((value) => value.length > 0)
+        ),
     ];
     const customers = await prisma.customer.findMany({
         where: {
@@ -171,13 +178,27 @@ export async function importPayments(
     const prepared: PreparedPayment[] = [];
 
     for (let i = 0; i < paymentRecords.length; i++) {
+        if (i > 0 && i % 25 === 0 && options?.shouldCancel?.()) {
+            break;
+        }
         const record = { ...paymentRecords[i], account_id: accountId };
-        const customerId = customerByNumber.get(record.customer_number);
+        const customerNumber = record.customer_number.trim();
+        if (!customerNumber) {
+            results[i] = {
+                index: i,
+                success: false,
+                skipped: true,
+                message: "missing customer_number",
+            };
+            continue;
+        }
+        const customerId = customerByNumber.get(customerNumber);
         if (customerId === undefined) {
             results[i] = {
                 index: i,
                 success: false,
-                message: `Customer ${record.customer_number} not found`,
+                skipped: true,
+                message: `Customer ${customerNumber} not found`,
             };
             continue;
         }
@@ -328,7 +349,6 @@ export async function importPayments(
         data: Record<string, unknown>;
         previousInvoiceId: number | null;
         newInvoiceId: number | null;
-        normalizeNegative?: boolean;
         winner: PreparedPayment;
         deferred: boolean;
     }> = [];
@@ -336,28 +356,19 @@ export async function importPayments(
         winner: PreparedPayment;
         deferred: boolean;
         invoiceId: number | null;
-        normalizeNegative?: boolean;
     }> = [];
     const skippedIds = new Map<string, ImportPaymentResult>();
     const failedIds = new Map<string, ImportPaymentResult>();
     const invoiceIdsToRecalc = new Map<
         number,
         {
-            normalizeNegativePaymentsForCreditClose?: boolean;
             isForcePaidClose?: BillingAccountExtension["isForcePaidClose"];
         }
     >();
 
-    const markRecalc = (
-        invoiceId: number | null,
-        normalizeNegative?: boolean
-    ) => {
+    const markRecalc = (invoiceId: number | null) => {
         if (invoiceId == null) return;
-        const prev = invoiceIdsToRecalc.get(invoiceId) ?? {};
         invoiceIdsToRecalc.set(invoiceId, {
-            normalizeNegativePaymentsForCreditClose:
-                prev.normalizeNegativePaymentsForCreditClose === true ||
-                normalizeNegative === true,
             isForcePaidClose: extension?.isForcePaidClose,
         });
     };
@@ -532,12 +543,6 @@ export async function importPayments(
             continue;
         }
 
-        const normalizeNegative =
-            extension?.shouldNormalizeNegativeCreditPayments?.({
-                rawErpRow,
-                invoiceCustomCode1: invoice.custom_code1,
-                customerAmount: amountResolution.customer_amount,
-            }) === true;
         const nextSnapshot = {
             amount: amountResolution.amount,
             customer_amount: amountResolution.customer_amount,
@@ -561,7 +566,7 @@ export async function importPayments(
                 });
                 queueAfterPaymentLinked(winner, invoice.id);
                 // Recon force-paid / virtual close still need a recalc pass.
-                markRecalc(invoice.id, normalizeNegative);
+                markRecalc(invoice.id);
                 continue;
             }
             updates.push({
@@ -570,7 +575,6 @@ export async function importPayments(
                 newInvoiceId: invoice.id,
                 winner,
                 deferred: false,
-                normalizeNegative,
                 data: {
                     invoice_id: invoice.id,
                     invoice_number: winner.targetInvoiceNumber || null,
@@ -606,7 +610,6 @@ export async function importPayments(
             winner,
             deferred: false,
             invoiceId: invoice.id,
-            normalizeNegative,
         });
         queueAfterPaymentLinked(winner, invoice.id);
     }
@@ -665,7 +668,7 @@ export async function importPayments(
             customerId: row.winner.customerId,
             message: row.deferred ? "import.results.paymentDeferred" : undefined,
         });
-        markRecalc(row.invoiceId, row.normalizeNegative);
+        markRecalc(row.invoiceId);
     }
     for (const row of updates) {
         const key = `${row.winner.customerId}::${row.winner.effectiveReference}`;
@@ -677,8 +680,8 @@ export async function importPayments(
             customerId: row.winner.customerId,
             message: row.deferred ? "import.results.paymentDeferred" : undefined,
         });
-        markRecalc(row.previousInvoiceId, row.normalizeNegative);
-        markRecalc(row.newInvoiceId, row.normalizeNegative);
+        markRecalc(row.previousInvoiceId);
+        markRecalc(row.newInvoiceId);
     }
 
     if (

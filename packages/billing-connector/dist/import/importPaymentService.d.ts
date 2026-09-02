@@ -12,4 +12,5 @@ export interface ImportPaymentResult {
 }
 export declare function importPayments(prisma: PrismaClient, paymentRecords: InvoicePaymentInput[], accountId: number, userId?: string, options?: {
     extension?: BillingAccountExtension;
+    shouldCancel?: () => boolean;
 }): Promise<ImportPaymentResult[]>;

@@ -1,5 +1,5 @@
-import type { BillingAccountExtension, ExtensionAfterPaymentLinkedContext, ExtensionAfterPaymentLinkedResult, ExtensionAlignPaymentAmountsInput, ExtensionAlignedPaymentAmounts, ExtensionCreditPaymentCloseInput, ExtensionMappedBatch } from "../types";
-/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp, credit abs payments. */
+import type { BillingAccountExtension, ExtensionAfterPaymentLinkedContext, ExtensionAfterPaymentLinkedResult, ExtensionAlignPaymentAmountsInput, ExtensionAlignedPaymentAmounts, ExtensionMappedBatch } from "../types";
+/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp. */
 export declare const ACCOUNT_10149_EXTENSION_KEY = "account_10149";
 export declare const ACCOUNT_10149_ID = 10149;
 export declare const ILS_CURRENCY_CODE = "ILS";
@@ -51,7 +51,6 @@ export declare function collectHelamOffsetPairTargets(payments: Record<string, u
 export declare function isAccount10149ReconciledClose(rawErpRow: Record<string, unknown>): boolean;
 /** @deprecated Use {@link isAccount10149ReconciledClose}. */
 export declare function isAccount10149ReconciledReceiptClose(rawErpRow: Record<string, unknown>): boolean;
-export declare function shouldNormalizeAccount10149NegativeCreditPayments(row: ExtensionCreditPaymentCloseInput): boolean;
 /**
  * Priority credit-note invoice numbers (e.g. CR26100000032) — recon lines for
  * these are not cash receipts; queue virtual close instead of importing payment.

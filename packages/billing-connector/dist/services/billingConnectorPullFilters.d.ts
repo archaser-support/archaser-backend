@@ -37,5 +37,14 @@ export declare function resolveRelatedCustomerPullFilterOData(raw: unknown): str
  * OData $filter for a live import pull: the entity's own pull filter, plus a
  * CUSTNAME-only Customer filter on related entities so invoices/payments/
  * contacts stay inside the same customer subset.
+ *
+ * Start backfill customer scope is **not** applied here — it uses Archaser
+ * `customer_id` for purge and post-map filtering by our `customer_number`, so
+ * custom ERP tables without CUSTNAME (e.g. IDG_ARFNCITEMS4) do not break.
  */
 export declare function resolveImportPullFilterOData(raw: unknown, importType: ImportType): string | null;
+/**
+ * @deprecated Start backfill scopes by Archaser customer_id / customer_number
+ * after mapping — do not AND ERP customer columns onto live pulls.
+ */
+export declare function compileRuntimeCustomerNumberOData(customerNumber: string | null | undefined): string | null;

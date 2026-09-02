@@ -24,7 +24,6 @@ export {
     type ExtensionAfterPaymentLinkedResult,
     type ExtensionAttachmentUpsertInput,
     type ExtensionAttachmentUpsertPatch,
-    type ExtensionCreditPaymentCloseInput,
     type ExtensionEntityType,
     type ExtensionLinkedPayment,
     type ExtensionMappedBatch,
@@ -147,6 +146,23 @@ export {
 } from "./sync/runInProcessSync";
 
 export {
+    CLEAR_BEFORE_IMPORT_BATCH_SIZE,
+    CLEAR_BEFORE_IMPORT_ENTITIES,
+    clearBeforeImport,
+    parseClearBeforeImport,
+    parseCustomerIdForClearBeforeImport,
+    parseCustomerNumberForClearBeforeImport,
+    resolveAccountCustomerById,
+    resolveAccountCustomerByNumber,
+    resolveClearBeforeImportTargets,
+    type ClearBeforeImportDeletedCounts,
+    type ClearBeforeImportEntity,
+    type ClearBeforeImportOptions,
+    type ClearBeforeImportProgress,
+    type ClearBeforeImportResult,
+} from "./purge/clearBeforeImport";
+
+export {
     BILLING_CONNECTOR_SYNC_SOURCE,
     createBillingConnectorMetricsSinkFromProm,
     emitBillingConnectorSyncFinish,
@@ -189,6 +205,7 @@ export {
 } from "./services/billingConnectorEntitySets";
 
 export {
+    compileRuntimeCustomerNumberOData,
     listChangedPullFilterEntities,
     mergePullFiltersPatch,
     pullFiltersToPrismaJson,
@@ -202,6 +219,7 @@ export {
     AR_REPLAY_ENTITY_STATS_KEY,
     LIVE_REFRESH_ENTITY_STATS_KEY,
     MATURITY_ENTITY_STATS_KEY,
+    PURGE_ENTITY_STATS_KEY,
     POST_INGEST_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
@@ -220,6 +238,17 @@ export {
     requestConnectorSyncCancel,
     isConnectorSyncCancelRequested,
 } from "./sync/connectorSyncCancelRegistry";
+
+export {
+    cancelInProcessSyncRun,
+    createInProcessSyncHistoryStub,
+    listDurableSyncHistoryRuns,
+    listMergedInProcessSyncRuns,
+    registerAcceptedInProcessSync,
+    runAcceptedInProcessSync,
+    type RegisterAcceptedInProcessSyncParams,
+    type RunAcceptedInProcessSyncParams,
+} from "./sync/inProcessSyncLifecycle";
 
 export {
     runStagedExtensionSync,

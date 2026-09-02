@@ -41,7 +41,7 @@ export function andODataFilters(
     return cleaned.map((part) => `(${part})`).join(" and ");
 }
 
-function escapeODataStringLiteral(value: string): string {
+export function escapeODataStringLiteral(value: string): string {
     return `'${value.replace(/'/g, "''")}'`;
 }
 

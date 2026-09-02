@@ -11,5 +11,7 @@ export interface InvoicePaymentInput {
     reference: string;
     _rawRecord?: Record<string, unknown>;
 }
+/** Avoid String(null) → "null"; fall back to Priority CUSTNAME on the ERP row. */
+export declare function resolvePaymentCustomerNumber(record: Record<string, unknown>, rawErpRow?: Record<string, unknown>): string;
 export declare function normalizePaymentInput(record: Record<string, unknown>): InvoicePaymentInput;
 export declare function toPaymentInput(row: Record<string, unknown>, accountId: number): InvoicePaymentInput;

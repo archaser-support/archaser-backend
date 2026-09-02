@@ -915,7 +915,10 @@ async function importMappedEntityBatch(prisma, importType, records, accountId, m
         return importInvoiceBatch(prisma, rows, accountId, userId, options);
     }
     const payments = rows.map((row) => (0, normalizePaymentInput_1.toPaymentInput)(row, accountId));
-    const paymentResults = await (0, importPaymentService_1.importPayments)(prisma, payments, accountId, userId, { extension: options?.extension });
+    const paymentResults = await (0, importPaymentService_1.importPayments)(prisma, payments, accountId, userId, {
+        extension: options?.extension,
+        shouldCancel: options?.shouldCancel,
+    });
     result.rowResults = paymentResults.map((paymentResult) => ({
         index: paymentResult.index,
         success: paymentResult.success,
