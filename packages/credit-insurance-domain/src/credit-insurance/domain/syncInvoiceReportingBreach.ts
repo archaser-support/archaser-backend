@@ -191,46 +191,79 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
 /**
  * Recompute target_reporting_date and target_mep_date from invoice due_date and
  * Customer.reporting_days / max_allowed_mep (same as import / refreshInsuranceFields).
+ *
+ * Processes invoices in chunks with limited concurrency so large backfills do
+ * not sit on sequential awaits, and optional onProgress can drive a sync tail step.
  */
 export async function refreshInsuranceTargetDatesForInvoiceIds(
     invoiceIds: number[],
-    db: DbClient = prisma
+    db: DbClient = prisma,
+    options?: {
+        onProgress?: (progress: {
+            processed: number;
+            total: number;
+        }) => void;
+        /** Invoice ids loaded/updated per outer chunk (default 200). */
+        chunkSize?: number;
+        /** Concurrent invoice updates within a chunk (default 25). */
+        concurrency?: number;
+    }
 ): Promise<number> {
-    if (invoiceIds.length === 0) {
-        return 0;
-    }
-    const rows = await db.invoice.findMany({
-        where: { id: { in: invoiceIds } },
-        select: {
-            id: true,
-            amount: true,
-            invoice_date: true,
-            due_date: true,
-            target_reporting_date: true,
-            target_mep_date: true,
-            customer_id: true,
-        },
-    });
-    const customerIds = Array.from(
-        new Set(
-            rows
-                .map((r) => r.customer_id)
-                .filter((id): id is number => id != null)
-        )
+    const uniqueIds = Array.from(
+        new Set(invoiceIds.filter((id) => Number.isFinite(id) && id > 0))
     );
-    if (customerIds.length === 0) {
+    if (uniqueIds.length === 0) {
         return 0;
     }
-    const customerById = await loadEffectiveInsuranceForCustomers(customerIds);
 
+    const chunkSize = Math.max(1, options?.chunkSize ?? 200);
+    const concurrency = Math.max(1, options?.concurrency ?? 25);
+    const total = uniqueIds.length;
+    let processed = 0;
     let updated = 0;
-    for (const inv of rows) {
-        if (inv.customer_id == null) {
-            continue;
-        }
-        const c = customerById.get(inv.customer_id);
-        const { target_reporting_date: nextReporting, target_mep_date: nextMep } =
-            computeInsuranceTargetDates({
+
+    options?.onProgress?.({ processed: 0, total });
+
+    for (let offset = 0; offset < uniqueIds.length; offset += chunkSize) {
+        const idChunk = uniqueIds.slice(offset, offset + chunkSize);
+        const rows = await db.invoice.findMany({
+            where: { id: { in: idChunk } },
+            select: {
+                id: true,
+                amount: true,
+                invoice_date: true,
+                due_date: true,
+                target_reporting_date: true,
+                target_mep_date: true,
+                customer_id: true,
+            },
+        });
+        const customerIds = Array.from(
+            new Set(
+                rows
+                    .map((r) => r.customer_id)
+                    .filter((id): id is number => id != null)
+            )
+        );
+        const customerById = await loadEffectiveInsuranceForCustomers(
+            customerIds
+        );
+
+        const pendingUpdates: Array<{
+            id: number;
+            target_reporting_date: Date | null;
+            target_mep_date: Date | null;
+        }> = [];
+
+        for (const inv of rows) {
+            if (inv.customer_id == null) {
+                continue;
+            }
+            const c = customerById.get(inv.customer_id);
+            const {
+                target_reporting_date: nextReporting,
+                target_mep_date: nextMep,
+            } = computeInsuranceTargetDates({
                 amount: inv.amount,
                 due_date: inv.due_date,
                 invoice_date: inv.invoice_date,
@@ -246,27 +279,45 @@ export async function refreshInsuranceTargetDatesForInvoiceIds(
                         c?.reporting_substitute_day_of_month ?? null,
                 },
             });
-        const reportingChanged = !datesEqualCalendarUtc(
-            inv.target_reporting_date,
-            nextReporting
-        );
-        const mepChanged = !datesEqualCalendarUtc(
-            inv.target_mep_date,
-            nextMep
-        );
-        if (!reportingChanged && !mepChanged) {
-            continue;
-        }
-        // Date-only refresh: update targets only — do not clear reporting_breach.
-        await db.invoice.update({
-            where: { id: inv.id },
-            data: {
+            const reportingChanged = !datesEqualCalendarUtc(
+                inv.target_reporting_date,
+                nextReporting
+            );
+            const mepChanged = !datesEqualCalendarUtc(
+                inv.target_mep_date,
+                nextMep
+            );
+            if (!reportingChanged && !mepChanged) {
+                continue;
+            }
+            pendingUpdates.push({
+                id: inv.id,
                 target_reporting_date: nextReporting,
                 target_mep_date: nextMep,
-            },
-        });
-        updated += 1;
+            });
+        }
+
+        for (let i = 0; i < pendingUpdates.length; i += concurrency) {
+            const batch = pendingUpdates.slice(i, i + concurrency);
+            await Promise.all(
+                batch.map((row) =>
+                    // Date-only refresh: update targets only — do not clear reporting_breach.
+                    db.invoice.update({
+                        where: { id: row.id },
+                        data: {
+                            target_reporting_date: row.target_reporting_date,
+                            target_mep_date: row.target_mep_date,
+                        },
+                    })
+                )
+            );
+            updated += batch.length;
+        }
+
+        processed = Math.min(offset + idChunk.length, total);
+        options?.onProgress?.({ processed, total });
     }
+
     return updated;
 }
 

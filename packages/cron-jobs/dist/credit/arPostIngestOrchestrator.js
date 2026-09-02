@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.LIVE_REFRESH_CUSTOMER_CONCURRENCY = void 0;
 exports.defaultAccountHasCreditInsurance = defaultAccountHasCreditInsurance;
 exports.createDefaultArPostIngestDeps = createDefaultArPostIngestDeps;
 exports.runArPostIngestForCustomers = runArPostIngestForCustomers;
@@ -53,6 +54,25 @@ const billing_connector_1 = require("@archaser/billing-connector");
 const credit_insurance_domain_1 = require("@archaser/credit-insurance-domain");
 const handleOverdueInvoices_1 = require("../handleOverdueInvoices");
 const importArReplayService_1 = require("./importArReplayService");
+/** Concurrent live-refresh customers (same idea as CTV / insurance-date pools). */
+exports.LIVE_REFRESH_CUSTOMER_CONCURRENCY = 8;
+async function runWithConcurrency(items, limit, fn) {
+    if (items.length === 0) {
+        return;
+    }
+    let cursor = 0;
+    async function worker() {
+        for (;;) {
+            const i = cursor++;
+            if (i >= items.length) {
+                return;
+            }
+            await fn(items[i]);
+        }
+    }
+    const workerCount = Math.min(Math.max(1, limit), items.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+}
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -106,7 +126,8 @@ function createDefaultArPostIngestDeps() {
  * Run post-ingest AR refresh for affected customers.
  * Process Overdue runs for every account; replay / maturity / live refresh
  * (and in-orchestrator as-of) remain credit-insurance-gated.
- * Customers are processed one at a time for replay and live refresh.
+ * Customers are processed one at a time for replay. Live refresh runs a
+ * bounded worker pool across customers (see {@link LIVE_REFRESH_CUSTOMER_CONCURRENCY}).
  * Process Overdue runs once per batch of touched customers.
  */
 async function runArPostIngestForCustomers(options, deps = createDefaultArPostIngestDeps()) {
@@ -254,7 +275,7 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
     }
     // --- Credit-insurance-gated: live refresh + as-of ---
     if (hasCreditInsurance && options.runLiveRefresh) {
-        for (const customerId of customerIds) {
+        await runWithConcurrency(customerIds, exports.LIVE_REFRESH_CUSTOMER_CONCURRENCY, async (customerId) => {
             try {
                 await deps.liveRefreshCustomer(customerId, options.liveRefreshAsOf, invoiceIdsByCustomer.get(customerId));
             }
@@ -275,7 +296,7 @@ async function runArPostIngestForCustomers(options, deps = createDefaultArPostIn
                 });
             }
             advanceProgress("live_refresh", customerId);
-        }
+        });
     }
     if (hasCreditInsurance && options.enqueueAsOfRewrite) {
         const asOf = options.asOfRewrite;

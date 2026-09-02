@@ -17,13 +17,23 @@ function resolveCustomersDomainRoot(): string {
     return path.resolve(__dirname, "../../../api/dist/customers");
 }
 
+export type RecalculateCustomerAmountsHostOptions = {
+    onProgress?: (progress: {
+        processed: number;
+        total: number;
+    }) => void;
+    concurrency?: number;
+    progressEvery?: number;
+};
+
 /**
  * Default post-ingest rollup refresh used when the host does not pass
  * onCustomerBalancesFinal (queue worker, scheduled sync, internal inline).
  */
 export async function recalculateCustomerAmountsViaHost(
     customerIds: number[],
-    prisma: PrismaClient
+    prisma: PrismaClient,
+    options?: RecalculateCustomerAmountsHostOptions
 ): Promise<void> {
     if (customerIds.length === 0) {
         return;
@@ -36,8 +46,9 @@ export async function recalculateCustomerAmountsViaHost(
     const mod = require(full) as {
         recalculateCustomerAmounts: (
             ids: number[],
-            db: PrismaClient
+            db: PrismaClient,
+            opts?: RecalculateCustomerAmountsHostOptions
         ) => Promise<unknown>;
     };
-    await mod.recalculateCustomerAmounts(customerIds, prisma);
+    await mod.recalculateCustomerAmounts(customerIds, prisma, options);
 }

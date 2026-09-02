@@ -54,12 +54,12 @@ function resolveCustomersDomainRoot() {
  * Default post-ingest rollup refresh used when the host does not pass
  * onCustomerBalancesFinal (queue worker, scheduled sync, internal inline).
  */
-async function recalculateCustomerAmountsViaHost(customerIds, prisma) {
+async function recalculateCustomerAmountsViaHost(customerIds, prisma, options) {
     if (customerIds.length === 0) {
         return;
     }
     const full = path.join(resolveCustomersDomainRoot(), "domain/recalculateCustomerAmounts.js");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require(full);
-    await mod.recalculateCustomerAmounts(customerIds, prisma);
+    await mod.recalculateCustomerAmounts(customerIds, prisma, options);
 }
