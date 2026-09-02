@@ -3,7 +3,7 @@ import {
     clearRunningSync,
     getRunningSync,
     listSyncRuns,
-    patchSyncRunEntityStats,
+    patchSyncRunProgress,
     registerRunningSync,
     upsertSyncRun,
     type ConnectorSyncRunSummary,
@@ -129,14 +129,14 @@ export async function runAcceptedInProcessSync(
             executionId,
             mode,
             onLog,
-            onProgress: (entityStats) => {
-                patchSyncRunEntityStats(
+            onProgress: (patch) => {
+                patchSyncRunProgress(
                     accountId,
                     executionId,
-                    entityStats,
+                    patch,
                     runningSummary
                 );
-                void heartbeat(entityStats);
+                void heartbeat(patch.entity_stats);
             },
             ...runOptions,
         });
@@ -363,9 +363,12 @@ export async function listMergedInProcessSyncRuns(
             ) {
                 continue;
             }
+            // Prefer in-memory live progress over Mongo. Heartbeats only flush
+            // entity_stats about every 60s, so Mongo-first merge made the panel
+            // show stale/zero counts (e.g. "0 processed") while a tail step ran.
             byId.set(run.id, {
-                ...(existing ?? run),
                 ...run,
+                ...(existing ?? {}),
                 cutover_options:
                     existing?.cutover_options ?? run.cutover_options,
                 cutover_summary:
