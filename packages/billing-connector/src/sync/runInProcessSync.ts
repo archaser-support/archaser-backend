@@ -23,10 +23,16 @@ import { PRIORITY_RATE_LIMITS } from "../priority/priorityApiContract";
 import { odataSelectFieldsFromMapping } from "../priority/prioritySelectFields";
 import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
 import { resolveImportPullFilterOData } from "../services/billingConnectorPullFilters";
+import {
+    clearBeforeImport,
+    parseCustomerIdForClearBeforeImport,
+    resolveAccountCustomerById,
+    type ClearBeforeImportEntity,
+} from "../purge/clearBeforeImport";
 import { isConnectorSyncCancelRequested } from "./connectorSyncCancelRegistry";
 import {
     BALANCES_ENTITY_STATS_KEY,
-    POST_INGEST_ENTITY_STATS_KEY,
+    PROCESS_OVERDUE_ENTITY_STATS_KEY,
     entityStatsFromCounts,
     type ConnectorEntityStats,
     type ConnectorSyncCounts,
@@ -41,10 +47,14 @@ import {
 } from "./stagedExtensionSync";
 import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
 import {
-    invokeConnectorArPostIngest,
     type ArPostIngestHostFn,
     type ConnectorPostIngestDeferOptions,
 } from "../credit/arPostIngestHost";
+import { runInlineArPostIngestTailSteps } from "./arPostIngestTailSteps";
+import {
+    runProcessOverdueTailStep,
+    type ProcessOverdueCustomersFn,
+} from "./processOverdueTailStep";
 import {
     emitBillingConnectorSyncFinish,
     emitBillingConnectorSyncStart,
@@ -62,6 +72,16 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
     /** In-process cancel / sync-run id (API cancel endpoint). */
     executionId?: string;
     mode?: "backfill" | "incremental";
+    /**
+     * Start backfill only: entities to purge before ERP pull/import.
+     * Ignored for incremental, preview/dryRun, and when the host omits them on Resume.
+     */
+    clearBeforeImport?: ClearBeforeImportEntity[];
+    /**
+     * Start backfill only: optional Archaser customer_id scope for purge + pull.
+     * Ignored for incremental, preview/dryRun, and Resume (host must omit).
+     */
+    customerId?: number | null;
     /** Override window plan (multi-window backfills / tests). */
     windows?: ExtensionSyncWindow[];
     /** Injected provider (skips live Priority client construction). */
@@ -88,8 +108,15 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
      * refresh, as-of enqueue). Nest wires runArPostIngestForCustomers.
      */
     onArPostIngest?: ArPostIngestHostFn;
+    /**
+     * One batched Process Overdue pass for touched customers before AR
+     * post-ingest. Nest wires handleOverdueInvoices.
+     */
+    onProcessOverdueCustomers?: ProcessOverdueCustomersFn;
     /** Structured Loki JSON + Prometheus counters (start / finish / errors). */
     observability?: BillingConnectorObservabilityOptions;
+    /** Account MEP breach start date — narrows AR replay event load when set. */
+    mepBreachStartDate?: Date | null;
 }
 
 type SyncObsRuntime = {
@@ -118,6 +145,8 @@ export interface RunInProcessSyncResult {
     message: string;
     error?: string;
     cancelled?: boolean;
+    /** True when post-import was enqueued for worker drain (Mongo stays RUNNING). */
+    postIngestDeferred?: boolean;
     entity_stats?: Record<
         string,
         { pulled: number; success: number; failed: number; skipped: number }
@@ -344,56 +373,44 @@ async function runInProcessSyncBody(
         stats.tailSteps = { ...(stats.tailSteps ?? {}), [key]: state };
         emitProgress(options.onProgress, stats);
     };
-    /** Wraps post-ingest so the UI shows it instead of freezing on the last entity. */
-    const runPostIngestWithProgress = async (args: {
+    /** Inline Process Overdue → AR replay → insurance refresh for the progress panel. */
+    const runArTailWithProgress = async (args: {
         customerIds: number[];
         invoiceEntityIds: number[];
         paymentEntityIds: number[];
         runMaturity: boolean;
+        mepBreachStartDate?: Date | null;
     }): Promise<void> => {
-        setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-            status: "running",
-            total: args.customerIds.length,
-        });
-        try {
-            const postIngest = await invokeConnectorArPostIngest({
-                accountId,
+        // Nest wires onProcessOverdueCustomers as its own step; skip overdue inside
+        // runInlineArPostIngestTailSteps (separateOverdueStep) and run it here first.
+        if (
+            options.onProcessOverdueCustomers &&
+            args.customerIds.length > 0
+        ) {
+            await runProcessOverdueTailStep({
                 customerIds: args.customerIds,
-                invoiceEntityIds: args.invoiceEntityIds,
-                paymentEntityIds: args.paymentEntityIds,
-                prisma,
-                onArPostIngest: options.onArPostIngest,
+                onProcessOverdueCustomers: options.onProcessOverdueCustomers,
                 log,
-                runMaturity: args.runMaturity,
-                deferPostIngest: options.deferPostIngest,
-                enqueueDeferredSteps: options.enqueueDeferredSteps,
-                schedulePostIngestDrain: options.schedulePostIngestDrain,
-                onProgress: ({ completed, total, step, detail }) => {
-                    setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-                        status: "running",
-                        processed: completed,
-                        total,
-                        ...(step
-                            ? { detail: { step, ...(detail ?? {}) } }
-                            : {}),
-                    });
-                },
-            });
-            setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-                status: postIngest.deferred ? "queued" : "done",
-                processed: args.customerIds.length,
-                total: args.customerIds.length,
-            });
-        } catch (error) {
-            setTailStep(POST_INGEST_ENTITY_STATS_KEY, {
-                status: "failed",
-                total: args.customerIds.length,
-                error:
-                    error instanceof Error
-                        ? error.message
-                        : "AR post-ingest failed",
+                setTailStep: (state) =>
+                    setTailStep(PROCESS_OVERDUE_ENTITY_STATS_KEY, state),
             });
         }
+        await runInlineArPostIngestTailSteps({
+            accountId,
+            customerIds: args.customerIds,
+            invoiceEntityIds: args.invoiceEntityIds,
+            paymentEntityIds: args.paymentEntityIds,
+            mepBreachStartDate: args.mepBreachStartDate,
+            prisma,
+            onArPostIngest: options.onArPostIngest,
+            log,
+            setTailStep,
+            separateOverdueStep: Boolean(options.onProcessOverdueCustomers),
+            onProcessOverdueCustomers: options.onProcessOverdueCustomers,
+            runMaturity: args.runMaturity,
+            importType:
+                args.invoiceEntityIds.length > 0 ? "Invoice" : "Payment",
+        });
     };
 
     try {
@@ -453,6 +470,149 @@ async function runInProcessSyncBody(
                 extensionKey ? `; extension ${extensionKey}` : ""
             })`
         );
+
+        const clearRequested =
+            !dryRun &&
+            options.mode === "backfill" &&
+            Array.isArray(options.clearBeforeImport) &&
+            options.clearBeforeImport.length > 0
+                ? options.clearBeforeImport
+                : [];
+        const scopedCustomerId =
+            !dryRun && options.mode === "backfill"
+                ? parseCustomerIdForClearBeforeImport(options.customerId)
+                : null;
+        let runtimeCustomerNumber: string | null = null;
+        let clearCustomerId: number | null = null;
+        if (scopedCustomerId != null) {
+            const customer = await resolveAccountCustomerById({
+                prisma,
+                accountId,
+                customerId: scopedCustomerId,
+            });
+            if (!customer) {
+                return {
+                    ok: false,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    message: `Customer not found: id ${scopedCustomerId}`,
+                    error: "CUSTOMER_NOT_FOUND",
+                };
+            }
+            clearCustomerId = customer.id;
+            // Post-map pull filter uses Archaser customer_number for this id.
+            runtimeCustomerNumber = customer.customer_number;
+            log(
+                `Customer scope for this Start: id=${customer.id} number=${customer.customer_number}`
+            );
+        }
+        if (clearRequested.length > 0) {
+            log(
+                `Clear before import: ${clearRequested.join(", ")} (enabled ∩ requested)`
+            );
+            const applyDeletedCounts = (
+                deleted: Partial<
+                    Record<ClearBeforeImportEntity, number | undefined>
+                >
+            ) => {
+                if (deleted.Customer != null) {
+                    stats.customersDeleted = deleted.Customer;
+                }
+                if (deleted.Contact != null) {
+                    stats.contactsDeleted = deleted.Contact;
+                }
+                if (deleted.Invoice != null) {
+                    stats.invoicesDeleted = deleted.Invoice;
+                }
+                if (deleted.Payment != null) {
+                    stats.paymentsDeleted = deleted.Payment;
+                }
+            };
+            stats.purgeStatus = "running";
+            stats.purgeDetail = { step: "deleting", processed: 0 };
+            emitProgress(options.onProgress, stats);
+            let purgeResult: Awaited<ReturnType<typeof clearBeforeImport>>;
+            try {
+                purgeResult = await clearBeforeImport({
+                    prisma,
+                    accountId,
+                    entities: clearRequested,
+                    enabledEntities: enabled,
+                    customerId: clearCustomerId,
+                    shouldCancel: () => isCancelRequested(options),
+                    onProgress: (progress) => {
+                        applyDeletedCounts(progress.deleted);
+                        if (progress.total != null) {
+                            stats.purgeTotal = progress.total;
+                        }
+                        const deletedSoFar =
+                            (stats.customersDeleted ?? 0) +
+                            (stats.contactsDeleted ?? 0) +
+                            (stats.invoicesDeleted ?? 0) +
+                            (stats.paymentsDeleted ?? 0);
+                        stats.purgeStatus = "running";
+                        stats.purgeDetail = {
+                            step: progress.currentEntity
+                                ? `deleting_${progress.currentEntity.toLowerCase()}`
+                                : "deleting",
+                            processed: deletedSoFar,
+                            total: stats.purgeTotal,
+                        };
+                        emitProgress(options.onProgress, stats);
+                    },
+                });
+            } catch (err) {
+                const message =
+                    err instanceof Error
+                        ? err.message
+                        : "Clear before import failed";
+                log(`Clear before import failed: ${message}`);
+                stats.purgeStatus = "cancelled";
+                emitProgress(options.onProgress, stats);
+                return {
+                    ok: false,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    message,
+                    error: "CLEAR_BEFORE_IMPORT_FAILED",
+                };
+            }
+            applyDeletedCounts(purgeResult.deleted);
+            if (purgeResult.deleted.Customer != null) {
+                log(
+                    `Cleared ${purgeResult.deleted.Customer} Customer row(s)`
+                );
+            }
+            if (purgeResult.deleted.Contact != null) {
+                log(`Cleared ${purgeResult.deleted.Contact} Contact row(s)`);
+            }
+            if (purgeResult.deleted.Invoice != null) {
+                log(`Cleared ${purgeResult.deleted.Invoice} Invoice row(s)`);
+            }
+            if (purgeResult.deleted.Payment != null) {
+                log(
+                    `Cleared ${purgeResult.deleted.Payment} InvoicePayment row(s)`
+                );
+            }
+            if (purgeResult.cancelled) {
+                stats.purgeStatus = "cancelled";
+                emitProgress(options.onProgress, stats);
+                log("Stopped by operator during clear before import");
+                return {
+                    ok: true,
+                    cancelled: true,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    message: "Stopped by operator during clear before import",
+                };
+            }
+            stats.purgeStatus = "done";
+            stats.purgeDetail = { step: "deleting" };
+            emitProgress(options.onProgress, stats);
+        }
 
         // Fail fast at sync start — never silently fall back to legacy path.
         let extension: BillingAccountExtension | undefined;
@@ -639,17 +799,44 @@ async function runInProcessSyncBody(
                 skipReportingBreach,
                 importBatch,
                 onLog,
-                onProgress: (liveStats) =>
-                    emitProgress(options.onProgress, liveStats),
+                onProgress: (liveStats) => {
+                    if (stats.customersDeleted != null) {
+                        liveStats.customersDeleted = stats.customersDeleted;
+                    }
+                    if (stats.contactsDeleted != null) {
+                        liveStats.contactsDeleted = stats.contactsDeleted;
+                    }
+                    if (stats.invoicesDeleted != null) {
+                        liveStats.invoicesDeleted = stats.invoicesDeleted;
+                    }
+                    if (stats.paymentsDeleted != null) {
+                        liveStats.paymentsDeleted = stats.paymentsDeleted;
+                    }
+                    if (stats.purgeTotal != null) {
+                        liveStats.purgeTotal = stats.purgeTotal;
+                    }
+                    if (stats.purgeStatus) {
+                        liveStats.purgeStatus = stats.purgeStatus;
+                        if (stats.purgeDetail) {
+                            liveStats.purgeDetail = stats.purgeDetail;
+                        }
+                    }
+                    emitProgress(options.onProgress, liveStats);
+                },
                 shouldCancel: () => isCancelRequested(options),
                 onCustomerBalancesFinal: options.onCustomerBalancesFinal,
                 onArPostIngest: options.onArPostIngest,
+                onProcessOverdueCustomers: options.onProcessOverdueCustomers,
                 deferPostIngest: options.deferPostIngest,
                 enqueueDeferredSteps: options.enqueueDeferredSteps,
                 schedulePostIngestDrain: options.schedulePostIngestDrain,
+                mepBreachStartDate:
+                    options.mepBreachStartDate ??
+                    connector.mep_breach_start_date,
                 pullCreatedOnOrAfter:
                     !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,
+                runtimeCustomerNumber,
                 entitySets: connector.entity_sets,
                 dateFieldByType,
                 overlapMinutes: connector.sync_overlap_minutes,
@@ -672,12 +859,41 @@ async function runInProcessSyncBody(
                     : `Sync failed: ${staged.error ?? finishMessage}`
             );
 
+            // Preserve clear-before-import deleted counts (staged starts empty).
+            const mergedStats: ConnectorSyncCounts = {
+                ...staged.stats,
+                ...(stats.customersDeleted != null
+                    ? { customersDeleted: stats.customersDeleted }
+                    : {}),
+                ...(stats.contactsDeleted != null
+                    ? { contactsDeleted: stats.contactsDeleted }
+                    : {}),
+                ...(stats.invoicesDeleted != null
+                    ? { invoicesDeleted: stats.invoicesDeleted }
+                    : {}),
+                ...(stats.paymentsDeleted != null
+                    ? { paymentsDeleted: stats.paymentsDeleted }
+                    : {}),
+                ...(stats.purgeTotal != null
+                    ? { purgeTotal: stats.purgeTotal }
+                    : {}),
+                ...(stats.purgeStatus
+                    ? {
+                          purgeStatus: stats.purgeStatus,
+                          ...(stats.purgeDetail
+                              ? { purgeDetail: stats.purgeDetail }
+                              : {}),
+                      }
+                    : {}),
+            };
+
             return {
                 ok: staged.ok,
                 cancelled: staged.cancelled,
+                postIngestDeferred: staged.postIngestDeferred,
                 accountId,
                 provider: connector.provider,
-                stats: staged.stats,
+                stats: mergedStats,
                 extension_key: extensionKey,
                 dry_run: dryRun,
                 preview_batch: staged.previewBatch,
@@ -844,11 +1060,14 @@ async function runInProcessSyncBody(
 
                 if (entityType === "Invoice") {
                     invoicePostIngestRan = true;
-                    await runPostIngestWithProgress({
+                    await runArTailWithProgress({
                         customerIds: Array.from(arAffectedCustomerIds),
                         invoiceEntityIds: Array.from(arAffectedInvoiceIds),
                         paymentEntityIds: Array.from(arAffectedPaymentIds),
                         runMaturity: false,
+                        mepBreachStartDate:
+                            options.mepBreachStartDate ??
+                            connector.mep_breach_start_date,
                     });
                 }
 
@@ -917,11 +1136,14 @@ async function runInProcessSyncBody(
             !invoicePostIngestRan &&
             paymentAffectedCustomerIds.size > 0
         ) {
-            await runPostIngestWithProgress({
+            await runArTailWithProgress({
                 customerIds: Array.from(paymentAffectedCustomerIds),
                 invoiceEntityIds: [],
                 paymentEntityIds: Array.from(arAffectedPaymentIds),
                 runMaturity: true,
+                mepBreachStartDate:
+                    options.mepBreachStartDate ??
+                    connector.mep_breach_start_date,
             });
         }
 
@@ -945,6 +1167,7 @@ async function runInProcessSyncBody(
 
         return {
             ok: stats.importErrors === 0,
+            postIngestDeferred: false,
             accountId,
             provider: connector.provider,
             stats,

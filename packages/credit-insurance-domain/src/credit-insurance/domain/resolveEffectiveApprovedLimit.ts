@@ -110,18 +110,143 @@ function convertAmount(
     return { converted: amount * rate.currency_ratio, missingRate: false };
 }
 
+type ResolveTopUpOptions = {
+    baseApprovedLimit?: Prisma.Decimal | null;
+    baseApprovedLimitCurrency?: string | null;
+    outdatedDcl?: boolean;
+    excludedFromPolicy?: boolean;
+    /** When set, only top-ups linked to this primary policy count (D10). */
+    parentPrimaryPolicyId?: number;
+    dbClient?: DbClient;
+};
+
+const TOP_UP_SELECT = {
+    id: true,
+    top_up_type: true,
+    top_up_value: true,
+    currency: true,
+    start_date: true,
+    end_date: true,
+    cancelled_at: true,
+    InsurancePolicy: {
+        select: {
+            id: true,
+            allow_concurrent_top_ups: true,
+            parent_insurance_policy_id: true,
+        },
+    },
+} as const;
+
+async function resolveTopUpsFromRows(
+    rows: TopUpRowForResolution[],
+    asOfDate: Date,
+    baseLimit: Prisma.Decimal,
+    baseCurrency: string | null,
+    parentPrimaryPolicyId: number | undefined,
+    rateCache: Map<
+        string,
+        { currency_ratio: number; base_currency: string; other_currency: string } | null
+    >
+): Promise<{
+    topUpByPolicy: ResolvedTopUpByPolicy[];
+    topUpTotalInLimitCurrency: number;
+    missingRate: boolean;
+}> {
+    const byPolicy = new Map<
+        number,
+        TopUpRowForResolution["InsurancePolicy"] & { rows: TopUpRowForResolution[] }
+    >();
+
+    for (const row of rows) {
+        if (!isActiveTopUp(row, asOfDate)) {
+            continue;
+        }
+        const parentId = row.InsurancePolicy.parent_insurance_policy_id;
+        if (parentPrimaryPolicyId != null && parentId !== parentPrimaryPolicyId) {
+            continue;
+        }
+        const policyId = row.InsurancePolicy.id;
+        let bucket = byPolicy.get(policyId);
+        if (!bucket) {
+            bucket = {
+                id: policyId,
+                allow_concurrent_top_ups: row.InsurancePolicy.allow_concurrent_top_ups,
+                parent_insurance_policy_id: row.InsurancePolicy.parent_insurance_policy_id,
+                rows: [],
+            };
+            byPolicy.set(policyId, bucket);
+        }
+        bucket.rows.push(row);
+    }
+
+    let topUpTotalInLimitCurrency = 0;
+    let missingRate = false;
+    const topUpByPolicy: ResolvedTopUpByPolicy[] = [];
+
+    for (const [, bucket] of Array.from(byPolicy)) {
+        const resolvedRows: ResolvedTopUpByPolicy["rows"] = [];
+        let policySubtotal = 0;
+
+        for (const row of bucket.rows) {
+            const resolvedAmount = resolveTopUpMonetaryAmount(row, baseLimit);
+            if (resolvedAmount <= 0) {
+                continue;
+            }
+            resolvedRows.push({
+                id: row.id,
+                topUpType: row.top_up_type as "Fixed" | "Percentage",
+                topUpValue: row.top_up_value,
+                resolvedMonetaryAmount: resolvedAmount,
+                currency: row.currency,
+                startDate: row.start_date,
+                endDate: row.end_date,
+            });
+            policySubtotal += resolvedAmount;
+        }
+
+        const rowCurrency = bucket.rows[0]?.currency || baseCurrency;
+        const from = rowCurrency ?? baseCurrency ?? "USD";
+        const to = baseCurrency ?? "USD";
+        let rate: {
+            currency_ratio: number;
+            base_currency: string;
+            other_currency: string;
+        } | null = null;
+        if (rowCurrency && baseCurrency && rowCurrency !== baseCurrency) {
+            const cacheKey = `${from}->${to}`;
+            if (rateCache.has(cacheKey)) {
+                rate = rateCache.get(cacheKey) ?? null;
+            } else {
+                rate = await fetchCurrencyRate(from, to);
+                rateCache.set(cacheKey, rate);
+            }
+        }
+        const { converted, missingRate: mr } = convertAmount(
+            policySubtotal,
+            from,
+            to,
+            rate
+        );
+        if (mr) {
+            missingRate = true;
+        }
+        topUpTotalInLimitCurrency += converted;
+
+        topUpByPolicy.push({
+            insurancePolicyId: bucket.id,
+            allowConcurrent: bucket.allow_concurrent_top_ups,
+            parentPrimaryPolicyId: bucket.parent_insurance_policy_id,
+            rows: resolvedRows,
+            policySubtotal: converted,
+        });
+    }
+
+    return { topUpByPolicy, topUpTotalInLimitCurrency, missingRate };
+}
+
 export async function resolveEffectiveApprovedLimit(
     customerId: number,
-    options?: {
-        asOfDate?: Date;
-        baseApprovedLimit?: Prisma.Decimal | null;
-        baseApprovedLimitCurrency?: string | null;
-        outdatedDcl?: boolean;
-        excludedFromPolicy?: boolean;
-        /** When set, only top-ups linked to this primary policy count (D10). */
-        parentPrimaryPolicyId?: number;
-        dbClient?: DbClient;
-    },
+    options?: ResolveTopUpOptions & { asOfDate?: Date }
 ): Promise<EffectiveApprovedLimitResult> {
     const asOfDate = options?.asOfDate ?? new Date();
     const asOfUtcDay = startOfUtcDay(asOfDate);
@@ -154,22 +279,7 @@ export async function resolveEffectiveApprovedLimit(
                 policy_kind: "TopUp",
             },
         },
-        select: {
-            id: true,
-            top_up_type: true,
-            top_up_value: true,
-            currency: true,
-            start_date: true,
-            end_date: true,
-            cancelled_at: true,
-            InsurancePolicy: {
-                select: {
-                    id: true,
-                    allow_concurrent_top_ups: true,
-                    parent_insurance_policy_id: true,
-                },
-            },
-        },
+        select: TOP_UP_SELECT,
     });
 
     if (activeTopUps.length === 0) {
@@ -184,89 +294,98 @@ export async function resolveEffectiveApprovedLimit(
         };
     }
 
-    const byPolicy = new Map<number, TopUpRowForResolution["InsurancePolicy"] & { rows: TopUpRowForResolution[] }>();
-
-    for (const row of activeTopUps) {
-        if (!isActiveTopUp(row, asOfDate)) {
-            continue;
-        }
-        const parentId = row.InsurancePolicy.parent_insurance_policy_id;
-        if (options?.parentPrimaryPolicyId != null) {
-            if (parentId !== options.parentPrimaryPolicyId) {
-                continue;
-            }
-        }
-        const policyId = row.InsurancePolicy.id;
-        let bucket = byPolicy.get(policyId);
-        if (!bucket) {
-            bucket = {
-                id: policyId,
-                allow_concurrent_top_ups: row.InsurancePolicy.allow_concurrent_top_ups,
-                parent_insurance_policy_id: row.InsurancePolicy.parent_insurance_policy_id,
-                rows: [],
-            };
-            byPolicy.set(policyId, bucket);
-        }
-        bucket.rows.push(row as TopUpRowForResolution);
-    }
-
-    let topUpTotalInLimitCurrency = 0;
-    let missingRate = false;
-    const topUpByPolicy: ResolvedTopUpByPolicy[] = [];
-
-    for (const [, bucket] of Array.from(byPolicy)) {
-        const resolvedRows: ResolvedTopUpByPolicy["rows"] = [];
-        let policySubtotal = 0;
-
-        for (const row of bucket.rows) {
-            const resolvedAmount = resolveTopUpMonetaryAmount(row, baseLimit);
-            if (resolvedAmount <= 0) {
-                continue;
-            }
-            resolvedRows.push({
-                id: row.id,
-                topUpType: row.top_up_type as "Fixed" | "Percentage",
-                topUpValue: row.top_up_value,
-                resolvedMonetaryAmount: resolvedAmount,
-                currency: row.currency,
-                startDate: row.start_date,
-                endDate: row.end_date,
-            });
-            policySubtotal += resolvedAmount;
-        }
-
-        const rowCurrency = bucket.rows[0]?.currency || baseCurrency;
-        const { converted, missingRate: mr } = convertAmount(
-            policySubtotal,
-            rowCurrency ?? baseCurrency ?? "USD",
-            baseCurrency ?? "USD",
-            rowCurrency && baseCurrency && rowCurrency !== baseCurrency
-                ? await fetchCurrencyRate(rowCurrency, baseCurrency)
-                : null,
-        );
-        if (mr) {
-            missingRate = true;
-        }
-        topUpTotalInLimitCurrency += converted;
-
-        topUpByPolicy.push({
-            insurancePolicyId: bucket.id,
-            allowConcurrent: bucket.allow_concurrent_top_ups,
-            parentPrimaryPolicyId: bucket.parent_insurance_policy_id,
-            rows: resolvedRows,
-            policySubtotal: converted,
-        });
-    }
-
-    const effectiveLimitNum = new Prisma.Decimal(baseLimit).toNumber() + topUpTotalInLimitCurrency;
+    const resolved = await resolveTopUpsFromRows(
+        activeTopUps as TopUpRowForResolution[],
+        asOfDate,
+        baseLimit,
+        baseCurrency,
+        options?.parentPrimaryPolicyId,
+        new Map()
+    );
 
     return {
         baseApprovedLimit: baseLimit,
         baseApprovedLimitCurrency: baseCurrency,
-        topUpByPolicy,
-        topUpTotalInLimitCurrency,
-        effectiveApprovedLimit: effectiveLimitNum,
+        topUpByPolicy: resolved.topUpByPolicy,
+        topUpTotalInLimitCurrency: resolved.topUpTotalInLimitCurrency,
+        effectiveApprovedLimit:
+            new Prisma.Decimal(baseLimit).toNumber() +
+            resolved.topUpTotalInLimitCurrency,
         limitCurrency: baseCurrency,
-        missingRate,
+        missingRate: resolved.missingRate,
     };
+}
+
+/**
+ * Prefetch top-up totals for many as-of dates with one DB load of candidate
+ * top-ups, then resolve each day in memory (shared FX-rate cache).
+ */
+export async function resolveTopUpTotalsForAsOfDates(
+    customerId: number,
+    asOfDates: Date[],
+    options?: ResolveTopUpOptions
+): Promise<Map<number, number>> {
+    const totals = new Map<number, number>();
+    if (asOfDates.length === 0) {
+        return totals;
+    }
+
+    const baseLimit = options?.baseApprovedLimit ?? null;
+    const baseCurrency = options?.baseApprovedLimitCurrency ?? null;
+    const outdatedDcl = options?.outdatedDcl ?? false;
+    const excludedFromPolicy = options?.excludedFromPolicy ?? false;
+    const dbClient = options?.dbClient ?? prisma;
+
+    const utcDays = asOfDates.map(startOfUtcDay);
+    for (const day of utcDays) {
+        totals.set(day.getTime(), 0);
+    }
+
+    if (outdatedDcl || excludedFromPolicy || baseLimit == null) {
+        return totals;
+    }
+
+    let minDay = utcDays[0]!;
+    let maxDay = utcDays[0]!;
+    for (const day of utcDays) {
+        if (day < minDay) minDay = day;
+        if (day > maxDay) maxDay = day;
+    }
+
+    const candidateTopUps = await dbClient.customerTopUp.findMany({
+        where: {
+            customer_id: customerId,
+            cancelled_at: null,
+            start_date: { lte: maxDay },
+            end_date: { gte: minDay },
+            InsurancePolicy: {
+                policy_kind: "TopUp",
+            },
+        },
+        select: TOP_UP_SELECT,
+    });
+
+    if (candidateTopUps.length === 0) {
+        return totals;
+    }
+
+    const rateCache = new Map<
+        string,
+        { currency_ratio: number; base_currency: string; other_currency: string } | null
+    >();
+
+    for (const asOfDate of asOfDates) {
+        const day = startOfUtcDay(asOfDate);
+        const resolved = await resolveTopUpsFromRows(
+            candidateTopUps as TopUpRowForResolution[],
+            asOfDate,
+            baseLimit,
+            baseCurrency,
+            options?.parentPrimaryPolicyId,
+            rateCache
+        );
+        totals.set(day.getTime(), resolved.topUpTotalInLimitCurrency);
+    }
+
+    return totals;
 }

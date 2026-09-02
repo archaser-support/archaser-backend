@@ -6,7 +6,6 @@ import {
 } from "./invoicePaidTolerance";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
-import { commitOps } from "../import/bulkWrite";
 
 export type LinkDeferredPaymentAndRecalcResult = {
     invoicePayment: InvoicePayment;
@@ -22,9 +21,14 @@ export {
 } from "./invoicePaidTolerance";
 
 export type InvoicePaidRecalcOptions = {
-    normalizeNegativePaymentsForCreditClose?: boolean;
     isForcePaidClose?: (payment: ExtensionLinkedPayment) => boolean;
+    /** When set, skips a BillingConnector lookup inside the transaction. */
+    paidTolerance?: number;
 };
+
+/** Default Prisma interactive tx timeout is 5s; replay recalc can exceed that under load. */
+const LINK_PAYMENT_TRANSACTION_TIMEOUT_MS = 30_000;
+const LINK_PAYMENT_TRANSACTION_MAX_WAIT_MS = 10_000;
 
 type LinkedPaymentForRecalc = {
     id: number;
@@ -41,6 +45,26 @@ type InvoiceForPaidRecalc = Pick<
 >;
 
 const RECALC_PROGRESS_CHUNK = 200;
+const BULK_PAYMENT_LINK_CHUNK = 500;
+
+export type BulkDeferredPaymentLink = {
+    paymentId: number;
+    invoiceId: number;
+    /** When set, link also realigns payment amounts to the invoice currency. */
+    amount?: number;
+    customer_amount?: number;
+    customer_currency?: string;
+};
+
+type InvoicePaidRecalcRow = {
+    id: number;
+    total_paid: number;
+    customer_total_paid: number;
+    outstanding_debt: number;
+    customer_outstanding_debt: number;
+    status: Invoice["status"];
+    clearAlerts: boolean;
+};
 
 const LINKED_PAYMENT_RECALC_SELECT = {
     id: true,
@@ -72,6 +96,28 @@ async function resolveForcePaidClose(
     return extension?.isForcePaidClose;
 }
 
+/**
+ * Read-only paid-close settings for an account. Safe to resolve before an
+ * interactive transaction so tolerance/extension lookups do not burn tx time.
+ */
+export async function resolveInvoicePaidRecalcOptions(
+    prisma: Pick<PrismaClient, "billingConnector">,
+    accountId: number,
+    overrides?: InvoicePaidRecalcOptions
+): Promise<InvoicePaidRecalcOptions> {
+    const [isForcePaidClose, paidTolerance] = await Promise.all([
+        resolveForcePaidClose(prisma, accountId, overrides?.isForcePaidClose),
+        overrides?.paidTolerance != null
+            ? Promise.resolve(overrides.paidTolerance)
+            : resolveInvoicePaidTolerance(prisma, accountId),
+    ]);
+    return {
+        ...overrides,
+        isForcePaidClose,
+        paidTolerance,
+    };
+}
+
 function buildInvoicePaidUpdate(
     invoice: InvoiceForPaidRecalc,
     linkedPayments: LinkedPaymentForRecalc[],
@@ -94,23 +140,12 @@ function buildInvoicePaidUpdate(
         };
     }
 
-    const useAbsPaidTotals =
-        options?.normalizeNegativePaymentsForCreditClose === true &&
-        invoice.custom_code1 === "C";
-
     let totalPaid = 0;
     let totalCustomerPaid = 0;
 
-    if (useAbsPaidTotals) {
-        for (const payment of linkedPayments) {
-            totalPaid += Math.abs(payment.amount ?? 0);
-            totalCustomerPaid += Math.abs(payment.customer_amount ?? 0);
-        }
-    } else {
-        for (const payment of linkedPayments) {
-            totalPaid += payment.amount ?? 0;
-            totalCustomerPaid += payment.customer_amount ?? 0;
-        }
+    for (const payment of linkedPayments) {
+        totalPaid += payment.amount ?? 0;
+        totalCustomerPaid += payment.customer_amount ?? 0;
     }
 
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;
@@ -133,6 +168,177 @@ function buildInvoicePaidUpdate(
             reporting_breach: false,
         }),
     };
+}
+
+function toInvoicePaidRecalcRow(
+    invoice: InvoiceForPaidRecalc,
+    linkedPayments: LinkedPaymentForRecalc[],
+    options: InvoicePaidRecalcOptions | undefined,
+    paidTolerance: number
+): InvoicePaidRecalcRow {
+    const update = buildInvoicePaidUpdate(
+        invoice,
+        linkedPayments,
+        options,
+        new Date(),
+        paidTolerance
+    );
+    const status =
+        typeof update.status === "string"
+            ? update.status
+            : invoice.status;
+    return {
+        id: invoice.id,
+        total_paid: update.total_paid as number,
+        customer_total_paid: update.customer_total_paid as number,
+        outstanding_debt: update.outstanding_debt as number,
+        customer_outstanding_debt: update.customer_outstanding_debt as number,
+        status,
+        clearAlerts:
+            update.zero_limit_alert === false &&
+            update.reporting_breach === false,
+    };
+}
+
+async function bulkWriteInvoicePaidRecalcRows(
+    prisma: Pick<PrismaClient, "$executeRaw">,
+    rows: InvoicePaidRecalcRow[],
+    modifiedAt: Date
+): Promise<void> {
+    if (rows.length === 0) {
+        return;
+    }
+    for (let i = 0; i < rows.length; i += RECALC_PROGRESS_CHUNK) {
+        const chunk = rows.slice(i, i + RECALC_PROGRESS_CHUNK);
+        const ids = chunk.map((row) => row.id);
+        const totalPaid = chunk.map((row) => row.total_paid);
+        const customerTotalPaid = chunk.map((row) => row.customer_total_paid);
+        const outstandingDebt = chunk.map((row) => row.outstanding_debt);
+        const customerOutstandingDebt = chunk.map(
+            (row) => row.customer_outstanding_debt
+        );
+        const statuses = chunk.map((row) => row.status);
+        const clearAlerts = chunk.map((row) => row.clearAlerts);
+        await prisma.$executeRaw`
+            UPDATE "Invoice" AS inv
+            SET
+                total_paid = data.total_paid,
+                customer_total_paid = data.customer_total_paid,
+                outstanding_debt = data.outstanding_debt,
+                customer_outstanding_debt = data.customer_outstanding_debt,
+                status = data.status::"invoice_status",
+                modified_at = ${modifiedAt},
+                zero_limit_alert = CASE
+                    WHEN data.clear_alerts THEN false
+                    ELSE inv.zero_limit_alert
+                END,
+                reporting_breach = CASE
+                    WHEN data.clear_alerts THEN false
+                    ELSE inv.reporting_breach
+                END
+            FROM (
+                SELECT
+                    UNNEST(${ids}::int[]) AS id,
+                    UNNEST(${totalPaid}::float8[]) AS total_paid,
+                    UNNEST(${customerTotalPaid}::float8[]) AS customer_total_paid,
+                    UNNEST(${outstandingDebt}::float8[]) AS outstanding_debt,
+                    UNNEST(${customerOutstandingDebt}::float8[]) AS customer_outstanding_debt,
+                    UNNEST(${statuses}::text[]) AS status,
+                    UNNEST(${clearAlerts}::boolean[]) AS clear_alerts
+            ) AS data
+            WHERE inv.id = data.id
+        `;
+    }
+}
+
+/**
+ * Bulk-link deferred payments in chunks via UPDATE … FROM UNNEST. Simple rows
+ * only set invoice_id; aligned rows also rewrite amount/currency columns.
+ */
+export async function bulkLinkDeferredPayments(
+    prisma: PrismaClient,
+    accountId: number,
+    rows: BulkDeferredPaymentLink[],
+    modifiedAt: Date,
+    options?: {
+        onChunkLinked?: (linkedInChunk: number) => void;
+    }
+): Promise<number> {
+    if (rows.length === 0) {
+        return 0;
+    }
+
+    let linked = 0;
+    for (let i = 0; i < rows.length; i += BULK_PAYMENT_LINK_CHUNK) {
+        const chunk = rows.slice(i, i + BULK_PAYMENT_LINK_CHUNK);
+        const simple = chunk.filter(
+            (row) => row.customer_currency === undefined
+        );
+        const aligned = chunk.filter(
+            (row) => row.customer_currency !== undefined
+        );
+        let chunkLinked = 0;
+
+        if (simple.length > 0) {
+            const ids = simple.map((row) => row.paymentId);
+            const invoiceIds = simple.map((row) => row.invoiceId);
+            const result = await prisma.$executeRaw`
+                UPDATE "InvoicePayment" AS p
+                SET
+                    invoice_id = data.invoice_id,
+                    modified_at = ${modifiedAt}
+                FROM (
+                    SELECT
+                        UNNEST(${ids}::int[]) AS id,
+                        UNNEST(${invoiceIds}::int[]) AS invoice_id
+                ) AS data
+                WHERE p.id = data.id
+                  AND p.account_id = ${accountId}
+                  AND p.invoice_id IS NULL
+            `;
+            chunkLinked += Number(result);
+        }
+
+        if (aligned.length > 0) {
+            const ids = aligned.map((row) => row.paymentId);
+            const invoiceIds = aligned.map((row) => row.invoiceId);
+            const amounts = aligned.map((row) => row.amount ?? 0);
+            const customerAmounts = aligned.map(
+                (row) => row.customer_amount ?? 0
+            );
+            const currencies = aligned.map(
+                (row) => row.customer_currency ?? ""
+            );
+            const result = await prisma.$executeRaw`
+                UPDATE "InvoicePayment" AS p
+                SET
+                    invoice_id = data.invoice_id,
+                    amount = data.amount,
+                    customer_amount = data.customer_amount,
+                    customer_currency = data.customer_currency,
+                    modified_at = ${modifiedAt}
+                FROM (
+                    SELECT
+                        UNNEST(${ids}::int[]) AS id,
+                        UNNEST(${invoiceIds}::int[]) AS invoice_id,
+                        UNNEST(${amounts}::float8[]) AS amount,
+                        UNNEST(${customerAmounts}::float8[]) AS customer_amount,
+                        UNNEST(${currencies}::text[]) AS customer_currency
+                ) AS data
+                WHERE p.id = data.id
+                  AND p.account_id = ${accountId}
+                  AND p.invoice_id IS NULL
+            `;
+            chunkLinked += Number(result);
+        }
+
+        linked += chunkLinked;
+        if (chunkLinked > 0) {
+            options?.onChunkLinked?.(chunkLinked);
+        }
+    }
+
+    return linked;
 }
 
 export async function recalculateInvoiceFromLinkedPayments(
@@ -158,10 +364,9 @@ export async function recalculateInvoiceFromLinkedPayments(
         invoice.account_id,
         options?.isForcePaidClose
     );
-    const paidTolerance = await resolveInvoicePaidTolerance(
-        tx,
-        invoice.account_id
-    );
+    const paidTolerance =
+        options?.paidTolerance ??
+        (await resolveInvoicePaidTolerance(tx, invoice.account_id));
 
     return tx.invoice.update({
         where: { id: invoiceId },
@@ -176,8 +381,7 @@ export async function recalculateInvoiceFromLinkedPayments(
 }
 
 /**
- * Recalculate many invoices with two reads and chunked writes instead of
- * three round-trips per invoice.
+ * Recalculate many invoices: two batched reads, in-memory totals, bulk writes.
  */
 export async function recalculateInvoicesFromLinkedPayments(
     prisma: Pick<
@@ -247,43 +451,109 @@ export async function recalculateInvoicesFromLinkedPayments(
     }
 
     const modifiedAt = new Date();
-    const buildUpdate = (invoice: (typeof invoices)[number]) =>
-        prisma.invoice.update({
-            where: { id: invoice.id },
-            data: buildInvoicePaidUpdate(
-                invoice,
-                paymentsByInvoiceId.get(invoice.id) ?? [],
-                {
-                    ...targets.get(invoice.id),
-                    isForcePaidClose: forcePaidByAccount.get(
-                        invoice.account_id
-                    ),
-                },
-                modifiedAt,
-                paidToleranceByAccount.get(invoice.account_id) ??
-                    INVOICE_PAID_TOLERANCE
-            ),
-        });
+    const recalcRows = invoices.map((invoice) =>
+        toInvoicePaidRecalcRow(
+            invoice,
+            paymentsByInvoiceId.get(invoice.id) ?? [],
+            {
+                ...targets.get(invoice.id),
+                isForcePaidClose: forcePaidByAccount.get(invoice.account_id),
+            },
+            paidToleranceByAccount.get(invoice.account_id) ??
+                INVOICE_PAID_TOLERANCE
+        )
+    );
 
     if (!options?.onProgress) {
-        await commitOps(prisma, invoices.map(buildUpdate));
+        await bulkWriteInvoicePaidRecalcRows(
+            prisma as unknown as PrismaClient,
+            recalcRows,
+            modifiedAt
+        );
         return;
     }
 
-    // Sliced so long recalcs can report progress instead of looking frozen.
-    options.onProgress({ processed: 0, total: invoices.length });
+    options.onProgress({ processed: 0, total: recalcRows.length });
     for (
         let offset = 0;
-        offset < invoices.length;
+        offset < recalcRows.length;
         offset += RECALC_PROGRESS_CHUNK
     ) {
-        const chunk = invoices.slice(offset, offset + RECALC_PROGRESS_CHUNK);
-        await commitOps(prisma, chunk.map(buildUpdate));
+        const chunk = recalcRows.slice(offset, offset + RECALC_PROGRESS_CHUNK);
+        await bulkWriteInvoicePaidRecalcRows(
+            prisma as unknown as PrismaClient,
+            chunk,
+            modifiedAt
+        );
         options.onProgress({
-            processed: Math.min(offset + chunk.length, invoices.length),
-            total: invoices.length,
+            processed: Math.min(offset + chunk.length, recalcRows.length),
+            total: recalcRows.length,
         });
     }
+}
+
+/**
+ * Link many deferred payments (`invoice_id` null → target), then recalculate
+ * each affected invoice once via {@link recalculateInvoicesFromLinkedPayments}.
+ */
+export async function linkDeferredPaymentsAndRecalcBatch(
+    prisma: PrismaClient,
+    links: Array<{ invoicePaymentId: number; invoiceId: number }>,
+    recalcOptions?: InvoicePaidRecalcOptions
+): Promise<{ paymentsLinked: number; invoicesRecalculated: number }> {
+    if (links.length === 0) {
+        return { paymentsLinked: 0, invoicesRecalculated: 0 };
+    }
+
+    const paymentIds = links.map((row) => row.invoicePaymentId);
+    const payments = await prisma.invoicePayment.findMany({
+        where: { id: { in: paymentIds } },
+        select: { id: true, invoice_id: true, account_id: true },
+    });
+    const paymentById = new Map(payments.map((p) => [p.id, p]));
+
+    const pending: Array<{ paymentId: number; invoiceId: number }> = [];
+    for (const link of links) {
+        const payment = paymentById.get(link.invoicePaymentId);
+        if (!payment) continue;
+        if (payment.invoice_id === link.invoiceId) continue;
+        if (payment.invoice_id != null) continue;
+        pending.push({
+            paymentId: link.invoicePaymentId,
+            invoiceId: link.invoiceId,
+        });
+    }
+
+    if (pending.length === 0) {
+        return { paymentsLinked: 0, invoicesRecalculated: 0 };
+    }
+
+    const modifiedAt = new Date();
+    const accountId = payments[0]?.account_id;
+    if (accountId == null) {
+        return { paymentsLinked: 0, invoicesRecalculated: 0 };
+    }
+
+    const paymentsLinked = await bulkLinkDeferredPayments(
+        prisma,
+        accountId,
+        pending.map((row) => ({
+            paymentId: row.paymentId,
+            invoiceId: row.invoiceId,
+        })),
+        modifiedAt
+    );
+
+    const targets = new Map<number, InvoicePaidRecalcOptions>();
+    for (const row of pending) {
+        targets.set(row.invoiceId, recalcOptions ?? {});
+    }
+    await recalculateInvoicesFromLinkedPayments(prisma, targets);
+
+    return {
+        paymentsLinked,
+        invoicesRecalculated: targets.size,
+    };
 }
 
 export async function linkDeferredPaymentAndRecalc(
@@ -292,11 +562,29 @@ export async function linkDeferredPaymentAndRecalc(
         invoicePaymentId: number;
         invoiceId: number;
         forceRecalc?: boolean;
+        recalcOptions?: InvoicePaidRecalcOptions;
     }
 ): Promise<LinkDeferredPaymentAndRecalcResult> {
     const { invoicePaymentId, invoiceId, forceRecalc = false } = params;
 
-    return prisma.$transaction(async (tx) => {
+    let recalcOptions = params.recalcOptions;
+    if (recalcOptions?.paidTolerance == null) {
+        const paymentAccount = await prisma.invoicePayment.findUnique({
+            where: { id: invoicePaymentId },
+            select: { account_id: true },
+        });
+        if (!paymentAccount) {
+            throw new Error(`InvoicePayment ${invoicePaymentId} not found`);
+        }
+        recalcOptions = await resolveInvoicePaidRecalcOptions(
+            prisma,
+            paymentAccount.account_id,
+            recalcOptions
+        );
+    }
+
+    return prisma.$transaction(
+        async (tx) => {
         const payment = await tx.invoicePayment.findUnique({
             where: { id: invoicePaymentId },
         });
@@ -322,7 +610,8 @@ export async function linkDeferredPaymentAndRecalc(
 
             const updatedInvoice = await recalculateInvoiceFromLinkedPayments(
                 tx,
-                invoiceId
+                invoiceId,
+                recalcOptions
             );
             return {
                 invoicePayment: payment,
@@ -344,7 +633,8 @@ export async function linkDeferredPaymentAndRecalc(
 
         const updatedInvoice = await recalculateInvoiceFromLinkedPayments(
             tx,
-            invoiceId
+            invoiceId,
+            recalcOptions
         );
 
         return {
@@ -352,5 +642,10 @@ export async function linkDeferredPaymentAndRecalc(
             updatedInvoice,
             alreadyLinked: false,
         };
-    });
+        },
+        {
+            timeout: LINK_PAYMENT_TRANSACTION_TIMEOUT_MS,
+            maxWait: LINK_PAYMENT_TRANSACTION_MAX_WAIT_MS,
+        }
+    );
 }

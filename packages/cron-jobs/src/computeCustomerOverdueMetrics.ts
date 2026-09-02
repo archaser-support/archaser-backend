@@ -6,6 +6,8 @@ import {
     syncCustomerInsuranceFields,
 } from "@archaser/credit-insurance-domain";
 
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
+
 const CUSTOMER_CHUNK = 2000;
 const INVOICE_REPORTING_BREACH_CHUNK = 2000;
 
@@ -38,7 +40,8 @@ function scheduleTimeOnApprovedLimitExpirationDate(expiration: Date): Date {
  */
 export async function computeCustomerOverdueMetrics(
     prisma: PrismaClient,
-    customerIdFilter?: number
+    customerIdFilter?: number,
+    freeze?: CronFrozenAccountGuard
 ): Promise<{
     success: boolean;
     message: string;
@@ -58,6 +61,16 @@ export async function computeCustomerOverdueMetrics(
     const start = Date.now();
     bindCreditInsurancePrisma(prisma);
 
+    const frozenAccountFilter =
+        freeze && freeze.frozenAccountIds.size > 0
+            ? {
+                  Account: {
+                      has_credit_insurance: true,
+                      id: { notIn: [...freeze.frozenAccountIds] },
+                  },
+              }
+            : { Account: { has_credit_insurance: true } };
+
     let customersSynced = 0;
     let limitExpirationsProcessed = 0;
     let reportingBreachesPromoted = 0;
@@ -69,7 +82,7 @@ export async function computeCustomerOverdueMetrics(
         const chunk = await prisma.customer.findMany({
             where: {
                 id: { gt: lastCustomerId },
-                Account: { has_credit_insurance: true },
+                ...frozenAccountFilter,
                 ...(typeof customerIdFilter === "number"
                     ? { id: customerIdFilter }
                     : {}),
@@ -106,7 +119,7 @@ export async function computeCustomerOverdueMetrics(
                 reporting_breach: false,
                 OR: [{ amount: null }, { amount: { gte: 0 } }],
                 Customer: {
-                    Account: { has_credit_insurance: true },
+                    ...frozenAccountFilter,
                 },
                 ...(typeof customerIdFilter === "number"
                     ? { customer_id: customerIdFilter }
@@ -142,7 +155,7 @@ export async function computeCustomerOverdueMetrics(
                 ? { customer_id: customerIdFilter }
                 : {}),
             Customer: {
-                Account: { has_credit_insurance: true },
+                ...frozenAccountFilter,
             },
             approved_limit_expiration_date: {
                 not: null,
@@ -199,6 +212,16 @@ export async function computeCustomerOverdueMetrics(
     }
 
     const policyStatus = await runInsurancePolicyStatusMaintenance();
+    if (freeze && freeze.frozenAccountIds.size > 0) {
+        const skippedAccounts = await prisma.account.findMany({
+            where: {
+                id: { in: [...freeze.frozenAccountIds] },
+                has_credit_insurance: true,
+            },
+            select: { id: true },
+        });
+        freeze.reportSkips(skippedAccounts.map((row) => row.id));
+    }
     const durationMs = Date.now() - start;
     const summary = {
         customersSynced,

@@ -175,30 +175,49 @@ export class BillingConnectorController {
         @CurrentUser() user: JwtPayload,
         @Param("accountId", ParseIntPipe) accountId: number,
         @Body() body: Record<string, unknown>,
-        @Query("mode") mode?: string
+        @Query("mode") mode?: string,
+        @Query("importType") importType?: string
     ) {
-        return this.service.billingConnectorAction(
+        const bodyImportType =
+            typeof body?.importType === "string" ? body.importType : undefined;
+        return this.service.runBillingConnectorSync(
             user,
             accountId,
-            "sync",
-            {
-                ...(body ?? {}),
-                ...(mode ? { mode } : {}),
-            }
+            mode ?? (typeof body?.mode === "string" ? body.mode : undefined),
+            importType ?? bodyImportType
         );
+    }
+
+    @Post("sync/cancel")
+    @ApiOperation({ summary: "Cancel the in-process running sync" })
+    async cancelSync(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number
+    ) {
+        return this.service.cancelBillingConnectorSync(user, accountId);
     }
 
     @Get("sync-runs")
     @ApiOperation({ summary: "List billing connector sync runs" })
     async syncRuns(
         @CurrentUser() user: JwtPayload,
-        @Param("accountId", ParseIntPipe) accountId: number
+        @Param("accountId", ParseIntPipe) accountId: number,
+        @Query("limit") limit?: string
     ) {
-        return this.service.billingConnectorAction(
+        return this.service.listBillingConnectorSyncRuns(
             user,
             accountId,
-            "sync-runs"
+            limit
         );
+    }
+
+    @Get("sync-history")
+    @ApiOperation({ summary: "List durable billing connector sync history" })
+    async syncHistory(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number
+    ) {
+        return this.service.listBillingConnectorSyncHistory(user, accountId);
     }
 
     @Post("backfill/reset")

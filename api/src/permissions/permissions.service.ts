@@ -70,9 +70,6 @@ const LOCKED_UAM_KEYS = [
 
 const ADMIN_ACCOUNT_ID = 10013;
 
-/** UI kill-switch: hide file-import permissions from the role matrix (routes/APIs remain). */
-const FILE_IMPORT_UI_VISIBLE = false;
-
 const PERMISSIONS_BY_CATEGORY: Record<string, Record<string, string[]>> = {
     customer_data_management: {
         customers: ["create_customer", "edit_customer", "delete_customer"],
@@ -215,7 +212,6 @@ export class PermissionsService {
             (account as { has_collection?: boolean } | null)
                 ?.has_collection === false && hasCreditInsurance;
         const hasFileImport =
-            FILE_IMPORT_UI_VISIBLE &&
             (account as { has_file_import?: boolean } | null)
                 ?.has_file_import !== false;
 
@@ -231,7 +227,7 @@ export class PermissionsService {
             );
         }
 
-        if (!hasFileImport) {
+        if (account && !hasFileImport) {
             const importKeys = new Set(
                 ALL_PERMISSION_KEYS.filter((k) => k.startsWith("import_"))
             );
@@ -239,13 +235,6 @@ export class PermissionsService {
             permissionsByCategory = this.filterCategoryKeys(
                 permissionsByCategory,
                 importKeys
-            );
-            permissionsByCategory = this.removeSubcategory(
-                permissionsByCategory,
-                "import_export"
-            );
-            allPermissions = allPermissions.filter(
-                (k) => k !== "export_data"
             );
         }
 
@@ -539,26 +528,6 @@ export class PermissionsService {
                 if (filtered.length > 0) {
                     nextSubs[subKey] = filtered;
                 }
-            });
-            if (Object.keys(nextSubs).length > 0) {
-                result[categoryKey] = nextSubs;
-            }
-        });
-        return result;
-    }
-
-    private removeSubcategory(
-        categories: Record<string, Record<string, string[]>>,
-        subcategoryKey: string
-    ): Record<string, Record<string, string[]>> {
-        const result: Record<string, Record<string, string[]>> = {};
-        Object.entries(categories).forEach(([categoryKey, subcategories]) => {
-            const nextSubs: Record<string, string[]> = {};
-            Object.entries(subcategories).forEach(([subKey, perms]) => {
-                if (subKey === subcategoryKey) {
-                    return;
-                }
-                nextSubs[subKey] = perms;
             });
             if (Object.keys(nextSubs).length > 0) {
                 result[categoryKey] = nextSubs;

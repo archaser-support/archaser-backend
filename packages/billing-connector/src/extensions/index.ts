@@ -16,7 +16,6 @@ export type {
     ExtensionAlignedPaymentAmounts,
     ExtensionAttachmentUpsertInput,
     ExtensionAttachmentUpsertPatch,
-    ExtensionCreditPaymentCloseInput,
     ExtensionEntityType,
     ExtensionLinkedPayment,
     ExtensionMappedBatch,

@@ -100,7 +100,7 @@ if [ $START_STEP -le 1 ]; then
     # Install dependencies on native Linux filesystem (gets correct linux-x64-gnu SWC binary)
     echo -e "-> Installing dependencies on native Linux filesystem (may take a moment)..."
     cd "$LINUX_BUILD_DIR"
-    npm install --no-audit --ignore-scripts 2>&1 | tail -5
+    npm install --no-audit 2>&1 | tail -5
 
     # Run the Next.js build
     echo -e "-> Running Next.js production build..."
@@ -200,14 +200,11 @@ if [ $START_STEP -le 4 ]; then
 
     echo '-> Installing production dependencies...'
     cd $REMOTE_APP_DIR
-    npm install --production --no-audit --ignore-scripts
+    npm install --production --no-audit
 
-    echo '-> Running backend setup (Prisma generate + sync)...'
-    if [ -f backend/package.json ]; then
-        (cd backend && npm run setup)
-    else
-        npm run setup
-    fi
+    echo '-> Generating Prisma Client...'
+    npx prisma generate --schema=backend/prisma/schema.prisma
+    node backend/scripts/sync-prisma-client.js
 
     echo '-> Verifying routes-manifest.json...'
     node backend/scripts/deployment/fix-routes-manifest.js

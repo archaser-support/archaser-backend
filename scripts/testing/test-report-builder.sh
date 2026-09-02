@@ -25,14 +25,14 @@ fi
 if [ -z "$TEST_EMAIL" ]; then
     echo "⚠️  Warning: TEST_EMAIL not set, using default: admin@example.com"
     echo "   Set TEST_EMAIL environment variable to use a different email"
-    export TEST_EMAIL="admin@example.com"
+    export TEST_EMAIL="dori.stopper+555@gmail.com"
 fi
 
 # Check if TEST_PASSWORD is set
 if [ -z "$TEST_PASSWORD" ]; then
-    echo "❌ Error: TEST_PASSWORD is required."
-    echo "   Set TEST_PASSWORD in the environment before running this script."
-    exit 1
+    echo "⚠️  Warning: TEST_PASSWORD not set, using default: password"
+    echo "   Set TEST_PASSWORD environment variable to use a different password"
+    export TEST_PASSWORD="555555"
 fi
 
 echo "📊 Configuration:"

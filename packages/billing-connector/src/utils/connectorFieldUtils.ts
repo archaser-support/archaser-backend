@@ -73,8 +73,8 @@ export function getImportEntityFieldCatalog(importType: ImportType): {
                 "customer_number",
                 "invoice_number",
                 "invoice_date",
-                "base_amount",
-                "invoice_amount",
+                "due_date",
+                "currency",
             ],
             highlightedFields: ["invoice_number", "customer_number", "invoice_date"],
         },
@@ -497,6 +497,16 @@ export function mapErpRecord(
             }
         }
 
+        if (rule.archaserField === "customer_number" && isEmptyMappedValue(value)) {
+            const rawCust = extractNestedValue(erpRecord, "CUSTNAME");
+            if (!isEmptyMappedValue(rawCust)) {
+                value = applyConnectorTransform(
+                    rawCust,
+                    rule.transform ?? "trim"
+                );
+            }
+        }
+
         if (
             isEmptyMappedValue(value) &&
             rule.defaultValue !== undefined &&
@@ -736,7 +746,30 @@ export function computeMappingCompleteness(
             .map((rule) => rule.archaserField)
     );
 
-    return catalog.requiredFields.every((field) => mappedFields.has(field));
+    return catalog.requiredFields.every((field) => mappedFields.has(field))
+        && hasRequiredAmountMapping(importType, mappedFields);
+}
+
+const INVOICE_AMOUNT_FIELDS = [
+    "amount",
+    "base_amount",
+    "invoice_amount",
+    "customer_amount",
+] as const;
+
+const PAYMENT_AMOUNT_FIELDS = ["amount", "customer_amount"] as const;
+
+function hasRequiredAmountMapping(
+    importType: ImportType,
+    mappedFields: Set<string>
+): boolean {
+    if (importType === "Invoice") {
+        return INVOICE_AMOUNT_FIELDS.some((field) => mappedFields.has(field));
+    }
+    if (importType === "Payment") {
+        return PAYMENT_AMOUNT_FIELDS.some((field) => mappedFields.has(field));
+    }
+    return true;
 }
 
 export function rulesToRecordMapping(

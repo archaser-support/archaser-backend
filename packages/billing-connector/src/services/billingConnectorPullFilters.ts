@@ -3,6 +3,7 @@ import type { ImportType, Prisma } from "@prisma/client";
 import {
     andODataFilters,
     compileEntityPullFilter,
+    escapeODataStringLiteral,
 } from "./billingConnectorPullFilterCompile";
 
 export type PullFilterOperator =
@@ -262,6 +263,10 @@ export function resolveRelatedCustomerPullFilterOData(
  * OData $filter for a live import pull: the entity's own pull filter, plus a
  * CUSTNAME-only Customer filter on related entities so invoices/payments/
  * contacts stay inside the same customer subset.
+ *
+ * Start backfill customer scope is **not** applied here — it uses Archaser
+ * `customer_id` for purge and post-map filtering by our `customer_number`, so
+ * custom ERP tables without CUSTNAME (e.g. IDG_ARFNCITEMS4) do not break.
  */
 export function resolveImportPullFilterOData(
     raw: unknown,
@@ -279,4 +284,21 @@ export function resolveImportPullFilterOData(
         resolveRelatedCustomerPullFilterOData(raw),
         entityFilter
     );
+}
+
+/**
+ * @deprecated Start backfill scopes by Archaser customer_id / customer_number
+ * after mapping — do not AND ERP customer columns onto live pulls.
+ */
+export function compileRuntimeCustomerNumberOData(
+    customerNumber: string | null | undefined
+): string | null {
+    if (typeof customerNumber !== "string") {
+        return null;
+    }
+    const trimmed = customerNumber.trim();
+    if (!trimmed) {
+        return null;
+    }
+    return `CUSTNAME eq ${escapeODataStringLiteral(trimmed)}`;
 }

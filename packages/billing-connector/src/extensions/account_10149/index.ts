@@ -4,10 +4,13 @@ import type {
     ExtensionAfterPaymentLinkedResult,
     ExtensionAlignPaymentAmountsInput,
     ExtensionAlignedPaymentAmounts,
-    ExtensionCreditPaymentCloseInput,
     ExtensionMappedBatch,
     ExtensionTransformContext,
 } from "../types";
+import {
+    countUniquePendingCloseInvoiceNumbers,
+    uniqueTrimmedInvoiceNumberSet,
+} from "../pendingCloseProgress";
 import { parseErpDateOnly } from "../../utils/connectorFieldUtils";
 import { deriveInvoiceFxRatio } from "../../payment/alignPaymentToInvoiceCurrency";
 import { applyHelamOffsetStampClosesForInvoiceNumbers } from "./helamOffsetClose";
@@ -16,7 +19,7 @@ import {
     applyReconciledVirtualClosesForInvoiceNumbers,
 } from "./reconciledVirtualClose";
 
-/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp, credit abs payments. */
+/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp. */
 export const ACCOUNT_10149_EXTENSION_KEY = "account_10149";
 export const ACCOUNT_10149_ID = 10149;
 export const ILS_CURRENCY_CODE = "ILS";
@@ -234,12 +237,6 @@ function hasFreconnum(raw: Record<string, unknown>): boolean {
     return typeof freconnum === "string" && freconnum.trim().length > 0;
 }
 
-function isIdigitalPaymentRow(raw: Record<string, unknown>): boolean {
-    const fncnum = asNonEmptyString(raw.FNCNUM);
-    const fnciref1 = asNonEmptyString(raw.FNCIREF1);
-    return (fncnum != null && fnciref1 != null) || hasFreconnum(raw);
-}
-
 function pickInvoiceNumber(
     raw: Record<string, unknown>,
     row: Record<string, unknown>
@@ -385,16 +382,6 @@ export function isAccount10149ReconciledReceiptClose(
     rawErpRow: Record<string, unknown>
 ): boolean {
     return isAccount10149ReconciledClose(rawErpRow);
-}
-
-export function shouldNormalizeAccount10149NegativeCreditPayments(
-    row: ExtensionCreditPaymentCloseInput
-): boolean {
-    return (
-        isIdigitalPaymentRow(row.rawErpRow) &&
-        row.invoiceCustomCode1 === "C" &&
-        row.customerAmount < 0
-    );
 }
 
 function rewriteRowCurrencies(
@@ -608,14 +595,42 @@ export const account10149Extension: BillingAccountExtension = {
         const customerIds = new Set<number>();
 
         const offsetNumbers = ctx.helamOffsetInvoiceNumbers ?? [];
+        const total = countUniquePendingCloseInvoiceNumbers(
+            ctx.invoiceNumbers,
+            offsetNumbers
+        );
+        const report = (processed: number) => {
+            if (total <= 0) {
+                return;
+            }
+            ctx.onProgress?.({
+                processed: Math.min(processed, total),
+                total,
+            });
+        };
+        if (total > 0) {
+            report(0);
+        }
+
+        let processed = 0;
+
         if (offsetNumbers.length > 0) {
+            const helamBaseline = processed;
+            const helamQueued = uniqueTrimmedInvoiceNumberSet(offsetNumbers).size;
             const offsetResult =
                 await applyHelamOffsetStampClosesForInvoiceNumbers(
                     ctx.prisma,
                     ctx.accountId,
                     offsetNumbers,
-                    ctx.userId
+                    ctx.userId,
+                    {
+                        onProgress: ({ processed: helamProcessed }) => {
+                            report(helamBaseline + helamProcessed);
+                        },
+                    }
                 );
+            processed += helamQueued;
+            report(processed);
             for (const id of offsetResult.closedIds) {
                 closedIds.add(id);
             }
@@ -625,9 +640,7 @@ export const account10149Extension: BillingAccountExtension = {
         }
 
         // Virtual fill only for numbers not already stamp-closed as Helam offset.
-        const offsetSet = new Set(
-            offsetNumbers.map((value) => value.trim()).filter(Boolean)
-        );
+        const offsetSet = uniqueTrimmedInvoiceNumberSet(offsetNumbers);
         const virtualNumbers = ctx.invoiceNumbers.filter(
             (value) => !offsetSet.has(value.trim())
         );
@@ -639,6 +652,12 @@ export const account10149Extension: BillingAccountExtension = {
                 ctx.userId,
                 ctx.invoiceCloseDates
             );
+            processed += result.missingNumbers.length;
+            report(processed);
+
+            const recalcBaseline = processed;
+            const recalcTotal = result.touchedIds.length;
+
             if (result.touchedIds.length > 0) {
                 // Dynamic import avoids account_10149 ↔ extensions ↔ recalc cycle.
                 const { recalculateInvoicesFromLinkedPayments } = await import(
@@ -648,9 +667,17 @@ export const account10149Extension: BillingAccountExtension = {
                     ctx.prisma,
                     new Map(
                         result.touchedIds.map((invoiceId) => [invoiceId, {}])
-                    )
+                    ),
+                    {
+                        onProgress: ({ processed: recalcProcessed }) => {
+                            report(recalcBaseline + recalcProcessed);
+                        },
+                    }
                 );
             }
+            processed = recalcBaseline + recalcTotal;
+            report(processed);
+
             for (const id of result.touchedIds) {
                 closedIds.add(id);
             }
@@ -659,13 +686,15 @@ export const account10149Extension: BillingAccountExtension = {
             }
         }
 
+        if (total > 0) {
+            report(total);
+        }
+
         return {
             closedIds: [...closedIds],
             customerIds: [...customerIds],
         };
     },
-    shouldNormalizeNegativeCreditPayments:
-        shouldNormalizeAccount10149NegativeCreditPayments,
     normalizePaymentCurrency: normalizeAccount10149PaymentCurrency,
     alignPaymentAmountsForInvoice: alignAccount10149PaymentAmountsForInvoice,
 };

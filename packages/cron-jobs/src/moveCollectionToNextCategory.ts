@@ -3,6 +3,7 @@ import type { CronJobResult } from "./handlers";
 import { createCategoryChangeActivity } from "./activities/createCategoryChangeActivity";
 import { invalidateDashboardCacheForAccounts } from "./dashboard/invalidateDashboardCacheForAccounts";
 import { publishControlCenterUpdate } from "./realtime/publishControlCenterUpdate";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 
 /**
  * Move collections to next category
@@ -10,7 +11,8 @@ import { publishControlCenterUpdate } from "./realtime/publishControlCenterUpdat
  * server/cron-jobs/MoveCollectionToNextCategory.ts
  */
 export async function moveCollectionToNextCategory(
-    prisma: PrismaClient
+    prisma: PrismaClient,
+    freeze?: CronFrozenAccountGuard
 ): Promise<CronJobResult> {
     const start = Date.now();
     const summary = {
@@ -31,19 +33,23 @@ export async function moveCollectionToNextCategory(
 
         const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
+        const customerScope = (extra?: Record<string, unknown>) => ({
+            ...(freeze ? freeze.accountIdNotInFilter() : {}),
+            ...extra,
+            Account: {
+                OR: [
+                    { has_collection: true },
+                    { has_credit_insurance: { not: true } },
+                ],
+            },
+        });
+
         const expiredCollections =
             await prisma.customerCollectionPeriod.findMany({
                 where: {
                     current_category: "Promise_to_pay",
                     promise_to_pay_date: { lte: last24Hours },
-                    Customer: {
-                        Account: {
-                            OR: [
-                                { has_collection: true },
-                                { has_credit_insurance: { not: true } },
-                            ],
-                        },
-                    },
+                    Customer: customerScope(),
                 },
                 select: {
                     id: true,
@@ -77,14 +83,7 @@ export async function moveCollectionToNextCategory(
             where: {
                 next_category: { not: null },
                 next_category_date: { lte: now },
-                Customer: {
-                    Account: {
-                        OR: [
-                            { has_collection: true },
-                            { has_credit_insurance: { not: true } },
-                        ],
-                    },
-                },
+                Customer: customerScope(),
             },
             include: {
                 Customer: {
@@ -172,6 +171,40 @@ export async function moveCollectionToNextCategory(
                     excludeFromNotifications: true,
                     source: "automated",
                 }
+            );
+        }
+
+        if (freeze && freeze.frozenAccountIds.size > 0) {
+            const skippedRows = await prisma.customerCollectionPeriod.findMany({
+                where: {
+                    OR: [
+                        {
+                            current_category: "Promise_to_pay",
+                            promise_to_pay_date: { lte: last24Hours },
+                        },
+                        {
+                            next_category: { not: null },
+                            next_category_date: { lte: now },
+                        },
+                    ],
+                    Customer: {
+                        account_id: { in: [...freeze.frozenAccountIds] },
+                        Account: {
+                            OR: [
+                                { has_collection: true },
+                                { has_credit_insurance: { not: true } },
+                            ],
+                        },
+                    },
+                },
+                select: {
+                    Customer: { select: { account_id: true } },
+                },
+            });
+            freeze.reportSkips(
+                skippedRows
+                    .map((row) => row.Customer.account_id)
+                    .filter((id): id is number => id != null)
             );
         }
 

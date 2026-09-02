@@ -38,6 +38,21 @@ export type EnqueueArPostIngestRetryResult = {
     customersEnqueued: number;
 };
 
+/** Customers still waiting on deferred replay / live-refresh drain. */
+export async function countPendingArPostIngestCustomers(
+    accountId: number,
+    options?: { dbClient?: DbClient }
+): Promise<number> {
+    const db = options?.dbClient ?? (prisma as unknown as DbClient);
+    const rows = await db.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*)::bigint AS count
+        FROM "ArPostIngestRetryQueue"
+        WHERE account_id = ${accountId}
+          AND status IN ('pending', 'processing')
+    `;
+    return Number(rows[0]?.count ?? 0);
+}
+
 /**
  * Records per-customer failures for retry. Account-level failures (maturity,
  * as-of enqueue) are skipped: they carry no customer and the as-of path needs
@@ -68,7 +83,8 @@ async function upsertArPostIngestRetrySteps(
 
 /**
  * Intentionally queue post-ingest steps (e.g. after billing connector backfill)
- * so replay/overdue/live-refresh run on the worker instead of blocking sync.
+ * so replay/live-refresh run on the worker instead of blocking sync.
+ * Process Overdue runs in the connector Process Overdue tail step before enqueue.
  */
 export async function enqueueArPostIngestSteps(
     accountId: number,
@@ -160,6 +176,8 @@ export async function drainArPostIngestRetryQueue(options?: {
         customerIds: number[];
         steps: string[];
     }) => Promise<{ errors: ArPostIngestError[] }>;
+    /** Called after each successfully drained customer (heartbeat / finalize hook). */
+    onItemProcessed?: (accountId: number) => void | Promise<void>;
 }): Promise<DrainArPostIngestRetryResult> {
     const db = options?.dbClient ?? (prisma as unknown as DbClient);
     const maxItems = options?.maxItems ?? 50;
@@ -233,6 +251,7 @@ export async function drainArPostIngestRetryQueue(options?: {
                 WHERE id = ${item.id}
             `;
             itemsProcessed += 1;
+            await options?.onItemProcessed?.(item.account_id);
         } catch (error) {
             failures += 1;
             const message =

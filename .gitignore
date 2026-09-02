@@ -15,9 +15,14 @@ node_modules/
 
 # production
 /build
-# TypeScript / Nest workspace build output (never commit)
-dist/
 **/dist/
+backend/api/dist/
+backend/packages/database/dist/
+api/dist/
+packages/database/dist/
+# Built from source by scripts/startup/dev-microservices.sh (dev) and
+# scripts/deployment/deploy-backend-docker.sh (deploy), so it is never committed.
+packages/credit-insurance-domain/dist/
 frontend/build/
 frontend/.next/
 frontend/node_modules/

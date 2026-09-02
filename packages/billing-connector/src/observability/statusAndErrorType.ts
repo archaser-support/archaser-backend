@@ -1,5 +1,9 @@
 import type { ConnectorErrorType } from "../billing/connectorErrorClassification";
 import { classifyConnectorError } from "../billing/connectorErrorClassification";
+import {
+    totalMandatoryFieldSkipsFromEntityStats,
+    type EntityImportStatsAccum,
+} from "../import/aggregateEntityImportStats";
 import type {
     BillingConnectorSyncStatus,
     SyncResultForStatus,
@@ -7,24 +11,46 @@ import type {
 
 export type { SyncResultForStatus };
 
+function totalImported(result: SyncResultForStatus): number {
+    return (
+        result.stats.customersImported +
+        result.stats.contactsImported +
+        result.stats.invoicesImported +
+        result.stats.paymentsImported
+    );
+}
+
+function resolveMandatoryFieldSkips(result: SyncResultForStatus): number {
+    if (result.stats.mandatoryFieldSkips != null) {
+        return result.stats.mandatoryFieldSkips;
+    }
+    const entityStats = result.stats.entityImportStats as
+        | Partial<Record<string, EntityImportStatsAccum>>
+        | undefined;
+    return totalMandatoryFieldSkipsFromEntityStats(entityStats);
+}
+
 export function resolveSyncExecutionStatus(
     result: SyncResultForStatus
 ): BillingConnectorSyncStatus {
     if (result.cancelled) {
         return "TIMEOUT";
     }
-    if (result.ok) {
-        return "SUCCESS";
+
+    const imported = totalImported(result);
+    const importErrors = result.stats.importErrors;
+    const mandatorySkips = resolveMandatoryFieldSkips(result);
+    const hasValidationIssues = importErrors > 0 || mandatorySkips > 0;
+
+    if (hasValidationIssues) {
+        return imported > 0 ? "PARTIAL" : "FAILED";
     }
-    const imported =
-        result.stats.customersImported +
-        result.stats.contactsImported +
-        result.stats.invoicesImported +
-        result.stats.paymentsImported;
-    if (imported > 0 && result.stats.importErrors > 0) {
-        return "PARTIAL";
+
+    if (!result.ok) {
+        return imported > 0 ? "PARTIAL" : "FAILED";
     }
-    return "FAILED";
+
+    return "SUCCESS";
 }
 
 /**
@@ -39,13 +65,15 @@ export function resolveSyncErrorType(
         return null;
     }
     if (result.cancelled || status === "TIMEOUT") {
-        return "timeout";
+        return result.cancelled ? "cancelled" : "timeout";
     }
     if (result.error === "CONNECTOR_NOT_FOUND") {
         return "unknown";
     }
+    const mandatorySkips = resolveMandatoryFieldSkips(result);
     if (
         result.stats.importErrors > 0 ||
+        mandatorySkips > 0 ||
         /import error/i.test(result.error ?? "")
     ) {
         return "import_validation";

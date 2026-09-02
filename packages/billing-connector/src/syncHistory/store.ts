@@ -1,10 +1,13 @@
 import type {
     CompleteExecutionInput,
     CreateRunningExecutionInput,
+    DeferCompletionUntilPostIngestDrainInput,
+    FinalizeAwaitingPostIngestDrainOptions,
     ListExecutionsOptions,
     MarkExecutionCancelledInput,
     SweepStaleRunningOptions,
     SyncHistoryExecution,
+    TouchProgressInput,
 } from "./types";
 
 export interface SyncHistoryStore {
@@ -30,8 +33,29 @@ export interface SyncHistoryStore {
         accountId: number,
         options?: ListExecutionsOptions
     ): Promise<SyncHistoryExecution[]>;
+    /** Distinct account IDs with at least one RUNNING execution. */
+    listRunningAccountIds(): Promise<number[]>;
+    /** Updates last_progress_at (and optional entity_stats) while RUNNING. */
+    touchProgressIfRunning(
+        executionId: string,
+        input?: TouchProgressInput
+    ): Promise<SyncHistoryExecution | null>;
+    /**
+     * Keep RUNNING until deferred post-import drain completes; stores pending
+     * terminal status for finalizeAwaitingPostIngestDrainExecutions.
+     */
+    deferCompletionUntilPostIngestDrain(
+        executionId: string,
+        input: DeferCompletionUntilPostIngestDrainInput
+    ): Promise<SyncHistoryExecution | null>;
+    /** RUNNING executions waiting on deferred post-import drain. */
+    listAwaitingPostIngestDrainExecutions(
+        accountId?: number
+    ): Promise<SyncHistoryExecution[]>;
     sweepStaleRunning(options?: SweepStaleRunningOptions): Promise<number>;
 }
+
+export const HEARTBEAT_INTERVAL_SECONDS = 60;
 
 export const HISTORY_WINDOW_DAYS = 90;
 export const STALE_RUNNING_HOURS = 2;

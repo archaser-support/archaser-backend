@@ -122,10 +122,9 @@ git reset --hard "origin/$CURRENT_BRANCH"
 echo "Step 2: Installing dependencies..."
 # Ensure all dependencies (including dev) are installed for the build process
 # Next.js build requires @types and other dev dependencies
-# ignore-scripts: lifecycle hooks blocked via .npmrc; run setup explicitly after install
-NODE_ENV=development npm install --ignore-scripts
+NODE_ENV=development npm install
 
-echo "Step 2.1: Running backend setup (Prisma generate + sync)..."
+echo "Step 2.1: Generating Prisma Client..."
 # Ensure DATABASE_URL is available
 if [ -z "$DATABASE_URL" ]; then
     echo "WARNING: DATABASE_URL not set. Attempting to load .env again..."
@@ -135,13 +134,7 @@ if [ -z "$DATABASE_URL" ]; then
         set +a
     fi
 fi
-if [ -f backend/package.json ] && grep -q '"setup"' backend/package.json 2>/dev/null; then
-    (cd backend && npm run setup)
-elif grep -q '"setup"' package.json 2>/dev/null; then
-    npm run setup
-else
-    echo "WARNING: no setup script found; run prisma generate manually"
-fi
+npx prisma generate --schema=backend/prisma/schema.prisma
 
 # 3. Run build
 echo "Step 3: Building the application..."
