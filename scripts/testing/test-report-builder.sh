@@ -30,9 +30,9 @@ fi
 
 # Check if TEST_PASSWORD is set
 if [ -z "$TEST_PASSWORD" ]; then
-    echo "⚠️  Warning: TEST_PASSWORD not set, using default: password"
-    echo "   Set TEST_PASSWORD environment variable to use a different password"
-    export TEST_PASSWORD="REDACTED"
+    echo "❌ Error: TEST_PASSWORD is required."
+    echo "   Set TEST_PASSWORD in the environment before running this script."
+    exit 1
 fi
 
 echo "📊 Configuration:"
