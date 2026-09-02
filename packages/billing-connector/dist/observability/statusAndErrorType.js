@@ -4,21 +4,35 @@ exports.resolveSyncExecutionStatus = resolveSyncExecutionStatus;
 exports.resolveSyncErrorType = resolveSyncErrorType;
 exports.mapClassifiedErrorTypeForMetrics = mapClassifiedErrorTypeForMetrics;
 const connectorErrorClassification_1 = require("../billing/connectorErrorClassification");
+const aggregateEntityImportStats_1 = require("../import/aggregateEntityImportStats");
+function totalImported(result) {
+    return (result.stats.customersImported +
+        result.stats.contactsImported +
+        result.stats.invoicesImported +
+        result.stats.paymentsImported);
+}
+function resolveMandatoryFieldSkips(result) {
+    if (result.stats.mandatoryFieldSkips != null) {
+        return result.stats.mandatoryFieldSkips;
+    }
+    const entityStats = result.stats.entityImportStats;
+    return (0, aggregateEntityImportStats_1.totalMandatoryFieldSkipsFromEntityStats)(entityStats);
+}
 function resolveSyncExecutionStatus(result) {
     if (result.cancelled) {
         return "TIMEOUT";
     }
-    if (result.ok) {
-        return "SUCCESS";
+    const imported = totalImported(result);
+    const importErrors = result.stats.importErrors;
+    const mandatorySkips = resolveMandatoryFieldSkips(result);
+    const hasValidationIssues = importErrors > 0 || mandatorySkips > 0;
+    if (hasValidationIssues) {
+        return imported > 0 ? "PARTIAL" : "FAILED";
     }
-    const imported = result.stats.customersImported +
-        result.stats.contactsImported +
-        result.stats.invoicesImported +
-        result.stats.paymentsImported;
-    if (imported > 0 && result.stats.importErrors > 0) {
-        return "PARTIAL";
+    if (!result.ok) {
+        return imported > 0 ? "PARTIAL" : "FAILED";
     }
-    return "FAILED";
+    return "SUCCESS";
 }
 /**
  * Map sync finish / thrown errors onto the Prometheus `error_type` taxonomy
@@ -34,7 +48,9 @@ function resolveSyncErrorType(result, status) {
     if (result.error === "CONNECTOR_NOT_FOUND") {
         return "unknown";
     }
+    const mandatorySkips = resolveMandatoryFieldSkips(result);
     if (result.stats.importErrors > 0 ||
+        mandatorySkips > 0 ||
         /import error/i.test(result.error ?? "")) {
         return "import_validation";
     }

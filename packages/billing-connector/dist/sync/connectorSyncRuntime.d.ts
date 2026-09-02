@@ -101,6 +101,10 @@ export interface ConnectorSyncCounts {
     paymentLinkDetail?: TailStepDetail;
     /** Tail steps (pending closes, process overdue, AR post-ingest, balances). */
     tailSteps?: Partial<Record<TailStepKey, TailStepState>>;
+    /** Live-sync rows skipped for missing mandatory fields (Invoice/Payment). */
+    mandatoryFieldSkips?: number;
+    /** Per-entity import failures/skips with capped sample_errors. */
+    entityImportStats?: Partial<Record<string, import("../import/aggregateEntityImportStats").EntityImportStatsAccum>>;
 }
 export declare function entityStatsFromCounts(stats: ConnectorSyncCounts): ConnectorEntityStats;
 export interface RunningConnectorSync {

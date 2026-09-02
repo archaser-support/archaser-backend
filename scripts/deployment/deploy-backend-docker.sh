@@ -19,6 +19,7 @@ Options:
                        (default: /home/ubuntu/api for staging, /home/ubuntu/production for production)
   --skip-install       Skip npm ci
   --skip-build         Skip backend workspace builds
+  --skip-git-pull      Skip git fetch + reset to origin (use if you already synced)
   --no-grafana         Skip monitoring stack compose
   --skip-prisma        Skip prisma generate + sync-prisma-client
   -h, --help           Show this help
@@ -106,6 +107,48 @@ monitoring_stack_exists() {
     "${DOCKER[@]}" ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'archaser-loki'
 }
 
+# EC2 checkout must match remote before build. Without this, `npm run build` compiles stale sources.
+sync_git_checkout() {
+    if [[ "$SKIP_GIT_PULL" == "true" ]]; then
+        log "Skipping git sync (--skip-git-pull)"
+        return 0
+    fi
+    if [[ ! -d "$ROOT_DIR/.git" ]]; then
+        log "Not a git checkout — skipping git sync"
+        return 0
+    fi
+
+    log "Syncing git checkout"
+    cd "$ROOT_DIR"
+
+    if [[ -f "$ENV_SOURCE" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$ENV_SOURCE"
+        set +a
+    fi
+
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        local remote_url path
+        remote_url="$(git remote get-url origin 2>/dev/null || true)"
+        if [[ "$remote_url" == https://github.com/* && "$remote_url" != *"${GITHUB_TOKEN}"* ]]; then
+            path="${remote_url#https://}"
+            path="${path#*@}"
+            git remote set-url origin "https://${GITHUB_TOKEN}@${path}"
+        fi
+    fi
+
+    git fetch origin
+    local branch
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+        git reset --hard "origin/$branch"
+        log "Git at origin/$branch ($(git rev-parse --short HEAD))"
+    else
+        echo "Warning: origin/$branch not found — continuing with current checkout"
+    fi
+}
+
 npm_ci_low_memory() {
     local mem_mb heap_mb
     mem_mb="$(host_mem_mb)"
@@ -126,6 +169,7 @@ ENVIRONMENT=""
 APP_DIR=""
 SKIP_INSTALL="false"
 SKIP_BUILD="false"
+SKIP_GIT_PULL="false"
 NO_GRAFANA="false"
 SKIP_PRISMA="false"
 
@@ -145,6 +189,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-build)
             SKIP_BUILD="true"
+            shift
+            ;;
+        --skip-git-pull)
+            SKIP_GIT_PULL="true"
             shift
             ;;
         --no-grafana)
@@ -231,6 +279,7 @@ fi
 cd "$ROOT_DIR"
 log "Deploy root: $ROOT_DIR"
 ensure_deploy_swap
+sync_git_checkout
 
 log "Preparing env files"
 cp "$ENV_SOURCE" "$ENV_TARGET"
@@ -270,11 +319,13 @@ else
 fi
 
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
+# --force-recreate: bind-mounted dist/ and env_file values apply only after container recreate.
+# Without it, `up -d` leaves old Node processes running when compose config is unchanged.
 BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
     --project-name "$BACKEND_PROJECT" \
     --env-file "$ENV_TARGET" \
     -f "$COMPOSE_BACKEND" \
-    up -d --remove-orphans
+    up -d --remove-orphans --force-recreate
 
 if [[ "$NO_GRAFANA" != "true" ]]; then
     if [[ ! -f "$COMPOSE_MONITORING" ]]; then

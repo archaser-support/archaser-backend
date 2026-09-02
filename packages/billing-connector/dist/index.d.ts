@@ -26,6 +26,8 @@ export { CLEAR_BEFORE_IMPORT_BATCH_SIZE, CLEAR_BEFORE_IMPORT_ENTITIES, clearBefo
 export { BILLING_CONNECTOR_SYNC_SOURCE, createBillingConnectorMetricsSinkFromProm, emitBillingConnectorSyncFinish, emitBillingConnectorSyncStart, getDefaultBillingConnectorMetricsSink, resolveSyncErrorType, resolveSyncExecutionStatus, setDefaultBillingConnectorMetricsSink, type BillingConnectorObservabilityOptions, type BillingConnectorSyncMetricsSink, type BillingConnectorSyncStatus, } from "./observability";
 export { runPreviewSync, discoverConnectorFields, } from "./sync/runPreviewSync";
 export { fetchPriorityEntitySetCatalog } from "./priority/PriorityClient";
+export { validateConnectorLiveImportRow, formatImportIssueMessage, type ConnectorLiveImportType, type MandatoryFieldValidationResult, } from "./import/validateConnectorLiveImportRow";
+export { appendEntityImportIssue, appendBatchImportIssue, accumulateBatchIntoEntityStats, applyEntityImportResultToSyncStats, emptyEntityImportStatsAccum, SAMPLE_ERRORS_CAP, type EntityImportStatsAccum, type EntityImportStatKey, } from "./import/aggregateEntityImportStats";
 export { getImportEntityFieldCatalog } from "./utils/connectorFieldUtils";
 export { allEnabledEntitiesPreviewPassed, clearPreviewPass, clearPreviewPasses, parsePreviewPassesMap, previewPassesToPrismaJson, } from "./services/billingConnectorPreviewPasses";
 export { entitySetCatalogToPrismaJson, entitySetsToPrismaJson, getDefaultEntitySets, listChangedEntitySetEntities, mergeEntitySetsPatch, parseEntitySetCatalog, parseEntitySetsMap, type EntitySetsMap, } from "./services/billingConnectorEntitySets";
