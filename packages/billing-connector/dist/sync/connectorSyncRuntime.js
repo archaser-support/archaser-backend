@@ -4,12 +4,13 @@
  * plus a short history of completed runs for GET /sync-runs polling.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TAIL_STEP_KEYS = exports.BALANCES_ENTITY_STATS_KEY = exports.PENDING_CLOSES_ENTITY_STATS_KEY = exports.PROCESS_OVERDUE_ENTITY_STATS_KEY = exports.LIVE_REFRESH_ENTITY_STATS_KEY = exports.AR_REPLAY_ENTITY_STATS_KEY = exports.POST_INGEST_ENTITY_STATS_KEY = exports.PURGE_ENTITY_STATS_KEY = exports.MATURITY_ENTITY_STATS_KEY = void 0;
+exports.TAIL_STEP_KEYS = exports.BALANCES_ENTITY_STATS_KEY = exports.PENDING_CLOSES_ENTITY_STATS_KEY = exports.INSURANCE_TARGETS_ENTITY_STATS_KEY = exports.PROCESS_OVERDUE_ENTITY_STATS_KEY = exports.LIVE_REFRESH_ENTITY_STATS_KEY = exports.AR_REPLAY_ENTITY_STATS_KEY = exports.POST_INGEST_ENTITY_STATS_KEY = exports.PURGE_ENTITY_STATS_KEY = exports.MATURITY_ENTITY_STATS_KEY = void 0;
 exports.entityStatsFromCounts = entityStatsFromCounts;
 exports.registerRunningSync = registerRunningSync;
 exports.getRunningSync = getRunningSync;
 exports.clearRunningSync = clearRunningSync;
 exports.upsertSyncRun = upsertSyncRun;
+exports.patchSyncRunProgress = patchSyncRunProgress;
 exports.patchSyncRunEntityStats = patchSyncRunEntityStats;
 exports.listSyncRuns = listSyncRuns;
 exports.resetConnectorSyncRuntimeForTests = resetConnectorSyncRuntimeForTests;
@@ -28,11 +29,14 @@ exports.AR_REPLAY_ENTITY_STATS_KEY = "_ar_replay";
 /** Live MEP, capacity gap, and insurance field refresh. */
 exports.LIVE_REFRESH_ENTITY_STATS_KEY = "_live_refresh";
 exports.PROCESS_OVERDUE_ENTITY_STATS_KEY = "_process_overdue";
+/** Refresh invoice insurance target reporting/MEP dates after ingest. */
+exports.INSURANCE_TARGETS_ENTITY_STATS_KEY = "_insurance_targets";
 exports.PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
 exports.BALANCES_ENTITY_STATS_KEY = "_balances";
 exports.TAIL_STEP_KEYS = [
     exports.PENDING_CLOSES_ENTITY_STATS_KEY,
     exports.PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    exports.INSURANCE_TARGETS_ENTITY_STATS_KEY,
     exports.AR_REPLAY_ENTITY_STATS_KEY,
     exports.LIVE_REFRESH_ENTITY_STATS_KEY,
     exports.BALANCES_ENTITY_STATS_KEY,
@@ -166,15 +170,25 @@ function isTerminalSyncRunSummary(run) {
         (run.status === "TIMEOUT" && run.error_type === "cancelled"));
 }
 /** Live progress must not clobber a cancelled / finished status. */
-function patchSyncRunEntityStats(accountId, executionId, entityStats, fallback) {
+function patchSyncRunProgress(accountId, executionId, patch, fallback) {
     const existing = listSyncRuns(accountId).find((run) => run.id === executionId);
     if (existing && isTerminalSyncRunSummary(existing)) {
         return;
     }
     upsertSyncRun(accountId, {
         ...(existing ?? fallback),
-        entity_stats: entityStats,
+        entity_stats: patch.entity_stats,
+        ...(patch.active_step !== undefined
+            ? { active_step: patch.active_step }
+            : {}),
+        ...(patch.active_step_detail !== undefined
+            ? { active_step_detail: patch.active_step_detail }
+            : {}),
     });
+}
+/** @deprecated Prefer patchSyncRunProgress when active_step is available. */
+function patchSyncRunEntityStats(accountId, executionId, entityStats, fallback) {
+    patchSyncRunProgress(accountId, executionId, { entity_stats: entityStats }, fallback);
 }
 function listSyncRuns(accountId, limit = 25) {
     const existing = historyByAccount.get(accountId) ?? [];

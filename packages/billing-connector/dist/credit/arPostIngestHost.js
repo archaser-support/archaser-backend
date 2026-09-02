@@ -30,12 +30,14 @@ function resetArPostIngestOrchestratorForTests() {
  * Recompute invoice insurance target dates after amount/date upserts.
  * Uses the same credit-insurance refresh as API due-date edits.
  */
-async function refreshInsuranceTargetDatesViaHost(invoiceIds, prisma) {
+async function refreshInsuranceTargetDatesViaHost(invoiceIds, prisma, options) {
     if (invoiceIds.length === 0) {
         return 0;
     }
     (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(prisma);
-    return (0, credit_insurance_domain_1.refreshInsuranceTargetDatesForInvoiceIds)(invoiceIds, prisma);
+    return (0, credit_insurance_domain_1.refreshInsuranceTargetDatesForInvoiceIds)(invoiceIds, prisma, {
+        onProgress: options?.onProgress,
+    });
 }
 /**
  * Default post-Invoice / payment-only AR post-ingest when the host does not
@@ -107,7 +109,19 @@ async function invokeConnectorArPostIngest(params) {
     // so sign flips apply even if later post-ingest steps are skipped.
     if (invoiceEntityIds.length > 0) {
         try {
-            await refreshInsuranceTargetDatesViaHost(invoiceEntityIds, params.prisma);
+            const total = invoiceEntityIds.length;
+            let lastLogged = -1;
+            params.log(`Insurance target dates starting for ${total} invoice(s)…`);
+            const updated = await refreshInsuranceTargetDatesViaHost(invoiceEntityIds, params.prisma, {
+                onProgress: ({ processed, total: progressTotal }) => {
+                    if (processed === lastLogged) {
+                        return;
+                    }
+                    lastLogged = processed;
+                    params.log(`Insurance target dates progress: ${processed}/${progressTotal} invoice(s)`);
+                },
+            });
+            params.log(`Insurance target dates finished for ${total} invoice(s) (${updated} updated)`);
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);

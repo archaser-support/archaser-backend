@@ -32,7 +32,10 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
     importBatch?: ImportBatchFn;
     onLog?: (message: string) => void;
     /** Live pulled/imported counts for GET /sync-runs polling. */
-    onProgress?: (stats: RunStagedExtensionSyncResult["stats"]) => void;
+    onProgress?: (stats: RunStagedExtensionSyncResult["stats"], meta?: {
+        activeStep?: string | null;
+        activeStepDetail?: string | null;
+    }) => void;
     /** Cooperative cancel — checked between pages and after each import. */
     shouldCancel?: () => boolean;
     /**
@@ -40,7 +43,12 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
      * customer due/overdue rollups for these customers (Nest wires
      * recalculateCustomerAmounts).
      */
-    onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
+    onCustomerBalancesFinal?: (customerIds: number[], options?: {
+        onProgress?: (progress: {
+            processed: number;
+            total: number;
+        }) => void;
+    }) => Promise<void>;
     /**
      * After Invoice entity completes (all pages + maturity), or as payment-only
      * fallback when Invoice did not orchestrate, run shared AR post-ingest.
@@ -62,8 +70,9 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
     pullFilters?: unknown;
     /**
      * Start backfill only: Archaser customer_number for the resolved
-     * customer_id. Used to keep mapped rows for that customer after pull —
-     * not written to connector pull_filters and not ANDed as ERP OData.
+     * customer_id. AND-ed into ERP OData (with optional extension-expanded
+     * company-suffixed values for IDG payment tables) and used to keep mapped
+     * rows for that customer after pull.
      */
     runtimeCustomerNumber?: string | null;
     /** Stored BillingConnector.entity_sets — overrides TOTARPAY / etc. */

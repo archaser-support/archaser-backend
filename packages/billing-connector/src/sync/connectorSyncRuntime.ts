@@ -20,12 +20,15 @@ export const AR_REPLAY_ENTITY_STATS_KEY = "_ar_replay";
 /** Live MEP, capacity gap, and insurance field refresh. */
 export const LIVE_REFRESH_ENTITY_STATS_KEY = "_live_refresh";
 export const PROCESS_OVERDUE_ENTITY_STATS_KEY = "_process_overdue";
+/** Refresh invoice insurance target reporting/MEP dates after ingest. */
+export const INSURANCE_TARGETS_ENTITY_STATS_KEY = "_insurance_targets";
 export const PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
 export const BALANCES_ENTITY_STATS_KEY = "_balances";
 
 export const TAIL_STEP_KEYS = [
     PENDING_CLOSES_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    INSURANCE_TARGETS_ENTITY_STATS_KEY,
     AR_REPLAY_ENTITY_STATS_KEY,
     LIVE_REFRESH_ENTITY_STATS_KEY,
     BALANCES_ENTITY_STATS_KEY,
@@ -64,6 +67,13 @@ export type ConnectorEntityStatSlice = {
     detail?: TailStepDetail;
 };
 
+/** Live progress patch — entity counters plus orchestrator pointer. */
+export type ConnectorSyncProgressPatch = {
+    entity_stats: ConnectorEntityStats;
+    active_step?: string | null;
+    active_step_detail?: string | null;
+};
+
 export interface ConnectorSyncRunSummary {
     id: string;
     trigger: string;
@@ -73,6 +83,10 @@ export interface ConnectorSyncRunSummary {
     completed_at: string | null;
     duration_seconds: number | null;
     entity_stats: Record<string, ConnectorEntityStatSlice>;
+    /** Registry key for the step currently executing (Customer, _maturity, …). */
+    active_step?: string | null;
+    /** Sub-phase within the active step (pulling, linking, …). */
+    active_step_detail?: string | null;
     error_message: string | null;
     error_type: string | null;
     cutover_options?: {
@@ -291,10 +305,10 @@ function isTerminalSyncRunSummary(run: ConnectorSyncRunSummary): boolean {
 }
 
 /** Live progress must not clobber a cancelled / finished status. */
-export function patchSyncRunEntityStats(
+export function patchSyncRunProgress(
     accountId: number,
     executionId: string,
-    entityStats: ConnectorEntityStats,
+    patch: ConnectorSyncProgressPatch,
     fallback: ConnectorSyncRunSummary
 ): void {
     const existing = listSyncRuns(accountId).find(
@@ -305,8 +319,29 @@ export function patchSyncRunEntityStats(
     }
     upsertSyncRun(accountId, {
         ...(existing ?? fallback),
-        entity_stats: entityStats,
+        entity_stats: patch.entity_stats,
+        ...(patch.active_step !== undefined
+            ? { active_step: patch.active_step }
+            : {}),
+        ...(patch.active_step_detail !== undefined
+            ? { active_step_detail: patch.active_step_detail }
+            : {}),
     });
+}
+
+/** @deprecated Prefer patchSyncRunProgress when active_step is available. */
+export function patchSyncRunEntityStats(
+    accountId: number,
+    executionId: string,
+    entityStats: ConnectorEntityStats,
+    fallback: ConnectorSyncRunSummary
+): void {
+    patchSyncRunProgress(
+        accountId,
+        executionId,
+        { entity_stats: entityStats },
+        fallback
+    );
 }
 
 export function listSyncRuns(

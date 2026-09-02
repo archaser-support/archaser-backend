@@ -2,7 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { BillingProviderClient } from "../billing/BillingProviderClient";
 import type { BillingAccountExtension, ExtensionMappedBatch, ExtensionSyncWindow } from "../extensions/types";
 import { type ClearBeforeImportEntity } from "../purge/clearBeforeImport";
-import { type ConnectorEntityStats } from "./connectorSyncRuntime";
+import { type ConnectorSyncProgressPatch } from "./connectorSyncRuntime";
 import { type ImportBatchFn } from "./stagedExtensionSync";
 import { type ArPostIngestHostFn, type ConnectorPostIngestDeferOptions } from "../credit/arPostIngestHost";
 import { type ProcessOverdueCustomersFn } from "./processOverdueTailStep";
@@ -40,12 +40,17 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
     /** Progress lines for the host process terminal (Nest Logger, tests). */
     onLog?: (message: string) => void;
     /** Live pulled/imported counts for GET /sync-runs polling. */
-    onProgress?: (entityStats: ConnectorEntityStats) => void;
+    onProgress?: (patch: ConnectorSyncProgressPatch) => void;
     /**
      * After Payment/Invoice ingest (and deferred maturity), refresh denormalized
      * customer due/overdue amounts. Nest wires recalculateCustomerAmounts.
      */
-    onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
+    onCustomerBalancesFinal?: (customerIds: number[], options?: {
+        onProgress?: (progress: {
+            processed: number;
+            total: number;
+        }) => void;
+    }) => Promise<void>;
     /**
      * After Invoice entity completion: shared AR post-ingest (replay, live
      * refresh, as-of enqueue). Nest wires runArPostIngestForCustomers.

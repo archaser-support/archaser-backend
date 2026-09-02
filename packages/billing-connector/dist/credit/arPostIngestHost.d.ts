@@ -63,7 +63,12 @@ export declare function resetArPostIngestOrchestratorForTests(): void;
  * Recompute invoice insurance target dates after amount/date upserts.
  * Uses the same credit-insurance refresh as API due-date edits.
  */
-export declare function refreshInsuranceTargetDatesViaHost(invoiceIds: number[], prisma: PrismaClient): Promise<number>;
+export declare function refreshInsuranceTargetDatesViaHost(invoiceIds: number[], prisma: PrismaClient, options?: {
+    onProgress?: (progress: {
+        processed: number;
+        total: number;
+    }) => void;
+}): Promise<number>;
 /**
  * Default post-Invoice / payment-only AR post-ingest when the host does not
  * pass onArPostIngest (queue worker, scheduled sync, internal inline).

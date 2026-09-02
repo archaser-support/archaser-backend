@@ -17,9 +17,11 @@ export declare const AR_REPLAY_ENTITY_STATS_KEY = "_ar_replay";
 /** Live MEP, capacity gap, and insurance field refresh. */
 export declare const LIVE_REFRESH_ENTITY_STATS_KEY = "_live_refresh";
 export declare const PROCESS_OVERDUE_ENTITY_STATS_KEY = "_process_overdue";
+/** Refresh invoice insurance target reporting/MEP dates after ingest. */
+export declare const INSURANCE_TARGETS_ENTITY_STATS_KEY = "_insurance_targets";
 export declare const PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
 export declare const BALANCES_ENTITY_STATS_KEY = "_balances";
-export declare const TAIL_STEP_KEYS: readonly ["_pending_closes", "_process_overdue", "_ar_replay", "_live_refresh", "_balances"];
+export declare const TAIL_STEP_KEYS: readonly ["_pending_closes", "_process_overdue", "_insurance_targets", "_ar_replay", "_live_refresh", "_balances"];
 export type TailStepKey = (typeof TAIL_STEP_KEYS)[number];
 export type TailStepState = {
     status: "running" | "done" | "failed" | "queued";
@@ -49,6 +51,12 @@ export type ConnectorEntityStatSlice = {
     /** Present for tail steps while running. */
     detail?: TailStepDetail;
 };
+/** Live progress patch — entity counters plus orchestrator pointer. */
+export type ConnectorSyncProgressPatch = {
+    entity_stats: ConnectorEntityStats;
+    active_step?: string | null;
+    active_step_detail?: string | null;
+};
 export interface ConnectorSyncRunSummary {
     id: string;
     trigger: string;
@@ -58,6 +66,10 @@ export interface ConnectorSyncRunSummary {
     completed_at: string | null;
     duration_seconds: number | null;
     entity_stats: Record<string, ConnectorEntityStatSlice>;
+    /** Registry key for the step currently executing (Customer, _maturity, …). */
+    active_step?: string | null;
+    /** Sub-phase within the active step (pulling, linking, …). */
+    active_step_detail?: string | null;
     error_message: string | null;
     error_type: string | null;
     cutover_options?: {
@@ -119,6 +131,8 @@ export declare function getRunningSync(accountId: number): RunningConnectorSync 
 export declare function clearRunningSync(accountId: number): void;
 export declare function upsertSyncRun(accountId: number, summary: ConnectorSyncRunSummary): void;
 /** Live progress must not clobber a cancelled / finished status. */
+export declare function patchSyncRunProgress(accountId: number, executionId: string, patch: ConnectorSyncProgressPatch, fallback: ConnectorSyncRunSummary): void;
+/** @deprecated Prefer patchSyncRunProgress when active_step is available. */
 export declare function patchSyncRunEntityStats(accountId: number, executionId: string, entityStats: ConnectorEntityStats, fallback: ConnectorSyncRunSummary): void;
 export declare function listSyncRuns(accountId: number, limit?: number): ConnectorSyncRunSummary[];
 export declare function resetConnectorSyncRuntimeForTests(): void;
