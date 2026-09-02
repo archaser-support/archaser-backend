@@ -5,11 +5,16 @@ import {
     parseMappingRules,
     type MappingRule,
 } from "../utils/connectorFieldUtils";
+import { appendBatchImportIssue } from "./aggregateEntityImportStats";
 import { applyMaturedDeferredPayments } from "./applyMaturedDeferredPayments";
 import { commitOps, lastWinsByKey } from "./bulkWrite";
 import { importPayments } from "./importPaymentService";
 import { normalizeInvoiceImportInput } from "./normalizeInvoiceImportInput";
 import { toPaymentInput } from "./normalizePaymentInput";
+import {
+    formatImportIssueMessage,
+    validateConnectorLiveImportRow,
+} from "./validateConnectorLiveImportRow";
 import { sortInvoicesForImport } from "./sortInvoicesForImport";
 import { linkOrphanedCreditNotes } from "../invoice/linkOrphanedCreditNotes";
 import type { BillingAccountExtension } from "../extensions/types";
@@ -29,6 +34,8 @@ export interface EntityImportBatchResult {
     success: number;
     failed: number;
     skipped: number;
+    mandatoryFieldSkips?: number;
+    issueMessages?: string[];
     affectedCustomerIds: number[];
     entityIds: number[];
     errors: string[];
@@ -37,6 +44,8 @@ export interface EntityImportBatchResult {
 }
 
 export interface EntityImportBatchOptions {
+    /** Billing-connector live sync only — skip incomplete invoice/payment rows. */
+    enforceMandatoryFields?: boolean;
     skipReportingBreach?: boolean;
     /**
      * When true, skip deferred-payment maturity after this invoice batch.
@@ -92,6 +101,8 @@ function emptyBatchResult(): EntityImportBatchResult {
         success: 0,
         failed: 0,
         skipped: 0,
+        mandatoryFieldSkips: 0,
+        issueMessages: [],
         affectedCustomerIds: [],
         entityIds: [],
         errors: [],

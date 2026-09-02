@@ -17,6 +17,10 @@ export interface SyncResultForStatus {
         invoicesImported: number;
         paymentsImported: number;
         importErrors: number;
+        mandatoryFieldSkips?: number;
+        entityImportStats?: Partial<
+            Record<string, import("../import/aggregateEntityImportStats").EntityImportStatsAccum>
+        >;
     };
     entity_stats?: Record<
         string,

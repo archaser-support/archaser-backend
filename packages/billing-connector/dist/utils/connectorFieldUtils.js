@@ -71,8 +71,8 @@ function getImportEntityFieldCatalog(importType) {
                 "customer_number",
                 "invoice_number",
                 "invoice_date",
-                "base_amount",
-                "invoice_amount",
+                "due_date",
+                "currency",
             ],
             highlightedFields: ["invoice_number", "customer_number", "invoice_date"],
         },
@@ -612,7 +612,24 @@ function computeMappingCompleteness(importType, rules) {
         (rule.defaultValue !== undefined &&
             rule.defaultValue.trim() !== ""))
         .map((rule) => rule.archaserField));
-    return catalog.requiredFields.every((field) => mappedFields.has(field));
+    return catalog.requiredFields.every((field) => mappedFields.has(field))
+        && hasRequiredAmountMapping(importType, mappedFields);
+}
+const INVOICE_AMOUNT_FIELDS = [
+    "amount",
+    "base_amount",
+    "invoice_amount",
+    "customer_amount",
+];
+const PAYMENT_AMOUNT_FIELDS = ["amount", "customer_amount"];
+function hasRequiredAmountMapping(importType, mappedFields) {
+    if (importType === "Invoice") {
+        return INVOICE_AMOUNT_FIELDS.some((field) => mappedFields.has(field));
+    }
+    if (importType === "Payment") {
+        return PAYMENT_AMOUNT_FIELDS.some((field) => mappedFields.has(field));
+    }
+    return true;
 }
 function rulesToRecordMapping(rules) {
     const result = {};

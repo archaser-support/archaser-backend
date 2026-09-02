@@ -38,7 +38,7 @@ let AccessScopeService = class AccessScopeService {
     async resolveUserInfo(user) {
         const userId = user.sub;
         if (!userId || user.account_id == null) {
-            throw new Error("Unauthorized");
+            throw new common_1.UnauthorizedException("Unauthorized");
         }
         const dbUser = await this.db.user.findUnique({
             where: { id: userId },

@@ -8,7 +8,6 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var ReportExecutionService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportExecutionService = void 0;
 const common_1 = require("@nestjs/common");
@@ -31,11 +30,10 @@ const report_metadata_1 = require("./report-metadata");
 const formula_execution_1 = require("./report-formula/formula-execution");
 const types_1 = require("./report-formula/types");
 const report_datetime_util_1 = require("./report-datetime.util");
-let ReportExecutionService = ReportExecutionService_1 = class ReportExecutionService {
+let ReportExecutionService = class ReportExecutionService {
     constructor(db, access) {
         this.db = db;
         this.access = access;
-        this.logger = new common_1.Logger(ReportExecutionService_1.name);
         (0, credit_insurance_domain_1.bindCreditInsurancePrisma)(this.db);
     }
     async execute(user, reportId, body) {
@@ -169,9 +167,6 @@ let ReportExecutionService = ReportExecutionService_1 = class ReportExecutionSer
             ((0, credit_insurance_domain_1.isCreditDashboardEnrichedSortField)(effectiveSortField) ||
                 (0, credit_insurance_domain_2.isCustomerPolicyBackedReportField)(effectiveSortField));
         const needsInMemorySort = needsCreditDashboardInMemorySort || needsComputedFormattedSort;
-        if (needsComputedFormattedSort && computedSortTarget) {
-            this.logger.debug(`In-memory sort for computed field ${computedSortTarget.table}.${computedSortTarget.field} (outputKey=${computedSortTarget.outputKey}); SQL ORDER BY cannot use this column`);
-        }
         const orderBy = needsInMemorySort
             ? []
             : this.buildOrderBy(primaryTable, body.sortField, body.sortDirection, config.sorting);
@@ -1177,7 +1172,7 @@ let ReportExecutionService = ReportExecutionService_1 = class ReportExecutionSer
     }
 };
 exports.ReportExecutionService = ReportExecutionService;
-exports.ReportExecutionService = ReportExecutionService = ReportExecutionService_1 = __decorate([
+exports.ReportExecutionService = ReportExecutionService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [database_service_1.DatabaseService,
         access_scope_service_1.AccessScopeService])

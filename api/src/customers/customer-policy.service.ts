@@ -3,7 +3,11 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
-import type { customer_limit_type, CustomerPolicy } from "@prisma/client";
+import {
+    Prisma,
+    type customer_limit_type,
+    type CustomerPolicy,
+} from "@prisma/client";
 import {
     deriveExcludedFromPolicy,
     freezeCustomerPolicyGapOnDeactivation,
@@ -111,6 +115,36 @@ function parseLimitType(value: unknown): customer_limit_type | null {
         return "Named";
     }
     return null;
+}
+
+function parseDecimalOrNull(
+    value: unknown,
+    field: string
+): Prisma.Decimal | null {
+    if (isBlank(value)) {
+        return null;
+    }
+    try {
+        return new Prisma.Decimal(String(value).trim());
+    } catch {
+        throw new BadRequestException({
+            error: `${field} must be a valid number`,
+        });
+    }
+}
+
+function assertZeroLimitDateWhenRequired(
+    payload: CustomerPolicyTabPayload
+): void {
+    const limit = parseDecimalOrNull(payload.approved_limit, "approved_limit");
+    if (limit == null) {
+        return;
+    }
+    if (limit.equals(0) && payload.zero_limit_date == null) {
+        throw new BadRequestException({
+            error: "Approve zero limit date is required when approved limit is 0",
+        });
+    }
 }
 
 export function hasPolicyPayloadInBody(body: Record<string, unknown>): boolean {
@@ -249,13 +283,18 @@ function buildPolicyWriteData(
     pricing: {
         cost_percent: unknown;
         registration_fee_percent: unknown;
+        currency: string | null;
     },
     userId: string
 ): Record<string, unknown> {
     return {
         insurance_policy_id: payload.insurancePolicyId,
         customer_number_policy: payload.customer_number_policy,
-        approved_limit: payload.approved_limit,
+        approved_limit: parseDecimalOrNull(
+            payload.approved_limit,
+            "approved_limit"
+        ),
+        approved_limit_currency: pricing.currency,
         approved_limit_expiration_date: payload.approved_limit_expiration_date,
         zero_limit_date: payload.zero_limit_date,
         limit_type: payload.limit_type,
@@ -265,7 +304,7 @@ function buildPolicyWriteData(
         ...payload.monthEnd,
         policy_exclusion_reason: payload.policy_exclusion_reason,
         excluded_from_policy: payload.excluded_from_policy,
-        credit_score: payload.credit_score,
+        credit_score: parseDecimalOrNull(payload.credit_score, "credit_score"),
         credit_score_input_date: payload.credit_score_input_date,
         active_customer_since: payload.active_customer_since,
         outdated_dcl: payload.outdated_dcl,
@@ -328,6 +367,8 @@ export class CustomerPolicyService {
                 error: "limit_type is required when a policy is assigned",
             });
         }
+
+        assertZeroLimitDateWhenRequired(effectivePayload);
 
         const pricing = await this.loadPolicyPricing(nextPolicyId, args.accountId);
         const writeData = buildPolicyWriteData(
@@ -466,6 +507,7 @@ export class CustomerPolicyService {
             select: {
                 cost_percent: true,
                 registration_fee_percent: true,
+                currency: true,
             },
         });
         if (!policy) {
@@ -478,10 +520,18 @@ export class CustomerPolicyService {
         customerId: number,
         payload: CustomerPolicyTabPayload
     ): Promise<void> {
-        await syncCustomerInsuranceFields(customerId, {
-            dbClient: this.db,
-            validateZeroLimitDate: true,
-            refreshTermsBreachFlags: payload.explicitExclusionReason,
-        });
+        try {
+            await syncCustomerInsuranceFields(customerId, {
+                dbClient: this.db,
+                validateZeroLimitDate: false,
+                refreshTermsBreachFlags: payload.explicitExclusionReason,
+            });
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            throw new BadRequestException({
+                error: message || "Failed to sync customer insurance fields",
+            });
+        }
     }
 }
