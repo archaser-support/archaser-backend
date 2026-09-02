@@ -24,6 +24,18 @@ export interface FieldMetadata {
     // If not provided, uses field name. Used to construct keys like: values.{enumValueKeyPrefix}_{value}
 }
 
+/** Resolve report-builder field type from static metadata (date vs datetime). */
+export function resolveReportFieldType(
+    table: string,
+    field: string
+): string | undefined {
+    const tableMeta = REPORT_METADATA.tables.find((t) => t.name === table);
+    if (!tableMeta) {
+        return undefined;
+    }
+    return tableMeta.fields.find((entry) => entry.name === field)?.type;
+}
+
 export const REPORT_METADATA: { tables: TableMetadata[] } = {
     tables: [
         {
