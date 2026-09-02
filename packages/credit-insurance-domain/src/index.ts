@@ -37,6 +37,18 @@ export {
     zeroLimitWarningMembershipWhere,
 } from "./credit-insurance/domain/creditDashboardCustomerMembership";
 export {
+    UTILIZATION_DISTRIBUTION_BIN_KEYS,
+    assignUtilizationDistributionBin,
+    isUtilizationDistributionBinKey,
+    utilizationDistributionRiskZone,
+    type UtilizationDistributionBinKey,
+    type UtilizationDistributionRiskZone,
+} from "./credit-insurance/domain/utilizationDistributionBins";
+export {
+    fetchUtilizationBinCptCustomers,
+    fetchAsOfUtilizationByCustomerIds,
+} from "./credit-insurance/domain/utilizationBinReport";
+export {
     CUSTOMER_POLICY_BACKED_REPORT_FIELDS,
     extractCustomerPolicyReportField,
     getCustomerPolicyRow,
