@@ -152,7 +152,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
                 inv.capacity_gap_amount_limit != null &&
                 new Prisma.Decimal(inv.capacity_gap_amount_limit).eq(0);
             if (!zeroed) {
-                await dbClient.invoice.update({
+                await dbClient.invoice.updateMany({
                     where: { id: inv.id },
                     data: {
                         capacity_gap_amount: new Prisma.Decimal(0),
@@ -171,7 +171,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
                 inv.capacity_gap_amount_limit != null &&
                 new Prisma.Decimal(inv.capacity_gap_amount_limit).eq(0);
             if (!zeroed) {
-                await dbClient.invoice.update({
+                await dbClient.invoice.updateMany({
                     where: { id: inv.id },
                     data: {
                         capacity_gap_amount: new Prisma.Decimal(0),
@@ -249,7 +249,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
             !new Prisma.Decimal(prevLimit).eq(nextLimit);
 
         if (baseChanged || limitChanged) {
-            await dbClient.invoice.update({
+            await dbClient.invoice.updateMany({
                 where: { id: inv.id },
                 data: {
                     capacity_gap_amount: nextBase,

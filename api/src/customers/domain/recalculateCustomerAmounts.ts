@@ -15,6 +15,46 @@ import { Prisma, PrismaClient, record_status } from "@prisma/client";
 
 export type RecalcDbClient = PrismaClient | Prisma.TransactionClient;
 
+/** Concurrent customer row writes after the set-based aggregates. */
+export const BALANCE_WRITE_CONCURRENCY = 16;
+
+/** Default progress tick interval while writing customer rollups. */
+export const BALANCE_PROGRESS_EVERY = 10;
+
+export type RecalculateCustomerAmountsOptions = {
+    /** Parallel customer updates (default {@link BALANCE_WRITE_CONCURRENCY}). */
+    concurrency?: number;
+    /** Emit after each progressEvery completions and at the end. */
+    onProgress?: (progress: {
+        processed: number;
+        total: number;
+    }) => void;
+    /** Min completions between onProgress calls (default {@link BALANCE_PROGRESS_EVERY}). */
+    progressEvery?: number;
+};
+
+async function runWithConcurrency<T>(
+    items: readonly T[],
+    limit: number,
+    fn: (item: T) => Promise<void>
+): Promise<void> {
+    if (items.length === 0) {
+        return;
+    }
+    let cursor = 0;
+    async function worker(): Promise<void> {
+        for (;;) {
+            const i = cursor++;
+            if (i >= items.length) {
+                return;
+            }
+            await fn(items[i]!);
+        }
+    }
+    const workerCount = Math.min(Math.max(1, limit), items.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+}
+
 export type CustomerDueAmounts = {
     total_due_amount: number;
     no_of_due_invoices: number;
@@ -237,22 +277,45 @@ async function applyCollectionPeriodAmounts(
 /**
  * Recalculates due and overdue rollups for the given customers and persists them
  * on the Customer row (plus the open collection period).
+ *
+ * Aggregates are set-based (all customers in a few groupBy queries). Writes use
+ * a bounded worker pool so large backfills do not update one customer at a time.
  */
 export async function recalculateCustomerAmounts(
     customerIds: number[],
-    db: RecalcDbClient
+    db: RecalcDbClient,
+    options?: RecalculateCustomerAmountsOptions
 ): Promise<Map<number, CustomerAmountsResult>> {
     const result = new Map<number, CustomerAmountsResult>();
     if (!customerIds.length) {
         return result;
     }
 
+    const uniqueIds = Array.from(
+        new Set(customerIds.filter((id) => Number.isFinite(id) && id > 0))
+    );
+    if (uniqueIds.length === 0) {
+        return result;
+    }
+
+    const concurrency = Math.max(
+        1,
+        options?.concurrency ?? BALANCE_WRITE_CONCURRENCY
+    );
+    const progressEvery = Math.max(
+        1,
+        options?.progressEvery ?? BALANCE_PROGRESS_EVERY
+    );
+    const total = uniqueIds.length;
+    options?.onProgress?.({ processed: 0, total });
+
     const [dueAmounts, overdueAmounts] = await Promise.all([
-        calculateDueAmountsForCustomers(customerIds, db),
-        calculateOutstandingAmountsForCustomers(customerIds, db),
+        calculateDueAmountsForCustomers(uniqueIds, db),
+        calculateOutstandingAmountsForCustomers(uniqueIds, db),
     ]);
 
-    for (const customerId of customerIds) {
+    let processed = 0;
+    await runWithConcurrency(uniqueIds, concurrency, async (customerId) => {
         const due = dueAmounts.get(customerId) ?? EMPTY_DUE;
         const overdue = overdueAmounts.get(customerId) ?? EMPTY_OVERDUE;
         result.set(customerId, { due, overdue });
@@ -287,7 +350,15 @@ export async function recalculateCustomerAmounts(
         });
 
         await applyCollectionPeriodAmounts(customerId, overdue, db);
-    }
+
+        processed += 1;
+        if (
+            processed === total ||
+            processed % progressEvery === 0
+        ) {
+            options?.onProgress?.({ processed, total });
+        }
+    });
 
     return result;
 }
