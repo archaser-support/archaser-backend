@@ -13,6 +13,8 @@
  */
 import { type MaturityResult } from "@archaser/billing-connector";
 import { type ReplayCustomerSummary } from "./importArReplayService";
+/** Concurrent live-refresh customers (same idea as CTV / insurance-date pools). */
+export declare const LIVE_REFRESH_CUSTOMER_CONCURRENCY = 8;
 export type ArPostIngestStep = "replay" | "maturity" | "process_overdue" | "live_refresh" | "as_of_enqueue";
 export type ArPostIngestError = {
     step: ArPostIngestStep;
@@ -114,7 +116,8 @@ export declare function createDefaultArPostIngestDeps(): ArPostIngestDeps;
  * Run post-ingest AR refresh for affected customers.
  * Process Overdue runs for every account; replay / maturity / live refresh
  * (and in-orchestrator as-of) remain credit-insurance-gated.
- * Customers are processed one at a time for replay and live refresh.
+ * Customers are processed one at a time for replay. Live refresh runs a
+ * bounded worker pool across customers (see {@link LIVE_REFRESH_CUSTOMER_CONCURRENCY}).
  * Process Overdue runs once per batch of touched customers.
  */
 export declare function runArPostIngestForCustomers(options: RunArPostIngestOptions, deps?: ArPostIngestDeps): Promise<ArPostIngestResult>;

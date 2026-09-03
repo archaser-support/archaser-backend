@@ -86,8 +86,8 @@ async function syncDueBillingConnectors(prisma, options) {
                 executionId,
                 onLog: options?.onLog,
                 observability: options?.observability,
-                onProgress: (entityStats) => {
-                    void heartbeat(entityStats);
+                onProgress: (patch) => {
+                    void heartbeat(patch.entity_stats);
                 },
             });
             results.push(result);

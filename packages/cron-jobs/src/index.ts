@@ -39,6 +39,7 @@ export {
     createDefaultArPostIngestDeps,
     defaultAccountHasCreditInsurance,
     runArPostIngestForCustomers,
+    LIVE_REFRESH_CUSTOMER_CONCURRENCY,
     type ArPostIngestDeps,
     type ArPostIngestError,
     type ArPostIngestResult,

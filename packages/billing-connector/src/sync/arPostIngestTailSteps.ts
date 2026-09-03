@@ -1,15 +1,14 @@
 import type { PrismaClient } from "@prisma/client";
-import {
-    refreshInsuranceTargetDatesViaHost,
-    type ArPostIngestHostFn,
-} from "../credit/arPostIngestHost";
+import type { ArPostIngestHostFn } from "../credit/arPostIngestHost";
 import {
     AR_REPLAY_ENTITY_STATS_KEY,
+    INSURANCE_TARGETS_ENTITY_STATS_KEY,
     LIVE_REFRESH_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
     type TailStepKey,
     type TailStepState,
 } from "./connectorSyncRuntime";
+import { runInsuranceTargetsTailStep } from "./insuranceTargetsTailStep";
 import {
     runProcessOverdueTailStep,
     type ProcessOverdueCustomersFn,
@@ -70,8 +69,12 @@ async function runChunkedHostStep(params: {
                 i,
                 i + AR_POST_INGEST_CUSTOMER_CHUNK
             );
+            const chunkEnd = Math.min(i + chunk.length, total);
+            params.log(
+                `${params.logLabel} progress: ${i}/${total} — processing customers ${i + 1}–${chunkEnd}…`
+            );
             await params.runChunk(chunk);
-            const processed = Math.min(i + chunk.length, total);
+            const processed = chunkEnd;
             params.setTailStep(params.tailKey, {
                 status: "running",
                 processed,
@@ -82,6 +85,9 @@ async function runChunkedHostStep(params: {
                     total,
                 },
             });
+            params.log(
+                `${params.logLabel} progress: ${processed}/${total} customer(s)`
+            );
         }
         params.setTailStep(params.tailKey, {
             status: "done",
@@ -110,8 +116,8 @@ async function runChunkedHostStep(params: {
 }
 
 /**
- * Inline AR post-ingest tail: Process Overdue (optional) → replay → live refresh
- * → as-of enqueue. Each CI step is its own progress row with chunked updates.
+ * Inline AR post-ingest tail: Process Overdue (optional) → insurance target
+ * dates → replay → live refresh → as-of enqueue. Each step is its own progress row.
  */
 export async function runInlineArPostIngestTailSteps(
     params: RunInlineArPostIngestTailStepsParams
@@ -129,21 +135,6 @@ export async function runInlineArPostIngestTailSteps(
         return;
     }
 
-    if (params.invoiceEntityIds.length > 0 && params.prisma) {
-        try {
-            await refreshInsuranceTargetDatesViaHost(
-                params.invoiceEntityIds,
-                params.prisma
-            );
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : String(error);
-            params.log(
-                `Insurance target refresh after invoice upsert failed: ${message}`
-            );
-        }
-    }
-
     if (
         !params.separateOverdueStep &&
         params.onProcessOverdueCustomers &&
@@ -155,6 +146,17 @@ export async function runInlineArPostIngestTailSteps(
             log: params.log,
             setTailStep: (state) =>
                 params.setTailStep(PROCESS_OVERDUE_ENTITY_STATS_KEY, state),
+        });
+    }
+
+    // Target dates must be current before AR replay (sign flips / MEP window).
+    if (params.invoiceEntityIds.length > 0 && params.prisma) {
+        await runInsuranceTargetsTailStep({
+            invoiceIds: params.invoiceEntityIds,
+            prisma: params.prisma,
+            log: params.log,
+            setTailStep: (state) =>
+                params.setTailStep(INSURANCE_TARGETS_ENTITY_STATS_KEY, state),
         });
     }
 

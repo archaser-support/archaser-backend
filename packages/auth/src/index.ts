@@ -19,3 +19,4 @@ export {
     parseCorsOrigins,
     PUBLIC_CORS_ALLOWED_HEADERS,
 } from "./public-cors";
+export { QuietNestLogger } from "./quiet-nest-logger";

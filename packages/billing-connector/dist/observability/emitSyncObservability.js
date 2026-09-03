@@ -57,7 +57,8 @@ function emitBillingConnectorSyncFinish(input, options) {
     const syncMode = input.syncMode || "INCREMENTAL";
     const provider = input.provider || "UNKNOWN";
     const trigger = input.trigger || "manual";
-    if (structuredLogs) {
+    // Skip SUCCESS finish dumps — huge entity_stats spam Nest/Loki; metrics still record.
+    if (structuredLogs && status !== "SUCCESS") {
         const line = (0, structuredLog_1.formatBillingConnectorSyncLogLine)((0, structuredLog_1.buildBaseLogFields)({
             accountId: input.accountId,
             connectorId: input.connectorId,
@@ -70,9 +71,7 @@ function emitBillingConnectorSyncFinish(input, options) {
             correlationId: input.correlationId,
             durationSeconds: Math.round(durationSeconds * 1000) / 1000,
             entityStats: input.result.entity_stats,
-            message: status === "SUCCESS"
-                ? "Billing connector sync finished"
-                : `Billing connector sync finished: ${status}`,
+            message: `Billing connector sync finished: ${status}`,
         }));
         writeStructuredLine(options?.onLog, line);
     }

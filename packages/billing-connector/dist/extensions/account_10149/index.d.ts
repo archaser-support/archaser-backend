@@ -4,6 +4,12 @@ export declare const ACCOUNT_10149_EXTENSION_KEY = "account_10149";
 export declare const ACCOUNT_10149_ID = 10149;
 export declare const ILS_CURRENCY_CODE = "ILS";
 export declare const USD_CURRENCY_CODE = "USD";
+/**
+ * Priority company codes on IDG_ARFNCITEMS4. IDG_CUSTNAME is often
+ * customer_number + company without leading zeros ("002" → suffix "02").
+ * Override via extension_config.idgPaymentCompanyCodes.
+ */
+export declare const ACCOUNT_10149_DEFAULT_IDG_PAYMENT_COMPANY_CODES: readonly ["000", "002"];
 export declare function isHebrewShekelCurrencyLabel(value: unknown): boolean;
 /** Priority dollar symbol (and common US$ / USD$ variants) → USD. */
 export declare function isDollarCurrencyLabel(value: unknown): boolean;
@@ -52,6 +58,24 @@ export declare function isAccount10149ReconciledClose(rawErpRow: Record<string, 
 /** @deprecated Use {@link isAccount10149ReconciledClose}. */
 export declare function isAccount10149ReconciledReceiptClose(rawErpRow: Record<string, unknown>): boolean;
 /**
+ * Priority COMPANYNAME → IDG_CUSTNAME suffix.
+ * "000" → none (plain customer number); "002" → "02" (not "2").
+ */
+export declare function account10149CompanySuffix(companyCode: string | null | undefined): string;
+export declare function resolveAccount10149IdgPaymentCompanyCodes(extensionConfig: Record<string, unknown> | null | undefined): string[];
+/**
+ * Archaser customer_number plus IDG company-suffixed variants for Payment pulls.
+ */
+export declare function expandAccount10149IdgCustomerNumbers(customerNumber: string, companyCodes: string[]): string[];
+/**
+ * Map IDG_CUSTNAME / mapped customer_number back to Archaser customer_number
+ * using COMPANYNAME on the ERP row when present, else known company suffixes.
+ */
+export declare function normalizeAccount10149PaymentCustomerNumber(customerNumber: string | null | undefined, options?: {
+    companyName?: string | null;
+    companyCodes?: string[];
+}): string;
+/**
  * Priority credit-note invoice numbers (e.g. CR26100000032) — recon lines for
  * these are not cash receipts; queue virtual close instead of importing payment.
  */
@@ -70,6 +94,7 @@ export declare function transformAccount10149Batch(batch: ExtensionMappedBatch, 
     closeDates?: Map<string, Date>) => void;
     /** Original + cancel stamp numbers for Helam offset pair stamp-close. */
     onHelamOffsetCloseTargets?: (invoiceNumbers: string[]) => void;
+    extension_config?: Record<string, unknown> | null;
 }): ExtensionMappedBatch;
 export declare function afterAccount10149PaymentLinked(ctx: ExtensionAfterPaymentLinkedContext): Promise<ExtensionAfterPaymentLinkedResult>;
 export declare const account10149Extension: BillingAccountExtension;

@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.account10149Extension = exports.USD_CURRENCY_CODE = exports.ILS_CURRENCY_CODE = exports.ACCOUNT_10149_ID = exports.ACCOUNT_10149_EXTENSION_KEY = void 0;
+exports.account10149Extension = exports.ACCOUNT_10149_DEFAULT_IDG_PAYMENT_COMPANY_CODES = exports.USD_CURRENCY_CODE = exports.ILS_CURRENCY_CODE = exports.ACCOUNT_10149_ID = exports.ACCOUNT_10149_EXTENSION_KEY = void 0;
 exports.isHebrewShekelCurrencyLabel = isHebrewShekelCurrencyLabel;
 exports.isDollarCurrencyLabel = isDollarCurrencyLabel;
 exports.normalizeAccount10149PaymentCurrency = normalizeAccount10149PaymentCurrency;
@@ -44,12 +44,17 @@ exports.isAccount10149HelamOffsetCancelRow = isAccount10149HelamOffsetCancelRow;
 exports.collectHelamOffsetPairTargets = collectHelamOffsetPairTargets;
 exports.isAccount10149ReconciledClose = isAccount10149ReconciledClose;
 exports.isAccount10149ReconciledReceiptClose = isAccount10149ReconciledReceiptClose;
+exports.account10149CompanySuffix = account10149CompanySuffix;
+exports.resolveAccount10149IdgPaymentCompanyCodes = resolveAccount10149IdgPaymentCompanyCodes;
+exports.expandAccount10149IdgCustomerNumbers = expandAccount10149IdgCustomerNumbers;
+exports.normalizeAccount10149PaymentCustomerNumber = normalizeAccount10149PaymentCustomerNumber;
 exports.isAccount10149CreditInvoiceNumber = isAccount10149CreditInvoiceNumber;
 exports.transformAccount10149Batch = transformAccount10149Batch;
 exports.afterAccount10149PaymentLinked = afterAccount10149PaymentLinked;
 const pendingCloseProgress_1 = require("../pendingCloseProgress");
 const connectorFieldUtils_1 = require("../../utils/connectorFieldUtils");
 const alignPaymentToInvoiceCurrency_1 = require("../../payment/alignPaymentToInvoiceCurrency");
+const paymentImportTrace_1 = require("../../import/paymentImportTrace");
 const helamOffsetClose_1 = require("./helamOffsetClose");
 const reconciledVirtualClose_1 = require("./reconciledVirtualClose");
 /** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp. */
@@ -57,6 +62,16 @@ exports.ACCOUNT_10149_EXTENSION_KEY = "account_10149";
 exports.ACCOUNT_10149_ID = 10149;
 exports.ILS_CURRENCY_CODE = "ILS";
 exports.USD_CURRENCY_CODE = "USD";
+/**
+ * Priority company codes on IDG_ARFNCITEMS4. IDG_CUSTNAME is often
+ * customer_number + company without leading zeros ("002" → suffix "02").
+ * Override via extension_config.idgPaymentCompanyCodes.
+ */
+exports.ACCOUNT_10149_DEFAULT_IDG_PAYMENT_COMPANY_CODES = [
+    "000",
+    "002",
+];
+const IDG_PAYMENT_COMPANY_CODES_CONFIG_KEY = "idgPaymentCompanyCodes";
 const INVOICE_AMOUNT_FIELDS = [
     "amount",
     "customer_amount",
@@ -352,14 +367,106 @@ function transformInvoiceRow(row) {
         : row;
     return rewriteRowCurrencies(withCreditSign);
 }
-function transformPaymentRow(row) {
-    if (isAccount10149CancelDebitPaymentRow(row)) {
-        return rewriteRowCurrencies(absCancelPaymentAmounts(row));
+/**
+ * Priority COMPANYNAME → IDG_CUSTNAME suffix.
+ * "000" → none (plain customer number); "002" → "02" (not "2").
+ */
+function account10149CompanySuffix(companyCode) {
+    if (typeof companyCode !== "string") {
+        return "";
     }
-    if (isAccount10149DebitPaymentRow(row)) {
+    const trimmed = companyCode.trim();
+    if (!trimmed || /^0+$/.test(trimmed)) {
+        return "";
+    }
+    // 3-digit company codes drop one leading zero in IDG_CUSTNAME ("002" → "02").
+    if (/^0\d{2}$/.test(trimmed)) {
+        return trimmed.slice(1);
+    }
+    return trimmed.replace(/^0+/, "") || "";
+}
+function resolveAccount10149IdgPaymentCompanyCodes(extensionConfig) {
+    const raw = extensionConfig?.[IDG_PAYMENT_COMPANY_CODES_CONFIG_KEY];
+    if (Array.isArray(raw)) {
+        const fromConfig = raw
+            .map((value) => String(value ?? "").trim())
+            .filter((value) => value.length > 0);
+        if (fromConfig.length > 0) {
+            return fromConfig;
+        }
+    }
+    return [...exports.ACCOUNT_10149_DEFAULT_IDG_PAYMENT_COMPANY_CODES];
+}
+/**
+ * Archaser customer_number plus IDG company-suffixed variants for Payment pulls.
+ */
+function expandAccount10149IdgCustomerNumbers(customerNumber, companyCodes) {
+    const base = customerNumber.trim();
+    if (!base) {
+        return [];
+    }
+    const values = new Set([base]);
+    for (const code of companyCodes) {
+        const suffix = account10149CompanySuffix(code);
+        if (suffix) {
+            values.add(`${base}${suffix}`);
+        }
+    }
+    return [...values];
+}
+/**
+ * Map IDG_CUSTNAME / mapped customer_number back to Archaser customer_number
+ * using COMPANYNAME on the ERP row when present, else known company suffixes.
+ */
+function normalizeAccount10149PaymentCustomerNumber(customerNumber, options) {
+    const value = typeof customerNumber === "string" ? customerNumber.trim() : "";
+    if (!value) {
+        return value;
+    }
+    const fromCompany = account10149CompanySuffix(options?.companyName);
+    if (fromCompany &&
+        value.endsWith(fromCompany) &&
+        value.length > fromCompany.length) {
+        return value.slice(0, -fromCompany.length);
+    }
+    const codes = options?.companyCodes ??
+        [...exports.ACCOUNT_10149_DEFAULT_IDG_PAYMENT_COMPANY_CODES];
+    const suffixes = codes
+        .map(account10149CompanySuffix)
+        .filter((suffix) => suffix.length > 0)
+        .sort((a, b) => b.length - a.length);
+    for (const suffix of suffixes) {
+        if (value.endsWith(suffix) && value.length > suffix.length) {
+            return value.slice(0, -suffix.length);
+        }
+    }
+    return value;
+}
+function transformPaymentRow(row, companyCodes) {
+    const next = normalizeAccount10149PaymentCustomerOnRow(row, companyCodes);
+    if (isAccount10149CancelDebitPaymentRow(next)) {
+        return rewriteRowCurrencies(absCancelPaymentAmounts(next));
+    }
+    if (isAccount10149DebitPaymentRow(next)) {
         return null;
     }
-    return rewriteRowCurrencies(row);
+    return rewriteRowCurrencies(next);
+}
+function normalizeAccount10149PaymentCustomerOnRow(row, companyCodes) {
+    const raw = rawRecordOf(row);
+    const normalizedCustomer = normalizeAccount10149PaymentCustomerNumber(typeof row.customer_number === "string"
+        ? row.customer_number
+        : asNonEmptyString(raw.IDG_CUSTNAME) ??
+            asNonEmptyString(raw.CUSTNAME), {
+        companyName: asNonEmptyString(raw.COMPANYNAME) ??
+            asNonEmptyString(row.COMPANYNAME),
+        companyCodes,
+    });
+    if (!normalizedCustomer ||
+        normalizedCustomer === String(row.customer_number ?? "").trim()) {
+        return row;
+    }
+    return { ...row, customer_number: normalizedCustomer };
 }
 /**
  * Priority credit-note invoice numbers (e.g. CR26100000032) — recon lines for
@@ -377,6 +484,7 @@ function isAccount10149CreditInvoiceNumber(invoiceNumber) {
  * invoices with no virtual payment.
  */
 function transformAccount10149Batch(batch, options) {
+    const companyCodes = resolveAccount10149IdgPaymentCompanyCodes(options?.extension_config);
     const invoices = batch.Invoice;
     const payments = batch.Payment;
     const nextInvoices = invoices && invoices.length > 0
@@ -396,40 +504,71 @@ function transformAccount10149Batch(batch, options) {
         const queuedCloseDates = new Map();
         const kept = [];
         for (const row of payments) {
-            const raw = rawRecordOf(row);
+            const normalizedRow = normalizeAccount10149PaymentCustomerOnRow(row, companyCodes);
+            const raw = rawRecordOf(normalizedRow);
             const reconciled = isAccount10149ReconciledClose({
-                ...row,
+                ...normalizedRow,
                 ...raw,
             });
             // Two-invoice Helam offset: drop cancel; stamp both (no payment).
-            if (reconciled && isAccount10149HelamOffsetCancelRow(row)) {
+            if (reconciled &&
+                isAccount10149HelamOffsetCancelRow(normalizedRow)) {
+                (0, paymentImportTrace_1.tracePaymentImport)("extension_drop", normalizedRow, {
+                    reason: "helam_offset_cancel_stamp",
+                    reconciled,
+                });
                 continue;
             }
-            const ivnum = pickInvoiceNumber(raw, row);
+            const ivnum = pickInvoiceNumber(raw, normalizedRow);
             // Original debit of an offset pair in this batch: drop, no virtual
             // (stamp-close handles both sides).
             if (reconciled &&
-                isAccount10149DebitPaymentRow(row) &&
+                isAccount10149DebitPaymentRow(normalizedRow) &&
                 ivnum != null &&
                 offsetTargets.originals.has(ivnum)) {
+                (0, paymentImportTrace_1.tracePaymentImport)("extension_drop", normalizedRow, {
+                    reason: "helam_offset_original_debit",
+                    ivnum,
+                    offsetOriginals: [...offsetTargets.originals],
+                });
                 continue;
             }
             const dropForVirtualClose = reconciled &&
-                (isAccount10149DebitPaymentRow(row) ||
+                (isAccount10149DebitPaymentRow(normalizedRow) ||
                     isAccount10149CreditInvoiceNumber(ivnum));
             if (dropForVirtualClose) {
+                (0, paymentImportTrace_1.tracePaymentImport)("extension_drop", normalizedRow, {
+                    reason: isAccount10149DebitPaymentRow(normalizedRow)
+                        ? "reconciled_debit_virtual_close"
+                        : "credit_invoice_virtual_close",
+                    ivnum,
+                    queuedVirtualClose: ivnum ?? null,
+                });
                 if (ivnum) {
                     queuedCloseNumbers.push(ivnum);
-                    const curDate = (0, connectorFieldUtils_1.parseErpDateOnly)(raw.CURDATE ?? row.CURDATE);
+                    const curDate = (0, connectorFieldUtils_1.parseErpDateOnly)(raw.CURDATE ?? normalizedRow.CURDATE);
                     if (curDate) {
                         queuedCloseDates.set(ivnum.trim(), curDate);
                     }
                 }
                 continue;
             }
-            const transformed = transformPaymentRow(row);
+            const transformed = transformPaymentRow(normalizedRow, companyCodes);
             if (transformed != null) {
+                (0, paymentImportTrace_1.tracePaymentImport)("extension_keep", transformed, {
+                    reason: isAccount10149CancelDebitPaymentRow(row)
+                        ? "helam_cancel_debit_import"
+                        : "receipt_import",
+                });
                 kept.push(transformed);
+            }
+            else {
+                (0, paymentImportTrace_1.tracePaymentImport)("extension_drop", row, {
+                    reason: "transformPaymentRow_null_debit",
+                    isDebit: isAccount10149DebitPaymentRow(row),
+                    isCancelDebit: isAccount10149CancelDebitPaymentRow(row),
+                    reconciled,
+                });
             }
         }
         if (queuedCloseNumbers.length > 0) {
@@ -462,8 +601,21 @@ async function afterAccount10149PaymentLinked(ctx) {
 exports.account10149Extension = {
     key: exports.ACCOUNT_10149_EXTENSION_KEY,
     label: "Account 10149",
+    expandRuntimeCustomerScopeNumbers(params) {
+        if (params.entityType !== "Payment") {
+            return [];
+        }
+        const setName = (params.entitySet ?? "").trim().toUpperCase();
+        if (!setName.includes("IDG_ARFNCITEMS") &&
+            !setName.startsWith("IDG_")) {
+            return [];
+        }
+        const companyCodes = resolveAccount10149IdgPaymentCompanyCodes(params.extension_config);
+        return expandAccount10149IdgCustomerNumbers(params.customerNumber, companyCodes);
+    },
     async transform(ctx) {
         return transformAccount10149Batch(ctx.batch, {
+            extension_config: ctx.extension_config,
             onReconciledInvoiceCloseTargets: (invoiceNumbers, closeDates) => {
                 if (ctx.pendingInvoiceCloses) {
                     for (const invoiceNumber of invoiceNumbers) {

@@ -27,6 +27,30 @@ import {
     type ReplayCustomerSummary,
 } from "./importArReplayService";
 
+/** Concurrent live-refresh customers (same idea as CTV / insurance-date pools). */
+export const LIVE_REFRESH_CUSTOMER_CONCURRENCY = 8;
+
+async function runWithConcurrency<T>(
+    items: readonly T[],
+    limit: number,
+    fn: (item: T) => Promise<void>
+): Promise<void> {
+    if (items.length === 0) {
+        return;
+    }
+    let cursor = 0;
+    async function worker(): Promise<void> {
+        for (;;) {
+            const i = cursor++;
+            if (i >= items.length) {
+                return;
+            }
+            await fn(items[i]!);
+        }
+    }
+    const workerCount = Math.min(Math.max(1, limit), items.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+}
 export type ArPostIngestStep =
     | "replay"
     | "maturity"
@@ -204,7 +228,8 @@ export function createDefaultArPostIngestDeps(): ArPostIngestDeps {
  * Run post-ingest AR refresh for affected customers.
  * Process Overdue runs for every account; replay / maturity / live refresh
  * (and in-orchestrator as-of) remain credit-insurance-gated.
- * Customers are processed one at a time for replay and live refresh.
+ * Customers are processed one at a time for replay. Live refresh runs a
+ * bounded worker pool across customers (see {@link LIVE_REFRESH_CUSTOMER_CONCURRENCY}).
  * Process Overdue runs once per batch of touched customers.
  */
 export async function runArPostIngestForCustomers(
@@ -374,31 +399,35 @@ export async function runArPostIngestForCustomers(
 
     // --- Credit-insurance-gated: live refresh + as-of ---
     if (hasCreditInsurance && options.runLiveRefresh) {
-        for (const customerId of customerIds) {
-            try {
-                await deps.liveRefreshCustomer(
-                    customerId,
-                    options.liveRefreshAsOf,
-                    invoiceIdsByCustomer.get(customerId)
-                );
-            } catch (error) {
-                const message = errorMessage(error);
-                const stack = errorStack(error);
-                logError("live refresh failed", {
-                    accountId: options.accountId,
-                    customerId,
-                    message,
-                    stack,
-                });
-                errors.push({
-                    step: "live_refresh",
-                    customerId,
-                    message,
-                    ...(stack ? { stack } : {}),
-                });
+        await runWithConcurrency(
+            customerIds,
+            LIVE_REFRESH_CUSTOMER_CONCURRENCY,
+            async (customerId) => {
+                try {
+                    await deps.liveRefreshCustomer(
+                        customerId,
+                        options.liveRefreshAsOf,
+                        invoiceIdsByCustomer.get(customerId)
+                    );
+                } catch (error) {
+                    const message = errorMessage(error);
+                    const stack = errorStack(error);
+                    logError("live refresh failed", {
+                        accountId: options.accountId,
+                        customerId,
+                        message,
+                        stack,
+                    });
+                    errors.push({
+                        step: "live_refresh",
+                        customerId,
+                        message,
+                        ...(stack ? { stack } : {}),
+                    });
+                }
+                advanceProgress("live_refresh", customerId);
             }
-            advanceProgress("live_refresh", customerId);
-        }
+        );
     }
 
     if (hasCreditInsurance && options.enqueueAsOfRewrite) {

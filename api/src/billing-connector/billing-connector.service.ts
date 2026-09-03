@@ -53,7 +53,7 @@ import {
     resolveExtensionAttachmentInput,
     toPublicPullFilters,
     upsertSyncRun,
-    patchSyncRunEntityStats,
+    patchSyncRunProgress,
     createRunningExecution,
     createSyncProgressHeartbeat,
     finalizeSyncHistoryAfterRun,
@@ -68,6 +68,7 @@ import {
     parseClearBeforeImport,
     parseCustomerIdForClearBeforeImport,
     resolveAccountCustomerById,
+    searchAccountCustomers,
     type ClearBeforeImportEntity,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
@@ -515,6 +516,20 @@ export class BillingConnectorApiService {
             });
         }
         return serializeBigInt({ customer });
+    }
+
+    async searchCustomers(
+        user: JwtPayload,
+        accountId: number,
+        q?: string
+    ) {
+        await this.assertAccess(user, accountId, "manage_billing_connector");
+        const items = await searchAccountCustomers({
+            prisma: this.db,
+            accountId,
+            q,
+        });
+        return serializeBigInt({ items });
     }
 
     async upsertConfig(
@@ -1139,34 +1154,22 @@ export class BillingConnectorApiService {
                 observability: {
                     metrics: this.syncMetrics,
                 },
-                onProgress: (entityStats) => {
-                    const pulledSummary = [
-                        "Customer",
-                        "Payment",
-                        "Invoice",
-                        "Contact",
-                    ]
-                        .map((entity) => {
-                            const slice = entityStats[entity];
-                            return slice
-                                ? `${entity}=${slice.pulled ?? 0}`
-                                : null;
-                        })
-                        .filter(Boolean)
-                        .join(" ");
-                    onLog(
-                        `[progress-debug] sync-run patch ${executionId}: ${pulledSummary || "no entity slices"}`
-                    );
-                    patchSyncRunEntityStats(
+                onProgress: (patch) => {
+                    const entityStats = patch.entity_stats;
+                    patchSyncRunProgress(
                         accountId,
                         executionId,
-                        entityStats,
+                        patch,
                         runningSummary
                     );
                     void heartbeat(entityStats);
                 },
-                onCustomerBalancesFinal: async (customerIds) => {
-                    await recalculateCustomerAmounts(customerIds, this.db);
+                onCustomerBalancesFinal: async (customerIds, options) => {
+                    await recalculateCustomerAmounts(
+                        customerIds,
+                        this.db,
+                        options
+                    );
                 },
                 onProcessOverdueCustomers: async (customerIds) => {
                     if (customerIds.length === 0) {

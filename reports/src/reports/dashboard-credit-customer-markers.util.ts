@@ -18,6 +18,10 @@ export type PreparedDashboardCreditCustomerMarkers = {
     policyId?: number;
     /** From top_up_expiring membership value; default 30 when type matches. */
     withinDays?: number;
+    /** From utilization_bin membership value (YYYY-MM-DD). */
+    asOfDate?: string;
+    /** From utilization_bin membership value. */
+    utilizationBin?: string;
     membershipType?:
         | "capacity"
         | "policy_risk"
@@ -26,6 +30,7 @@ export type PreparedDashboardCreditCustomerMarkers = {
         | "no_policy_exposure"
         | "top_up"
         | "top_up_expiring"
+        | "utilization_bin"
         | null;
 };
 
@@ -64,9 +69,12 @@ export function parseCreditDashboardCustomerMembershipValue(value: unknown): {
         | "no_policy_exposure"
         | "top_up"
         | "top_up_expiring"
+        | "utilization_bin"
         | null;
     includeNoPolicyExposure: boolean;
     withinDays: number | null;
+    utilizationBin: string | null;
+    asOfDate: string | null;
 } {
     const raw = value == null ? "" : String(value);
     if (
@@ -80,6 +88,8 @@ export function parseCreditDashboardCustomerMembershipValue(value: unknown): {
             type: raw,
             includeNoPolicyExposure: true,
             withinDays: null,
+            utilizationBin: null,
+            asOfDate: null,
         };
     }
     if (raw === "no_policy_exposure") {
@@ -87,6 +97,8 @@ export function parseCreditDashboardCustomerMembershipValue(value: unknown): {
             type: "no_policy_exposure",
             includeNoPolicyExposure: true,
             withinDays: null,
+            utilizationBin: null,
+            asOfDate: null,
         };
     }
     if (raw === "no_policy_exposure:0") {
@@ -94,6 +106,8 @@ export function parseCreditDashboardCustomerMembershipValue(value: unknown): {
             type: "no_policy_exposure",
             includeNoPolicyExposure: false,
             withinDays: null,
+            utilizationBin: null,
+            asOfDate: null,
         };
     }
     if (raw === "top_up_expiring") {
@@ -101,6 +115,8 @@ export function parseCreditDashboardCustomerMembershipValue(value: unknown): {
             type: "top_up_expiring",
             includeNoPolicyExposure: true,
             withinDays: 30,
+            utilizationBin: null,
+            asOfDate: null,
         };
     }
     if (raw.startsWith("top_up_expiring:")) {
@@ -109,12 +125,30 @@ export function parseCreditDashboardCustomerMembershipValue(value: unknown): {
             type: "top_up_expiring",
             includeNoPolicyExposure: true,
             withinDays: Number.isFinite(days) ? Math.max(1, days) : 30,
+            utilizationBin: null,
+            asOfDate: null,
+        };
+    }
+    // utilization_bin:<bin>:<asOfYmd> or …:0 for exclude no-policy
+    if (raw.startsWith("utilization_bin:")) {
+        const parts = raw.split(":");
+        const bin = parts[1] ?? "";
+        const asOfDate = parts[2] ?? "";
+        const excludeFlag = parts[3];
+        return {
+            type: "utilization_bin",
+            includeNoPolicyExposure: excludeFlag !== "0",
+            withinDays: null,
+            utilizationBin: bin || null,
+            asOfDate: /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? asOfDate : null,
         };
     }
     return {
         type: null,
         includeNoPolicyExposure: true,
         withinDays: null,
+        utilizationBin: null,
+        asOfDate: null,
     };
 }
 
@@ -135,6 +169,8 @@ export async function prepareDashboardCreditCustomerMarkers(
     let membershipWhere: PrismaWhere | undefined;
     let policyId: number | undefined;
     let withinDays: number | undefined;
+    let asOfDate: string | undefined;
+    let utilizationBin: string | undefined;
     let membershipType: PreparedDashboardCreditCustomerMarkers["membershipType"];
 
     const scopeIndex = working.findIndex(
@@ -167,6 +203,10 @@ export async function prepareDashboardCreditCustomerMarkers(
             if (parsed.type === "top_up_expiring") {
                 withinDays = parsed.withinDays ?? 30;
             }
+            if (parsed.type === "utilization_bin") {
+                asOfDate = parsed.asOfDate ?? undefined;
+                utilizationBin = parsed.utilizationBin ?? undefined;
+            }
             working = working.filter((_, i) => i !== membershipIndex);
 
             if (parsed.type === "zero_limit_warning") {
@@ -195,6 +235,8 @@ export async function prepareDashboardCreditCustomerMarkers(
                         includeNoPolicyExposure:
                             parsed.includeNoPolicyExposure,
                         withinDays: parsed.withinDays ?? undefined,
+                        utilizationBin: parsed.utilizationBin ?? undefined,
+                        asOfDate: parsed.asOfDate ?? undefined,
                     }
                 );
                 membershipWhere = {
@@ -215,9 +257,14 @@ export async function prepareDashboardCreditCustomerMarkers(
 
     return {
         filters: working,
-        primaryWhereExtras: andWhere([scopeWhere, membershipWhere]),
+        primaryWhereExtras:
+            membershipType === "utilization_bin"
+                ? membershipWhere
+                : andWhere([scopeWhere, membershipWhere]),
         policyId,
         withinDays,
+        asOfDate,
+        utilizationBin,
         membershipType,
     };
 }

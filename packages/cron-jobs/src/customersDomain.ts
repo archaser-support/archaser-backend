@@ -27,7 +27,15 @@ export type CustomerOutstandingAmounts = {
 type RecalculateCustomerAmountsModule = {
     recalculateCustomerAmounts: (
         ids: number[],
-        db: PrismaClient
+        db: PrismaClient,
+        options?: {
+            onProgress?: (progress: {
+                processed: number;
+                total: number;
+            }) => void;
+            concurrency?: number;
+            progressEvery?: number;
+        }
     ) => Promise<unknown>;
     calculateOutstandingAmountsForCustomers: (
         ids: number[],

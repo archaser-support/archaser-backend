@@ -15,6 +15,8 @@ const priorityApiContract_1 = require("../priority/priorityApiContract");
 const prioritySelectFields_1 = require("../priority/prioritySelectFields");
 const billingConnectorEntitySets_1 = require("../services/billingConnectorEntitySets");
 const billingConnectorPullFilters_1 = require("../services/billingConnectorPullFilters");
+const billingConnectorPullFilterCompile_1 = require("../services/billingConnectorPullFilterCompile");
+const paymentImportTrace_1 = require("../import/paymentImportTrace");
 exports.STAGED_ENTITY_ORDER = [
     "Customer",
     "Payment",
@@ -143,19 +145,46 @@ async function finalizeCustomerBalances(customerIds, prisma, onCustomerBalancesF
         return;
     }
     const ids = Array.from(customerIds);
+    const total = ids.length;
     const run = onCustomerBalancesFinal ??
-        ((customerIdsToRecalc) => (0, recalculateCustomerAmountsHost_1.recalculateCustomerAmountsViaHost)(customerIdsToRecalc, prisma));
+        ((customerIdsToRecalc, options) => (0, recalculateCustomerAmountsHost_1.recalculateCustomerAmountsViaHost)(customerIdsToRecalc, prisma, options));
     setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
         status: "running",
-        total: ids.length,
+        processed: 0,
+        total,
+        detail: {
+            step: "balances",
+            processed: 0,
+            total,
+        },
     });
+    log(`Recalculate balances starting for ${total} customer(s)…`);
     try {
-        await run(ids);
-        log(`Recalculated customer due/overdue amounts for ${ids.length} customer(s)`);
+        await run(ids, {
+            onProgress: ({ processed, total: progressTotal }) => {
+                setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
+                    status: "running",
+                    processed,
+                    total: progressTotal,
+                    detail: {
+                        step: "balances",
+                        processed,
+                        total: progressTotal,
+                    },
+                });
+                log(`Recalculate balances progress: ${processed}/${progressTotal} customer(s)`);
+            },
+        });
+        log(`Recalculated customer due/overdue amounts for ${total} customer(s)`);
         setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
             status: "done",
-            processed: ids.length,
-            total: ids.length,
+            processed: total,
+            total,
+            detail: {
+                step: "balances",
+                processed: total,
+                total,
+            },
         });
     }
     catch (error) {
@@ -165,7 +194,7 @@ async function finalizeCustomerBalances(customerIds, prisma, onCustomerBalancesF
         log(`Customer amount recalculation failed: ${message}`);
         setStep?.(connectorSyncRuntime_1.BALANCES_ENTITY_STATS_KEY, {
             status: "failed",
-            total: ids.length,
+            total,
             error: message,
         });
     }
@@ -185,18 +214,28 @@ async function runStagedExtensionSync(options) {
     const dryRun = options.dryRun === true;
     const tailSteps = {};
     const log = (message) => options.onLog?.(message);
+    (0, paymentImportTrace_1.setPaymentImportTraceSink)(log);
+    const paymentTraceKeys = (0, paymentImportTrace_1.getPaymentImportTraceKeys)();
+    if (paymentTraceKeys.length > 0) {
+        log(`[payment-trace] armed keys=${paymentTraceKeys.join(",")} (watch Nest logs for matching FNCNUM/IVNUM/FNCIREF1)`);
+    }
+    let activeStep = null;
+    let activeStepDetail = null;
     let lastProgressEmitSignature = "";
     const emitProgress = () => {
-        const signature = `cust=${stats.customersProcessed} pay=${stats.paymentsProcessed} inv=${stats.invoicesProcessed} contact=${stats.contactsProcessed}`;
+        const signature = `cust=${stats.customersProcessed} pay=${stats.paymentsProcessed} inv=${stats.invoicesProcessed} contact=${stats.contactsProcessed} step=${activeStep ?? "none"}`;
         if (signature !== lastProgressEmitSignature) {
             lastProgressEmitSignature = signature;
-            log(`[progress-debug] emitProgress ${signature}`);
         }
         options.onProgress?.({
             ...stats,
             ...paymentLink,
             tailSteps: { ...tailSteps },
-        });
+        }, { activeStep, activeStepDetail });
+    };
+    const setActiveStep = (step, detail) => {
+        activeStep = step;
+        activeStepDetail = detail ?? null;
     };
     const resultStats = () => ({
         ...stats,
@@ -213,6 +252,15 @@ async function runStagedExtensionSync(options) {
             return;
         }
         tailSteps[key] = state;
+        if (state.status === "running") {
+            setActiveStep(key, state.detail?.step ?? null);
+        }
+        else if ((state.status === "done" || state.status === "failed") &&
+            activeStep === key) {
+            // Clear so the UI does not keep the finished step as Running.
+            activeStep = null;
+            activeStepDetail = null;
+        }
         emitProgress();
     };
     const cutover = options.pullCreatedOnOrAfter === true;
@@ -316,29 +364,34 @@ async function runStagedExtensionSync(options) {
         });
     };
     const finishWithBalances = async (result) => {
-        if (!dryRun && !result.cancelled) {
-            await flushExtensionPendingCloses("finalize");
-            // Payment-only (or Invoice-not-orchestrated) fallback: same
-            // orchestrator as post-Invoice, including deferred maturity.
-            // Skip when Invoice already ran post-ingest in this sync.
-            if (!invoicePostIngestRan &&
-                paymentAffectedCustomerIds.size > 0) {
-                await runArTailWithProgress({
-                    customerIds: Array.from(paymentAffectedCustomerIds),
-                    invoiceEntityIds: [],
-                    paymentEntityIds: Array.from(arAffectedPaymentIds),
-                    runMaturity: true,
-                });
+        try {
+            if (!dryRun && !result.cancelled) {
+                await flushExtensionPendingCloses("finalize");
+                // Payment-only (or Invoice-not-orchestrated) fallback: same
+                // orchestrator as post-Invoice, including deferred maturity.
+                // Skip when Invoice already ran post-ingest in this sync.
+                if (!invoicePostIngestRan &&
+                    paymentAffectedCustomerIds.size > 0) {
+                    await runArTailWithProgress({
+                        customerIds: Array.from(paymentAffectedCustomerIds),
+                        invoiceEntityIds: [],
+                        paymentEntityIds: Array.from(arAffectedPaymentIds),
+                        runMaturity: true,
+                    });
+                }
+                await finalizeCustomerBalances(arAffectedCustomerIds, options.prisma, options.onCustomerBalancesFinal, log, setTailStep);
             }
-            await finalizeCustomerBalances(arAffectedCustomerIds, options.prisma, options.onCustomerBalancesFinal, log, setTailStep);
+            return {
+                ...result,
+                // Refresh after balances / late AR tail so finish logs include them.
+                stats: resultStats(),
+                invoicePostIngestRan,
+                postIngestDeferred: false,
+            };
         }
-        return {
-            ...result,
-            // Refresh after balances / late AR tail so finish logs include them.
-            stats: resultStats(),
-            invoicePostIngestRan,
-            postIngestDeferred: false,
-        };
+        finally {
+            (0, paymentImportTrace_1.setPaymentImportTraceSink)(null);
+        }
     };
     for (const window of options.windows) {
         log(window.start || window.end
@@ -366,7 +419,6 @@ async function runStagedExtensionSync(options) {
                     },
                 });
                 afterKey = syncState?.backfill_cursor ?? null;
-                log(`[progress-debug] ${entityType} entity start: backfill_completed=${Boolean(syncState?.backfill_completed)} pulled=${syncState?.backfill_records_pulled ?? 0} cursor=${afterKey ? "yes" : "no"} last_attempt_at=${syncState?.last_attempt_at?.toISOString?.() ?? "null"}`);
                 // Clear completion before sampling/pull so the UI stays on
                 // Running until every page for this entity is fetched. Otherwise
                 // a prior-run backfill_completed + first live page looks "Done".
@@ -384,22 +436,46 @@ async function runStagedExtensionSync(options) {
                         },
                     });
                     afterKey = null;
-                    log(`[progress-debug] Cleared stale ${entityType} completion (zeroed pulled/cursor) before this run's pull`);
                 }
             }
             let guard = 0;
             let entityLastError = null;
             const entityPageSize = priorityApiContract_1.PRIORITY_RATE_LIMITS.recommendedPageSize;
+            setActiveStep(entityType, "sampling");
+            emitProgress();
             const entitySet = entitySets[entityType] ?? null;
             // Customer/Contact tables often lack a usable date column; scope via
             // pull_filters OData only. Invoice/Payment still use date windows.
             const usesDatePull = entityType === "Invoice" || entityType === "Payment";
             const applyDateWindow = Boolean(windowCutover) && usesDatePull;
-            const entityPullFilter = (0, billingConnectorPullFilters_1.resolveImportPullFilterOData)(options.pullFilters, entityType);
             const scopedCustomerNumber = typeof options.runtimeCustomerNumber === "string"
                 ? options.runtimeCustomerNumber.trim()
                 : "";
             const scopeToCustomer = scopedCustomerNumber.length > 0;
+            const additionalCustomerNumbers = scopeToCustomer &&
+                typeof options.extension.expandRuntimeCustomerScopeNumbers ===
+                    "function"
+                ? options.extension.expandRuntimeCustomerScopeNumbers({
+                    customerNumber: scopedCustomerNumber,
+                    entityType,
+                    entitySet,
+                    extension_config: options.extensionConfig,
+                })
+                : [];
+            const allowedCustomerNumbers = new Set([
+                scopedCustomerNumber,
+                ...additionalCustomerNumbers
+                    .map((value) => typeof value === "string" ? value.trim() : "")
+                    .filter((value) => value.length > 0),
+            ]);
+            const baseEntityPullFilter = (0, billingConnectorPullFilters_1.resolveImportPullFilterOData)(options.pullFilters, entityType, { entitySet });
+            const runtimeCustomerClause = (0, billingConnectorPullFilters_1.resolveRuntimeCustomerScopeOData)({
+                customerNumber: scopedCustomerNumber || null,
+                additionalCustomerNumbers,
+                entityType,
+                entitySet,
+            });
+            const entityPullFilter = (0, billingConnectorPullFilterCompile_1.andODataFilters)(baseEntityPullFilter, runtimeCustomerClause);
             while (guard < 200) {
                 if (options.shouldCancel?.()) {
                     log(`Stopped by operator before ${entityType} page ${guard}`);
@@ -419,9 +495,7 @@ async function runStagedExtensionSync(options) {
                     });
                 }
                 guard += 1;
-                if (guard === 1) {
-                    log(`[progress-debug] ${entityType} page 1 pull starting (includes column sampling)`);
-                }
+                setActiveStep(entityType, "pulling");
                 const page = await options.provider.pull(entityType, {
                     since: usesDatePull && !applyDateWindow ? window.start : null,
                     createdOnOrAfter: applyDateWindow ? windowCutover : null,
@@ -445,12 +519,32 @@ async function runStagedExtensionSync(options) {
                     if (usesDatePull &&
                         !windowCutover &&
                         !recordInWindow(raw, window)) {
+                        if (entityType === "Payment") {
+                            (0, paymentImportTrace_1.tracePaymentImportByRaw)("pull_skip_date_window", raw, {
+                                windowStart: window.start?.toISOString() ?? null,
+                                windowEnd: window.end?.toISOString() ?? null,
+                            });
+                        }
                         continue;
                     }
                     const mapped = (0, connectorFieldUtils_1.mapErpRecord)(raw, rules);
+                    if (entityType === "Payment") {
+                        (0, paymentImportTrace_1.tracePaymentImport)("field_mapped", mapped, {
+                            rawKeys: Object.keys(raw).length,
+                        });
+                    }
                     if (scopeToCustomer) {
                         const rowCustomer = String(mapped.customer_number ?? "").trim();
-                        if (rowCustomer !== scopedCustomerNumber) {
+                        if (!allowedCustomerNumbers.has(rowCustomer)) {
+                            if (entityType === "Payment") {
+                                (0, paymentImportTrace_1.tracePaymentImport)("pull_skip_customer_scope", mapped, {
+                                    rowCustomer,
+                                    scopedCustomerNumber,
+                                    allowedCustomerNumbers: [
+                                        ...allowedCustomerNumbers,
+                                    ],
+                                });
+                            }
                             continue;
                         }
                     }
@@ -476,6 +570,33 @@ async function runStagedExtensionSync(options) {
                         mergeBatch(previewBatch, afterPlugin);
                         mergeBatch(windowBatch, afterPlugin);
                         pageRows = afterPlugin[entityType] ?? [];
+                        if (entityType === "Payment") {
+                            for (const row of mappedPage) {
+                                if (!(0, paymentImportTrace_1.isTracedPaymentRow)(row)) {
+                                    continue;
+                                }
+                                const raw = row._rawRecord ?? row;
+                                const fncnum = String(raw.FNCNUM ?? "").trim();
+                                const stillPresent = pageRows.some((kept) => {
+                                    const keptRaw = kept._rawRecord ?? kept;
+                                    return (String(keptRaw.FNCNUM ?? "").trim() ===
+                                        fncnum);
+                                });
+                                if (!stillPresent) {
+                                    (0, paymentImportTrace_1.tracePaymentImport)("extension_removed_from_page", row, {
+                                        mappedPageCount: mappedPage.length,
+                                        keptPageCount: pageRows.length,
+                                    });
+                                }
+                            }
+                            for (const row of pageRows) {
+                                if ((0, paymentImportTrace_1.isTracedPaymentRow)(row)) {
+                                    (0, paymentImportTrace_1.tracePaymentImport)("import_batch_row", row, {
+                                        batchSize: pageRows.length,
+                                    });
+                                }
+                            }
+                        }
                     }
                     catch (err) {
                         const message = err instanceof Error
@@ -500,6 +621,7 @@ async function runStagedExtensionSync(options) {
                     }
                     // Preview accumulates post-plugin rows without entity writes.
                     if (!dryRun && pageRows.length > 0) {
+                        setActiveStep(entityType, "importing");
                         const importResult = await importFn(options.prisma, entityType, pageRows, options.accountId, null, options.userId, {
                             skipReportingBreach: options.skipReportingBreach === true,
                             skipDeferredPaymentMaturity: entityType === "Invoice",
@@ -588,9 +710,6 @@ async function runStagedExtensionSync(options) {
                         pageSize: entityPageSize,
                         providerTotalCount: page.totalCount,
                     });
-                    if (exhausted) {
-                        log(`[progress-debug] ${entityType} fetch complete: pulled=${stats[processedKey(entityType)]} backfill_completed=true`);
-                    }
                 }
                 if (exhausted) {
                     break;
@@ -600,6 +719,7 @@ async function runStagedExtensionSync(options) {
             // Maturity once after all Invoice pages (not per page) so paging
             // stays fast; deferred payments from Payment-first ingest link here.
             if (!dryRun && entityType === "Invoice") {
+                setActiveStep(connectorSyncRuntime_1.MATURITY_ENTITY_STATS_KEY, "linking");
                 paymentLink.paymentLinkStatus = "running";
                 paymentLink.paymentLinkError = undefined;
                 paymentLink.paymentsLinked = 0;
@@ -629,6 +749,10 @@ async function runStagedExtensionSync(options) {
                         maturityResult.deferredRemaining;
                     paymentLink.paymentsLinkTotal =
                         maturityResult.totalCandidates;
+                    if (activeStep === connectorSyncRuntime_1.MATURITY_ENTITY_STATS_KEY) {
+                        activeStep = null;
+                        activeStepDetail = null;
+                    }
                     emitProgress();
                     log(`Invoice entity maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`);
                 }
@@ -638,6 +762,10 @@ async function runStagedExtensionSync(options) {
                         : "Deferred payment maturity failed";
                     paymentLink.paymentLinkStatus = "failed";
                     paymentLink.paymentLinkError = message;
+                    if (activeStep === connectorSyncRuntime_1.MATURITY_ENTITY_STATS_KEY) {
+                        activeStep = null;
+                        activeStepDetail = null;
+                    }
                     emitProgress();
                     log(`Invoice entity maturity failed: ${message}`);
                 }

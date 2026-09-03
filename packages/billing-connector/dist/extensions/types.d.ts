@@ -130,6 +130,17 @@ export interface BillingAccountExtension {
      * (e.g. Priority CODE/CREDIT1 vs CODE5/CREDIT5).
      */
     alignPaymentAmountsForInvoice?(input: ExtensionAlignPaymentAmountsInput): ExtensionAlignedPaymentAmounts;
+    /**
+     * Extra ERP customer-number values for Start customer-scoped pulls
+     * (OR'd with the Archaser customer_number). Account-specific — e.g.
+     * IDG_ARFNCITEMS IDG_CUSTNAME = customer + company suffix.
+     */
+    expandRuntimeCustomerScopeNumbers?(params: {
+        customerNumber: string;
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string[];
 }
 export type ExtensionAttachmentUpsertInput = {
     /** Undefined = omit key change; null/"" = clear attachment. */

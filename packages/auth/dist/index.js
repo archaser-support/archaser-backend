@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PUBLIC_CORS_ALLOWED_HEADERS = exports.parseCorsOrigins = exports.enablePublicCors = exports.isPublicPagesApiPath = exports.SoftDualAuthGuard = exports.InternalServiceClient = exports.InternalSecretGuard = exports.DualAuthGuard = exports.CurrentUser = exports.ArchaserAuthModule = exports.AccessScopeService = exports.AUTH_DATABASE = void 0;
+exports.QuietNestLogger = exports.PUBLIC_CORS_ALLOWED_HEADERS = exports.parseCorsOrigins = exports.enablePublicCors = exports.isPublicPagesApiPath = exports.SoftDualAuthGuard = exports.InternalServiceClient = exports.InternalSecretGuard = exports.DualAuthGuard = exports.CurrentUser = exports.ArchaserAuthModule = exports.AccessScopeService = exports.AUTH_DATABASE = void 0;
 var auth_database_1 = require("./auth-database");
 Object.defineProperty(exports, "AUTH_DATABASE", { enumerable: true, get: function () { return auth_database_1.AUTH_DATABASE; } });
 var access_scope_service_1 = require("./access-scope.service");
@@ -22,3 +22,5 @@ var public_cors_1 = require("./public-cors");
 Object.defineProperty(exports, "enablePublicCors", { enumerable: true, get: function () { return public_cors_1.enablePublicCors; } });
 Object.defineProperty(exports, "parseCorsOrigins", { enumerable: true, get: function () { return public_cors_1.parseCorsOrigins; } });
 Object.defineProperty(exports, "PUBLIC_CORS_ALLOWED_HEADERS", { enumerable: true, get: function () { return public_cors_1.PUBLIC_CORS_ALLOWED_HEADERS; } });
+var quiet_nest_logger_1 = require("./quiet-nest-logger");
+Object.defineProperty(exports, "QuietNestLogger", { enumerable: true, get: function () { return quiet_nest_logger_1.QuietNestLogger; } });
