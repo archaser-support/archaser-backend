@@ -1,11 +1,12 @@
 /**
- * Temporary debug trace for specific ERP payment lines through connector import.
+ * Optional debug trace for specific ERP payment lines through connector import.
  *
- * Matches rows when FNCNUM / IVNUM / FNCIREF1 / reference contains a trace key.
- * Default keys include the SI26ED0000488 / 10714824402 investigation pair.
+ * Off by default. Matches rows when FNCNUM / IVNUM / FNCIREF1 / reference
+ * contains a trace key.
  *
- * Disable: BILLING_PAYMENT_TRACE=off
- * Override: BILLING_PAYMENT_TRACE=26063733,SI260000488
+ * Enable defaults: BILLING_PAYMENT_TRACE=on
+ * Custom keys: BILLING_PAYMENT_TRACE=26063733,SI260000488
+ * Disable: omit env, or BILLING_PAYMENT_TRACE=off
  */
 
 const DEFAULT_TRACE_KEYS = [
@@ -20,18 +21,18 @@ const DEFAULT_TRACE_KEYS = [
 
 function parseTraceKeys(): Set<string> {
     const env = process.env.BILLING_PAYMENT_TRACE?.trim();
-    if (env === "0" || env === "off" || env === "false") {
+    if (!env || env === "0" || env === "off" || env === "false") {
         return new Set();
     }
-    if (env && env.length > 0) {
-        return new Set(
-            env
-                .split(/[,;\s]+/)
-                .map((part) => part.trim())
-                .filter(Boolean)
-        );
+    if (env === "1" || env === "on" || env === "true") {
+        return new Set(DEFAULT_TRACE_KEYS);
     }
-    return new Set(DEFAULT_TRACE_KEYS);
+    return new Set(
+        env
+            .split(/[,;\s]+/)
+            .map((part) => part.trim())
+            .filter(Boolean)
+    );
 }
 
 let traceKeys = parseTraceKeys();

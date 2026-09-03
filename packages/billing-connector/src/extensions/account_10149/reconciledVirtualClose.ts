@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 
 import { resolveInvoicePaidTolerance } from "../../invoice/invoicePaidTolerance";
 import { commitOps } from "../../import/bulkWrite";
+import { findManyInChunks, PRISMA_IN_CHUNK } from "../../import/prismaInChunks";
 
 export const VIRTUAL_PAYMENT_METHOD = "virtual";
 
@@ -82,28 +83,32 @@ export async function applyReconciledVirtualCloses(
 
     const invoiceIds = [...byInvoice.keys()];
     const [invoices, linkedPayments] = await Promise.all([
-        prisma.invoice.findMany({
-            where: { id: { in: invoiceIds } },
-            select: {
-                id: true,
-                amount: true,
-                customer_amount: true,
-                customer_net_amount: true,
-                customer_currency: true,
-            },
-        }),
-        prisma.invoicePayment.findMany({
-            where: { invoice_id: { in: invoiceIds } },
-            select: {
-                id: true,
-                invoice_id: true,
-                customer_amount: true,
-                payment_date: true,
-                payment_method: true,
-                reference: true,
-                customer_id: true,
-            },
-        }),
+        findManyInChunks(invoiceIds, (chunk) =>
+            prisma.invoice.findMany({
+                where: { id: { in: chunk } },
+                select: {
+                    id: true,
+                    amount: true,
+                    customer_amount: true,
+                    customer_net_amount: true,
+                    customer_currency: true,
+                },
+            })
+        ),
+        findManyInChunks(invoiceIds, (chunk) =>
+            prisma.invoicePayment.findMany({
+                where: { invoice_id: { in: chunk } },
+                select: {
+                    id: true,
+                    invoice_id: true,
+                    customer_amount: true,
+                    payment_date: true,
+                    payment_method: true,
+                    reference: true,
+                    customer_id: true,
+                },
+            })
+        ),
     ]);
 
     const invoiceById = new Map(invoices.map((row) => [row.id, row]));
@@ -211,7 +216,10 @@ export async function applyReconciledVirtualCloses(
     }
 
     if (inserts.length > 0) {
-        await prisma.invoicePayment.createMany({ data: inserts as never });
+        for (let i = 0; i < inserts.length; i += PRISMA_IN_CHUNK) {
+            const chunk = inserts.slice(i, i + PRISMA_IN_CHUNK);
+            await prisma.invoicePayment.createMany({ data: chunk as never });
+        }
     }
     if (updates.length > 0) {
         await commitOps(
@@ -225,9 +233,12 @@ export async function applyReconciledVirtualCloses(
         );
     }
     if (deleteIds.length > 0) {
-        await prisma.invoicePayment.deleteMany({
-            where: { id: { in: deleteIds }, account_id: accountId },
-        });
+        for (let i = 0; i < deleteIds.length; i += PRISMA_IN_CHUNK) {
+            const chunk = deleteIds.slice(i, i + PRISMA_IN_CHUNK);
+            await prisma.invoicePayment.deleteMany({
+                where: { id: { in: chunk }, account_id: accountId },
+            });
+        }
     }
 
     return touchedInvoiceIds;
@@ -260,17 +271,19 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
         return { touchedIds: [], customerIds: [], missingNumbers: [] };
     }
 
-    const invoices = await prisma.invoice.findMany({
-        where: {
-            account_id: accountId,
-            invoice_number: { in: unique },
-        },
-        select: {
-            id: true,
-            invoice_number: true,
-            customer_id: true,
-        },
-    });
+    const invoices = await findManyInChunks(unique, (chunk) =>
+        prisma.invoice.findMany({
+            where: {
+                account_id: accountId,
+                invoice_number: { in: chunk },
+            },
+            select: {
+                id: true,
+                invoice_number: true,
+                customer_id: true,
+            },
+        })
+    );
 
     const foundNumbers = new Set(
         invoices

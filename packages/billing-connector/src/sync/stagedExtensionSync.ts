@@ -64,6 +64,12 @@ export const STAGED_ENTITY_ORDER: ExtensionEntityType[] = [
     "Contact",
 ];
 
+/**
+ * Max keyset pages per entity per window. At recommendedPageSize 500 this is
+ * 2.5M rows — raised from 200 (100k) after Payment backfills exhausted early.
+ */
+const MAX_ENTITY_PAGES_PER_WINDOW = 5_000;
+
 export type ImportBatchFn = (
     prisma: PrismaClient,
     importType: ImportEntityType,
@@ -770,7 +776,7 @@ export async function runStagedExtensionSync(
                 runtimeCustomerClause
             );
 
-            while (guard < 200) {
+            while (guard < MAX_ENTITY_PAGES_PER_WINDOW) {
                 if (options.shouldCancel?.()) {
                     log(`Stopped by operator before ${entityType} page ${guard}`);
                     windows.push({
@@ -1058,6 +1064,12 @@ export async function runStagedExtensionSync(
                     break;
                 }
                 afterKey = page.nextCursor;
+            }
+
+            if (guard >= MAX_ENTITY_PAGES_PER_WINDOW && afterKey != null) {
+                log(
+                    `${entityType} hit page cap (${MAX_ENTITY_PAGES_PER_WINDOW} × ${entityPageSize}); more rows may remain — raise MAX_ENTITY_PAGES_PER_WINDOW`
+                );
             }
 
             // Maturity once after all Invoice pages (not per page) so paging
