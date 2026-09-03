@@ -335,11 +335,14 @@ export class ReportExecutionService {
             fields
         );
         const needsComputedFormattedSort = computedSortTarget != null;
+        // Enriched metrics (Open AR, policy risk, …) must sort in memory after
+        // enrichment — independent of report.context so builder/copied reports work.
         const needsCreditDashboardInMemorySort =
-            report.context === "dashboard_credit_customers" &&
+            primaryTable === "Customer" &&
             !!effectiveSortField &&
             (isCreditDashboardEnrichedSortField(effectiveSortField) ||
-                isCustomerPolicyBackedReportField(effectiveSortField));
+                (report.context === "dashboard_credit_customers" &&
+                    isCustomerPolicyBackedReportField(effectiveSortField)));
         const needsInMemorySort =
             needsCreditDashboardInMemorySort || needsComputedFormattedSort;
 
@@ -365,14 +368,27 @@ export class ReportExecutionService {
             delegate.count({ where }),
         ]);
 
+        // Open AR / related metrics are not Prisma columns — always enrich when
+        // requested, even if context is wrong/null (staging copied reports, builder).
         if (
-            report.context === "dashboard_credit_customers" &&
             primaryTable === "Customer" &&
             reportConfigNeedsCreditDashboardEnrichment(fields)
         ) {
             const requestedCustomerFields = fields
                 .filter((f) => f.table === "Customer" && f.field)
                 .map((f) => f.field as string);
+            // Sorting by an enriched field must still compute it even if hidden.
+            if (
+                effectiveSortField &&
+                isCreditDashboardEnrichedSortField(effectiveSortField)
+            ) {
+                const sortLeaf = effectiveSortField.startsWith("Customer.")
+                    ? effectiveSortField.slice("Customer.".length)
+                    : effectiveSortField;
+                if (!requestedCustomerFields.includes(sortLeaf)) {
+                    requestedCustomerFields.push(sortLeaf);
+                }
+            }
             let limitWarningByCustomerId:
                 | Map<
                       number,

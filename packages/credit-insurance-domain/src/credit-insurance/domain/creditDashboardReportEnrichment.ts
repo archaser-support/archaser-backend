@@ -286,6 +286,12 @@ export async function enrichCreditDashboardCustomerRows(
                   asOfDate: options.asOfDate,
                   customerIds,
                   policyId: options.policyId,
+              }).catch(() => {
+                  // As-of CPT is optional; never blank Open AR / other metrics.
+                  return new Map<
+                      number,
+                      { utilizationPct: number; usageAmount: number }
+                  >();
               })
             : Promise.resolve(
                   new Map<
@@ -444,7 +450,13 @@ const ENRICHED_IN_MEMORY_SORT_FIELDS = new Set([
 export function isCreditDashboardEnrichedSortField(
     field: string | undefined
 ): boolean {
-    return field != null && ENRICHED_IN_MEMORY_SORT_FIELDS.has(field);
+    if (field == null) {
+        return false;
+    }
+    const normalized = field.startsWith("Customer.")
+        ? field.slice("Customer.".length)
+        : field;
+    return ENRICHED_IN_MEMORY_SORT_FIELDS.has(normalized);
 }
 
 export function sortCreditDashboardEnrichedRows(
@@ -452,10 +464,13 @@ export function sortCreditDashboardEnrichedRows(
     sortField: string,
     sortDirection: "asc" | "desc" | "ASC" | "DESC" = "desc"
 ): any[] {
+    const leaf = sortField.startsWith("Customer.")
+        ? sortField.slice("Customer.".length)
+        : sortField;
     const sign = String(sortDirection).toLowerCase() === "asc" ? 1 : -1;
     return [...rows].sort((a, b) => {
-        const av = a[sortField];
-        const bv = b[sortField];
+        const av = a[leaf];
+        const bv = b[leaf];
         if (av == null && bv == null) {
             return 0;
         }
