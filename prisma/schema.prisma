@@ -1749,7 +1749,7 @@ model InvoicePayment {
   id                                    Int       @id @default(autoincrement())
   invoice_id                            Int?
   customer_currency                     String    @db.VarChar(50)
-  payment_date                          DateTime  @db.Timestamptz(6)
+  payment_date                          DateTime  @db.Date
   amount                                Float     @db.Real
   payment_method                        String    @db.VarChar(100)
   reference                             String    @db.VarChar(100)
