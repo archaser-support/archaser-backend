@@ -89,6 +89,8 @@ exports.RELATION_FROM_PRIMARY = {
         Country: "Country",
         State: "State",
         ParentCustomer: "ParentCustomer",
+        Invoice: "Invoice",
+        InvoicePayment: "InvoicePayment",
     },
     Invoice: {
         Customer: "Customer",

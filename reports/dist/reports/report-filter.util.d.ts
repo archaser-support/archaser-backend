@@ -12,6 +12,15 @@ export type SplitFiltersOptions = {
     skipFields?: Set<string>;
 };
 /**
+ * Assign a filter clause onto a Prisma where object, expanding dotted paths
+ * like `InsurancePolicy.policy_number` into nested relation filters.
+ *
+ * Nullness on `Relation.scalar` is rewritten to relation presence
+ * (`{ isNot: null }` / `{ is: null }`) because required scalars (e.g.
+ * InsurancePolicy.policy_number) reject null filters in Prisma 6.
+ */
+export declare function assignFilterFieldPath(target: PrismaWhere, fieldPath: string, clause: PrismaWhere): void;
+/**
  * Build Prisma where clauses for filters that target `primaryTable`.
  * Nested-table filters are returned separately for relation where.
  */

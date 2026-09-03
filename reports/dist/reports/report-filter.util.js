@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.coerceDateTimeBound = coerceDateTimeBound;
 exports.operatorToPrisma = operatorToPrisma;
+exports.assignFilterFieldPath = assignFilterFieldPath;
 exports.splitFiltersByTable = splitFiltersByTable;
 exports.mergeAndWhere = mergeAndWhere;
 const report_virtual_fields_util_1 = require("./report-virtual-fields.util");
@@ -150,6 +151,8 @@ function operatorToPrisma(operator, value) {
         case "is_not_null":
         case "isnotnull":
         case "is_not_empty":
+            // Marker only — assignFilterFieldPath rewrites dotted relation
+            // paths to `{ isNot: null }`. Bare scalars keep `{ not: null }`.
             return { not: null };
         case "between": {
             if (Array.isArray(v) && v.length >= 2) {
@@ -168,6 +171,119 @@ function operatorToPrisma(operator, value) {
         default:
             return { equals: coerceDateTimeBound(v, "start") };
     }
+}
+/** Detect is-null / is-not-null clauses produced by operatorToPrisma. */
+function nullnessOfClause(clause) {
+    if (clause == null || typeof clause !== "object" || Array.isArray(clause)) {
+        return null;
+    }
+    const keys = Object.keys(clause);
+    if (keys.length === 1 && keys[0] === "equals" && clause.equals === null) {
+        return "null";
+    }
+    if (keys.length === 1 && keys[0] === "not" && clause.not === null) {
+        return "not_null";
+    }
+    if (keys.length === 1 &&
+        keys[0] === "not" &&
+        clause.not &&
+        typeof clause.not === "object" &&
+        !Array.isArray(clause.not) &&
+        clause.not.equals === null) {
+        return "not_null";
+    }
+    return null;
+}
+/**
+ * Assign a filter clause onto a Prisma where object, expanding dotted paths
+ * like `InsurancePolicy.policy_number` into nested relation filters.
+ *
+ * Nullness on `Relation.scalar` is rewritten to relation presence
+ * (`{ isNot: null }` / `{ is: null }`) because required scalars (e.g.
+ * InsurancePolicy.policy_number) reject null filters in Prisma 6.
+ */
+function assignFilterFieldPath(target, fieldPath, clause) {
+    const parts = fieldPath.split(".").filter(Boolean);
+    if (parts.length === 0) {
+        return;
+    }
+    if (parts.length === 1) {
+        target[parts[0]] = clause;
+        return;
+    }
+    const nullness = nullnessOfClause(clause);
+    if (nullness) {
+        // Relation.leaf → set presence on the owning relation, not the leaf.
+        let cursor = target;
+        for (let i = 0; i < parts.length - 2; i++) {
+            const key = parts[i];
+            const existing = cursor[key];
+            if (!existing ||
+                typeof existing !== "object" ||
+                Array.isArray(existing)) {
+                cursor[key] = {};
+            }
+            cursor = cursor[key];
+        }
+        const relKey = parts[parts.length - 2];
+        const existing = cursor[relKey];
+        if (nullness === "not_null") {
+            // Other field filters already imply the relation exists.
+            if (existing &&
+                typeof existing === "object" &&
+                !Array.isArray(existing) &&
+                !("is" in existing) &&
+                !("isNot" in existing)) {
+                return;
+            }
+            cursor[relKey] = { isNot: null };
+            return;
+        }
+        cursor[relKey] = { is: null };
+        return;
+    }
+    let cursor = target;
+    for (let i = 0; i < parts.length - 1; i++) {
+        const key = parts[i];
+        const existing = cursor[key];
+        if (!existing ||
+            typeof existing !== "object" ||
+            Array.isArray(existing)) {
+            cursor[key] = {};
+        }
+        cursor = cursor[key];
+    }
+    cursor[parts[parts.length - 1]] = clause;
+}
+/**
+ * Customer report fields named `InsurancePolicy.*` are backed by the
+ * CustomerPolicy → InsurancePolicy join, not a direct Customer relation.
+ */
+function assignCustomerInsurancePolicyFilter(primary, fieldPath, clause) {
+    const leaf = fieldPath.startsWith("InsurancePolicy.")
+        ? fieldPath.slice("InsurancePolicy.".length)
+        : fieldPath;
+    const nullness = nullnessOfClause(clause);
+    // Bare leaf after stripping `InsurancePolicy.` — nullness must target the
+    // relation, or Prisma rejects null filters on required String columns.
+    const policyWhere = nullness
+        ? nullness === "not_null"
+            ? { isNot: null }
+            : { is: null }
+        : (() => {
+            const w = {};
+            assignFilterFieldPath(w, leaf, clause);
+            return w;
+        })();
+    const someClause = {
+        some: {
+            InsurancePolicy: policyWhere,
+        },
+    };
+    primary.AND = [
+        ...(Array.isArray(primary.AND) ? primary.AND : []),
+        { CustomerPolicy: someClause },
+    ];
 }
 /**
  * Build Prisma where clauses for filters that target `primaryTable`.
@@ -218,7 +334,12 @@ function splitFiltersByTable(filters, primaryTable, options = {}) {
                     !(0, report_virtual_fields_util_1.isPrismaScalarField)(primaryTable, f.field))) {
                 continue;
             }
-            primary[f.field] = clause;
+            if (primaryTable === "Customer" &&
+                f.field.startsWith("InsurancePolicy.")) {
+                assignCustomerInsurancePolicyFilter(primary, f.field, clause);
+                continue;
+            }
+            assignFilterFieldPath(primary, f.field, clause);
         }
         else {
             if ((0, report_virtual_fields_util_1.isComputedReportField)(f.table, f.field) ||
@@ -229,7 +350,12 @@ function splitFiltersByTable(filters, primaryTable, options = {}) {
             if (!nested[f.table]) {
                 nested[f.table] = {};
             }
-            nested[f.table][f.field] = clause;
+            if (f.table === "Customer" &&
+                f.field.startsWith("InsurancePolicy.")) {
+                assignCustomerInsurancePolicyFilter(nested[f.table], f.field, clause);
+                continue;
+            }
+            assignFilterFieldPath(nested[f.table], f.field, clause);
         }
     }
     if (primaryExtras.length) {

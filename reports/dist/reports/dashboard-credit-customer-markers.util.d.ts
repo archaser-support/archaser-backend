@@ -8,13 +8,19 @@ export type PreparedDashboardCreditCustomerMarkers = {
     policyId?: number;
     /** From top_up_expiring membership value; default 30 when type matches. */
     withinDays?: number;
-    membershipType?: "capacity" | "policy_risk" | "limit_warning" | "zero_limit_warning" | "no_policy_exposure" | "top_up" | "top_up_expiring" | null;
+    /** From utilization_bin membership value (YYYY-MM-DD). */
+    asOfDate?: string;
+    /** From utilization_bin membership value. */
+    utilizationBin?: string;
+    membershipType?: "capacity" | "policy_risk" | "limit_warning" | "zero_limit_warning" | "no_policy_exposure" | "top_up" | "top_up_expiring" | "utilization_bin" | null;
 };
 export declare function parseCreditDashboardCustomerScopeValue(value: unknown): number | undefined;
 export declare function parseCreditDashboardCustomerMembershipValue(value: unknown): {
-    type: "capacity" | "policy_risk" | "limit_warning" | "zero_limit_warning" | "no_policy_exposure" | "top_up" | "top_up_expiring" | null;
+    type: "capacity" | "policy_risk" | "limit_warning" | "zero_limit_warning" | "no_policy_exposure" | "top_up" | "top_up_expiring" | "utilization_bin" | null;
     includeNoPolicyExposure: boolean;
     withinDays: number | null;
+    utilizationBin: string | null;
+    asOfDate: string | null;
 };
 /**
  * Strip credit dashboard customer scope / membership markers and expand into
