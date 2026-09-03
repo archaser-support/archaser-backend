@@ -70,9 +70,6 @@ async function runChunkedHostStep(params: {
                 i + AR_POST_INGEST_CUSTOMER_CHUNK
             );
             const chunkEnd = Math.min(i + chunk.length, total);
-            params.log(
-                `${params.logLabel} progress: ${i}/${total} — processing customers ${i + 1}–${chunkEnd}…`
-            );
             await params.runChunk(chunk);
             const processed = chunkEnd;
             params.setTailStep(params.tailKey, {
@@ -85,9 +82,6 @@ async function runChunkedHostStep(params: {
                     total,
                 },
             });
-            params.log(
-                `${params.logLabel} progress: ${processed}/${total} customer(s)`
-            );
         }
         params.setTailStep(params.tailKey, {
             status: "done",

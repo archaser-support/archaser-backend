@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 
 import { commitOps } from "../../import/bulkWrite";
+import { findManyInChunks, PRISMA_IN_CHUNK } from "../../import/prismaInChunks";
 import { PENDING_CLOSE_PROGRESS_CHUNK } from "../pendingCloseProgress";
 import { VIRTUAL_PAYMENT_METHOD } from "./reconciledVirtualClose";
 
@@ -37,19 +38,21 @@ export async function applyHelamOffsetStampClosesForInvoiceNumbers(
         return { closedIds: [], customerIds: [], missingNumbers: [] };
     }
 
-    const invoices = await prisma.invoice.findMany({
-        where: {
-            account_id: accountId,
-            invoice_number: { in: unique },
-        },
-        select: {
-            id: true,
-            invoice_number: true,
-            customer_id: true,
-            net_amount: true,
-            customer_net_amount: true,
-        },
-    });
+    const invoices = await findManyInChunks(unique, (chunk) =>
+        prisma.invoice.findMany({
+            where: {
+                account_id: accountId,
+                invoice_number: { in: chunk },
+            },
+            select: {
+                id: true,
+                invoice_number: true,
+                customer_id: true,
+                net_amount: true,
+                customer_net_amount: true,
+            },
+        })
+    );
 
     const foundNumbers = new Set(
         invoices
@@ -62,13 +65,15 @@ export async function applyHelamOffsetStampClosesForInvoiceNumbers(
     }
 
     const invoiceIds = invoices.map((row) => row.id);
-    const linkedPayments = await prisma.invoicePayment.findMany({
-        where: { invoice_id: { in: invoiceIds }, account_id: accountId },
-        select: {
-            id: true,
-            payment_method: true,
-        },
-    });
+    const linkedPayments = await findManyInChunks(invoiceIds, (chunk) =>
+        prisma.invoicePayment.findMany({
+            where: { invoice_id: { in: chunk }, account_id: accountId },
+            select: {
+                id: true,
+                payment_method: true,
+            },
+        })
+    );
 
     const deleteIds = linkedPayments
         .filter((payment) => {
@@ -81,9 +86,12 @@ export async function applyHelamOffsetStampClosesForInvoiceNumbers(
         .map((payment) => payment.id);
 
     if (deleteIds.length > 0) {
-        await prisma.invoicePayment.deleteMany({
-            where: { id: { in: deleteIds }, account_id: accountId },
-        });
+        for (let i = 0; i < deleteIds.length; i += PRISMA_IN_CHUNK) {
+            const chunk = deleteIds.slice(i, i + PRISMA_IN_CHUNK);
+            await prisma.invoicePayment.deleteMany({
+                where: { id: { in: chunk }, account_id: accountId },
+            });
+        }
     }
 
     const now = new Date();

@@ -6,6 +6,7 @@ exports.applyReconciledVirtualCloses = applyReconciledVirtualCloses;
 exports.applyReconciledVirtualClosesForInvoiceNumbers = applyReconciledVirtualClosesForInvoiceNumbers;
 const invoicePaidTolerance_1 = require("../../invoice/invoicePaidTolerance");
 const bulkWrite_1 = require("../../import/bulkWrite");
+const prismaInChunks_1 = require("../../import/prismaInChunks");
 exports.VIRTUAL_PAYMENT_METHOD = "virtual";
 function buildVirtualPaymentReference(invoiceNumber) {
     return `virtual|${invoiceNumber.trim()}`;
@@ -46,8 +47,8 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
     const paidTolerance = await (0, invoicePaidTolerance_1.resolveInvoicePaidTolerance)(prisma, accountId);
     const invoiceIds = [...byInvoice.keys()];
     const [invoices, linkedPayments] = await Promise.all([
-        prisma.invoice.findMany({
-            where: { id: { in: invoiceIds } },
+        (0, prismaInChunks_1.findManyInChunks)(invoiceIds, (chunk) => prisma.invoice.findMany({
+            where: { id: { in: chunk } },
             select: {
                 id: true,
                 amount: true,
@@ -55,9 +56,9 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
                 customer_net_amount: true,
                 customer_currency: true,
             },
-        }),
-        prisma.invoicePayment.findMany({
-            where: { invoice_id: { in: invoiceIds } },
+        })),
+        (0, prismaInChunks_1.findManyInChunks)(invoiceIds, (chunk) => prisma.invoicePayment.findMany({
+            where: { invoice_id: { in: chunk } },
             select: {
                 id: true,
                 invoice_id: true,
@@ -67,7 +68,7 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
                 reference: true,
                 customer_id: true,
             },
-        }),
+        })),
     ]);
     const invoiceById = new Map(invoices.map((row) => [row.id, row]));
     const paymentsByInvoice = new Map();
@@ -156,7 +157,10 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
         }
     }
     if (inserts.length > 0) {
-        await prisma.invoicePayment.createMany({ data: inserts });
+        for (let i = 0; i < inserts.length; i += prismaInChunks_1.PRISMA_IN_CHUNK) {
+            const chunk = inserts.slice(i, i + prismaInChunks_1.PRISMA_IN_CHUNK);
+            await prisma.invoicePayment.createMany({ data: chunk });
+        }
     }
     if (updates.length > 0) {
         await (0, bulkWrite_1.commitOps)(prisma, updates.map((row) => prisma.invoicePayment.update({
@@ -165,9 +169,12 @@ async function applyReconciledVirtualCloses(prisma, accountId, candidates, userI
         })));
     }
     if (deleteIds.length > 0) {
-        await prisma.invoicePayment.deleteMany({
-            where: { id: { in: deleteIds }, account_id: accountId },
-        });
+        for (let i = 0; i < deleteIds.length; i += prismaInChunks_1.PRISMA_IN_CHUNK) {
+            const chunk = deleteIds.slice(i, i + prismaInChunks_1.PRISMA_IN_CHUNK);
+            await prisma.invoicePayment.deleteMany({
+                where: { id: { in: chunk }, account_id: accountId },
+            });
+        }
     }
     return touchedInvoiceIds;
 }
@@ -184,17 +191,17 @@ paymentDates, paymentDate = new Date()) {
     if (unique.length === 0) {
         return { touchedIds: [], customerIds: [], missingNumbers: [] };
     }
-    const invoices = await prisma.invoice.findMany({
+    const invoices = await (0, prismaInChunks_1.findManyInChunks)(unique, (chunk) => prisma.invoice.findMany({
         where: {
             account_id: accountId,
-            invoice_number: { in: unique },
+            invoice_number: { in: chunk },
         },
         select: {
             id: true,
             invoice_number: true,
             customer_id: true,
         },
-    });
+    }));
     const foundNumbers = new Set(invoices
         .map((row) => row.invoice_number)
         .filter((value) => Boolean(value)));

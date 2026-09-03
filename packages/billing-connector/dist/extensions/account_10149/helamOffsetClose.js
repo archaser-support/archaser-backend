@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.applyHelamOffsetStampClosesForInvoiceNumbers = applyHelamOffsetStampClosesForInvoiceNumbers;
 const bulkWrite_1 = require("../../import/bulkWrite");
+const prismaInChunks_1 = require("../../import/prismaInChunks");
 const pendingCloseProgress_1 = require("../pendingCloseProgress");
 const reconciledVirtualClose_1 = require("./reconciledVirtualClose");
 /** Priority Helam (חלמ) payment method label on cancel stamp lines. */
@@ -17,10 +18,10 @@ async function applyHelamOffsetStampClosesForInvoiceNumbers(prisma, accountId, i
     if (unique.length === 0) {
         return { closedIds: [], customerIds: [], missingNumbers: [] };
     }
-    const invoices = await prisma.invoice.findMany({
+    const invoices = await (0, prismaInChunks_1.findManyInChunks)(unique, (chunk) => prisma.invoice.findMany({
         where: {
             account_id: accountId,
-            invoice_number: { in: unique },
+            invoice_number: { in: chunk },
         },
         select: {
             id: true,
@@ -29,7 +30,7 @@ async function applyHelamOffsetStampClosesForInvoiceNumbers(prisma, accountId, i
             net_amount: true,
             customer_net_amount: true,
         },
-    });
+    }));
     const foundNumbers = new Set(invoices
         .map((row) => row.invoice_number)
         .filter((value) => Boolean(value)));
@@ -38,13 +39,13 @@ async function applyHelamOffsetStampClosesForInvoiceNumbers(prisma, accountId, i
         return { closedIds: [], customerIds: [], missingNumbers };
     }
     const invoiceIds = invoices.map((row) => row.id);
-    const linkedPayments = await prisma.invoicePayment.findMany({
-        where: { invoice_id: { in: invoiceIds }, account_id: accountId },
+    const linkedPayments = await (0, prismaInChunks_1.findManyInChunks)(invoiceIds, (chunk) => prisma.invoicePayment.findMany({
+        where: { invoice_id: { in: chunk }, account_id: accountId },
         select: {
             id: true,
             payment_method: true,
         },
-    });
+    }));
     const deleteIds = linkedPayments
         .filter((payment) => {
         const method = (payment.payment_method ?? "").trim();
@@ -53,9 +54,12 @@ async function applyHelamOffsetStampClosesForInvoiceNumbers(prisma, accountId, i
     })
         .map((payment) => payment.id);
     if (deleteIds.length > 0) {
-        await prisma.invoicePayment.deleteMany({
-            where: { id: { in: deleteIds }, account_id: accountId },
-        });
+        for (let i = 0; i < deleteIds.length; i += prismaInChunks_1.PRISMA_IN_CHUNK) {
+            const chunk = deleteIds.slice(i, i + prismaInChunks_1.PRISMA_IN_CHUNK);
+            await prisma.invoicePayment.deleteMany({
+                where: { id: { in: chunk }, account_id: accountId },
+            });
+        }
     }
     const now = new Date();
     const customerIds = new Set();
