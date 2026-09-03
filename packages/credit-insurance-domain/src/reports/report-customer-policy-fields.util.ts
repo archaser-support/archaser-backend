@@ -207,6 +207,16 @@ export function mergeActiveCustomerPolicySelect(
         }
     }
 
+    // At-risk / policy-risk enrichment reads capacity gap + exclusion from the
+    // active CustomerPolicy row even when those columns are not report fields.
+    if (
+        fields.includes("at_risk_exposure") ||
+        fields.includes("policy_risk_allocated")
+    ) {
+        mergePolicySelectFields(policySelect, "capacity_gap_amount");
+        policySelect.policy_exclusion_reason = true;
+    }
+
     if (Object.keys(policySelect).length === 0) {
         return;
     }

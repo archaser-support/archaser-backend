@@ -372,6 +372,13 @@ exports.REPORT_METADATA = {
                     translationNamespace: "dashboard",
                 },
                 {
+                    name: "at_risk_exposure",
+                    type: "number",
+                    label: "At Risk Exposure",
+                    translationKey: "at_risk_exposure",
+                    translationNamespace: "dashboard",
+                },
+                {
                     name: "limit_warning_summary",
                     type: "string",
                     label: "Warning Reason",
