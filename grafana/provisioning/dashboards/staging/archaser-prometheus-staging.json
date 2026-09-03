@@ -1355,6 +1355,7 @@
                 "type": "loki",
                 "uid": "Loki"
             },
+            "description": "Nest app containers only (api, worker, sms, connectors, reports). Ignores service dropdown.",
             "gridPos": {
                 "h": 8,
                 "w": 8,
@@ -1372,7 +1373,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum by(compose_service) (count_over_time({job=\"nest-docker\", environment=\"staging\"} [$__range]))",
+                    "expr": "sum by(compose_service) (count_over_time({job=\"nest-docker\", environment=\"staging\", compose_service=~\"api|worker|sms|connectors|reports\"} [$__range]))",
                     "legendFormat": "{{compose_service}}",
                     "refId": "A"
                 }
@@ -1385,6 +1386,7 @@
                 "type": "loki",
                 "uid": "Loki"
             },
+            "description": "Error/exception/fatal rate across all Nest app services. Ignores service dropdown.",
             "gridPos": {
                 "h": 8,
                 "w": 16,
@@ -1394,7 +1396,7 @@
             "id": 111,
             "targets": [
                 {
-                    "expr": "sum(count_over_time({job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)error|exception|fatal\" [$__interval]))",
+                    "expr": "sum(count_over_time({job=\"nest-docker\", environment=\"staging\", compose_service=~\"api|worker|sms|connectors|reports\"} |~ \"(?i)error|exception|fatal\" [$__interval]))",
                     "legendFormat": "Errors",
                     "refId": "A"
                 }
@@ -1407,6 +1409,7 @@
                 "type": "loki",
                 "uid": "Loki"
             },
+            "description": "Filtered by $compose_service and $search.",
             "gridPos": {
                 "h": 8,
                 "w": 24,
@@ -1421,7 +1424,7 @@
             },
             "targets": [
                 {
-                    "expr": "{job=\"nest-docker\", environment=\"staging\"} |~ \"(?i)error|critical|fatal|exception\"",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\" |~ \"(?i)error|critical|fatal|exception\"",
                     "refId": "A"
                 }
             ],
@@ -1433,47 +1436,27 @@
                 "type": "loki",
                 "uid": "Loki"
             },
+            "description": "Full Nest container stdout/stderr. Filtered by $compose_service and $search.",
             "gridPos": {
-                "h": 8,
+                "h": 12,
                 "w": 24,
                 "x": 0,
                 "y": 82
             },
-            "id": 113,
+            "id": 114,
+            "options": {
+                "showTime": true,
+                "enableLogDetails": true,
+                "sortOrder": "Descending"
+            },
             "targets": [
                 {
-                    "expr": "sum by(compose_service) (count_over_time({job=\"nest-docker\", environment=\"staging\"} [$__range]))",
-                    "legendFormat": "{{compose_service}}",
-                    "queryType": "instant",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\"",
                     "refId": "A"
                 }
             ],
-            "transformations": [
-                {
-                    "id": "labelsToFields"
-                },
-                {
-                    "id": "organize",
-                    "options": {
-                        "renameByName": {
-                            "Value": "Count"
-                        }
-                    }
-                },
-                {
-                    "id": "sortBy",
-                    "options": {
-                        "sort": [
-                            {
-                                "field": "Count",
-                                "desc": true
-                            }
-                        ]
-                    }
-                }
-            ],
-            "title": "Top Reporting Services",
-            "type": "table"
+            "title": "Live Nest logs",
+            "type": "logs"
         }
     ],
     "refresh": "10s",
@@ -1485,7 +1468,76 @@
         "staging"
     ],
     "templating": {
-        "list": []
+        "list": [
+            {
+                "current": {
+                    "selected": true,
+                    "text": "api",
+                    "value": "api"
+                },
+                "description": "Filters Recent Error Records and Live Nest logs only. Overview pie/error-rate stay all Nest apps.",
+                "hide": 0,
+                "includeAll": false,
+                "label": "Service",
+                "multi": false,
+                "name": "compose_service",
+                "options": [
+                    {
+                        "selected": true,
+                        "text": "api",
+                        "value": "api"
+                    },
+                    {
+                        "selected": false,
+                        "text": "worker",
+                        "value": "worker"
+                    },
+                    {
+                        "selected": false,
+                        "text": "sms",
+                        "value": "sms"
+                    },
+                    {
+                        "selected": false,
+                        "text": "connectors",
+                        "value": "connectors"
+                    },
+                    {
+                        "selected": false,
+                        "text": "reports",
+                        "value": "reports"
+                    },
+                    {
+                        "selected": false,
+                        "text": "All",
+                        "value": "api|worker|sms|connectors|reports"
+                    }
+                ],
+                "query": "api,worker,sms,connectors,reports,All : api|worker|sms|connectors|reports",
+                "skipUrlSync": false,
+                "type": "custom"
+            },
+            {
+                "current": {
+                    "selected": true,
+                    "text": ".*",
+                    "value": ".*"
+                },
+                "description": "Case-insensitive regex filter for log panels. Default .* = all lines.",
+                "label": "Search",
+                "name": "search",
+                "options": [
+                    {
+                        "selected": true,
+                        "text": ".*",
+                        "value": ".*"
+                    }
+                ],
+                "query": ".*",
+                "skipUrlSync": false,
+                "type": "textbox"
+            }
+        ]
     },
     "time": {
         "from": "now-3h",
@@ -1494,5 +1546,5 @@
     "timezone": "browser",
     "title": "Infrastructure - Staging",
     "uid": "archaser-prometheus-v1-staging",
-    "version": 4
+    "version": 5
 }
