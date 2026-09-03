@@ -19,13 +19,18 @@ import {
     assertFilterFieldsExist,
     buildKeysetFilter,
     columnNameSet,
+    DATE_FIELD_FALLBACKS,
     encodeKeysetCursor,
     formatOrderByClause,
     intersectSelectFields,
+    KEYSET_TIE_BREAKER_FIELDS,
+    odataFilterFieldNames,
+    ORDER_BY_FALLBACKS,
     pickDateField,
     pickKeysetTieBreaker,
     pickOrderByField,
 } from "./resolveTablePullShape";
+import { PAYMENT_ALWAYS_SELECT_SOURCES } from "./prioritySelectFields";
 import {
     discoverPriorityFields,
     fetchPriorityTableColumns,
@@ -134,9 +139,24 @@ function dateGeIso(date: Date, overlapMinutes: number): string {
     return new Date(ms).toISOString();
 }
 
+function columnSampleCacheKey(
+    entity: ImportType,
+    entitySet?: string | null,
+    filter?: string | null
+): string {
+    return `${entity}:${entitySet?.trim() ?? ""}:${filter?.trim() ?? ""}`;
+}
+
+function isIdgPaymentEntitySet(entitySet?: string | null): boolean {
+    const name = (entitySet ?? "").trim().toUpperCase();
+    return name.includes("IDG_ARFNCITEMS") || name.startsWith("IDG_");
+}
+
 export class PriorityProviderClient implements BillingProviderClient {
     private readonly config: PriorityConnectionConfig;
     private readonly tableColumnsByKey = new Map<string, string[]>();
+    /** Successful $top sample under this filter returned 0 rows — pull is empty, not an error. */
+    private readonly emptyFilterMatchKeys = new Set<string>();
 
     constructor(config: PriorityConnectionConfig) {
         this.config = config;
@@ -200,11 +220,28 @@ export class PriorityProviderClient implements BillingProviderClient {
             options.entitySet
         );
 
-        const columns = columnNameSet(
-            await this.columnsForTable(entity, options.entitySet)
+        const columnCacheKey = columnSampleCacheKey(
+            entity,
+            options.entitySet,
+            options.filter
         );
+        const columnList = await this.columnsForTable(entity, options.entitySet, {
+            filter: options.filter,
+            select: options.select,
+        });
+        if (this.emptyFilterMatchKeys.has(columnCacheKey)) {
+            return {
+                records: [],
+                nextCursor: null,
+                hasMore: false,
+            };
+        }
+        const columns = columnNameSet(columnList);
         const endpoint = getPriorityEntityEndpoint(entity);
-        const orderBy = pickOrderByField(endpoint.defaultOrderBy, columns);
+        const preferredOrderBy = isIdgPaymentEntitySet(options.entitySet)
+            ? "FNCNUM"
+            : endpoint.defaultOrderBy;
+        const orderBy = pickOrderByField(preferredOrderBy, columns);
         const tieBreaker = pickKeysetTieBreaker(columns, orderBy);
         const needsDate =
             options.createdOnOrAfter != null || options.since != null;
@@ -325,12 +362,17 @@ export class PriorityProviderClient implements BillingProviderClient {
 
     private async columnsForTable(
         entity: ImportType,
-        entitySet?: string | null
+        entitySet?: string | null,
+        options?: {
+            filter?: string | null;
+            select?: string[] | null;
+        }
     ): Promise<string[]> {
         if (!isPriorityEntityImportType(entity)) {
             throw new Error(`Unsupported entity: ${entity}`);
         }
-        const key = `${entity}:${entitySet?.trim() ?? ""}`;
+        const filterKey = options?.filter?.trim() ?? "";
+        const key = columnSampleCacheKey(entity, entitySet, filterKey);
         const cached = this.tableColumnsByKey.get(key);
         if (cached) {
             return cached;
@@ -340,19 +382,84 @@ export class PriorityProviderClient implements BillingProviderClient {
         );
         const sampled = await fetchPriorityTableColumns(this.config, entity, {
             entitySet,
+            filter: options?.filter,
         });
         if (!sampled.ok) {
-            throw new Error(
-                sampled.error ?? "Failed to sample Priority table columns"
+            const filterPreview = (options?.filter ?? "").slice(0, 280);
+            this.config.onLog?.(
+                `[column-sample] entity=${entity} entitySet=${entitySet?.trim() || "default"} failed: ${sampled.error ?? "unknown"} filterLen=${(options?.filter ?? "").length} filterPreview=${filterPreview} — using fallback columns`
             );
+            const fallback = this.fallbackColumnsForPull(entity, options, entitySet);
+            this.emptyFilterMatchKeys.delete(key);
+            this.tableColumnsByKey.set(key, fallback);
+            return fallback;
         }
         if (sampled.columns.length === 0) {
-            throw new Error(
-                "This table returned no columns; cannot build a safe request"
+            // Live sample succeeded with 0 rows under this filter — there is
+            // nothing to pull. Do not invent columns (e.g. PAYNUM) that can 400
+            // the real pull and abort the whole sync.
+            const filterPreview = (options?.filter ?? "").slice(0, 280);
+            this.config.onLog?.(
+                `[column-sample] entity=${entity} entitySet=${entitySet?.trim() || "default"} source=empty_filter_match columnCount=0 filterLen=${(options?.filter ?? "").length} filterPreview=${filterPreview} — pull will return empty`
             );
+            this.emptyFilterMatchKeys.add(key);
+            this.tableColumnsByKey.set(key, []);
+            return [];
         }
+        this.emptyFilterMatchKeys.delete(key);
         this.tableColumnsByKey.set(key, sampled.columns);
         return sampled.columns;
+    }
+
+    /** Best-effort column names when Priority will not return a sample row quickly. */
+    private fallbackColumnsForPull(
+        entity: ImportType,
+        options?: {
+            filter?: string | null;
+            select?: string[] | null;
+        },
+        entitySet?: string | null
+    ): string[] {
+        const names = new Set<string>();
+        for (const name of odataFilterFieldNames(options?.filter)) {
+            names.add(name);
+        }
+        for (const name of options?.select ?? []) {
+            const trimmed = name.trim();
+            if (trimmed) {
+                names.add(trimmed);
+            }
+        }
+        for (const name of ORDER_BY_FALLBACKS) {
+            names.add(name);
+        }
+        for (const name of DATE_FIELD_FALLBACKS) {
+            names.add(name);
+        }
+        for (const name of KEYSET_TIE_BREAKER_FIELDS) {
+            names.add(name);
+        }
+        if (entity === "Payment") {
+            for (const name of PAYMENT_ALWAYS_SELECT_SOURCES) {
+                names.add(name);
+            }
+        }
+        if (isPriorityEntityImportType(entity)) {
+            const endpoint = getPriorityEntityEndpoint(entity);
+            if (isIdgPaymentEntitySet(entitySet)) {
+                // IDG_ARFNCITEMS* has FNCNUM/KLINE, not PAYNUM; no CREDIT/DEBIT.
+                names.delete("PAYNUM");
+                names.delete("CREDIT");
+                names.delete("DEBIT");
+                names.delete("PAYMENT");
+                names.delete("CUSTNAME");
+                names.add("FNCNUM");
+                names.add("KLINE");
+            } else if (endpoint.defaultOrderBy) {
+                names.add(endpoint.defaultOrderBy);
+            }
+        }
+        return Array.from(names);
     }
 
     private async fetchJson(url: string): Promise<unknown> {

@@ -240,7 +240,7 @@ async function main() {
 
     // Extension transforms queue invoice numbers that must be closed without a payment.
     const pendingInvoiceCloses = new Set();
-    const pendingHelamOffsetCloses = new Set();
+    const pendingInvoiceCloseDates = new Map();
 
     const pullAndTransform = async (entityType, mappingRow, filter) => {
         if (!mappingRow || !filter) return [];
@@ -280,7 +280,7 @@ async function main() {
             userId: args.userId,
             dryRun: args.dryRun,
             pendingInvoiceCloses,
-            pendingHelamOffsetCloses,
+            pendingInvoiceCloseDates,
         });
         const rows = transformed[entityType] ?? [];
         console.log(`${LOG} ${entityType} after extension:`, {
@@ -366,7 +366,6 @@ async function main() {
     }
     console.log(`${LOG} Extension pending closes:`, {
         virtualCloses: [...pendingInvoiceCloses].join(', ') || 'none',
-        helamOffsetCloses: [...pendingHelamOffsetCloses].join(', ') || 'none',
     });
 
     if (args.dryRun) {
@@ -453,14 +452,14 @@ async function main() {
     // 4. Settle invoices the extension marked as closed without a cash payment.
     if (
         extension?.flushPendingInvoiceCloses &&
-        (pendingInvoiceCloses.size > 0 || pendingHelamOffsetCloses.size > 0)
+        pendingInvoiceCloses.size > 0
     ) {
         const flushed = await extension.flushPendingInvoiceCloses({
             prisma,
             accountId: customer.account_id,
             userId: args.userId,
             invoiceNumbers: [...pendingInvoiceCloses],
-            helamOffsetInvoiceNumbers: [...pendingHelamOffsetCloses],
+            invoiceCloseDates: pendingInvoiceCloseDates,
         });
         for (const id of flushed.closedIds) affectedInvoiceIds.add(id);
         for (const id of flushed.customerIds ?? []) affectedCustomerIds.add(id);

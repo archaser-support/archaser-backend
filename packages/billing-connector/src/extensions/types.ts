@@ -26,7 +26,7 @@ export interface ExtensionTransformContext {
     window: ExtensionSyncWindow;
     batch: ExtensionMappedBatch;
     extension_config: Record<string, unknown> | null;
-    /** When set, extension may write (e.g. Helam offset invoice settlement). */
+    /** When set, extension may write during transform (rare). */
     prisma?: Pick<PrismaClient, "invoice" | "invoicePayment">;
     userId?: string;
     /** Preview / dry-run — no DB writes from the extension. */
@@ -41,11 +41,6 @@ export interface ExtensionTransformContext {
      * virtual close carries the ERP date instead of the import timestamp.
      */
     pendingInvoiceCloseDates?: Map<string, Date>;
-    /**
-     * Helam offset-pair invoice numbers (original + cancel stamp) to stamp
-     * Paid without virtual/cancel payments after Invoice ingest.
-     */
-    pendingHelamOffsetCloses?: Set<string>;
 }
 
 export type ExtensionLinkedPayment = {
@@ -127,10 +122,8 @@ export interface BillingAccountExtension {
         | ExtensionAfterPaymentLinkedResult
         | Promise<ExtensionAfterPaymentLinkedResult>;
     /**
-     * Flush invoice numbers queued during Payment transform (dropped recon
-     * debit lines) after Invoice ingest — virtual fill + paid recalc.
-     * Optional helamOffsetInvoiceNumbers stamp Helam cancel pairs Paid with
-     * no virtual / cancel payment import.
+     * Flush invoice numbers queued during Payment transform (reconciled
+     * IDG_ARFNCITEMS4 lines) after Invoice ingest — virtual fill + paid recalc.
      */
     flushPendingInvoiceCloses?(ctx: {
         prisma: Pick<
@@ -142,7 +135,6 @@ export interface BillingAccountExtension {
         invoiceNumbers: string[];
         /** ERP CURDATE per invoice number for virtual-close payment dates. */
         invoiceCloseDates?: Map<string, Date>;
-        helamOffsetInvoiceNumbers?: string[];
         /** Live progress for the Settle closed invoices tail step. */
         onProgress?: (progress: {
             processed: number;
@@ -158,6 +150,15 @@ export interface BillingAccountExtension {
     alignPaymentAmountsForInvoice?(
         input: ExtensionAlignPaymentAmountsInput
     ): ExtensionAlignedPaymentAmounts;
+/**
+     * Extra OData $select columns for live/preview pulls (account-specific
+     * ERP fields such as IDG_*). Merged with mapping-derived select.
+     */
+    extraSelectFields?(params: {
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string[];
     /**
      * Extra ERP customer-number values for Start customer-scoped pulls
      * (OR'd with the Archaser customer_number). Account-specific — e.g.
@@ -169,6 +170,31 @@ export interface BillingAccountExtension {
         entitySet?: string | null;
         extension_config: Record<string, unknown> | null;
     }): string[];
+    /**
+     * Optional full OData customer-scope clause for Start / preview pulls.
+     * When a non-empty string is returned, it replaces the generic
+     * `CUSTNAME` clause from `resolveRuntimeCustomerScopeOData`.
+     * Return null to keep the generic clause.
+     * Account 10149 uses this for IDG_CUSTNAME (fast path).
+     */
+    buildRuntimeCustomerScopeOData?(params: {
+        customerNumber: string;
+        additionalCustomerNumbers: string[];
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string | null;
+    /**
+     * Optional second customer-scope clause run after the primary Payment pull
+     * (e.g. IDC_CUSTNAMEIV when IDG_CUSTNAME is null). Must not be OR'd into
+     * the primary filter — Priority full-scans and hangs.
+     */
+    buildRuntimeCustomerScopeFallbackOData?(params: {
+        customerNumber: string;
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string | null;
 }
 
 export type ExtensionAttachmentUpsertInput = {

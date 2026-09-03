@@ -195,6 +195,9 @@ export function createDefaultArPostIngestDeps(): ArPostIngestDeps {
                 accountId,
                 mepBreachStartDate,
                 onProgress,
+                // After linking deferred payments, restamp CTV including
+                // ctv_customer_overdue_mep from as-of issue-date block state.
+                stampInsuranceFields: true,
             }),
         applyMaturity: (accountId, asOf) =>
             applyMaturedDeferredPayments(prisma, accountId, asOf),

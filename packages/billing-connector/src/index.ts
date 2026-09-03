@@ -246,15 +246,19 @@ export {
     PENDING_CLOSES_ENTITY_STATS_KEY,
     BALANCES_ENTITY_STATS_KEY,
     clearRunningSync,
+    completePreviewJob,
+    getPreviewJob,
     getRunningSync,
     listSyncRuns,
     registerRunningSync,
+    setPreviewJobRunning,
     upsertSyncRun,
     patchSyncRunEntityStats,
     patchSyncRunProgress,
     entityStatsFromCounts,
     type ConnectorSyncProgressPatch,
     type ConnectorSyncRunSummary,
+    type PreviewJobState,
 } from "./sync/connectorSyncRuntime";
 
 export {

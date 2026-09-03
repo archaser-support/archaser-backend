@@ -52,9 +52,7 @@ export function resolvePaymentCustomerNumber(
         return direct;
     }
     if (raw) {
-        const fromErp =
-            asTrimmedString(raw.CUSTNAME) ||
-            asTrimmedString(raw.IDG_CUSTNAME);
+        const fromErp = asTrimmedString(raw.CUSTNAME);
         if (fromErp) {
             return fromErp;
         }
