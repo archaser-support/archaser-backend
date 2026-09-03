@@ -307,8 +307,8 @@ if [[ "$SKIP_BUILD" != "true" ]]; then
     npm run build -w @archaser/auth
     npm run build -w @archaser/sms-send
     npm run build -w @archaser/credit-insurance-domain
-    npm run build -w @archaser/cron-jobs
     npm run build -w @archaser/billing-connector
+    npm run build -w @archaser/cron-jobs
     npm run build -w @archaser/api
     npm run build -w @archaser/worker
     npm run build -w @archaser/sms
