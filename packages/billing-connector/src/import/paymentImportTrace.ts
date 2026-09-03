@@ -1,11 +1,12 @@
 /**
- * Temporary debug trace for specific ERP payment lines through connector import.
+ * Optional debug trace for specific ERP payment lines through connector import.
  *
- * Matches rows when FNCNUM / IVNUM / FNCIREF1 / reference contains a trace key.
- * Default keys include the SI26ED0000488 / 10714824402 investigation pair.
+ * Off by default. Matches rows when FNCNUM / IVNUM / FNCIREF1 / reference
+ * contains a trace key.
  *
- * Disable: BILLING_PAYMENT_TRACE=off
- * Override: BILLING_PAYMENT_TRACE=26063733,SI260000488
+ * Enable defaults: BILLING_PAYMENT_TRACE=on
+ * Custom keys: BILLING_PAYMENT_TRACE=26063733,SI260000488
+ * Disable: omit env, or BILLING_PAYMENT_TRACE=off
  */
 
 const DEFAULT_TRACE_KEYS = [
@@ -16,22 +17,25 @@ const DEFAULT_TRACE_KEYS = [
     "RC26ED0000310",
     "26014108",
     "26015834",
+    "SI26BZ002069",
+    "26082866",
+    "4641",
 ] as const;
 
 function parseTraceKeys(): Set<string> {
     const env = process.env.BILLING_PAYMENT_TRACE?.trim();
-    if (env === "0" || env === "off" || env === "false") {
+    if (!env || env === "0" || env === "off" || env === "false") {
         return new Set();
     }
-    if (env && env.length > 0) {
-        return new Set(
-            env
-                .split(/[,;\s]+/)
-                .map((part) => part.trim())
-                .filter(Boolean)
-        );
+    if (env === "1" || env === "on" || env === "true") {
+        return new Set(DEFAULT_TRACE_KEYS);
     }
-    return new Set(DEFAULT_TRACE_KEYS);
+    return new Set(
+        env
+            .split(/[,;\s]+/)
+            .map((part) => part.trim())
+            .filter(Boolean)
+    );
 }
 
 let traceKeys = parseTraceKeys();
@@ -137,8 +141,17 @@ export function flattenPaymentRowForTrace(
         kline: asTraceString(raw.KLINE ?? traceable.KLINE),
         fncpatname: asTraceString(raw.FNCPATNAME ?? traceable.FNCPATNAME),
         glname: asTraceString(raw.GLNAME ?? traceable.GLNAME),
+        idg_custname: asTraceString(raw.IDG_CUSTNAME ?? traceable.IDG_CUSTNAME),
+        idc_custnameiv: asTraceString(
+            raw.IDC_CUSTNAMEIV ?? traceable.IDC_CUSTNAMEIV
+        ),
+        companyname: asTraceString(raw.COMPANYNAME ?? traceable.COMPANYNAME),
+        accname: asTraceString(raw.ACCNAME ?? traceable.ACCNAME),
         debit1: raw.DEBIT1 ?? traceable.DEBIT1,
         credit1: raw.CREDIT1 ?? traceable.CREDIT1,
+        credit5: raw.CREDIT5 ?? traceable.CREDIT5,
+        code: asTraceString(raw.CODE ?? traceable.CODE),
+        code5: asTraceString(raw.CODE5 ?? traceable.CODE5),
         bal: raw.BAL ?? traceable.BAL,
         reference: asTraceString(traceable.reference ?? traceable.PAY_REFERENCE),
         invoice_number: asTraceString(

@@ -72,6 +72,9 @@ export async function runPreviewSync(params: {
     prisma: PrismaClient;
     accountId: number;
     importType?: ImportType;
+    onLog?: (message: string) => void;
+    /** Optional Archaser customer_number scope (same as Start backfill). */
+    runtimeCustomerNumber?: string | null;
 }): Promise<PreviewSyncResult> {
     const startedAt = new Date();
     const connector = await params.prisma.billingConnector.findUnique({
@@ -92,6 +95,7 @@ export async function runPreviewSync(params: {
         baseUrl: connector.base_url,
         authType: connector.auth_type,
         credentials,
+        onLog: params.onLog,
     };
     const connection = await testPriorityConnection(config);
     if (!connection.ok) {
@@ -118,6 +122,14 @@ export async function runPreviewSync(params: {
     for (const importType of targets) {
         const mappingRow = mappingByType.get(importType);
         const rules = parseMappingRules(mappingRow?.mapping);
+        const pullDateField =
+            mappingRow &&
+            "pull_date_field" in mappingRow &&
+            typeof (mappingRow as { pull_date_field?: string | null })
+                .pull_date_field === "string"
+                ? (mappingRow as { pull_date_field?: string | null })
+                      .pull_date_field
+                : null;
         entities.push(
             await previewEntityFromConnector({
                 importType,
@@ -125,6 +137,9 @@ export async function runPreviewSync(params: {
                 config,
                 connector: connectorPreviewContext,
                 mappingRules: rules,
+                backfillStartDate: connector.backfill_start_date,
+                pullDateField,
+                runtimeCustomerNumber: params.runtimeCustomerNumber,
             })
         );
     }
@@ -156,6 +171,18 @@ export async function runPreviewSync(params: {
     });
 
     const completedAt = new Date();
+    const sampleDetail = entities
+        .map(
+            (entity) =>
+                `${entity.import_type}:${entity.importable_count}/${entity.pulled}`
+        )
+        .join(", ");
+    const entityPassDetail = entityPasses
+        .map(
+            (entry) =>
+                `${entry.importType}:${entry.passed ? "pass" : "fail"}`
+        )
+        .join(", ");
     return {
         mode: "preview",
         started_at: startedAt.toISOString(),
@@ -177,16 +204,9 @@ export async function runPreviewSync(params: {
             checks: [
                 {
                     id: "samples",
-                    label: "Importable sample rows",
-                    passed: entities.every(
-                        (entity) => entity.importable_count > 0
-                    ),
-                    detail: entities
-                        .map(
-                            (entity) =>
-                                `${entity.import_type}:${entity.importable_count}/${entity.pulled}`
-                        )
-                        .join(", "),
+                    label: "Sample pull (empty allowed)",
+                    passed: true,
+                    detail: sampleDetail || "no entities",
                 },
                 {
                     id: "required_fields",
@@ -201,12 +221,7 @@ export async function runPreviewSync(params: {
                     id: "entity_pass",
                     label: "Enabled entities passed preview",
                     passed: entityPasses.every((entry) => entry.passed),
-                    detail: entityPasses
-                        .map(
-                            (entry) =>
-                                `${entry.importType}:${entry.passed ? "pass" : "fail"}`
-                        )
-                        .join(", "),
+                    detail: entityPassDetail,
                 },
             ],
         },

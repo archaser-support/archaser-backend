@@ -255,9 +255,9 @@ export type ReplayCustomerArImportParams = {
      */
     linkDeferredPayments?: boolean;
     /**
-     * When true, stamp insurance CTV fields after assessed amounts (batched).
-     * Default false: post-ingest capacity gap only needs assessed stamps + live
-     * refresh; per-invoice CTV stamping dominated runtime at Helam scale.
+     * When true, stamp insurance CTV fields (including MEP) after deferred
+     * payments are linked so as-of ledger is complete. Default false outside
+     * post-ingest; orchestrator enables this on backfill/import replay.
      */
     stampInsuranceFields?: boolean;
     /**
@@ -380,9 +380,10 @@ async function bulkWriteLimitAssessedAmounts(
  * Chronological AR replay for one customer.
  *
  * Computes `limit_assessed_amount` entirely in memory (open-AR timeline), then
- * bulk-writes stamps. Deferred payments (`invoice_id` null) are linked afterward;
- * already-linked payments only affect the in-memory timeline — no per-event
- * forceRecalc. Does not rewrite outstanding columns.
+ * bulk-writes assessed stamps. Deferred payments (`invoice_id` null) are linked
+ * before insurance CTV stamping so as-of MEP sees the payment ledger; already-
+ * linked payments only affect the in-memory timeline — no per-event forceRecalc.
+ * Does not rewrite outstanding columns.
  */
 export async function replayCustomerArImport(
     params: ReplayCustomerArImportParams
@@ -637,16 +638,8 @@ export async function replayCustomerArImport(
         total: events.length,
     });
 
-    if (stampInsuranceFields && assessedStamps.length > 0) {
-        await stampInvoicesInsuranceFieldsAsOf(
-            assessedStamps.map((stamp) => ({
-                invoiceId: stamp.invoiceId,
-                asOf: stamp.invoiceDate,
-            })),
-            db
-        );
-    }
-
+    // Link deferred payments before CTV/MEP stamp — as-of MEP only counts
+    // InvoicePayment rows with invoice_id set.
     let paymentsLinked = 0;
     if (linkDeferredPayments && deferredToLink.length > 0) {
         const recalcOptions = await resolveInvoicePaidRecalcOptions(
@@ -662,6 +655,16 @@ export async function replayCustomerArImport(
             recalcOptions
         );
         paymentsLinked = linkResult.paymentsLinked;
+    }
+
+    if (stampInsuranceFields && assessedStamps.length > 0) {
+        await stampInvoicesInsuranceFieldsAsOf(
+            assessedStamps.map((stamp) => ({
+                invoiceId: stamp.invoiceId,
+                asOf: stamp.invoiceDate,
+            })),
+            db
+        );
     }
 
     const stillDeferred = await db.invoicePayment.count({

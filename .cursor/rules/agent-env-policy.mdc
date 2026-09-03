@@ -1,0 +1,21 @@
+---
+description: Block agent access to .env and other secret files (even via Shell)
+alwaysApply: true
+---
+
+# Env / credential files — agent must not access
+
+`.cursorignore` is **not** a security boundary. Shell with elevated permissions can still read ignored files.
+
+## Never do this
+
+- ❌ Read, write, append, or search dotenv files, PEM/key files, or credentials JSON
+- ❌ Use Shell (`cat`, `rg`, `printf >>`, `sed`, etc.) to touch those paths
+- ❌ Request `required_permissions: ["all"]` in order to bypass ignore/sandbox for those files
+- ❌ Paste values from those files into chat
+
+## Do this instead
+
+- ✅ Tell the user which env **key name** to set (e.g. `CONNECTION_LIMIT_API=25`) and ask them to edit the local env file
+- ✅ Use committed examples only (`*.example`, docs) — never real values
+- ✅ If a task requires changing the local env file, stop and ask the user to make the change

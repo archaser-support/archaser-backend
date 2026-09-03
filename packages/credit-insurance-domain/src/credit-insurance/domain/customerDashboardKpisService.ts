@@ -24,10 +24,7 @@ import {
     getCustomerRiskExposureAmountTrendByPolicy,
     type RiskExposurePolicySeries,
 } from "./customerPolicyTrendService";
-import {
-    computeTopUpUsageMetrics,
-    fetchCustomerCapacityGapSecondaryFromContributingInvoices,
-} from "./invoiceCapacityGapAmounts";
+import { computeTopUpUsageMetrics } from "./invoiceCapacityGapAmounts";
 import {
     computeCustomerRiskExposure,
     computeCustomerTotalAr,
@@ -741,16 +738,14 @@ export async function getCustomerDashboardKpis(
             totalArSecondary = arSecondaryForRatio;
         }
 
+        // Prefer stored limit-currency gap when it matches the display secondary
+        // currency; otherwise scale the account-currency primary by the same
+        // invoice due/overdue bucket ratio as Total Due / Total AR. Do not FX-sum
+        // per-invoice gaps here — those rollups do not match policy-level primary.
         capacityGapAmountSecondary =
             resolveStoredCapacityGapSecondary(policyRows, secondaryCurrency, {
                 policyId: policyId ?? undefined,
             }) ??
-            (await fetchCustomerCapacityGapSecondaryFromContributingInvoices(
-                accountId,
-                customerId,
-                secondaryCurrency,
-                { policyId: policyId ?? undefined }
-            )) ??
             deriveSecondaryAmountFromInvoiceBucketRatio(
                 capacityGapAmount,
                 arPrimaryForRatio,
