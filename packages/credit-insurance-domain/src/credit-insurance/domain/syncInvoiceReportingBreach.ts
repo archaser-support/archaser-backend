@@ -561,8 +561,10 @@ export async function refreshCtvSnapshotsForInvoiceIds(
         const snap = computeCreatedTermsViolationSnapshot({
             invoice_date: inv.invoice_date,
             invoice_amount: inv.amount,
+            // Prefer as-of map (false when absent) — never fall back to live
+            // Customer.overdue_block (false positives on historical invoices).
             customer_overdue_mep_at_invoice_date:
-                overdueMepByInvoiceId.get(inv.id) ?? null,
+                overdueMepByInvoiceId.get(inv.id) ?? false,
             mep_breach_start_date:
                 inv.account_id != null
                     ? mepBreachStartDateByAccountId.get(inv.account_id) ?? null

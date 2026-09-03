@@ -5,16 +5,39 @@
  * The connector has no per-document import entry point, so the filters are
  * backed up, replaced, used for a single run, and restored in a finally block.
  *
+ * Wires the same post-import host callbacks as the billing integration page:
+ * Process Overdue, AR post-ingest (replay / live refresh / as-of), and
+ * customer balance recalculation.
+ *
  * Usage:
  *   npx tsx scripts/import-invoices-by-number.ts --customer 4036 --invoices SI240003534,CR250000836
  *   npx tsx scripts/import-invoices-by-number.ts --customer 4036 --invoices ... --import
  *   npx tsx scripts/import-invoices-by-number.ts --customer 4036 --invoices ... --import --from 2024-01-01
  */
 import "dotenv/config";
+import * as path from "path";
 import { PrismaClient, type Prisma } from "@prisma/client";
 
+import {
+    handleOverdueInvoices,
+    runArPostIngestForCustomers,
+} from "@archaser/cron-jobs";
+import {
+    bindCreditInsurancePrisma,
+    enqueueRewriteForImport,
+} from "@archaser/credit-insurance-domain";
+
+import { recalculateCustomerAmounts } from "../api/src/customers/domain/recalculateCustomerAmounts";
 import { runPreviewSync } from "../packages/billing-connector/src/sync/runPreviewSync";
 import { runInProcessSync } from "../packages/billing-connector/src/sync/runInProcessSync";
+
+// Host default resolves packages/api; this repo keeps api at the repo root.
+if (!process.env.CUSTOMERS_DOMAIN_ROOT) {
+    process.env.CUSTOMERS_DOMAIN_ROOT = path.resolve(
+        __dirname,
+        "../api/dist/customers"
+    );
+}
 
 interface Args {
     customerId: number;
@@ -156,6 +179,9 @@ async function main(): Promise<void> {
             return;
         }
 
+        const onLog = (message: string) =>
+            console.log("[import-invoices] sync:", message);
+
         const result = await runInProcessSync({
             prisma,
             accountId,
@@ -164,7 +190,89 @@ async function main(): Promise<void> {
             ...(args.from
                 ? { windows: [{ start: args.from, end: new Date() }] }
                 : {}),
-            onLog: (message) => console.log("[import-invoices] sync:", message),
+            onLog,
+            onCustomerBalancesFinal: async (customerIds, options) => {
+                await recalculateCustomerAmounts(customerIds, prisma, options);
+            },
+            onProcessOverdueCustomers: async (customerIds) => {
+                if (customerIds.length === 0) {
+                    return;
+                }
+                const scope =
+                    customerIds.length === 1
+                        ? customerIds[0]
+                        : { customerIds };
+                await handleOverdueInvoices(prisma, scope);
+            },
+            onArPostIngest: async (input) => {
+                bindCreditInsurancePrisma(prisma);
+                let skipped = false;
+                let thrown: unknown;
+                try {
+                    const postIngest = await runArPostIngestForCustomers({
+                        accountId: input.accountId,
+                        customerIds: input.customerIds,
+                        runReplay: input.runReplay === true,
+                        runMaturity: input.runMaturity === true,
+                        ...(input.runProcessOverdue !== undefined
+                            ? { runProcessOverdue: input.runProcessOverdue }
+                            : {}),
+                        runLiveRefresh: input.runLiveRefresh === true,
+                        enqueueAsOfRewrite: input.enqueueAsOfRewrite === true,
+                        dryRun: input.dryRun === true,
+                        asOfRewrite: input.asOfRewrite,
+                        ...(input.affectedInvoiceIds !== undefined
+                            ? { affectedInvoiceIds: input.affectedInvoiceIds }
+                            : {}),
+                        ...(input.mepBreachStartDate !== undefined
+                            ? { mepBreachStartDate: input.mepBreachStartDate }
+                            : {}),
+                        ...(input.onProgress
+                            ? { onProgress: input.onProgress }
+                            : {}),
+                    });
+                    skipped = postIngest.skipped;
+                    for (const failure of postIngest.errors) {
+                        onLog(
+                            `AR post-ingest step "${failure.step}" failed` +
+                                (failure.customerId != null
+                                    ? ` for customer ${failure.customerId}`
+                                    : "") +
+                                `: ${failure.message}`
+                        );
+                    }
+                    if (postIngest.skipReason) {
+                        onLog(
+                            `AR post-ingest skipped: ${postIngest.skipReason}`
+                        );
+                    }
+                } catch (error) {
+                    skipped = true;
+                    thrown = error;
+                    const message =
+                        error instanceof Error ? error.message : String(error);
+                    onLog(`AR post-ingest failed: ${message}`);
+                }
+                if (
+                    skipped &&
+                    input.enqueueAsOfRewrite &&
+                    input.asOfRewrite
+                ) {
+                    try {
+                        await enqueueRewriteForImport({
+                            accountId: input.accountId,
+                            importType: input.asOfRewrite.importType,
+                            entityIds: input.asOfRewrite.entityIds,
+                            customerIds: input.customerIds,
+                        });
+                    } catch {
+                        // Best-effort; do not fail sync for as-of enqueue.
+                    }
+                }
+                if (thrown) {
+                    throw thrown;
+                }
+            },
         });
         console.log("[import-invoices] result:", {
             ok: result.ok,

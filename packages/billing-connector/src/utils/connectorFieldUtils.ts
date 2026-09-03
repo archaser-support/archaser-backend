@@ -132,7 +132,6 @@ const PRIORITY_DEFAULT_ERP_FIELDS: Partial<
         state_iso2: "STATECODE",
         postal_code: "ZIP",
         country_iso2: "COUNTRYCODE",
-        business_unit: "IDG_COMPANYNAME",
         parent_customer_number: "MCUSTNAME",
     },
     Contact: {

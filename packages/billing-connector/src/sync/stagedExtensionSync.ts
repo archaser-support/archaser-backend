@@ -64,6 +64,12 @@ export const STAGED_ENTITY_ORDER: ExtensionEntityType[] = [
     "Contact",
 ];
 
+/**
+ * Max keyset pages per entity per window. At recommendedPageSize 500 this is
+ * 2.5M rows — raised from 200 (100k) after Payment backfills exhausted early.
+ */
+const MAX_ENTITY_PAGES_PER_WINDOW = 5_000;
+
 export type ImportBatchFn = (
     prisma: PrismaClient,
     importType: ImportEntityType,
@@ -510,28 +516,22 @@ export async function runStagedExtensionSync(
     const arAffectedInvoiceIds = new Set<number>();
     const arAffectedPaymentIds = new Set<number>();
     const paymentAffectedCustomerIds = new Set<number>();
-    /** Recon debit IVNUMs queued during Payment transform for virtual close. */
+    /** Reconciled payment-feed IVNUMs queued during Payment transform for virtual close. */
     const pendingInvoiceCloses = new Set<string>();
     /** ERP CURDATE per queued IVNUM — payment date for its virtual close. */
     const pendingInvoiceCloseDates = new Map<string, Date>();
-    /** Helam offset-pair invoice numbers (original + cancel) for stamp-close. */
-    const pendingHelamOffsetCloses = new Set<string>();
     let invoicePostIngestRan = false;
 
     const flushExtensionPendingCloses = async (label: string) => {
         if (
-            (pendingInvoiceCloses.size === 0 &&
-                pendingHelamOffsetCloses.size === 0) ||
+            pendingInvoiceCloses.size === 0 ||
             !options.extension.flushPendingInvoiceCloses
         ) {
             return;
         }
         const pendingNumbers = Array.from(pendingInvoiceCloses);
-        const helamOffsetNumbers = Array.from(pendingHelamOffsetCloses);
-        const pendingTotal = countUniquePendingCloseInvoiceNumbers(
-            pendingNumbers,
-            helamOffsetNumbers
-        );
+        const pendingTotal =
+            countUniquePendingCloseInvoiceNumbers(pendingNumbers);
         setTailStep(PENDING_CLOSES_ENTITY_STATS_KEY, {
             status: "running",
             processed: 0,
@@ -545,7 +545,6 @@ export async function runStagedExtensionSync(
                     userId: options.userId,
                     invoiceNumbers: pendingNumbers,
                     invoiceCloseDates: new Map(pendingInvoiceCloseDates),
-                    helamOffsetInvoiceNumbers: helamOffsetNumbers,
                     onProgress: ({ processed, total }) => {
                         setTailStep(PENDING_CLOSES_ENTITY_STATS_KEY, {
                             status: "running",
@@ -562,9 +561,8 @@ export async function runStagedExtensionSync(
             }
             pendingInvoiceCloses.clear();
             pendingInvoiceCloseDates.clear();
-            pendingHelamOffsetCloses.clear();
             log(
-                `Extension pending invoice closes (${label}): ${flushResult.closedIds.length} settled (${pendingNumbers.length} virtual, ${helamOffsetNumbers.length} Helam offset)`
+                `Extension pending invoice closes (${label}): ${flushResult.closedIds.length} settled (${pendingNumbers.length} virtual)`
             );
             setTailStep(PENDING_CLOSES_ENTITY_STATS_KEY, {
                 status: "done",
@@ -759,18 +757,84 @@ export async function runStagedExtensionSync(
                 entityType,
                 { entitySet }
             );
-            const runtimeCustomerClause = resolveRuntimeCustomerScopeOData({
-                customerNumber: scopedCustomerNumber || null,
-                additionalCustomerNumbers,
-                entityType,
-                entitySet,
-            });
-            const entityPullFilter = andODataFilters(
+            const extensionScopeClause =
+                scopeToCustomer &&
+                typeof options.extension.buildRuntimeCustomerScopeOData ===
+                    "function"
+                    ? options.extension.buildRuntimeCustomerScopeOData({
+                          customerNumber: scopedCustomerNumber,
+                          additionalCustomerNumbers,
+                          entityType,
+                          entitySet,
+                          extension_config: options.extensionConfig,
+                      })
+                    : null;
+            const runtimeCustomerClause =
+                (typeof extensionScopeClause === "string" &&
+                extensionScopeClause.trim().length > 0
+                    ? extensionScopeClause.trim()
+                    : null) ??
+                resolveRuntimeCustomerScopeOData({
+                    customerNumber: scopedCustomerNumber || null,
+                    additionalCustomerNumbers,
+                    entityType,
+                    entitySet,
+                });
+            const primaryPullFilter = andODataFilters(
                 baseEntityPullFilter,
                 runtimeCustomerClause
             );
+            const fallbackScopeClause =
+                entityType === "Payment" &&
+                scopeToCustomer &&
+                typeof options.extension
+                    .buildRuntimeCustomerScopeFallbackOData === "function"
+                    ? options.extension.buildRuntimeCustomerScopeFallbackOData({
+                          customerNumber: scopedCustomerNumber,
+                          entityType,
+                          entitySet,
+                          extension_config: options.extensionConfig,
+                      })
+                    : null;
+            const fallbackPullFilter =
+                typeof fallbackScopeClause === "string" &&
+                fallbackScopeClause.trim().length > 0
+                    ? andODataFilters(
+                          baseEntityPullFilter,
+                          fallbackScopeClause.trim()
+                      )
+                    : null;
+            const pullPhases: Array<{
+                label: string;
+                filter: string | null;
+                /** Resume cursor only for the primary phase. */
+                startAfterKey: string | null;
+            }> = [
+                {
+                    label: "primary",
+                    filter: primaryPullFilter,
+                    startAfterKey: afterKey,
+                },
+            ];
+            if (fallbackPullFilter) {
+                pullPhases.push({
+                    label: "idc_fallback",
+                    filter: fallbackPullFilter,
+                    startAfterKey: null,
+                });
+            }
 
-            while (guard < 200) {
+            let watchedPaymentSeen = false;
+            for (const phase of pullPhases) {
+                afterKey = phase.startAfterKey;
+                if (entityType === "Payment") {
+                    const filterText = phase.filter ?? "";
+                    log(
+                        `[payment-watch] Payment ${phase.label} filterLen=${filterText.length} hasIdcCustnameIv=${filterText.includes("IDC_CUSTNAMEIV")} hasIdgCustname=${filterText.includes("IDG_CUSTNAME")} filterPreview=${filterText.slice(0, 360)}`
+                    );
+                }
+
+            while (guard < MAX_ENTITY_PAGES_PER_WINDOW) {
                 if (options.shouldCancel?.()) {
                     log(`Stopped by operator before ${entityType} page ${guard}`);
                     windows.push({
@@ -790,27 +854,88 @@ export async function runStagedExtensionSync(
                 }
                 guard += 1;
                 setActiveStep(entityType, "pulling");
-                const page = await options.provider.pull(entityType, {
-                    since: usesDatePull && !applyDateWindow ? window.start : null,
-                    createdOnOrAfter: applyDateWindow ? windowCutover : null,
-                    preferredDateField: usesDatePull
-                        ? options.dateFieldByType?.get(entityType) ?? null
-                        : null,
-                    overlapMinutes: options.overlapMinutes,
-                    afterKey,
-                    pagination: "keyset",
-                    pageSize: entityPageSize,
-                    entitySet,
-                    filter: entityPullFilter,
-                    select: odataSelectFieldsFromMapping({
-                        mappingRules: rules,
-                        extraFields: ["UDATE"],
-                        entityType,
-                    }),
-                });
+                let page;
+                try {
+                    page = await options.provider.pull(entityType, {
+                        since:
+                            usesDatePull && !applyDateWindow
+                                ? window.start
+                                : null,
+                        createdOnOrAfter: applyDateWindow
+                            ? windowCutover
+                            : null,
+                        preferredDateField: usesDatePull
+                            ? options.dateFieldByType?.get(entityType) ?? null
+                            : null,
+                        overlapMinutes: options.overlapMinutes,
+                        afterKey,
+                        pagination: "keyset",
+                        pageSize: entityPageSize,
+                        entitySet,
+                        filter: phase.filter,
+                        select: odataSelectFieldsFromMapping({
+                            mappingRules: rules,
+                            extraFields: [
+                                "UDATE",
+                                ...(typeof options.extension
+                                    .extraSelectFields === "function"
+                                    ? options.extension.extraSelectFields({
+                                          entityType,
+                                          entitySet,
+                                          extension_config:
+                                              options.extensionConfig,
+                                      })
+                                    : []),
+                            ],
+                            entityType,
+                        }),
+                    });
+                } catch (err) {
+                    const message =
+                        err instanceof Error ? err.message : String(err);
+                    if (entityType === "Payment") {
+                        log(
+                            `[payment-watch] Payment ${phase.label} pull FAILED page=${guard} afterKey=${afterKey ?? "null"} error=${message} filterPreview=${(phase.filter ?? "").slice(0, 360)}`
+                        );
+                    }
+                    throw err;
+                }
+                if (entityType === "Payment") {
+                    log(
+                        `[payment-watch] Payment ${phase.label} page=${guard} rawRows=${page.records.length} hasMore=${page.hasMore} watchedSeen=${watchedPaymentSeen}`
+                    );
+                }
 
                 const mappedPage: Record<string, unknown>[] = [];
+                let idcFallbackDroppedIdg = 0;
                 for (const raw of page.records) {
+                    if (entityType === "Payment" && isTracedPaymentRow(raw)) {
+                        watchedPaymentSeen = true;
+                        tracePaymentImportByRaw("erp_page_raw", raw, {
+                            pageGuard: guard,
+                            pageRecordCount: page.records.length,
+                            phase: phase.label,
+                        });
+                    }
+                    // IDC fallback: keep Helam/VAT lines only (empty IDG).
+                    // Priority rejects IDG null in $filter, so partition here.
+                    if (
+                        entityType === "Payment" &&
+                        phase.label === "idc_fallback"
+                    ) {
+                        const idg = String(raw.IDG_CUSTNAME ?? "").trim();
+                        if (idg.length > 0) {
+                            idcFallbackDroppedIdg += 1;
+                            if (isTracedPaymentRow(raw)) {
+                                tracePaymentImportByRaw(
+                                    "idc_fallback_skip_has_idg",
+                                    raw,
+                                    { idgCustname: idg }
+                                );
+                            }
+                            continue;
+                        }
+                    }
                     if (
                         usesDatePull &&
                         !windowCutover &&
@@ -820,6 +945,7 @@ export async function runStagedExtensionSync(
                             tracePaymentImportByRaw("pull_skip_date_window", raw, {
                                 windowStart: window.start?.toISOString() ?? null,
                                 windowEnd: window.end?.toISOString() ?? null,
+                                phase: phase.label,
                             });
                         }
                         continue;
@@ -828,26 +954,56 @@ export async function runStagedExtensionSync(
                     if (entityType === "Payment") {
                         tracePaymentImport("field_mapped", mapped, {
                             rawKeys: Object.keys(raw).length,
+                            phase: phase.label,
                         });
                     }
                     if (scopeToCustomer) {
                         const rowCustomer = String(
                             mapped.customer_number ?? ""
                         ).trim();
-                        if (!allowedCustomerNumbers.has(rowCustomer)) {
+                        const rawRecord =
+                            (mapped._rawRecord as
+                                | Record<string, unknown>
+                                | undefined) ?? raw;
+                        const idgCustname = String(
+                            rawRecord.IDG_CUSTNAME ?? ""
+                        ).trim();
+                        const idcCustnameIv = String(
+                            rawRecord.IDC_CUSTNAMEIV ?? ""
+                        ).trim();
+                        const inScope =
+                            (rowCustomer.length > 0 &&
+                                allowedCustomerNumbers.has(rowCustomer)) ||
+                            (idgCustname.length > 0 &&
+                                allowedCustomerNumbers.has(idgCustname)) ||
+                            (idcCustnameIv.length > 0 &&
+                                allowedCustomerNumbers.has(idcCustnameIv));
+                        if (!inScope) {
                             if (entityType === "Payment") {
                                 tracePaymentImport("pull_skip_customer_scope", mapped, {
                                     rowCustomer,
+                                    idgCustname: idgCustname || null,
+                                    idcCustnameIv: idcCustnameIv || null,
                                     scopedCustomerNumber,
                                     allowedCustomerNumbers: [
                                         ...allowedCustomerNumbers,
                                     ],
+                                    phase: phase.label,
                                 });
                             }
                             continue;
                         }
                     }
                     mappedPage.push(mapped);
+                }
+                if (
+                    entityType === "Payment" &&
+                    phase.label === "idc_fallback" &&
+                    idcFallbackDroppedIdg > 0
+                ) {
+                    log(
+                        `[payment-watch] Payment idc_fallback dropped ${idcFallbackDroppedIdg} row(s) with non-empty IDG_CUSTNAME (client partition)`
+                    );
                 }
 
                 bumpProcessedPage(stats, entityType, mappedPage.length);
@@ -866,7 +1022,6 @@ export async function runStagedExtensionSync(
                             dryRun,
                             pendingInvoiceCloses,
                             pendingInvoiceCloseDates,
-                            pendingHelamOffsetCloses,
                         });
                         mergeBatch(previewBatch, afterPlugin);
                         mergeBatch(windowBatch, afterPlugin);
@@ -1060,6 +1215,25 @@ export async function runStagedExtensionSync(
                 afterKey = page.nextCursor;
             }
 
+            if (entityType === "Payment") {
+                log(
+                    `[payment-watch] Payment ${phase.label} phase done watchedSeen=${watchedPaymentSeen} pendingCloses=${pendingInvoiceCloses.size}`
+                );
+            }
+            }
+
+            if (entityType === "Payment") {
+                log(
+                    `[payment-watch] Payment entity done watchedSeen=${watchedPaymentSeen} pendingCloses=${pendingInvoiceCloses.size} watchKeys=SI26BZ002069,26082866,4641`
+                );
+            }
+
+            if (guard >= MAX_ENTITY_PAGES_PER_WINDOW && afterKey != null) {
+                log(
+                    `${entityType} hit page cap (${MAX_ENTITY_PAGES_PER_WINDOW} × ${entityPageSize}); more rows may remain — raise MAX_ENTITY_PAGES_PER_WINDOW`
+                );
+            }
+
             // Maturity once after all Invoice pages (not per page) so paging
             // stays fast; deferred payments from Payment-first ingest link here.
             if (!dryRun && entityType === "Invoice") {
@@ -1129,10 +1303,7 @@ export async function runStagedExtensionSync(
                     log(`Invoice entity maturity failed: ${message}`);
                 }
 
-                if (
-                    pendingInvoiceCloses.size > 0 ||
-                    pendingHelamOffsetCloses.size > 0
-                ) {
+                if (pendingInvoiceCloses.size > 0) {
                     await flushExtensionPendingCloses("after Invoice");
                 }
 

@@ -264,9 +264,10 @@ export function resolveRelatedCustomerPullFilterOData(
  * CUSTNAME-only Customer filter on related entities so invoices/payments/
  * contacts stay inside the same customer subset.
  *
- * Optional Start-backfill `runtimeCustomerNumber` is AND-ed with the entity's
- * ERP customer column (`IDG_CUSTNAME` on IDG_ARFNCITEMS* payment tables,
- * otherwise `CUSTNAME`) so customer-scoped pulls do not page the full table.
+ * Optional Start-backfill `runtimeCustomerNumber` is AND-ed as `CUSTNAME eq …`
+ * so customer-scoped pulls do not page the full table. Account extensions may
+ * replace that clause via `buildRuntimeCustomerScopeOData` (account 10149 owns
+ * IDG_CUSTNAME / IDC_CUSTNAMEIV on IDG_ARFNCITEMS*).
  */
 export function resolveImportPullFilterOData(
     raw: unknown,
@@ -300,16 +301,17 @@ export function resolveImportPullFilterOData(
 }
 
 /**
- * ERP customer-number $filter for Start backfill customer scope.
- * IDG payment tables (e.g. IDG_ARFNCITEMS4) use IDG_CUSTNAME; standard
- * Priority Customer/Contact/Invoice/Payment sets use CUSTNAME.
+ * Generic ERP customer-number $filter for Start backfill customer scope.
+ * Always uses `CUSTNAME`. Custom IDG_* customer fields belong in account
+ * extensions (`buildRuntimeCustomerScopeOData`).
  *
  * When `additionalCustomerNumbers` is set (account extensions), builds
- * `(field eq 'A' or field eq 'B' or …)`.
+ * `(CUSTNAME eq 'A' or CUSTNAME eq 'B' or …)`.
  */
 export function resolveRuntimeCustomerScopeOData(params: {
     customerNumber: string | null | undefined;
     additionalCustomerNumbers?: string[] | null;
+    /** Kept for call-site compatibility; generic scope always uses CUSTNAME. */
     entityType: ImportType;
     entitySet?: string | null;
 }): string | null {
@@ -320,10 +322,6 @@ export function resolveRuntimeCustomerScopeOData(params: {
     if (!trimmed) {
         return null;
     }
-    const field = runtimeCustomerScopeField(
-        params.entityType,
-        params.entitySet
-    );
     const values = new Set<string>([trimmed]);
     for (const extra of params.additionalCustomerNumbers ?? []) {
         if (typeof extra !== "string") {
@@ -335,7 +333,7 @@ export function resolveRuntimeCustomerScopeOData(params: {
         }
     }
     const clauses = [...values].map(
-        (value) => `${field} eq ${escapeODataStringLiteral(value)}`
+        (value) => `CUSTNAME eq ${escapeODataStringLiteral(value)}`
     );
     if (clauses.length === 1) {
         return clauses[0] ?? null;
@@ -343,23 +341,8 @@ export function resolveRuntimeCustomerScopeOData(params: {
     return `(${clauses.join(" or ")})`;
 }
 
-function runtimeCustomerScopeField(
-    entityType: ImportType,
-    entitySet?: string | null
-): string {
-    const setName = (entitySet ?? "").trim().toUpperCase();
-    if (
-        entityType === "Payment" &&
-        (setName.includes("IDG_ARFNCITEMS") || setName.startsWith("IDG_"))
-    ) {
-        return "IDG_CUSTNAME";
-    }
-    return "CUSTNAME";
-}
-
 /**
- * @deprecated Prefer {@link resolveRuntimeCustomerScopeOData} with entityType /
- * entitySet so IDG payment tables filter on IDG_CUSTNAME.
+ * @deprecated Prefer {@link resolveRuntimeCustomerScopeOData}.
  */
 export function compileRuntimeCustomerNumberOData(
     customerNumber: string | null | undefined,

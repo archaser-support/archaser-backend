@@ -3,7 +3,9 @@ import type { ImportType } from "@prisma/client";
 import type { MappingRule } from "../utils/connectorFieldUtils";
 
 const SYNTHETIC_SOURCE_FIELDS: Record<string, readonly string[]> = {
-    PAY_AMOUNT: ["PAYMENT", "CREDIT1", "DEBIT1", "CREDIT", "DEBIT"],
+    // IDG_ARFNCITEMS4 exposes CREDIT1/DEBIT1 (not CREDIT/DEBIT). Requesting
+    // CREDIT/DEBIT in $select returns HTTP 400 and aborts the sync.
+    PAY_AMOUNT: ["PAYMENT", "CREDIT1", "DEBIT1"],
     PAY_DATE: ["PAYDATE", "FNCDATE", "BALDATE"],
     PAY_REFERENCE: [
         "FRECONNUM",
@@ -23,10 +25,12 @@ const SYNTHETIC_SOURCE_FIELDS: Record<string, readonly string[]> = {
  * Always request on Payment pulls when the table exposes them.
  * FRECONNUM / BAL drive recon virtual-close; PAY_REFERENCE sources are needed
  * even when the connector maps `reference` to IVNUM/PAYNUM instead of PAY_REFERENCE.
- * CREDIT5/DEBIT5/CODE5/CURDATE are Priority dual-currency / rate-date fields on
- * IDG_ARFNCITEMS4 (discovered for account 10149) — needed for FX diagnosis/conversion.
+ * CREDIT5/DEBIT5/CODE5/CURDATE are Priority dual-currency / rate-date fields.
+ * Account-specific columns (IDG_*, IDC_CUSTNAMEIV, …) belong on the account
+ * extension via `extraSelectFields` — not here.
  */
-const PAYMENT_ALWAYS_SELECT_SOURCES = [
+export const PAYMENT_ALWAYS_SELECT_SOURCES = [
+    "ACCNAME",
     "BAL",
     "CODE",
     "CODE5",
@@ -36,20 +40,18 @@ const PAYMENT_ALWAYS_SELECT_SOURCES = [
     "DEBIT1",
     "DEBIT5",
     "CURDATE",
-    "IDG_CUSTNAME",
     ...SYNTHETIC_SOURCE_FIELDS.PAY_REFERENCE,
 ] as const;
 
 /**
  * Not on CINVOICES for this Priority OData form. PIVNUM/CREDITFOR are subform
- * (or absent). PAYDATE is a payment column that invoice mappings sometimes include.
+ * (or absent). Do not omit PAYDATE — invoice due_date is often mapped to it.
  */
-const OMIT_FROM_INVOICE_SELECT = new Set(["PIVNUM", "CREDITFOR", "PAYDATE"]);
+const OMIT_FROM_INVOICE_SELECT = new Set(["PIVNUM", "CREDITFOR"]);
 
 /**
- * Not on CUSTOMERS, and not on account 10149's payment table
- * (IDG_ARFNCITEMS4). CUSTPERSONNEL was never discovered with UDATE.
- * Requesting it in $select returns HTTP 400. CINVOICES does expose UDATE.
+ * Not on CUSTOMERS / CUSTPERSONNEL for some Priority forms. CINVOICES does
+ * expose UDATE; Payment feeds that omit it should keep UDATE out of $select.
  */
 const OMIT_UDATE_FROM_SELECT = new Set(["UDATE"]);
 
