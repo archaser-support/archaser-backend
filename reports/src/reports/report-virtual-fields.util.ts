@@ -367,6 +367,23 @@ export function applyComputedFieldSelect(
             };
             return true;
         }
+        // Enriched-only fields: keep them out of the Prisma select.
+        if (
+            field === "open_receivable_amount" ||
+            field === "open_invoice_count" ||
+            field === "terms_breach_outstanding" ||
+            field === "policy_risk_allocated" ||
+            field === "limit_warning_summary" ||
+            field === "top_up_type" ||
+            field === "top_up_value" ||
+            field === "top_up_resolved_amount" ||
+            field === "top_up_end_date" ||
+            field === "top_up_days_left" ||
+            field === "as_of_utilization_pct" ||
+            field === "as_of_usage_amount"
+        ) {
+            return true;
+        }
         return false;
     }
 
@@ -432,6 +449,24 @@ export function extractComputedFieldValue(
                 | null
                 | undefined;
             return company?.company_number ?? null;
+        }
+        // Post-query enrichment (Open AR, policy risk, as-of utilization, …)
+        // writes these onto the row; treat as computed so we never hit Prisma.
+        if (
+            field === "open_receivable_amount" ||
+            field === "open_invoice_count" ||
+            field === "terms_breach_outstanding" ||
+            field === "policy_risk_allocated" ||
+            field === "limit_warning_summary" ||
+            field === "top_up_type" ||
+            field === "top_up_value" ||
+            field === "top_up_resolved_amount" ||
+            field === "top_up_end_date" ||
+            field === "top_up_days_left" ||
+            field === "as_of_utilization_pct" ||
+            field === "as_of_usage_amount"
+        ) {
+            return row[field] ?? null;
         }
         return undefined;
     }
