@@ -1427,7 +1427,7 @@
             },
             "targets": [
                 {
-                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\" |~ \"(?i)error|critical|fatal|exception\" | label_format level=\"unknown\"",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} | regexp `(?is).*$search.*` | regexp `(?i)(?s).*(error|critical|fatal|exception).*` | line_format \"\\033[31m{{__line__}}\\033[0m\" | label_format level=\"unknown\"",
                     "refId": "A"
                 }
             ],
@@ -1439,7 +1439,7 @@
                 "type": "loki",
                 "uid": "Loki"
             },
-            "description": "Full Nest container stdout/stderr. Filtered by $compose_service and $search.",
+            "description": "Full Nest container stdout/stderr. Filtered by $compose_service and $search. Font color: green=info, yellow=warn, red=error.",
             "gridPos": {
                 "h": 12,
                 "w": 24,
@@ -1457,7 +1457,7 @@
             },
             "targets": [
                 {
-                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\" | label_format level=\"unknown\"",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} | regexp `(?is).*$search.*` | regexp `(?i)(?P<level>error|fatal|critical|exception|warn|warning)|(?P<_rest>[\\s\\S]*)` | line_format \"{{ if or (eq (lower .level) \\\"warn\\\") (eq (lower .level) \\\"warning\\\") }}\\033[33m{{__line__}}\\033[0m{{ else if .level }}\\033[31m{{__line__}}\\033[0m{{ else }}\\033[32m{{__line__}}\\033[0m{{ end }}\" | label_format level=\"unknown\"",
                     "refId": "A"
                 }
             ],
@@ -1526,20 +1526,20 @@
             {
                 "current": {
                     "selected": true,
-                    "text": ".*",
-                    "value": ".*"
+                    "text": "",
+                    "value": ""
                 },
-                "description": "Case-insensitive regex filter for log panels. Default .* = all lines.",
+                "description": "Optional case-insensitive substring/regex for log panels. Leave blank for all lines.",
                 "label": "Search",
                 "name": "search",
                 "options": [
                     {
                         "selected": true,
-                        "text": ".*",
-                        "value": ".*"
+                        "text": "",
+                        "value": ""
                     }
                 ],
-                "query": ".*",
+                "query": "",
                 "skipUrlSync": false,
                 "type": "textbox"
             }
