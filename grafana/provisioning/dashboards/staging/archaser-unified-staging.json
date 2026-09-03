@@ -428,6 +428,77 @@
             ],
             "title": "SMS Failed (24h)",
             "type": "stat"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 14
+            },
+            "id": 200,
+            "title": "Nest Logs",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "Loki"
+            },
+            "description": "Filtered by $compose_service and $search. Full view on Infrastructure.",
+            "gridPos": {
+                "h": 12,
+                "w": 12,
+                "x": 0,
+                "y": 15
+            },
+            "id": 201,
+            "options": {
+                "showTime": true,
+                "showLevel": false,
+                "enableLogDetails": true,
+                "syntaxHighlighting": false,
+                "wrapLogMessage": true,
+                "sortOrder": "Descending"
+            },
+            "targets": [
+                {
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\" |~ \"(?i)error|critical|fatal|exception\" | label_format level=\"unknown\"",
+                    "refId": "A"
+                }
+            ],
+            "title": "Recent Error Records",
+            "type": "logs"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "Loki"
+            },
+            "description": "Full Nest container stdout/stderr. Filtered by $compose_service and $search.",
+            "gridPos": {
+                "h": 12,
+                "w": 12,
+                "x": 12,
+                "y": 15
+            },
+            "id": 202,
+            "options": {
+                "showTime": true,
+                "showLevel": false,
+                "enableLogDetails": true,
+                "syntaxHighlighting": false,
+                "wrapLogMessage": true,
+                "sortOrder": "Descending"
+            },
+            "targets": [
+                {
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\" | label_format level=\"unknown\"",
+                    "refId": "A"
+                }
+            ],
+            "title": "Live Nest logs",
+            "type": "logs"
         }
     ],
     "refresh": "5s",
@@ -442,14 +513,71 @@
         "list": [
             {
                 "current": {
-                    "text": "",
-                    "value": ""
+                    "selected": true,
+                    "text": "api",
+                    "value": "api"
                 },
+                "description": "Filters Nest log panels. Default api.",
                 "hide": 0,
+                "includeAll": false,
+                "label": "Service",
+                "multi": false,
+                "name": "compose_service",
+                "options": [
+                    {
+                        "selected": true,
+                        "text": "api",
+                        "value": "api"
+                    },
+                    {
+                        "selected": false,
+                        "text": "worker",
+                        "value": "worker"
+                    },
+                    {
+                        "selected": false,
+                        "text": "sms",
+                        "value": "sms"
+                    },
+                    {
+                        "selected": false,
+                        "text": "connectors",
+                        "value": "connectors"
+                    },
+                    {
+                        "selected": false,
+                        "text": "reports",
+                        "value": "reports"
+                    },
+                    {
+                        "selected": false,
+                        "text": "All",
+                        "value": "api|worker|sms|connectors|reports"
+                    }
+                ],
+                "query": "api,worker,sms,connectors,reports,All : api|worker|sms|connectors|reports",
+                "skipUrlSync": false,
+                "type": "custom"
+            },
+            {
+                "current": {
+                    "selected": true,
+                    "text": ".*",
+                    "value": ".*"
+                },
+                "description": "Case-insensitive regex filter for Nest log panels. Default .* = all lines.",
                 "label": "Search",
                 "name": "search",
-                "query": "",
-                "type": "text"
+                "options": [
+                    {
+                        "selected": true,
+                        "text": ".*",
+                        "value": ".*"
+                    }
+                ],
+                "query": ".*",
+                "skipUrlSync": false,
+                "type": "textbox"
             }
         ]
     },
@@ -460,5 +588,5 @@
     "timezone": "browser",
     "title": "Home / Glance - Staging",
     "uid": "archaser-unified-v1-staging",
-    "version": 4
+    "version": 5
 }

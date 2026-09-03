@@ -1419,12 +1419,15 @@
             "id": 112,
             "options": {
                 "showTime": true,
+                "showLevel": false,
                 "enableLogDetails": true,
+                "syntaxHighlighting": false,
+                "wrapLogMessage": true,
                 "sortOrder": "Descending"
             },
             "targets": [
                 {
-                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\" |~ \"(?i)error|critical|fatal|exception\"",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\" |~ \"(?i)error|critical|fatal|exception\" | label_format level=\"unknown\"",
                     "refId": "A"
                 }
             ],
@@ -1446,12 +1449,15 @@
             "id": 114,
             "options": {
                 "showTime": true,
+                "showLevel": false,
                 "enableLogDetails": true,
+                "syntaxHighlighting": false,
+                "wrapLogMessage": true,
                 "sortOrder": "Descending"
             },
             "targets": [
                 {
-                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\"",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} |~ \"(?i)$search\" | label_format level=\"unknown\"",
                     "refId": "A"
                 }
             ],
