@@ -298,6 +298,7 @@ function applyComputedFieldSelect(primaryTable, field, select) {
             field === "open_invoice_count" ||
             field === "terms_breach_outstanding" ||
             field === "policy_risk_allocated" ||
+            field === "at_risk_exposure" ||
             field === "limit_warning_summary" ||
             field === "top_up_type" ||
             field === "top_up_value" ||
@@ -350,6 +351,7 @@ function extractComputedFieldValue(primaryTable, field, row) {
             field === "open_invoice_count" ||
             field === "terms_breach_outstanding" ||
             field === "policy_risk_allocated" ||
+            field === "at_risk_exposure" ||
             field === "limit_warning_summary" ||
             field === "top_up_type" ||
             field === "top_up_value" ||
@@ -382,6 +384,7 @@ function isComputedReportField(primaryTable, field) {
             field === "open_invoice_count" ||
             field === "terms_breach_outstanding" ||
             field === "policy_risk_allocated" ||
+            field === "at_risk_exposure" ||
             field === "limit_warning_summary" ||
             field === "top_up_type" ||
             field === "top_up_value" ||

@@ -9,7 +9,12 @@ import type { invoice_status } from "@prisma/client";
 import { prisma } from "../domain-db";
 import { resolveAccountDisplayLanguage } from "./reportExecutionVirtualFields-stub";
 import { extractCustomerPolicyReportField } from "./reportCustomerPolicyFields-stub";
+import { getCustomerPolicyRow } from "./reportCustomerPolicyFields-stub";
 import { computeCustomerRiskExposure } from "./invoiceInsuranceFields";
+import {
+    hasActiveLinkedPolicy,
+    isUncoveredExposureCustomer,
+} from "./shared/policyExclusion";
 
 import {
     fetchOpenReceivableByCustomerMap,
@@ -29,6 +34,7 @@ export const CREDIT_DASHBOARD_ENRICHED_CUSTOMER_FIELDS = new Set([
     "open_invoice_count",
     "terms_breach_outstanding",
     "policy_risk_allocated",
+    "at_risk_exposure",
     "limit_warning_summary",
     "top_up_type",
     "top_up_value",
@@ -236,12 +242,15 @@ export async function enrichCreditDashboardCustomerRows(
 
     const needsOpenAr =
         fields.has("open_receivable_amount") ||
-        fields.has("policy_risk_allocated");
+        fields.has("policy_risk_allocated") ||
+        fields.has("at_risk_exposure");
     const needsOpenInvoices = fields.has("open_invoice_count");
     const needsTermsBreach =
         fields.has("terms_breach_outstanding") ||
-        fields.has("policy_risk_allocated");
-    const needsPolicyRisk = fields.has("policy_risk_allocated");
+        fields.has("policy_risk_allocated") ||
+        fields.has("at_risk_exposure");
+    const needsPolicyRisk =
+        fields.has("policy_risk_allocated") || fields.has("at_risk_exposure");
     const needsWarningSummary = fields.has("limit_warning_summary");
     const needsAsOfUtilization =
         fields.has("as_of_utilization_pct") || fields.has("as_of_usage_amount");
@@ -317,7 +326,7 @@ export async function enrichCreditDashboardCustomerRows(
             enriched.terms_breach_outstanding =
                 termsOutstandingByCustomer.get(customerId) ?? 0;
         }
-        if (fields.has("policy_risk_allocated")) {
+        if (needsPolicyRisk) {
             const ar = openArByCustomer.get(customerId) ?? 0;
             const gapRaw = extractCustomerPolicyReportField(
                 row,
@@ -328,11 +337,24 @@ export async function enrichCreditDashboardCustomerRows(
                     ? 0
                     : Number(gapRaw);
             const tbForAtRisk = termsForAtRiskByCustomer.get(customerId) ?? 0;
-            enriched.policy_risk_allocated = computeCustomerRiskExposure({
+            const allocated = computeCustomerRiskExposure({
                 totalAr: ar,
                 capacityGapAmount: Number.isFinite(gap) ? gap : 0,
                 termsBreachOutstanding: tbForAtRisk,
             });
+            if (fields.has("policy_risk_allocated")) {
+                enriched.policy_risk_allocated = allocated;
+            }
+            if (fields.has("at_risk_exposure")) {
+                const policy = getCustomerPolicyRow(row);
+                const uncovered = isUncoveredExposureCustomer({
+                    hasLinkedPolicy: hasActiveLinkedPolicy(
+                        policy?.insurance_policy_id as number | null | undefined
+                    ),
+                    exclusionReason: policy?.policy_exclusion_reason ?? null,
+                });
+                enriched.at_risk_exposure = uncovered ? ar : allocated;
+            }
         }
         if (needsWarningSummary && options.limitWarningByCustomerId) {
             const warningRow = options.limitWarningByCustomerId.get(customerId);
@@ -440,6 +462,7 @@ const ENRICHED_IN_MEMORY_SORT_FIELDS = new Set([
     "open_invoice_count",
     "terms_breach_outstanding",
     "policy_risk_allocated",
+    "at_risk_exposure",
     "top_up_days_left",
     "top_up_value",
     "top_up_resolved_amount",
