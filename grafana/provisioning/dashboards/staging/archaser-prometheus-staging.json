@@ -1427,7 +1427,7 @@
             },
             "targets": [
                 {
-                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} | regexp `(?is).*$search.*` | regexp `(?i)(?s).*(error|critical|fatal|exception).*` | line_format \"\\033[31m{{__line__}}\\033[0m\" | label_format level=\"unknown\"",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} | regexp `(?is)(?P<_s>.*$search.*)` | regexp `(?is)(?P<_e>.*(error|critical|fatal|exception).*)` | line_format \"\\033[31m{{__line__}}\\033[0m\" | label_format level=\"unknown\"",
                     "refId": "A"
                 }
             ],
@@ -1457,7 +1457,7 @@
             },
             "targets": [
                 {
-                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} | regexp `(?is).*$search.*` | regexp `(?i)(?P<level>error|fatal|critical|exception|warn|warning)|(?P<_rest>[\\s\\S]*)` | line_format \"{{ if or (eq (lower .level) \\\"warn\\\") (eq (lower .level) \\\"warning\\\") }}\\033[33m{{__line__}}\\033[0m{{ else if .level }}\\033[31m{{__line__}}\\033[0m{{ else }}\\033[32m{{__line__}}\\033[0m{{ end }}\" | label_format level=\"unknown\"",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} | regexp `(?is)(?P<_s>.*$search.*)` | regexp `(?i)(?P<level>error|fatal|critical|exception|warn|warning)|(?P<_rest>[\\s\\S]*)` | line_format \"{{ if or (eq (lower .level) \\\"warn\\\") (eq (lower .level) \\\"warning\\\") }}\\033[33m{{__line__}}\\033[0m{{ else if .level }}\\033[31m{{__line__}}\\033[0m{{ else }}\\033[32m{{__line__}}\\033[0m{{ end }}\" | label_format level=\"unknown\"",
                     "refId": "A"
                 }
             ],
