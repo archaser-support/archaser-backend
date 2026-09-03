@@ -93,6 +93,19 @@ export class BillingConnectorController {
         return this.service.lookupCustomerById(user, accountId, customerId);
     }
 
+    @Get("customers/search")
+    @ApiOperation({
+        summary:
+            "Typeahead search customers on this account (Start backfill customer scope)",
+    })
+    async searchCustomers(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number,
+        @Query("q") q?: string
+    ) {
+        return this.service.searchCustomers(user, accountId, q);
+    }
+
     @Post("sync/cancel")
     @ApiOperation({ summary: "Cancel the in-process running sync" })
     async cancel(

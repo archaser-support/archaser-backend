@@ -4,6 +4,7 @@ exports.PriorityProviderClient = void 0;
 const BillingProviderClient_1 = require("../billing/BillingProviderClient");
 const priorityApiContract_1 = require("./priorityApiContract");
 const connectorPaymentSynthetics_1 = require("../payment/connectorPaymentSynthetics");
+const paymentImportTrace_1 = require("../import/paymentImportTrace");
 const resolveTablePullShape_1 = require("./resolveTablePullShape");
 const PriorityClient_1 = require("./PriorityClient");
 function normalizeServiceRoot(baseUrl) {
@@ -184,9 +185,24 @@ class PriorityProviderClient {
             throw new Error("Unexpected Priority response shape (missing value array)");
         }
         const rawRecords = value.filter((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+        if (entity === "Payment") {
+            for (const row of rawRecords) {
+                (0, paymentImportTrace_1.tracePaymentImportByRaw)("erp_pull_raw", row, {
+                    pageSize,
+                });
+            }
+        }
         const records = entity === "Payment"
             ? (0, connectorPaymentSynthetics_1.applyPaymentSyntheticsToRecords)(rawRecords)
             : rawRecords;
+        if (entity === "Payment") {
+            for (const row of records) {
+                (0, paymentImportTrace_1.tracePaymentImportByRaw)("erp_pull_after_synthetics", row, {
+                    pageSize,
+                    recordCount: records.length,
+                });
+            }
+        }
         const hasMore = records.length === pageSize;
         const lastKey = records.length
             ? recordKeysetCursor(records[records.length - 1], orderBy, tieBreaker)

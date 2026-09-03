@@ -8,3 +8,4 @@ export { InternalServiceClient } from "./internal-service.client";
 export { type JwtPayload } from "./jwt-payload";
 export { SoftDualAuthGuard, isPublicPagesApiPath, } from "./soft-dual-auth.guard";
 export { enablePublicCors, parseCorsOrigins, PUBLIC_CORS_ALLOWED_HEADERS, } from "./public-cors";
+export { QuietNestLogger } from "./quiet-nest-logger";

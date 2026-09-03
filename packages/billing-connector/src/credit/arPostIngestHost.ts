@@ -98,13 +98,21 @@ export function resetArPostIngestOrchestratorForTests(): void {
  */
 export async function refreshInsuranceTargetDatesViaHost(
     invoiceIds: number[],
-    prisma: PrismaClient
+    prisma: PrismaClient,
+    options?: {
+        onProgress?: (progress: {
+            processed: number;
+            total: number;
+        }) => void;
+    }
 ): Promise<number> {
     if (invoiceIds.length === 0) {
         return 0;
     }
     bindCreditInsurancePrisma(prisma);
-    return refreshInsuranceTargetDatesForInvoiceIds(invoiceIds, prisma);
+    return refreshInsuranceTargetDatesForInvoiceIds(invoiceIds, prisma, {
+        onProgress: options?.onProgress,
+    });
 }
 
 /**
@@ -237,9 +245,28 @@ export async function invokeConnectorArPostIngest(params: {
     // so sign flips apply even if later post-ingest steps are skipped.
     if (invoiceEntityIds.length > 0) {
         try {
-            await refreshInsuranceTargetDatesViaHost(
+            const total = invoiceEntityIds.length;
+            let lastLogged = -1;
+            params.log(
+                `Insurance target dates starting for ${total} invoice(s)…`
+            );
+            const updated = await refreshInsuranceTargetDatesViaHost(
                 invoiceEntityIds,
-                params.prisma
+                params.prisma,
+                {
+                    onProgress: ({ processed, total: progressTotal }) => {
+                        if (processed === lastLogged) {
+                            return;
+                        }
+                        lastLogged = processed;
+                        params.log(
+                            `Insurance target dates progress: ${processed}/${progressTotal} invoice(s)`
+                        );
+                    },
+                }
+            );
+            params.log(
+                `Insurance target dates finished for ${total} invoice(s) (${updated} updated)`
             );
         } catch (error) {
             const message =

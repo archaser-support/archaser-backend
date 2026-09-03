@@ -33,9 +33,10 @@ import { isConnectorSyncCancelRequested } from "./connectorSyncCancelRegistry";
 import {
     BALANCES_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    PURGE_ENTITY_STATS_KEY,
     entityStatsFromCounts,
-    type ConnectorEntityStats,
     type ConnectorSyncCounts,
+    type ConnectorSyncProgressPatch,
     type TailStepKey,
     type TailStepState,
 } from "./connectorSyncRuntime";
@@ -97,12 +98,20 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
     /** Progress lines for the host process terminal (Nest Logger, tests). */
     onLog?: (message: string) => void;
     /** Live pulled/imported counts for GET /sync-runs polling. */
-    onProgress?: (entityStats: ConnectorEntityStats) => void;
+    onProgress?: (patch: ConnectorSyncProgressPatch) => void;
     /**
      * After Payment/Invoice ingest (and deferred maturity), refresh denormalized
      * customer due/overdue amounts. Nest wires recalculateCustomerAmounts.
      */
-    onCustomerBalancesFinal?: (customerIds: number[]) => Promise<void>;
+    onCustomerBalancesFinal?: (
+        customerIds: number[],
+        options?: {
+            onProgress?: (progress: {
+                processed: number;
+                total: number;
+            }) => void;
+        }
+    ) => Promise<void>;
     /**
      * After Invoice entity completion: shared AR post-ingest (replay, live
      * refresh, as-of enqueue). Nest wires runArPostIngestForCustomers.
@@ -197,7 +206,15 @@ async function finalizeLegacyCustomerBalances(
     customerIds: Set<number>,
     prisma: PrismaClient,
     onCustomerBalancesFinal:
-        | ((customerIds: number[]) => Promise<void>)
+        | ((
+              customerIds: number[],
+              options?: {
+                  onProgress?: (progress: {
+                      processed: number;
+                      total: number;
+                  }) => void;
+              }
+          ) => Promise<void>)
         | undefined,
     log: (message: string) => void,
     setStep?: (key: TailStepKey, state: TailStepState) => void
@@ -206,23 +223,56 @@ async function finalizeLegacyCustomerBalances(
         return;
     }
     const ids = Array.from(customerIds);
+    const total = ids.length;
     const run =
         onCustomerBalancesFinal ??
-        ((customerIdsToRecalc: number[]) =>
-            recalculateCustomerAmountsViaHost(customerIdsToRecalc, prisma));
+        ((customerIdsToRecalc: number[], options?) =>
+            recalculateCustomerAmountsViaHost(
+                customerIdsToRecalc,
+                prisma,
+                options
+            ));
     setStep?.(BALANCES_ENTITY_STATS_KEY, {
         status: "running",
-        total: ids.length,
+        processed: 0,
+        total,
+        detail: {
+            step: "balances",
+            processed: 0,
+            total,
+        },
     });
+    log(`Recalculate balances starting for ${total} customer(s)…`);
     try {
-        await run(ids);
+        await run(ids, {
+            onProgress: ({ processed, total: progressTotal }) => {
+                setStep?.(BALANCES_ENTITY_STATS_KEY, {
+                    status: "running",
+                    processed,
+                    total: progressTotal,
+                    detail: {
+                        step: "balances",
+                        processed,
+                        total: progressTotal,
+                    },
+                });
+                log(
+                    `Recalculate balances progress: ${processed}/${progressTotal} customer(s)`
+                );
+            },
+        });
         log(
-            `Recalculated customer due/overdue amounts for ${ids.length} customer(s)`
+            `Recalculated customer due/overdue amounts for ${total} customer(s)`
         );
         setStep?.(BALANCES_ENTITY_STATS_KEY, {
             status: "done",
-            processed: ids.length,
-            total: ids.length,
+            processed: total,
+            total,
+            detail: {
+                step: "balances",
+                processed: total,
+                total,
+            },
         });
     } catch (error) {
         const message =
@@ -232,17 +282,23 @@ async function finalizeLegacyCustomerBalances(
         log(`Customer amount recalculation failed: ${message}`);
         setStep?.(BALANCES_ENTITY_STATS_KEY, {
             status: "failed",
-            total: ids.length,
+            total,
             error: message,
         });
     }
 }
 
 function emitProgress(
-    onProgress: ((entityStats: ConnectorEntityStats) => void) | undefined,
-    stats: ReturnType<typeof emptyStats>
+    onProgress: ((patch: ConnectorSyncProgressPatch) => void) | undefined,
+    stats: ConnectorSyncCounts,
+    activeStep?: string | null,
+    activeStepDetail?: string | null
 ): void {
-    onProgress?.(entityStatsFromCounts(stats));
+    onProgress?.({
+        entity_stats: entityStatsFromCounts(stats),
+        active_step: activeStep ?? null,
+        active_step_detail: activeStepDetail ?? null,
+    });
 }
 
 function entityStatsFrom(stats: ReturnType<typeof emptyStats>) {
@@ -354,6 +410,10 @@ async function runInProcessSyncBody(
         onLog,
     } = options;
     const stats = emptyStats();
+    let activeStep: string | null = null;
+    let activeStepDetail: string | null = null;
+    const emit = () =>
+        emitProgress(options.onProgress, stats, activeStep, activeStepDetail);
     const resolveExtension =
         options.resolveExtension ?? getRegisteredExtension;
     const importBatch = options.importBatch ?? importMappedEntityBatch;
@@ -371,7 +431,18 @@ async function runInProcessSyncBody(
             return;
         }
         stats.tailSteps = { ...(stats.tailSteps ?? {}), [key]: state };
-        emitProgress(options.onProgress, stats);
+        if (state.status === "running") {
+            activeStep = key;
+            activeStepDetail = state.detail?.step ?? null;
+        } else if (
+            (state.status === "done" || state.status === "failed") &&
+            activeStep === key
+        ) {
+            // Clear so the UI does not keep the finished step as Running.
+            activeStep = null;
+            activeStepDetail = null;
+        }
+        emit();
     };
     /** Inline Process Overdue → AR replay → insurance refresh for the progress panel. */
     const runArTailWithProgress = async (args: {
@@ -531,7 +602,9 @@ async function runInProcessSyncBody(
             };
             stats.purgeStatus = "running";
             stats.purgeDetail = { step: "deleting", processed: 0 };
-            emitProgress(options.onProgress, stats);
+            activeStep = PURGE_ENTITY_STATS_KEY;
+            activeStepDetail = "deleting";
+            emit();
             let purgeResult: Awaited<ReturnType<typeof clearBeforeImport>>;
             try {
                 purgeResult = await clearBeforeImport({
@@ -559,7 +632,8 @@ async function runInProcessSyncBody(
                             processed: deletedSoFar,
                             total: stats.purgeTotal,
                         };
-                        emitProgress(options.onProgress, stats);
+                        activeStepDetail = stats.purgeDetail.step;
+                        emit();
                     },
                 });
             } catch (err) {
@@ -569,7 +643,7 @@ async function runInProcessSyncBody(
                         : "Clear before import failed";
                 log(`Clear before import failed: ${message}`);
                 stats.purgeStatus = "cancelled";
-                emitProgress(options.onProgress, stats);
+                emit();
                 return {
                     ok: false,
                     accountId,
@@ -598,7 +672,7 @@ async function runInProcessSyncBody(
             }
             if (purgeResult.cancelled) {
                 stats.purgeStatus = "cancelled";
-                emitProgress(options.onProgress, stats);
+                emit();
                 log("Stopped by operator during clear before import");
                 return {
                     ok: true,
@@ -611,7 +685,9 @@ async function runInProcessSyncBody(
             }
             stats.purgeStatus = "done";
             stats.purgeDetail = { step: "deleting" };
-            emitProgress(options.onProgress, stats);
+            activeStep = enabled[0] ?? null;
+            activeStepDetail = "sampling";
+            emit();
         }
 
         // Fail fast at sync start — never silently fall back to legacy path.
@@ -799,7 +875,7 @@ async function runInProcessSyncBody(
                 skipReportingBreach,
                 importBatch,
                 onLog,
-                onProgress: (liveStats) => {
+                onProgress: (liveStats, meta) => {
                     if (stats.customersDeleted != null) {
                         liveStats.customersDeleted = stats.customersDeleted;
                     }
@@ -821,7 +897,12 @@ async function runInProcessSyncBody(
                             liveStats.purgeDetail = stats.purgeDetail;
                         }
                     }
-                    emitProgress(options.onProgress, liveStats);
+                    emitProgress(
+                        options.onProgress,
+                        liveStats,
+                        meta?.activeStep,
+                        meta?.activeStepDetail
+                    );
                 },
                 shouldCancel: () => isCancelRequested(options),
                 onCustomerBalancesFinal: options.onCustomerBalancesFinal,
@@ -936,7 +1017,11 @@ async function runInProcessSyncBody(
                     entitySet: entitySets[entityType] ?? null,
                     filter: resolveImportPullFilterOData(
                         connector.pull_filters,
-                        entityType
+                        entityType,
+                        {
+                            runtimeCustomerNumber,
+                            entitySet: entitySets[entityType] ?? null,
+                        }
                     ),
                     select: odataSelectFieldsFromMapping({
                         mappingRules: mappingRulesByType.get(entityType) ?? [],
@@ -990,6 +1075,9 @@ async function runInProcessSyncBody(
             const mapping = mappingByType.get(entityType);
             if (!mapping) continue;
 
+            activeStep = entityType;
+            activeStepDetail = "pulling";
+
             try {
                 const syncState = await prisma.connectorSyncState.findFirst({
                     where: {
@@ -1012,7 +1100,11 @@ async function runInProcessSyncBody(
                     entitySet: entitySets[entityType] ?? null,
                     filter: resolveImportPullFilterOData(
                         connector.pull_filters,
-                        entityType
+                        entityType,
+                        {
+                            runtimeCustomerNumber,
+                            entitySet: entitySets[entityType] ?? null,
+                        }
                     ),
                     select: odataSelectFieldsFromMapping({
                         mappingRules: mappingRulesByType.get(entityType) ?? [],
@@ -1027,8 +1119,9 @@ async function runInProcessSyncBody(
                     `${entityType.toLowerCase()}sImported` as keyof typeof stats;
                 (stats as unknown as Record<string, number>)[processedKey] =
                     pullResult.records.length;
-                emitProgress(options.onProgress, stats);
+                emit();
 
+                activeStepDetail = "importing";
                 const importResult: EntityImportBatchResult = await importBatch(
                     prisma,
                     entityType,
@@ -1056,7 +1149,7 @@ async function runInProcessSyncBody(
                         }
                     }
                 }
-                emitProgress(options.onProgress, stats);
+                emit();
 
                 if (entityType === "Invoice") {
                     invoicePostIngestRan = true;

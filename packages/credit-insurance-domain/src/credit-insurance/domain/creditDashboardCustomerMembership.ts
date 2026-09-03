@@ -17,6 +17,8 @@ import {
     getTopUpCoverReport,
     getTopUpExpiringReport,
 } from "./creditInsuranceTopUpDashboardService";
+import { fetchUtilizationBinCptCustomers } from "./utilizationBinReport";
+import { isUtilizationDistributionBinKey } from "./utilizationDistributionBins";
 
 /** Cap for ID materialization; credit cohorts are customer-scoped, not unbounded. */
 const MEMBERSHIP_TAKE = 100_000;
@@ -28,15 +30,20 @@ export type CreditCustomerMembershipType =
     | "zero_limit_warning"
     | "no_policy_exposure"
     | "top_up"
-    | "top_up_expiring";
+    | "top_up_expiring"
+    | "utilization_bin";
 
 export interface CreditCustomerMembershipOptions {
     policyId?: number;
     customerId?: number;
-    /** Only for no_policy_exposure; default true. */
+    /** Only for no_policy_exposure / utilization_bin; default true. */
     includeNoPolicyExposure?: boolean;
     /** Only for top_up_expiring; default 30. */
     withinDays?: number;
+    /** Only for utilization_bin. */
+    utilizationBin?: string;
+    /** Only for utilization_bin; YYYY-MM-DD. */
+    asOfDate?: string;
 }
 
 
@@ -140,6 +147,26 @@ export async function resolveCreditCustomerMembershipIds(
                     withinDays: options.withinDays ?? 30,
                 }
             );
+            return rows.map((r) => r.customerId);
+        }
+        case "utilization_bin": {
+            const bin = options.utilizationBin;
+            const asOfDate = options.asOfDate;
+            if (
+                bin == null ||
+                asOfDate == null ||
+                !isUtilizationDistributionBinKey(bin)
+            ) {
+                return [];
+            }
+            const rows = await fetchUtilizationBinCptCustomers({
+                accountId,
+                bin,
+                asOfDate,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
             return rows.map((r) => r.customerId);
         }
         default:

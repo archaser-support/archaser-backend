@@ -7,6 +7,7 @@ const connectorFieldUtils_1 = require("../utils/connectorFieldUtils");
 const bulkWrite_1 = require("./bulkWrite");
 const extensions_1 = require("../extensions");
 const resolvePaymentImportAmounts_1 = require("./resolvePaymentImportAmounts");
+const paymentImportTrace_1 = require("./paymentImportTrace");
 function resolveDeferredPaymentAmounts(record) {
     const customer_amount = record.customer_amount;
     const customer_currency = record.customer_currency.trim();
@@ -95,8 +96,14 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
             break;
         }
         const record = { ...paymentRecords[i], account_id: accountId };
+        const traced = (0, paymentImportTrace_1.isTracedPaymentRow)(record);
         const customerNumber = record.customer_number.trim();
         if (!customerNumber) {
+            if (traced) {
+                (0, paymentImportTrace_1.tracePaymentImport)("import_prepare_fail", record, {
+                    reason: "missing customer_number",
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
@@ -107,6 +114,12 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
         }
         const customerId = customerByNumber.get(customerNumber);
         if (customerId === undefined) {
+            if (traced) {
+                (0, paymentImportTrace_1.tracePaymentImport)("import_prepare_fail", record, {
+                    reason: "customer_not_found",
+                    customerNumber,
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
@@ -116,6 +129,11 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
             continue;
         }
         if (!record.reference) {
+            if (traced) {
+                (0, paymentImportTrace_1.tracePaymentImport)("import_prepare_fail", record, {
+                    reason: "missing reference",
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
@@ -138,6 +156,12 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
         const paymentDate = (0, connectorFieldUtils_1.parseErpDateOnly)(record.payment_date) ??
             (0, connectorFieldUtils_1.parseErpDateOnly)(String(record.payment_date ?? "").slice(0, 10));
         if (!paymentDate) {
+            if (traced) {
+                (0, paymentImportTrace_1.tracePaymentImport)("import_prepare_fail", record, {
+                    reason: "import.validation.paymentDateRequired",
+                    payment_date_raw: record.payment_date,
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
@@ -156,6 +180,24 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
             paymentDate,
             paymentMethod: record.payment_method ?? "",
         });
+        if (traced) {
+            (0, paymentImportTrace_1.tracePaymentImport)("import_prepare_ok", record, {
+                customerId,
+                effectiveReference,
+                targetInvoiceNumber,
+                uniqueAliases: aliases,
+            });
+        }
+    }
+    const winnerKeys = new Set((0, bulkWrite_1.lastWinsByKey)(prepared, (row) => `${row.customerId}::${row.effectiveReference}`).map((row) => `${row.customerId}::${row.effectiveReference}`));
+    for (const row of prepared) {
+        const key = `${row.customerId}::${row.effectiveReference}`;
+        if (!winnerKeys.has(key) && (0, paymentImportTrace_1.isTracedPaymentRow)(row.record)) {
+            (0, paymentImportTrace_1.tracePaymentImport)("import_dedupe_loser", row.record, {
+                reason: "lastWinsByKey",
+                effectiveReference: row.effectiveReference,
+            });
+        }
     }
     const winners = (0, bulkWrite_1.lastWinsByKey)(prepared, (row) => `${row.customerId}::${row.effectiveReference}`);
     if (winners.length === 0) {
@@ -260,6 +302,11 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
         const existingPayment = matchExistingPayment(existingByCustomer.get(winner.customerId) ?? [], winner.uniqueAliases, winner.rawReference, winner.targetInvoiceNumber, winner.effectiveReference);
         const invoice = invoiceByCustomerNumber.get(`${winner.customerId}::${winner.targetInvoiceNumber}`);
         if (!invoice) {
+            (0, paymentImportTrace_1.tracePaymentImport)("import_resolve", winner.record, {
+                action: "invoice_not_found",
+                targetInvoiceNumber: winner.targetInvoiceNumber,
+                existingPaymentId: existingPayment?.id ?? null,
+            });
             const deferredAmounts = resolveDeferredPaymentAmounts(winner.record);
             const nextSnapshot = {
                 amount: deferredAmounts.amount,
@@ -273,6 +320,10 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
             };
             if (existingPayment) {
                 if (isUnchangedPayment(existingPayment, nextSnapshot)) {
+                    (0, paymentImportTrace_1.tracePaymentImport)("import_write", winner.record, {
+                        action: "skip_unchanged_deferred",
+                        invoicePaymentId: existingPayment.id,
+                    });
                     skippedIds.set(key, {
                         index: winner.index,
                         success: true,
@@ -302,6 +353,10 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
                         modified_at: new Date(),
                     },
                 });
+                (0, paymentImportTrace_1.tracePaymentImport)("import_write", winner.record, {
+                    action: "update_deferred",
+                    invoicePaymentId: existingPayment.id,
+                });
                 continue;
             }
             inserts.push({
@@ -323,8 +378,17 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
                 deferred: true,
                 invoiceId: null,
             });
+            (0, paymentImportTrace_1.tracePaymentImport)("import_write", winner.record, {
+                action: "insert_deferred",
+                targetInvoiceNumber: winner.targetInvoiceNumber,
+            });
             continue;
         }
+        (0, paymentImportTrace_1.tracePaymentImport)("import_resolve", winner.record, {
+            action: "invoice_found",
+            invoiceId: invoice.id,
+            targetInvoiceNumber: winner.targetInvoiceNumber,
+        });
         const currencyOptions = extension?.normalizePaymentCurrency
             ? { normalizeCurrency: extension.normalizePaymentCurrency }
             : undefined;
@@ -348,6 +412,11 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
         }) ?? paymentAmountRow;
         const amountResolution = (0, resolvePaymentImportAmounts_1.resolvePaymentImportAmounts)(alignedRow, invoiceAmountContext, currencyOptions);
         if (!amountResolution.ok) {
+            (0, paymentImportTrace_1.tracePaymentImport)("import_write_fail", winner.record, {
+                reason: amountResolution.errorKey,
+                invoiceId: invoice.id,
+                targetInvoiceNumber: winner.targetInvoiceNumber,
+            });
             console.warn("[importPayments] payment amount resolution failed", {
                 errorKey: amountResolution.errorKey,
                 accountId,
@@ -399,6 +468,11 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
         };
         if (existingPayment) {
             if (isUnchangedPayment(existingPayment, nextSnapshot)) {
+                (0, paymentImportTrace_1.tracePaymentImport)("import_write", winner.record, {
+                    action: "skip_unchanged_linked",
+                    invoicePaymentId: existingPayment.id,
+                    invoiceId: invoice.id,
+                });
                 skippedIds.set(key, {
                     index: winner.index,
                     success: true,
@@ -432,6 +506,11 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
                 },
             });
             queueAfterPaymentLinked(winner, invoice.id);
+            (0, paymentImportTrace_1.tracePaymentImport)("import_write", winner.record, {
+                action: "update_linked",
+                invoicePaymentId: existingPayment.id,
+                invoiceId: invoice.id,
+            });
             continue;
         }
         inserts.push({
@@ -454,6 +533,10 @@ async function importPayments(prisma, paymentRecords, accountId, userId, options
             invoiceId: invoice.id,
         });
         queueAfterPaymentLinked(winner, invoice.id);
+        (0, paymentImportTrace_1.tracePaymentImport)("import_write", winner.record, {
+            action: "insert_linked",
+            invoiceId: invoice.id,
+        });
     }
     if (inserts.length > 0) {
         await prisma.invoicePayment.createMany({ data: inserts });

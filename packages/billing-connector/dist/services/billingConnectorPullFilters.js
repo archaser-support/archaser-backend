@@ -9,6 +9,7 @@ exports.toPublicPullFilters = toPublicPullFilters;
 exports.resolveEntityPullFilterOData = resolveEntityPullFilterOData;
 exports.resolveRelatedCustomerPullFilterOData = resolveRelatedCustomerPullFilterOData;
 exports.resolveImportPullFilterOData = resolveImportPullFilterOData;
+exports.resolveRuntimeCustomerScopeOData = resolveRuntimeCustomerScopeOData;
 exports.compileRuntimeCustomerNumberOData = compileRuntimeCustomerNumberOData;
 const billingConnectorPullFilterCompile_1 = require("./billingConnectorPullFilterCompile");
 exports.PULL_FILTER_OPERATORS = [
@@ -195,30 +196,74 @@ function resolveRelatedCustomerPullFilterOData(raw) {
  * CUSTNAME-only Customer filter on related entities so invoices/payments/
  * contacts stay inside the same customer subset.
  *
- * Start backfill customer scope is **not** applied here — it uses Archaser
- * `customer_id` for purge and post-map filtering by our `customer_number`, so
- * custom ERP tables without CUSTNAME (e.g. IDG_ARFNCITEMS4) do not break.
+ * Optional Start-backfill `runtimeCustomerNumber` is AND-ed with the entity's
+ * ERP customer column (`IDG_CUSTNAME` on IDG_ARFNCITEMS* payment tables,
+ * otherwise `CUSTNAME`) so customer-scoped pulls do not page the full table.
  */
-function resolveImportPullFilterOData(raw, importType) {
+function resolveImportPullFilterOData(raw, importType, options) {
     const entityFilter = resolveEntityPullFilterOData(raw, importType);
+    const runtimeScope = resolveRuntimeCustomerScopeOData({
+        customerNumber: options?.runtimeCustomerNumber,
+        additionalCustomerNumbers: options?.additionalCustomerNumbers,
+        entityType: importType,
+        entitySet: options?.entitySet,
+    });
     if (importType !== "Invoice" &&
         importType !== "Payment" &&
         importType !== "Contact") {
-        return entityFilter;
+        return (0, billingConnectorPullFilterCompile_1.andODataFilters)(entityFilter, runtimeScope);
     }
-    return (0, billingConnectorPullFilterCompile_1.andODataFilters)(resolveRelatedCustomerPullFilterOData(raw), entityFilter);
+    return (0, billingConnectorPullFilterCompile_1.andODataFilters)(resolveRelatedCustomerPullFilterOData(raw), entityFilter, runtimeScope);
 }
 /**
- * @deprecated Start backfill scopes by Archaser customer_id / customer_number
- * after mapping — do not AND ERP customer columns onto live pulls.
+ * ERP customer-number $filter for Start backfill customer scope.
+ * IDG payment tables (e.g. IDG_ARFNCITEMS4) use IDG_CUSTNAME; standard
+ * Priority Customer/Contact/Invoice/Payment sets use CUSTNAME.
+ *
+ * When `additionalCustomerNumbers` is set (account extensions), builds
+ * `(field eq 'A' or field eq 'B' or …)`.
  */
-function compileRuntimeCustomerNumberOData(customerNumber) {
-    if (typeof customerNumber !== "string") {
+function resolveRuntimeCustomerScopeOData(params) {
+    if (typeof params.customerNumber !== "string") {
         return null;
     }
-    const trimmed = customerNumber.trim();
+    const trimmed = params.customerNumber.trim();
     if (!trimmed) {
         return null;
     }
-    return `CUSTNAME eq ${(0, billingConnectorPullFilterCompile_1.escapeODataStringLiteral)(trimmed)}`;
+    const field = runtimeCustomerScopeField(params.entityType, params.entitySet);
+    const values = new Set([trimmed]);
+    for (const extra of params.additionalCustomerNumbers ?? []) {
+        if (typeof extra !== "string") {
+            continue;
+        }
+        const value = extra.trim();
+        if (value) {
+            values.add(value);
+        }
+    }
+    const clauses = [...values].map((value) => `${field} eq ${(0, billingConnectorPullFilterCompile_1.escapeODataStringLiteral)(value)}`);
+    if (clauses.length === 1) {
+        return clauses[0] ?? null;
+    }
+    return `(${clauses.join(" or ")})`;
+}
+function runtimeCustomerScopeField(entityType, entitySet) {
+    const setName = (entitySet ?? "").trim().toUpperCase();
+    if (entityType === "Payment" &&
+        (setName.includes("IDG_ARFNCITEMS") || setName.startsWith("IDG_"))) {
+        return "IDG_CUSTNAME";
+    }
+    return "CUSTNAME";
+}
+/**
+ * @deprecated Prefer {@link resolveRuntimeCustomerScopeOData} with entityType /
+ * entitySet so IDG payment tables filter on IDG_CUSTNAME.
+ */
+function compileRuntimeCustomerNumberOData(customerNumber, entityType = "Invoice", entitySet) {
+    return resolveRuntimeCustomerScopeOData({
+        customerNumber,
+        entityType,
+        entitySet,
+    });
 }

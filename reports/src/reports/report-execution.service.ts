@@ -197,6 +197,7 @@ export class ReportExecutionService {
         let creditInvoiceExtras: PrismaWhere | undefined;
         let creditDashboardPolicyId: number | undefined;
         let creditDashboardWithinDays: number | undefined;
+        let creditDashboardAsOfDate: string | undefined;
         let creditCustomerMembershipType:
             | "capacity"
             | "policy_risk"
@@ -205,6 +206,7 @@ export class ReportExecutionService {
             | "no_policy_exposure"
             | "top_up"
             | "top_up_expiring"
+            | "utilization_bin"
             | null
             | undefined;
         if (report.context === "dashboard_credit_customers") {
@@ -216,6 +218,7 @@ export class ReportExecutionService {
             creditCustomerExtras = prepared.primaryWhereExtras;
             creditDashboardPolicyId = prepared.policyId;
             creditDashboardWithinDays = prepared.withinDays;
+            creditDashboardAsOfDate = prepared.asOfDate;
             creditCustomerMembershipType = prepared.membershipType;
         } else if (report.context === "dashboard_credit_invoices") {
             const prepared = await prepareDashboardCreditInvoiceMarkers(
@@ -394,6 +397,7 @@ export class ReportExecutionService {
                 policyId: creditDashboardPolicyId,
                 requestedFields: requestedCustomerFields,
                 limitWarningByCustomerId,
+                asOfDate: creditDashboardAsOfDate,
             });
         }
 

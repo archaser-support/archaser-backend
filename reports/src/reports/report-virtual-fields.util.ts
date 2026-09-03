@@ -468,7 +468,9 @@ export function isComputedReportField(
             field === "top_up_value" ||
             field === "top_up_resolved_amount" ||
             field === "top_up_end_date" ||
-            field === "top_up_days_left"
+            field === "top_up_days_left" ||
+            field === "as_of_utilization_pct" ||
+            field === "as_of_usage_amount"
         );
     }
     if (primaryTable === "Activity") {

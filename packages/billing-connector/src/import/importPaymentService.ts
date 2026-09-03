@@ -10,6 +10,10 @@ import {
 } from "../extensions";
 import type { InvoicePaymentInput } from "./normalizePaymentInput";
 import { resolvePaymentImportAmounts } from "./resolvePaymentImportAmounts";
+import {
+    isTracedPaymentRow,
+    tracePaymentImport,
+} from "./paymentImportTrace";
 
 export interface ImportPaymentResult {
     index: number;
@@ -182,8 +186,14 @@ export async function importPayments(
             break;
         }
         const record = { ...paymentRecords[i], account_id: accountId };
+        const traced = isTracedPaymentRow(record);
         const customerNumber = record.customer_number.trim();
         if (!customerNumber) {
+            if (traced) {
+                tracePaymentImport("import_prepare_fail", record, {
+                    reason: "missing customer_number",
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
@@ -194,6 +204,12 @@ export async function importPayments(
         }
         const customerId = customerByNumber.get(customerNumber);
         if (customerId === undefined) {
+            if (traced) {
+                tracePaymentImport("import_prepare_fail", record, {
+                    reason: "customer_not_found",
+                    customerNumber,
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
@@ -203,6 +219,11 @@ export async function importPayments(
             continue;
         }
         if (!record.reference) {
+            if (traced) {
+                tracePaymentImport("import_prepare_fail", record, {
+                    reason: "missing reference",
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
@@ -235,6 +256,12 @@ export async function importPayments(
             parseErpDateOnly(record.payment_date) ??
             parseErpDateOnly(String(record.payment_date ?? "").slice(0, 10));
         if (!paymentDate) {
+            if (traced) {
+                tracePaymentImport("import_prepare_fail", record, {
+                    reason: "import.validation.paymentDateRequired",
+                    payment_date_raw: record.payment_date,
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
@@ -253,6 +280,29 @@ export async function importPayments(
             paymentDate,
             paymentMethod: record.payment_method ?? "",
         });
+        if (traced) {
+            tracePaymentImport("import_prepare_ok", record, {
+                customerId,
+                effectiveReference,
+                targetInvoiceNumber,
+                uniqueAliases: aliases,
+            });
+        }
+    }
+
+    const winnerKeys = new Set(
+        lastWinsByKey(prepared, (row) => `${row.customerId}::${row.effectiveReference}`).map(
+            (row) => `${row.customerId}::${row.effectiveReference}`
+        )
+    );
+    for (const row of prepared) {
+        const key = `${row.customerId}::${row.effectiveReference}`;
+        if (!winnerKeys.has(key) && isTracedPaymentRow(row.record)) {
+            tracePaymentImport("import_dedupe_loser", row.record, {
+                reason: "lastWinsByKey",
+                effectiveReference: row.effectiveReference,
+            });
+        }
     }
 
     const winners = lastWinsByKey(
@@ -408,6 +458,11 @@ export async function importPayments(
         );
 
         if (!invoice) {
+            tracePaymentImport("import_resolve", winner.record, {
+                action: "invoice_not_found",
+                targetInvoiceNumber: winner.targetInvoiceNumber,
+                existingPaymentId: existingPayment?.id ?? null,
+            });
             const deferredAmounts = resolveDeferredPaymentAmounts(winner.record);
             const nextSnapshot = {
                 amount: deferredAmounts.amount,
@@ -421,6 +476,10 @@ export async function importPayments(
             };
             if (existingPayment) {
                 if (isUnchangedPayment(existingPayment, nextSnapshot)) {
+                    tracePaymentImport("import_write", winner.record, {
+                        action: "skip_unchanged_deferred",
+                        invoicePaymentId: existingPayment.id,
+                    });
                     skippedIds.set(key, {
                         index: winner.index,
                         success: true,
@@ -450,6 +509,10 @@ export async function importPayments(
                         modified_at: new Date(),
                     },
                 });
+                tracePaymentImport("import_write", winner.record, {
+                    action: "update_deferred",
+                    invoicePaymentId: existingPayment.id,
+                });
                 continue;
             }
             inserts.push({
@@ -471,8 +534,18 @@ export async function importPayments(
                 deferred: true,
                 invoiceId: null,
             });
+            tracePaymentImport("import_write", winner.record, {
+                action: "insert_deferred",
+                targetInvoiceNumber: winner.targetInvoiceNumber,
+            });
             continue;
         }
+
+        tracePaymentImport("import_resolve", winner.record, {
+            action: "invoice_found",
+            invoiceId: invoice.id,
+            targetInvoiceNumber: winner.targetInvoiceNumber,
+        });
 
         const currencyOptions = extension?.normalizePaymentCurrency
             ? { normalizeCurrency: extension.normalizePaymentCurrency }
@@ -502,6 +575,11 @@ export async function importPayments(
             currencyOptions
         );
         if (!amountResolution.ok) {
+            tracePaymentImport("import_write_fail", winner.record, {
+                reason: amountResolution.errorKey,
+                invoiceId: invoice.id,
+                targetInvoiceNumber: winner.targetInvoiceNumber,
+            });
             console.warn("[importPayments] payment amount resolution failed", {
                 errorKey: amountResolution.errorKey,
                 accountId,
@@ -556,6 +634,11 @@ export async function importPayments(
 
         if (existingPayment) {
             if (isUnchangedPayment(existingPayment, nextSnapshot)) {
+                tracePaymentImport("import_write", winner.record, {
+                    action: "skip_unchanged_linked",
+                    invoicePaymentId: existingPayment.id,
+                    invoiceId: invoice.id,
+                });
                 skippedIds.set(key, {
                     index: winner.index,
                     success: true,
@@ -589,6 +672,11 @@ export async function importPayments(
                 },
             });
             queueAfterPaymentLinked(winner, invoice.id);
+            tracePaymentImport("import_write", winner.record, {
+                action: "update_linked",
+                invoicePaymentId: existingPayment.id,
+                invoiceId: invoice.id,
+            });
             continue;
         }
 
@@ -612,6 +700,10 @@ export async function importPayments(
             invoiceId: invoice.id,
         });
         queueAfterPaymentLinked(winner, invoice.id);
+        tracePaymentImport("import_write", winner.record, {
+            action: "insert_linked",
+            invoiceId: invoice.id,
+        });
     }
 
     if (inserts.length > 0) {

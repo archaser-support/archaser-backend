@@ -18,6 +18,7 @@ import {
     createPrismaClient,
     PrismaClient,
 } from "@archaser/database";
+import { QuietNestLogger } from "@archaser/auth";
 import type { Response } from "express";
 import { bindCreditInsurancePrisma } from "@archaser/credit-insurance-domain";
 import {
@@ -142,17 +143,9 @@ class WorkerRuntimeService implements OnModuleDestroy {
         });
 
         await this.syncRepeatables("startup");
-
-        this.logger.log(
-            `Worker listening on queue=${QUEUE_NAME} redis=${redisUrl}`
-        );
     }
 
     private async handleJob(job: Job): Promise<unknown> {
-        this.logger.log(
-            `Processing ${job.name} id=${job.id} data=${JSON.stringify(job.data)}`
-        );
-
         if (job.name === "sync-schedules") {
             await this.syncRepeatables("config-change");
             return { ok: true, synced: true };
@@ -252,10 +245,6 @@ class WorkerRuntimeService implements OnModuleDestroy {
         if (!job) {
             return { ok: false, reason: "CronJob not found", cronJobId };
         }
-
-        this.logger.log(
-            `Executing CronJob ${job.id} (${job.name}) via ${source}`
-        );
 
         const started = Date.now();
         let result: CronJobResult;
@@ -383,7 +372,9 @@ class WorkerRuntimeService implements OnModuleDestroy {
                 );
             }
         }
-        this.logger.log(`Synced ${synced} repeatables (${reason})`);
+        if (reason !== "startup") {
+            this.logger.log(`Synced ${synced} repeatables (${reason})`);
+        }
         return { synced, reason };
     }
 
@@ -428,7 +419,9 @@ class WorkerController {
 class WorkerModule {}
 
 async function bootstrap() {
-    const app = await NestFactory.create(WorkerModule);
+    const app = await NestFactory.create(WorkerModule, {
+        logger: new QuietNestLogger(),
+    });
     const runtime = app.get(WorkerRuntimeService);
     await runtime.start();
     const port = Number(process.env.WORKER_PORT || 3003);

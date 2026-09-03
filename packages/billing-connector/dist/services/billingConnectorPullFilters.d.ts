@@ -38,13 +38,32 @@ export declare function resolveRelatedCustomerPullFilterOData(raw: unknown): str
  * CUSTNAME-only Customer filter on related entities so invoices/payments/
  * contacts stay inside the same customer subset.
  *
- * Start backfill customer scope is **not** applied here — it uses Archaser
- * `customer_id` for purge and post-map filtering by our `customer_number`, so
- * custom ERP tables without CUSTNAME (e.g. IDG_ARFNCITEMS4) do not break.
+ * Optional Start-backfill `runtimeCustomerNumber` is AND-ed with the entity's
+ * ERP customer column (`IDG_CUSTNAME` on IDG_ARFNCITEMS* payment tables,
+ * otherwise `CUSTNAME`) so customer-scoped pulls do not page the full table.
  */
-export declare function resolveImportPullFilterOData(raw: unknown, importType: ImportType): string | null;
+export declare function resolveImportPullFilterOData(raw: unknown, importType: ImportType, options?: {
+    runtimeCustomerNumber?: string | null;
+    /** Extra values OR'd into the runtime customer-scope clause. */
+    additionalCustomerNumbers?: string[] | null;
+    entitySet?: string | null;
+}): string | null;
 /**
- * @deprecated Start backfill scopes by Archaser customer_id / customer_number
- * after mapping — do not AND ERP customer columns onto live pulls.
+ * ERP customer-number $filter for Start backfill customer scope.
+ * IDG payment tables (e.g. IDG_ARFNCITEMS4) use IDG_CUSTNAME; standard
+ * Priority Customer/Contact/Invoice/Payment sets use CUSTNAME.
+ *
+ * When `additionalCustomerNumbers` is set (account extensions), builds
+ * `(field eq 'A' or field eq 'B' or …)`.
  */
-export declare function compileRuntimeCustomerNumberOData(customerNumber: string | null | undefined): string | null;
+export declare function resolveRuntimeCustomerScopeOData(params: {
+    customerNumber: string | null | undefined;
+    additionalCustomerNumbers?: string[] | null;
+    entityType: ImportType;
+    entitySet?: string | null;
+}): string | null;
+/**
+ * @deprecated Prefer {@link resolveRuntimeCustomerScopeOData} with entityType /
+ * entitySet so IDG payment tables filter on IDG_CUSTNAME.
+ */
+export declare function compileRuntimeCustomerNumberOData(customerNumber: string | null | undefined, entityType?: ImportType, entitySet?: string | null): string | null;

@@ -90,7 +90,8 @@ export function emitBillingConnectorSyncFinish(
     const provider = input.provider || "UNKNOWN";
     const trigger = input.trigger || "manual";
 
-    if (structuredLogs) {
+    // Skip SUCCESS finish dumps — huge entity_stats spam Nest/Loki; metrics still record.
+    if (structuredLogs && status !== "SUCCESS") {
         const line = formatBillingConnectorSyncLogLine(
             buildBaseLogFields({
                 accountId: input.accountId,
@@ -104,10 +105,7 @@ export function emitBillingConnectorSyncFinish(
                 correlationId: input.correlationId,
                 durationSeconds: Math.round(durationSeconds * 1000) / 1000,
                 entityStats: input.result.entity_stats,
-                message:
-                    status === "SUCCESS"
-                        ? "Billing connector sync finished"
-                        : `Billing connector sync finished: ${status}`,
+                message: `Billing connector sync finished: ${status}`,
             })
         );
         writeStructuredLine(options?.onLog, line);
