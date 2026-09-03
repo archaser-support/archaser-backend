@@ -259,12 +259,26 @@ export interface RunningConnectorSync {
     accountId: number;
     executionId: string;
     startedAt: Date;
-    mode: "backfill" | "incremental";
+    mode: "backfill" | "incremental" | "preview";
     trigger: string;
+}
+
+/** Latest async preview job for an account (sample rows for the UI). */
+export type PreviewJobStatus = "RUNNING" | "SUCCESS" | "FAILED";
+
+export interface PreviewJobState {
+    executionId: string;
+    status: PreviewJobStatus;
+    started_at: string;
+    completed_at: string | null;
+    /** Full preview payload when status is SUCCESS. */
+    result: unknown | null;
+    error: string | null;
 }
 
 const runningByAccount = new Map<number, RunningConnectorSync>();
 const historyByAccount = new Map<number, ConnectorSyncRunSummary[]>();
+const previewJobByAccount = new Map<number, PreviewJobState>();
 
 const MAX_HISTORY = 25;
 
@@ -352,7 +366,59 @@ export function listSyncRuns(
     return existing.slice(0, Math.max(1, Math.min(limit, MAX_HISTORY)));
 }
 
+export function setPreviewJobRunning(
+    accountId: number,
+    executionId: string,
+    startedAt: Date = new Date()
+): PreviewJobState {
+    const job: PreviewJobState = {
+        executionId,
+        status: "RUNNING",
+        started_at: startedAt.toISOString(),
+        completed_at: null,
+        result: null,
+        error: null,
+    };
+    previewJobByAccount.set(accountId, job);
+    return job;
+}
+
+export function getPreviewJob(accountId: number): PreviewJobState | undefined {
+    return previewJobByAccount.get(accountId);
+}
+
+export function completePreviewJob(params: {
+    accountId: number;
+    executionId: string;
+    status: Exclude<PreviewJobStatus, "RUNNING">;
+    result?: unknown | null;
+    error?: string | null;
+    completedAt?: Date;
+}): PreviewJobState | null {
+    const existing = previewJobByAccount.get(params.accountId);
+    if (!existing || existing.executionId !== params.executionId) {
+        return null;
+    }
+    if (existing.status !== "RUNNING") {
+        return existing;
+    }
+    const completedAt = params.completedAt ?? new Date();
+    const next: PreviewJobState = {
+        ...existing,
+        status: params.status,
+        completed_at: completedAt.toISOString(),
+        result: params.status === "SUCCESS" ? (params.result ?? null) : null,
+        error:
+            params.status === "FAILED"
+                ? (params.error ?? "Preview failed")
+                : null,
+    };
+    previewJobByAccount.set(params.accountId, next);
+    return next;
+}
+
 export function resetConnectorSyncRuntimeForTests(): void {
     runningByAccount.clear();
     historyByAccount.clear();
+    previewJobByAccount.clear();
 }

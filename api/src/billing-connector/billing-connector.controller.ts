@@ -60,7 +60,7 @@ export class BillingConnectorController {
     @Post("sync")
     @ApiOperation({
         summary:
-            "Run preview (awaits), or start backfill/incremental sync in-process",
+            "Start preview/backfill/incremental sync in-process (preview is async like backfill)",
     })
     async sync(
         @CurrentUser() user: JwtPayload,
@@ -78,6 +78,18 @@ export class BillingConnectorController {
             importType ?? bodyImportType,
             body
         );
+    }
+
+    @Get("preview-result")
+    @ApiOperation({
+        summary:
+            "Latest async preview job status and sample-row payload for this account",
+    })
+    async previewResult(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number
+    ) {
+        return this.service.getPreviewResult(user, accountId);
     }
 
     @Get("customers/by-id")

@@ -17,6 +17,9 @@ const DEFAULT_TRACE_KEYS = [
     "RC26ED0000310",
     "26014108",
     "26015834",
+    "SI26BZ002069",
+    "26082866",
+    "4641",
 ] as const;
 
 function parseTraceKeys(): Set<string> {
@@ -138,8 +141,17 @@ export function flattenPaymentRowForTrace(
         kline: asTraceString(raw.KLINE ?? traceable.KLINE),
         fncpatname: asTraceString(raw.FNCPATNAME ?? traceable.FNCPATNAME),
         glname: asTraceString(raw.GLNAME ?? traceable.GLNAME),
+        idg_custname: asTraceString(raw.IDG_CUSTNAME ?? traceable.IDG_CUSTNAME),
+        idc_custnameiv: asTraceString(
+            raw.IDC_CUSTNAMEIV ?? traceable.IDC_CUSTNAMEIV
+        ),
+        companyname: asTraceString(raw.COMPANYNAME ?? traceable.COMPANYNAME),
+        accname: asTraceString(raw.ACCNAME ?? traceable.ACCNAME),
         debit1: raw.DEBIT1 ?? traceable.DEBIT1,
         credit1: raw.CREDIT1 ?? traceable.CREDIT1,
+        credit5: raw.CREDIT5 ?? traceable.CREDIT5,
+        code: asTraceString(raw.CODE ?? traceable.CODE),
+        code5: asTraceString(raw.CODE5 ?? traceable.CODE5),
         bal: raw.BAL ?? traceable.BAL,
         reference: asTraceString(traceable.reference ?? traceable.PAY_REFERENCE),
         invoice_number: asTraceString(

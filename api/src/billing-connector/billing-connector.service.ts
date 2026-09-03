@@ -50,6 +50,9 @@ import {
     runInProcessSync,
     runPreviewSync,
     clearRunningSync,
+    completePreviewJob,
+    getPreviewJob,
+    setPreviewJobRunning,
     resolveExtensionAttachmentInput,
     toPublicPullFilters,
     upsertSyncRun,
@@ -935,16 +938,93 @@ export class BillingConnectorApiService {
                 typeof importTypeRaw === "string" && importTypeRaw.trim()
                     ? (importTypeRaw.trim() as ImportType)
                     : undefined;
-            try {
-                const result = await runPreviewSync({
+            if (getRunningSync(accountId)) {
+                throw new ConflictException({
+                    error: "A sync is already running for this account",
+                    code: "SYNC_IN_PROGRESS",
+                });
+            }
+
+            const previewCustomerId = parseCustomerIdForClearBeforeImport(
+                body?.customer_id
+            );
+            let runtimeCustomerNumber: string | null = null;
+            if (previewCustomerId != null) {
+                const customer = await resolveAccountCustomerById({
                     prisma: this.db,
                     accountId,
-                    importType,
+                    customerId: previewCustomerId,
                 });
-                return { result };
-            } catch (error) {
-                rethrowCoded(error);
+                if (!customer) {
+                    throw new BadRequestException({
+                        error: `Customer not found on this account: id ${previewCustomerId}`,
+                        code: "CUSTOMER_NOT_FOUND",
+                    });
+                }
+                runtimeCustomerNumber = customer.customer_number;
             }
+
+            const executionId = randomUUID();
+            const startedAt = new Date();
+            const runningSummary: ConnectorSyncRunSummary = {
+                id: executionId,
+                trigger: "preview",
+                sync_mode: "PREVIEW",
+                status: "RUNNING",
+                started_at: startedAt.toISOString(),
+                completed_at: null,
+                duration_seconds: null,
+                entity_stats: {},
+                error_message: null,
+                error_type: null,
+                cutover_options: null,
+                cutover_summary: null,
+            };
+            registerRunningSync({
+                accountId,
+                executionId,
+                startedAt,
+                mode: "preview",
+                trigger: "preview",
+            });
+            setPreviewJobRunning(accountId, executionId, startedAt);
+            upsertSyncRun(accountId, runningSummary);
+
+            const onLog = (message: string) => {
+                this.logger.log(`[account ${accountId}] ${message}`);
+            };
+            onLog(
+                `Starting preview (execution ${executionId})` +
+                    (runtimeCustomerNumber
+                        ? ` customer=${runtimeCustomerNumber} (id=${previewCustomerId})`
+                        : "")
+            );
+
+            void this.runAcceptedPreview({
+                accountId,
+                executionId,
+                importType,
+                runtimeCustomerNumber,
+                runningSummary,
+                onLog,
+            });
+
+            return {
+                result: {
+                    ok: true,
+                    accepted: true,
+                    execution_id: executionId,
+                    status: "RUNNING",
+                    sync_mode: "PREVIEW",
+                    trigger: "preview",
+                    ...(previewCustomerId != null
+                        ? { customer_id: previewCustomerId }
+                        : {}),
+                    ...(runtimeCustomerNumber
+                        ? { customer_number: runtimeCustomerNumber }
+                        : {}),
+                },
+            };
         }
 
         if (!["backfill", "incremental"].includes(mode)) {
@@ -1110,6 +1190,128 @@ export class BillingConnectorApiService {
                 sync_mode: syncMode,
                 trigger,
             },
+        };
+    }
+
+    private async runAcceptedPreview(params: {
+        accountId: number;
+        executionId: string;
+        importType?: ImportType;
+        runtimeCustomerNumber?: string | null;
+        runningSummary: ConnectorSyncRunSummary;
+        onLog: (message: string) => void;
+    }) {
+        const {
+            accountId,
+            executionId,
+            importType,
+            runtimeCustomerNumber,
+            runningSummary,
+            onLog,
+        } = params;
+        try {
+            const result = await runPreviewSync({
+                prisma: this.db,
+                accountId,
+                importType,
+                runtimeCustomerNumber,
+                onLog,
+            });
+            const completedAt = new Date();
+            // Always keep sample rows for the UI; go/no-go is reflected on the payload.
+            completePreviewJob({
+                accountId,
+                executionId,
+                status: "SUCCESS",
+                result,
+                error: null,
+                completedAt,
+            });
+            const runStatus = result.go_no_go.passed ? "SUCCESS" : "FAILED";
+            upsertSyncRun(accountId, {
+                ...runningSummary,
+                status: runStatus,
+                completed_at: completedAt.toISOString(),
+                duration_seconds: Math.max(
+                    1,
+                    Math.round(
+                        (completedAt.getTime() -
+                            new Date(runningSummary.started_at).getTime()) /
+                            1000
+                    )
+                ),
+                entity_stats: Object.fromEntries(
+                    result.entities.map((entity) => [
+                        entity.import_type,
+                        {
+                            pulled: entity.pulled,
+                            success: entity.importable_count,
+                            failed: entity.validation_errors.length,
+                            skipped: Math.max(
+                                0,
+                                entity.pulled - entity.importable_count
+                            ),
+                            sample_errors: entity.validation_errors.slice(0, 5),
+                        },
+                    ])
+                ),
+                error_message: result.go_no_go.passed
+                    ? null
+                    : "Preview completed with validation issues",
+                error_type: result.go_no_go.passed ? null : "validation",
+            });
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            onLog(`Preview failed: ${message.slice(0, 300)}`);
+            const completedAt = new Date();
+            completePreviewJob({
+                accountId,
+                executionId,
+                status: "FAILED",
+                error: message,
+                completedAt,
+            });
+            upsertSyncRun(accountId, {
+                ...runningSummary,
+                status: "FAILED",
+                completed_at: completedAt.toISOString(),
+                duration_seconds: Math.max(
+                    1,
+                    Math.round(
+                        (completedAt.getTime() -
+                            new Date(runningSummary.started_at).getTime()) /
+                            1000
+                    )
+                ),
+                error_message: message,
+                error_type: "unexpected",
+            });
+        } finally {
+            clearRunningSync(accountId);
+        }
+    }
+
+    async getPreviewResult(user: JwtPayload, accountId: number) {
+        await this.assertAccess(user, accountId, "view_billing_connector");
+        const job = getPreviewJob(accountId);
+        if (!job) {
+            return {
+                execution_id: null,
+                status: null,
+                started_at: null,
+                completed_at: null,
+                result: null,
+                error: null,
+            };
+        }
+        return {
+            execution_id: job.executionId,
+            status: job.status,
+            started_at: job.started_at,
+            completed_at: job.completed_at,
+            result: job.result,
+            error: job.error,
         };
     }
 
@@ -1383,8 +1585,42 @@ export class BillingConnectorApiService {
         if (!running) {
             return { result: { cancelled: false, execution_id: null } };
         }
-        requestConnectorSyncCancel(running.executionId);
         const cancelledAt = new Date();
+        if (running.mode === "preview") {
+            completePreviewJob({
+                accountId,
+                executionId: running.executionId,
+                status: "FAILED",
+                error: "Preview stopped by operator",
+                completedAt: cancelledAt,
+            });
+            const existing = listSyncRuns(accountId).find(
+                (run: ConnectorSyncRunSummary) =>
+                    run.id === running.executionId
+            );
+            if (existing) {
+                const startedMs = new Date(existing.started_at).getTime();
+                upsertSyncRun(accountId, {
+                    ...existing,
+                    status: "TIMEOUT",
+                    completed_at: cancelledAt.toISOString(),
+                    duration_seconds: Math.max(
+                        1,
+                        Math.round((cancelledAt.getTime() - startedMs) / 1000)
+                    ),
+                    error_message: "Preview stopped by operator",
+                    error_type: "cancelled",
+                });
+            }
+            clearRunningSync(accountId);
+            return {
+                result: {
+                    cancelled: true,
+                    execution_id: running.executionId,
+                },
+            };
+        }
+        requestConnectorSyncCancel(running.executionId);
         const existing = listSyncRuns(accountId).find(
             (run: ConnectorSyncRunSummary) => run.id === running.executionId
         );

@@ -36,7 +36,7 @@ export type RegisterAcceptedInProcessSyncParams = {
     accountId: number;
     executionId: string;
     startedAt: Date;
-    mode: "backfill" | "incremental";
+    mode: "backfill" | "incremental" | "preview";
     trigger: string;
     runningSummary: ConnectorSyncRunSummary;
 };

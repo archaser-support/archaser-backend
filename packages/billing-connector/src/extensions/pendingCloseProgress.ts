@@ -1,15 +1,13 @@
 /** Chunk size for pending-close progress callbacks (matches invoice recalc). */
 export const PENDING_CLOSE_PROGRESS_CHUNK = 200;
 
-/** Unique trimmed invoice numbers across virtual-close and Helam offset queues. */
+/** Unique trimmed invoice numbers in the virtual-close queue. */
 export function countUniquePendingCloseInvoiceNumbers(
     invoiceNumbers: string[],
-    helamOffsetInvoiceNumbers: string[] = []
+    /** @deprecated Helam stamp-close removed; ignored when passed. */
+    _helamOffsetInvoiceNumbers: string[] = []
 ): number {
-    return uniqueTrimmedInvoiceNumberSet([
-        ...invoiceNumbers,
-        ...helamOffsetInvoiceNumbers,
-    ]).size;
+    return uniqueTrimmedInvoiceNumberSet(invoiceNumbers).size;
 }
 
 export function uniqueTrimmedInvoiceNumberSet(values: string[]): Set<string> {

@@ -141,11 +141,15 @@ export async function testPriorityConnection(
 
 async function fetchPriorityJson(
     config: PriorityConnectionConfig,
-    url: string
+    url: string,
+    options?: { timeoutSeconds?: number }
 ): Promise<{ ok: boolean; statusCode?: number; error?: string; payload?: unknown }> {
     if (!config.baseUrl?.trim()) {
         return { ok: false, error: "Base URL is required" };
     }
+
+    const timeoutSeconds =
+        options?.timeoutSeconds ?? PRIORITY_RATE_LIMITS.requestTimeoutSeconds;
 
     try {
         const authorization = buildAuthorizationHeader(
@@ -155,7 +159,7 @@ async function fetchPriorityJson(
         const controller = new AbortController();
         const timeout = setTimeout(
             () => controller.abort(),
-            PRIORITY_RATE_LIMITS.requestTimeoutSeconds * 1000
+            timeoutSeconds * 1000
         );
 
         try {
@@ -194,7 +198,12 @@ export async function fetchPriorityEntitySamples(
     config: PriorityConnectionConfig,
     importType: PriorityEntityImportType,
     top = 10,
-    options?: { entitySet?: string | null; filter?: string | null }
+    options?: {
+        entitySet?: string | null;
+        filter?: string | null;
+        /** Override default request timeout (preview Payment should stay short). */
+        timeoutSeconds?: number;
+    }
 ): Promise<PriorityFetchResult> {
     const serviceRoot = normalizeServiceRoot(config.baseUrl);
     const collectionUrl = buildEntityCollectionUrl(
@@ -203,11 +212,14 @@ export async function fetchPriorityEntitySamples(
         options?.entitySet
     );
     const params = new URLSearchParams({ $top: String(top) });
-    if (options?.filter?.trim()) {
-        params.set("$filter", options.filter.trim());
+    const filter = options?.filter?.trim();
+    if (filter) {
+        params.set("$filter", filter);
     }
     const url = `${collectionUrl}?${params.toString()}`;
-    const result = await fetchPriorityJson(config, url);
+    const result = await fetchPriorityJson(config, url, {
+        timeoutSeconds: options?.timeoutSeconds,
+    });
 
     if (!result.ok) {
         return {
@@ -240,10 +252,18 @@ export async function fetchPriorityEntitySamples(
     return { ok: true, statusCode: result.statusCode, records };
 }
 
+/** Column-sample requests should fail fast — unfiltered IDG tables can hang for minutes. */
+const COLUMN_SAMPLE_TIMEOUT_SECONDS = 45;
+
 export async function fetchPriorityTableColumns(
     config: PriorityConnectionConfig,
     importType: PriorityEntityImportType,
-    options?: { entitySet?: string | null }
+    options?: {
+        entitySet?: string | null;
+        /** Prefer a selective $filter (e.g. customer scope) so Priority does not scan the full form. */
+        filter?: string | null;
+        timeoutSeconds?: number;
+    }
 ): Promise<
     | { ok: true; columns: string[] }
     | { ok: false; error: string; statusCode?: number }
@@ -254,8 +274,15 @@ export async function fetchPriorityTableColumns(
         importType,
         options?.entitySet
     );
-    const url = `${collectionUrl}?${new URLSearchParams({ $top: "5" }).toString()}`;
-    const result = await fetchPriorityJson(config, url);
+    const params = new URLSearchParams({ $top: "5" });
+    const filter = options?.filter?.trim();
+    if (filter) {
+        params.set("$filter", filter);
+    }
+    const url = `${collectionUrl}?${params.toString()}`;
+    const timeoutSeconds =
+        options?.timeoutSeconds ?? COLUMN_SAMPLE_TIMEOUT_SECONDS;
+    const result = await fetchPriorityJson(config, url, { timeoutSeconds });
     if (!result.ok) {
         return {
             ok: false,

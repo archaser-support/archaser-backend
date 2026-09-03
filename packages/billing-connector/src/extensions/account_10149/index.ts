@@ -4,23 +4,21 @@ import type {
     ExtensionAfterPaymentLinkedResult,
     ExtensionAlignPaymentAmountsInput,
     ExtensionAlignedPaymentAmounts,
+    ExtensionEntityType,
     ExtensionMappedBatch,
     ExtensionTransformContext,
 } from "../types";
-import {
-    countUniquePendingCloseInvoiceNumbers,
-    uniqueTrimmedInvoiceNumberSet,
-} from "../pendingCloseProgress";
+import { countUniquePendingCloseInvoiceNumbers } from "../pendingCloseProgress";
 import { parseErpDateOnly } from "../../utils/connectorFieldUtils";
 import { deriveInvoiceFxRatio } from "../../payment/alignPaymentToInvoiceCurrency";
+import { escapeODataStringLiteral } from "../../services/billingConnectorPullFilterCompile";
 import { tracePaymentImport } from "../../import/paymentImportTrace";
-import { applyHelamOffsetStampClosesForInvoiceNumbers } from "./helamOffsetClose";
 import {
     applyReconciledVirtualCloses,
     applyReconciledVirtualClosesForInvoiceNumbers,
 } from "./reconciledVirtualClose";
 
-/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close, Helam offset stamp. */
+/** Account 10149 billing extension — credit sign, shekel→ILS, $→USD, recon virtual close. */
 export const ACCOUNT_10149_EXTENSION_KEY = "account_10149";
 export const ACCOUNT_10149_ID = 10149;
 export const ILS_CURRENCY_CODE = "ILS";
@@ -34,6 +32,15 @@ export const USD_CURRENCY_CODE = "USD";
 export const ACCOUNT_10149_DEFAULT_IDG_PAYMENT_COMPANY_CODES = [
     "000",
     "002",
+] as const;
+
+/**
+ * Account-specific IDG_* / IDC_* columns required on IDG_ARFNCITEMS4 Payment pulls.
+ * Kept out of generic PAYMENT_ALWAYS_SELECT_SOURCES.
+ */
+export const ACCOUNT_10149_PAYMENT_EXTRA_SELECT_FIELDS = [
+    "IDC_CUSTNAMEIV",
+    "IDG_CUSTNAME",
 ] as const;
 
 const IDG_PAYMENT_COMPANY_CODES_CONFIG_KEY = "idgPaymentCompanyCodes";
@@ -481,6 +488,83 @@ export function expandAccount10149IdgCustomerNumbers(
     return [...values];
 }
 
+function isAccount10149IdgPaymentEntitySet(
+    entityType: ExtensionEntityType | string,
+    entitySet?: string | null
+): boolean {
+    if (entityType !== "Payment") {
+        return false;
+    }
+    const setName = (entitySet ?? "").trim().toUpperCase();
+    return setName.includes("IDG_ARFNCITEMS") || setName.startsWith("IDG_");
+}
+
+function odataEqAny(field: string, values: string[]): string | null {
+    const clauses = values
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+        .map((value) => `${field} eq ${escapeODataStringLiteral(value)}`);
+    if (clauses.length === 0) {
+        return null;
+    }
+    if (clauses.length === 1) {
+        return clauses[0] ?? null;
+    }
+    return `(${clauses.join(" or ")})`;
+}
+
+/**
+ * IDG_ARFNCITEMS4 customer scope (fast path): company-suffixed IDG_CUSTNAME.
+ * IDC_CUSTNAMEIV is a separate fallback query — OR'ing it here makes Priority
+ * full-scan the form and hang preview/backfill for minutes.
+ */
+export function buildAccount10149RuntimeCustomerScopeOData(params: {
+    customerNumber: string;
+    additionalCustomerNumbers?: string[];
+    entityType: ExtensionEntityType | string;
+    entitySet?: string | null;
+}): string | null {
+    if (!isAccount10149IdgPaymentEntitySet(params.entityType, params.entitySet)) {
+        return null;
+    }
+    const values = new Set<string>();
+    const base = params.customerNumber.trim();
+    if (base) {
+        values.add(base);
+    }
+    for (const extra of params.additionalCustomerNumbers ?? []) {
+        const trimmed = typeof extra === "string" ? extra.trim() : "";
+        if (trimmed) {
+            values.add(trimmed);
+        }
+    }
+    return odataEqAny("IDG_CUSTNAME", [...values]);
+}
+
+/**
+ * Fallback scope for Helam/VAT lines where IDG_CUSTNAME is empty and the
+ * customer is only on IDC_CUSTNAMEIV (base Archaser customer_number).
+ * Run as a second Payment pull — do not OR into the IDG_CUSTNAME filter.
+ *
+ * Do not add `IDG_CUSTNAME eq null` / `eq ''` here — Priority returns HTTP 500
+ * ("Object reference not set…") on that clause. Drop non-empty IDG rows
+ * client-side after the pull instead.
+ */
+export function buildAccount10149IdcFallbackCustomerScopeOData(params: {
+    customerNumber: string;
+    entityType: ExtensionEntityType | string;
+    entitySet?: string | null;
+}): string | null {
+    if (!isAccount10149IdgPaymentEntitySet(params.entityType, params.entitySet)) {
+        return null;
+    }
+    const base = params.customerNumber.trim();
+    if (!base) {
+        return null;
+    }
+    return odataEqAny("IDC_CUSTNAMEIV", [base]);
+}
+
 /**
  * Map IDG_CUSTNAME / mapped customer_number back to Archaser customer_number
  * using COMPANYNAME on the ERP row when present, else known company suffixes.
@@ -543,7 +627,8 @@ function normalizeAccount10149PaymentCustomerOnRow(
         typeof row.customer_number === "string"
             ? row.customer_number
             : asNonEmptyString(raw.IDG_CUSTNAME) ??
-                  asNonEmptyString(raw.CUSTNAME),
+                  asNonEmptyString(raw.CUSTNAME) ??
+                  asNonEmptyString(raw.IDC_CUSTNAMEIV),
         {
             companyName:
                 asNonEmptyString(raw.COMPANYNAME) ??
@@ -571,24 +656,81 @@ export function isAccount10149CreditInvoiceNumber(
     return trimmed.length > 0 && /^CR/i.test(trimmed);
 }
 
+function queueReconciledInvoiceClose(
+    invoiceNumber: string | null | undefined,
+    raw: Record<string, unknown>,
+    row: Record<string, unknown>,
+    queuedCloseNumbers: string[],
+    queuedCloseDates: Map<string, Date>
+): void {
+    const trimmed = invoiceNumber?.trim() ?? "";
+    if (!trimmed) {
+        return;
+    }
+    queuedCloseNumbers.push(trimmed);
+    const curDate = parseErpDateOnly(raw.CURDATE ?? row.CURDATE);
+    if (curDate) {
+        queuedCloseDates.set(trimmed, curDate);
+    }
+}
+
+function paymentRowHasCustomerNumber(row: Record<string, unknown>): boolean {
+    const fromMapped =
+        typeof row.customer_number === "string"
+            ? row.customer_number.trim()
+            : "";
+    if (fromMapped.length > 0) {
+        return true;
+    }
+    const raw = rawRecordOf(row);
+    return (
+        asNonEmptyString(raw.IDG_CUSTNAME) != null ||
+        asNonEmptyString(raw.CUSTNAME) != null ||
+        asNonEmptyString(raw.IDC_CUSTNAMEIV) != null
+    );
+}
+
 /**
- * Drop invoice-side positive debits and reconciled credit-note (CR*) lines;
- * queue their IVNUMs for virtual close. Keep normal receipts and single-invoice
- * Helam cancels (IVNUM === FNCIREF1) for payment import + afterPaymentLinked.
- * Helam offset stamps (IVNUM ≠ FNCIREF1) drop both sides and stamp-close both
- * invoices with no virtual payment.
+ * Customer cash receipt (or single-invoice Helam cancel): import as payment.
+ * Includes VAT / tax ledger lines when a customer id is present.
+ * Positive debits, CR* notes, and Helam two-invoice offsets are virtual-queue only.
+ */
+export function shouldImportAccount10149CashPayment(
+    row: Record<string, unknown>
+): boolean {
+    if (!paymentRowHasCustomerNumber(row)) {
+        return false;
+    }
+    if (isAccount10149HelamOffsetCancelRow(row)) {
+        return false;
+    }
+    if (isAccount10149DebitPaymentRow(row)) {
+        return false;
+    }
+    const raw = rawRecordOf(row);
+    const ivnum = pickInvoiceNumber(raw, row);
+    if (isAccount10149CreditInvoiceNumber(ivnum)) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * IDG_ARFNCITEMS4 only returns closed AR lines. Any reconciled row
+ * (FRECONNUM + invoice + BAL=0) queues virtual close by invoice number.
+ * Customer receipts (including VAT ledger lines with a customer id) import as
+ * cash; virtual fills remaining. Helam offset cancels queue both IVNUM and
+ * FNCIREF1 (no stamp-close).
  */
 export function transformAccount10149Batch(
     batch: ExtensionMappedBatch,
     options?: {
-        /** Invoice numbers from dropped reconciled debit / CR* lines. */
+        /** Invoice numbers queued for flush virtual close. */
         onReconciledInvoiceCloseTargets?: (
             invoiceNumbers: string[],
             /** ERP CURDATE per invoice number, when the line carries one. */
             closeDates?: Map<string, Date>
         ) => void;
-        /** Original + cancel stamp numbers for Helam offset pair stamp-close. */
-        onHelamOffsetCloseTargets?: (invoiceNumbers: string[]) => void;
         extension_config?: Record<string, unknown> | null;
     }
 ): ExtensionMappedBatch {
@@ -603,15 +745,6 @@ export function transformAccount10149Batch(
             : invoices;
     let nextPayments = payments;
     if (payments && payments.length > 0) {
-        const offsetTargets = collectHelamOffsetPairTargets(payments);
-        const offsetStampNumbers = new Set<string>([
-            ...offsetTargets.originals,
-            ...offsetTargets.cancels,
-        ]);
-        if (offsetStampNumbers.size > 0) {
-            options?.onHelamOffsetCloseTargets?.([...offsetStampNumbers]);
-        }
-
         const queuedCloseNumbers: string[] = [];
         const queuedCloseDates = new Map<string, Date>();
         const kept: Record<string, unknown>[] = [];
@@ -625,60 +758,53 @@ export function transformAccount10149Batch(
                 ...normalizedRow,
                 ...raw,
             });
-
-            // Two-invoice Helam offset: drop cancel; stamp both (no payment).
-            if (
-                reconciled &&
-                isAccount10149HelamOffsetCancelRow(normalizedRow)
-            ) {
-                tracePaymentImport("extension_drop", normalizedRow, {
-                    reason: "helam_offset_cancel_stamp",
-                    reconciled,
-                });
-                continue;
-            }
-
             const ivnum = pickInvoiceNumber(raw, normalizedRow);
+            const fnciref1 = asNonEmptyString(raw.FNCIREF1);
+            const helamOffset =
+                reconciled && isAccount10149HelamOffsetCancelRow(normalizedRow);
 
-            // Original debit of an offset pair in this batch: drop, no virtual
-            // (stamp-close handles both sides).
-            if (
-                reconciled &&
-                isAccount10149DebitPaymentRow(normalizedRow) &&
-                ivnum != null &&
-                offsetTargets.originals.has(ivnum)
-            ) {
-                tracePaymentImport("extension_drop", normalizedRow, {
-                    reason: "helam_offset_original_debit",
+            if (reconciled) {
+                queueReconciledInvoiceClose(
                     ivnum,
-                    offsetOriginals: [...offsetTargets.originals],
-                });
-                continue;
-            }
-
-            const dropForVirtualClose =
-                reconciled &&
-                (isAccount10149DebitPaymentRow(normalizedRow) ||
-                    isAccount10149CreditInvoiceNumber(ivnum));
-            if (dropForVirtualClose) {
-                tracePaymentImport("extension_drop", normalizedRow, {
-                    reason: isAccount10149DebitPaymentRow(normalizedRow)
-                        ? "reconciled_debit_virtual_close"
-                        : "credit_invoice_virtual_close",
-                    ivnum,
-                    queuedVirtualClose: ivnum ?? null,
-                });
-                if (ivnum) {
-                    queuedCloseNumbers.push(ivnum);
-                    const curDate = parseErpDateOnly(
-                        raw.CURDATE ?? normalizedRow.CURDATE
+                    raw,
+                    normalizedRow,
+                    queuedCloseNumbers,
+                    queuedCloseDates
+                );
+                // Helam two-invoice cancel: also close the original (FNCIREF1).
+                if (
+                    helamOffset &&
+                    fnciref1 &&
+                    fnciref1 !== (ivnum?.trim() ?? "")
+                ) {
+                    queueReconciledInvoiceClose(
+                        fnciref1,
+                        raw,
+                        normalizedRow,
+                        queuedCloseNumbers,
+                        queuedCloseDates
                     );
-                    if (curDate) {
-                        queuedCloseDates.set(ivnum.trim(), curDate);
-                    }
                 }
+            }
+
+            if (!shouldImportAccount10149CashPayment(normalizedRow)) {
+                tracePaymentImport("extension_drop", normalizedRow, {
+                    reason: helamOffset
+                        ? "helam_offset_virtual_close"
+                        : isAccount10149DebitPaymentRow(normalizedRow)
+                          ? "reconciled_debit_virtual_close"
+                          : isAccount10149CreditInvoiceNumber(ivnum)
+                            ? "credit_invoice_virtual_close"
+                            : !paymentRowHasCustomerNumber(normalizedRow)
+                              ? "missing_customer_number"
+                              : "cash_import_skipped",
+                    reconciled,
+                    ivnum,
+                    queuedVirtualClose: reconciled ? ivnum ?? null : null,
+                });
                 continue;
             }
+
             const transformed = transformPaymentRow(
                 normalizedRow,
                 companyCodes
@@ -688,6 +814,8 @@ export function transformAccount10149Batch(
                     reason: isAccount10149CancelDebitPaymentRow(row)
                         ? "helam_cancel_debit_import"
                         : "receipt_import",
+                    reconciled,
+                    queuedVirtualClose: reconciled ? ivnum ?? null : null,
                 });
                 kept.push(transformed);
             } else {
@@ -746,13 +874,11 @@ export const account10149Extension: BillingAccountExtension = {
     key: ACCOUNT_10149_EXTENSION_KEY,
     label: "Account 10149",
     expandRuntimeCustomerScopeNumbers(params) {
-        if (params.entityType !== "Payment") {
-            return [];
-        }
-        const setName = (params.entitySet ?? "").trim().toUpperCase();
         if (
-            !setName.includes("IDG_ARFNCITEMS") &&
-            !setName.startsWith("IDG_")
+            !isAccount10149IdgPaymentEntitySet(
+                params.entityType,
+                params.entitySet
+            )
         ) {
             return [];
         }
@@ -763,6 +889,32 @@ export const account10149Extension: BillingAccountExtension = {
             params.customerNumber,
             companyCodes
         );
+    },
+    extraSelectFields(params) {
+        if (
+            !isAccount10149IdgPaymentEntitySet(
+                params.entityType,
+                params.entitySet
+            )
+        ) {
+            return [];
+        }
+        return [...ACCOUNT_10149_PAYMENT_EXTRA_SELECT_FIELDS];
+    },
+    buildRuntimeCustomerScopeOData(params) {
+        return buildAccount10149RuntimeCustomerScopeOData({
+            customerNumber: params.customerNumber,
+            additionalCustomerNumbers: params.additionalCustomerNumbers,
+            entityType: params.entityType,
+            entitySet: params.entitySet,
+        });
+    },
+    buildRuntimeCustomerScopeFallbackOData(params) {
+        return buildAccount10149IdcFallbackCustomerScopeOData({
+            customerNumber: params.customerNumber,
+            entityType: params.entityType,
+            entitySet: params.entitySet,
+        });
     },
     async transform(
         ctx: ExtensionTransformContext
@@ -781,13 +933,6 @@ export const account10149Extension: BillingAccountExtension = {
                     }
                 }
             },
-            onHelamOffsetCloseTargets: (invoiceNumbers) => {
-                if (ctx.pendingHelamOffsetCloses) {
-                    for (const invoiceNumber of invoiceNumbers) {
-                        ctx.pendingHelamOffsetCloses.add(invoiceNumber);
-                    }
-                }
-            },
         });
     },
     afterPaymentLinked: afterAccount10149PaymentLinked,
@@ -795,11 +940,7 @@ export const account10149Extension: BillingAccountExtension = {
         const closedIds = new Set<number>();
         const customerIds = new Set<number>();
 
-        const offsetNumbers = ctx.helamOffsetInvoiceNumbers ?? [];
-        const total = countUniquePendingCloseInvoiceNumbers(
-            ctx.invoiceNumbers,
-            offsetNumbers
-        );
+        const total = countUniquePendingCloseInvoiceNumbers(ctx.invoiceNumbers);
         const report = (processed: number) => {
             if (total <= 0) {
                 return;
@@ -815,41 +956,11 @@ export const account10149Extension: BillingAccountExtension = {
 
         let processed = 0;
 
-        if (offsetNumbers.length > 0) {
-            const helamBaseline = processed;
-            const helamQueued = uniqueTrimmedInvoiceNumberSet(offsetNumbers).size;
-            const offsetResult =
-                await applyHelamOffsetStampClosesForInvoiceNumbers(
-                    ctx.prisma,
-                    ctx.accountId,
-                    offsetNumbers,
-                    ctx.userId,
-                    {
-                        onProgress: ({ processed: helamProcessed }) => {
-                            report(helamBaseline + helamProcessed);
-                        },
-                    }
-                );
-            processed += helamQueued;
-            report(processed);
-            for (const id of offsetResult.closedIds) {
-                closedIds.add(id);
-            }
-            for (const id of offsetResult.customerIds) {
-                customerIds.add(id);
-            }
-        }
-
-        // Virtual fill only for numbers not already stamp-closed as Helam offset.
-        const offsetSet = uniqueTrimmedInvoiceNumberSet(offsetNumbers);
-        const virtualNumbers = ctx.invoiceNumbers.filter(
-            (value) => !offsetSet.has(value.trim())
-        );
-        if (virtualNumbers.length > 0) {
+        if (ctx.invoiceNumbers.length > 0) {
             const result = await applyReconciledVirtualClosesForInvoiceNumbers(
                 ctx.prisma,
                 ctx.accountId,
-                virtualNumbers,
+                ctx.invoiceNumbers,
                 ctx.userId,
                 ctx.invoiceCloseDates
             );
