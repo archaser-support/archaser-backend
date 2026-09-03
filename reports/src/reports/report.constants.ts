@@ -95,6 +95,8 @@ export const RELATION_FROM_PRIMARY: Record<
         Country: "Country",
         State: "State",
         ParentCustomer: "ParentCustomer",
+        Invoice: "Invoice",
+        InvoicePayment: "InvoicePayment",
     },
     Invoice: {
         Customer: "Customer",

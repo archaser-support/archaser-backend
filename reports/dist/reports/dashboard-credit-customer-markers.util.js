@@ -35,6 +35,8 @@ function parseCreditDashboardCustomerMembershipValue(value) {
             type: raw,
             includeNoPolicyExposure: true,
             withinDays: null,
+            utilizationBin: null,
+            asOfDate: null,
         };
     }
     if (raw === "no_policy_exposure") {
@@ -42,6 +44,8 @@ function parseCreditDashboardCustomerMembershipValue(value) {
             type: "no_policy_exposure",
             includeNoPolicyExposure: true,
             withinDays: null,
+            utilizationBin: null,
+            asOfDate: null,
         };
     }
     if (raw === "no_policy_exposure:0") {
@@ -49,6 +53,8 @@ function parseCreditDashboardCustomerMembershipValue(value) {
             type: "no_policy_exposure",
             includeNoPolicyExposure: false,
             withinDays: null,
+            utilizationBin: null,
+            asOfDate: null,
         };
     }
     if (raw === "top_up_expiring") {
@@ -56,6 +62,8 @@ function parseCreditDashboardCustomerMembershipValue(value) {
             type: "top_up_expiring",
             includeNoPolicyExposure: true,
             withinDays: 30,
+            utilizationBin: null,
+            asOfDate: null,
         };
     }
     if (raw.startsWith("top_up_expiring:")) {
@@ -64,12 +72,30 @@ function parseCreditDashboardCustomerMembershipValue(value) {
             type: "top_up_expiring",
             includeNoPolicyExposure: true,
             withinDays: Number.isFinite(days) ? Math.max(1, days) : 30,
+            utilizationBin: null,
+            asOfDate: null,
+        };
+    }
+    // utilization_bin:<bin>:<asOfYmd> or …:0 for exclude no-policy
+    if (raw.startsWith("utilization_bin:")) {
+        const parts = raw.split(":");
+        const bin = parts[1] ?? "";
+        const asOfDate = parts[2] ?? "";
+        const excludeFlag = parts[3];
+        return {
+            type: "utilization_bin",
+            includeNoPolicyExposure: excludeFlag !== "0",
+            withinDays: null,
+            utilizationBin: bin || null,
+            asOfDate: /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? asOfDate : null,
         };
     }
     return {
         type: null,
         includeNoPolicyExposure: true,
         withinDays: null,
+        utilizationBin: null,
+        asOfDate: null,
     };
 }
 /**
@@ -85,6 +111,8 @@ async function prepareDashboardCreditCustomerMarkers(filters, options) {
     let membershipWhere;
     let policyId;
     let withinDays;
+    let asOfDate;
+    let utilizationBin;
     let membershipType;
     const scopeIndex = working.findIndex((f) => f.table === "Customer" &&
         f.field === exports.CREDIT_DASHBOARD_CUSTOMER_SCOPE_FILTER_FIELD);
@@ -101,6 +129,10 @@ async function prepareDashboardCreditCustomerMarkers(filters, options) {
             membershipType = parsed.type;
             if (parsed.type === "top_up_expiring") {
                 withinDays = parsed.withinDays ?? 30;
+            }
+            if (parsed.type === "utilization_bin") {
+                asOfDate = parsed.asOfDate ?? undefined;
+                utilizationBin = parsed.utilizationBin ?? undefined;
             }
             working = working.filter((_, i) => i !== membershipIndex);
             if (parsed.type === "zero_limit_warning") {
@@ -121,6 +153,8 @@ async function prepareDashboardCreditCustomerMarkers(filters, options) {
                     customerId,
                     includeNoPolicyExposure: parsed.includeNoPolicyExposure,
                     withinDays: parsed.withinDays ?? undefined,
+                    utilizationBin: parsed.utilizationBin ?? undefined,
+                    asOfDate: parsed.asOfDate ?? undefined,
                 });
                 membershipWhere = {
                     id: { in: ids ?? [] },
@@ -135,9 +169,13 @@ async function prepareDashboardCreditCustomerMarkers(filters, options) {
     }
     return {
         filters: working,
-        primaryWhereExtras: andWhere([scopeWhere, membershipWhere]),
+        primaryWhereExtras: membershipType === "utilization_bin"
+            ? membershipWhere
+            : andWhere([scopeWhere, membershipWhere]),
         policyId,
         withinDays,
+        asOfDate,
+        utilizationBin,
         membershipType,
     };
 }

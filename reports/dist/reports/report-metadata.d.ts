@@ -18,6 +18,8 @@ export interface FieldMetadata {
     translationNamespace?: string;
     enumValueKeyPrefix?: string;
 }
+/** Resolve report-builder field type from static metadata (date vs datetime). */
+export declare function resolveReportFieldType(table: string, field: string): string | undefined;
 export declare const REPORT_METADATA: {
     tables: TableMetadata[];
 };

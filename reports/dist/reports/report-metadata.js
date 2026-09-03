@@ -5,7 +5,16 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.REPORT_METADATA = void 0;
+exports.resolveReportFieldType = resolveReportFieldType;
 const report_virtual_fields_util_1 = require("./report-virtual-fields.util");
+/** Resolve report-builder field type from static metadata (date vs datetime). */
+function resolveReportFieldType(table, field) {
+    const tableMeta = exports.REPORT_METADATA.tables.find((t) => t.name === table);
+    if (!tableMeta) {
+        return undefined;
+    }
+    return tableMeta.fields.find((entry) => entry.name === field)?.type;
+}
 exports.REPORT_METADATA = {
     tables: [
         {
@@ -367,6 +376,20 @@ exports.REPORT_METADATA = {
                     type: "string",
                     label: "Warning Reason",
                     translationKey: "warning_reason",
+                    translationNamespace: "dashboard",
+                },
+                {
+                    name: "as_of_utilization_pct",
+                    type: "number",
+                    label: "As-of utilization %",
+                    translationKey: "as_of_utilization_pct",
+                    translationNamespace: "dashboard",
+                },
+                {
+                    name: "as_of_usage_amount",
+                    type: "number",
+                    label: "As-of usage",
+                    translationKey: "as_of_usage_amount",
                     translationNamespace: "dashboard",
                 },
                 {

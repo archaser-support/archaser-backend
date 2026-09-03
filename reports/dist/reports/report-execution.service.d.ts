@@ -34,6 +34,11 @@ export declare class ReportExecutionService {
     private normalizeFilters;
     private buildOrderBy;
     private parseSortField;
+    /**
+     * Map report builder sort keys like `Invoice.amount__COUNT` to Prisma
+     * relation aggregate orderBy. Falls back to stable `id` when unsupported.
+     */
+    private parseAggregationSortField;
     private formatRow;
     private extractFieldValue;
     private applyAuditUserSelect;
@@ -56,6 +61,7 @@ export declare class ReportExecutionService {
     private extractParentCustomerName;
     private formatValue;
     private formatNumber;
+    private shouldFormatAsDateOnly;
     private looksLikeDateField;
 }
 export {};

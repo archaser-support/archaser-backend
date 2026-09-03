@@ -89,6 +89,7 @@ let ReportExecutionService = class ReportExecutionService {
         let creditInvoiceExtras;
         let creditDashboardPolicyId;
         let creditDashboardWithinDays;
+        let creditDashboardAsOfDate;
         let creditCustomerMembershipType;
         if (report.context === "dashboard_credit_customers") {
             const prepared = await (0, dashboard_credit_customer_markers_util_1.prepareDashboardCreditCustomerMarkers)(filters, { accountId });
@@ -96,6 +97,7 @@ let ReportExecutionService = class ReportExecutionService {
             creditCustomerExtras = prepared.primaryWhereExtras;
             creditDashboardPolicyId = prepared.policyId;
             creditDashboardWithinDays = prepared.withinDays;
+            creditDashboardAsOfDate = prepared.asOfDate;
             creditCustomerMembershipType = prepared.membershipType;
         }
         else if (report.context === "dashboard_credit_invoices") {
@@ -162,10 +164,13 @@ let ReportExecutionService = class ReportExecutionService {
                 : "desc");
         const computedSortTarget = (0, report_virtual_fields_util_1.resolveComputedSortTarget)(effectiveSortField, primaryTable, fields);
         const needsComputedFormattedSort = computedSortTarget != null;
-        const needsCreditDashboardInMemorySort = report.context === "dashboard_credit_customers" &&
+        // Enriched metrics (Open AR, policy risk, …) must sort in memory after
+        // enrichment — independent of report.context so builder/copied reports work.
+        const needsCreditDashboardInMemorySort = primaryTable === "Customer" &&
             !!effectiveSortField &&
             ((0, credit_insurance_domain_1.isCreditDashboardEnrichedSortField)(effectiveSortField) ||
-                (0, credit_insurance_domain_2.isCustomerPolicyBackedReportField)(effectiveSortField));
+                (report.context === "dashboard_credit_customers" &&
+                    (0, credit_insurance_domain_2.isCustomerPolicyBackedReportField)(effectiveSortField)));
         const needsInMemorySort = needsCreditDashboardInMemorySort || needsComputedFormattedSort;
         const orderBy = needsInMemorySort
             ? []
@@ -181,12 +186,23 @@ let ReportExecutionService = class ReportExecutionService {
             delegate.findMany(findArgs),
             delegate.count({ where }),
         ]);
-        if (report.context === "dashboard_credit_customers" &&
-            primaryTable === "Customer" &&
+        // Open AR / related metrics are not Prisma columns — always enrich when
+        // requested, even if context is wrong/null (staging copied reports, builder).
+        if (primaryTable === "Customer" &&
             (0, credit_insurance_domain_1.reportConfigNeedsCreditDashboardEnrichment)(fields)) {
             const requestedCustomerFields = fields
                 .filter((f) => f.table === "Customer" && f.field)
                 .map((f) => f.field);
+            // Sorting by an enriched field must still compute it even if hidden.
+            if (effectiveSortField &&
+                (0, credit_insurance_domain_1.isCreditDashboardEnrichedSortField)(effectiveSortField)) {
+                const sortLeaf = effectiveSortField.startsWith("Customer.")
+                    ? effectiveSortField.slice("Customer.".length)
+                    : effectiveSortField;
+                if (!requestedCustomerFields.includes(sortLeaf)) {
+                    requestedCustomerFields.push(sortLeaf);
+                }
+            }
             let limitWarningByCustomerId;
             if (requestedCustomerFields.includes("limit_warning_summary")) {
                 const { rows: warningRows } = await (0, credit_insurance_domain_1.getLimitWarningReport)(accountId, 100_000, 0, { policyId: creditDashboardPolicyId });
@@ -197,6 +213,7 @@ let ReportExecutionService = class ReportExecutionService {
                 policyId: creditDashboardPolicyId,
                 requestedFields: requestedCustomerFields,
                 limitWarningByCustomerId,
+                asOfDate: creditDashboardAsOfDate,
             });
         }
         if (needsCreditDashboardInMemorySort && effectiveSortField) {
@@ -698,6 +715,12 @@ let ReportExecutionService = class ReportExecutionService {
         if (raw.startsWith(types_1.FORMULA_OUTPUT_KEY_PREFIX)) {
             return null;
         }
+        // Aggregated output keys (e.g. Invoice.amount__COUNT) must not be treated as
+        // nested scalar paths — Prisma rejects `{ Invoice: { amount__COUNT: "asc" } }`.
+        const aggregationOrderBy = this.parseAggregationSortField(raw, primaryTable);
+        if (aggregationOrderBy) {
+            return aggregationOrderBy;
+        }
         // Normalize "Customer.name" → compare as field on primary
         const normalized = raw.startsWith(`${primaryTable}.`) && raw.split(".").length === 2
             ? raw.slice(primaryTable.length + 1)
@@ -765,6 +788,10 @@ let ReportExecutionService = class ReportExecutionService {
         if (parts.length >= 2) {
             const relTable = parts[0];
             const leaf = parts.slice(1).join(".");
+            // Never treat aggregation suffixes as relation scalars.
+            if (/__(SUM|AVG|COUNT|MIN|MAX)$/i.test(leaf)) {
+                return (dir) => ({ id: dir });
+            }
             const rel = (report_constants_1.RELATION_FROM_PRIMARY[primaryTable] || {})[relTable] ||
                 relTable;
             // Customer.name is virtual (Company/Person), not a Customer column
@@ -777,9 +804,51 @@ let ReportExecutionService = class ReportExecutionService {
                     [rel]: { [nestedRel]: { [nestedLeaf]: dir } },
                 });
             }
+            // To-many relations cannot be ordered by a nested leaf scalar.
+            if ((0, report_virtual_fields_util_1.isPrismaListRelation)(primaryTable, rel)) {
+                return (dir) => ({ id: dir });
+            }
             return (dir) => ({ [rel]: { [leaf]: dir } });
         }
         return null;
+    }
+    /**
+     * Map report builder sort keys like `Invoice.amount__COUNT` to Prisma
+     * relation aggregate orderBy. Falls back to stable `id` when unsupported.
+     */
+    parseAggregationSortField(sortField, primaryTable) {
+        const match = sortField.match(/^(.*)__(SUM|AVG|COUNT|MIN|MAX)$/i);
+        if (!match) {
+            return null;
+        }
+        const basePath = match[1];
+        const aggregation = match[2].toUpperCase();
+        let path = basePath;
+        if (path.startsWith(`${primaryTable}.`)) {
+            path = path.slice(primaryTable.length + 1);
+        }
+        const parts = path.split(".").filter(Boolean);
+        if (parts.length === 0) {
+            return (dir) => ({ id: dir });
+        }
+        // Primary-table aggregate (e.g. amount__COUNT) is not a Prisma orderBy.
+        if (parts.length === 1 || parts[0] === primaryTable) {
+            return (dir) => ({ id: dir });
+        }
+        const relTable = parts[0];
+        const rel = (report_constants_1.RELATION_FROM_PRIMARY[primaryTable] || {})[relTable] || relTable;
+        if (!(0, report_virtual_fields_util_1.isPrismaListRelation)(primaryTable, rel)) {
+            return (dir) => ({ id: dir });
+        }
+        if (aggregation === "COUNT") {
+            // Prisma relation orderBy supports only `_count` (not _sum/_avg/…).
+            return (dir) => ({ [rel]: { _count: dir } });
+        }
+        // SUM / AVG / MIN / MAX cannot drive Prisma findMany orderBy on
+        // to-many relations — `{ Invoice: { _sum: { amount } } }` is rejected.
+        // Stable id keeps the query valid; true aggregate sort needs raw SQL
+        // or post-fetch sorting.
+        return (dir) => ({ id: dir });
     }
     formatRow(row, primaryTable, fields, locale, scopedPolicyId, timezone) {
         const out = {
@@ -810,7 +879,7 @@ let ReportExecutionService = class ReportExecutionService {
                 }
             }
             out[key] = value ?? null;
-            out[`___formatted_${key}`] = this.formatValue(value, f.field, locale, timezone);
+            out[`___formatted_${key}`] = this.formatValue(value, f.field, locale, timezone, (0, report_metadata_1.resolveReportFieldType)(f.table, f.field));
             // dispute_number aliases the primary key. Override display to
             // "DIS-000726" so formatValue's thousands separator does not turn
             // id 1726 into "1,726". Raw value stays numeric for sort/search.
@@ -1115,7 +1184,7 @@ let ReportExecutionService = class ReportExecutionService {
         }
         return parent.Company?.name || null;
     }
-    formatValue(value, field, locale, timezone) {
+    formatValue(value, field, locale, timezone, metadataType) {
         if (value == null) {
             return null;
         }
@@ -1123,6 +1192,9 @@ let ReportExecutionService = class ReportExecutionService {
             const d = value instanceof Date ? value : new Date(String(value));
             if (!Number.isNaN(d.getTime())) {
                 try {
+                    if (this.shouldFormatAsDateOnly(field, metadataType)) {
+                        return (0, report_datetime_util_1.formatReportDate)(d, locale);
+                    }
                     return (0, report_datetime_util_1.formatReportDateTime)(d, locale, timezone);
                 }
                 catch {
@@ -1160,11 +1232,29 @@ let ReportExecutionService = class ReportExecutionService {
             return String(value);
         }
     }
+    shouldFormatAsDateOnly(field, metadataType) {
+        const normalized = metadataType?.toLowerCase();
+        if (normalized === "date") {
+            return true;
+        }
+        if (normalized === "datetime" ||
+            normalized === "timestamp") {
+            return false;
+        }
+        // Fallback when metadata is missing: *_date calendar fields vs event stamps.
+        if (field.includes("_at") || field === "schedule_time") {
+            return false;
+        }
+        return (field.includes("_date") ||
+            field === "due_date" ||
+            field === "date_of_birth");
+    }
     looksLikeDateField(field, value) {
         if (field.includes("_at") ||
             field.includes("_date") ||
             field === "due_date" ||
-            field === "schedule_time") {
+            field === "schedule_time" ||
+            field === "date_of_birth") {
             return true;
         }
         return (typeof value === "string" &&

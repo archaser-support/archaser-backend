@@ -1120,6 +1120,16 @@ export class ReportExecutionService {
             return null;
         }
 
+        // Aggregated output keys (e.g. Invoice.amount__COUNT) must not be treated as
+        // nested scalar paths — Prisma rejects `{ Invoice: { amount__COUNT: "asc" } }`.
+        const aggregationOrderBy = this.parseAggregationSortField(
+            raw,
+            primaryTable
+        );
+        if (aggregationOrderBy) {
+            return aggregationOrderBy;
+        }
+
         // Normalize "Customer.name" → compare as field on primary
         const normalized =
             raw.startsWith(`${primaryTable}.`) && raw.split(".").length === 2
@@ -1200,6 +1210,10 @@ export class ReportExecutionService {
         if (parts.length >= 2) {
             const relTable = parts[0];
             const leaf = parts.slice(1).join(".");
+            // Never treat aggregation suffixes as relation scalars.
+            if (/__(SUM|AVG|COUNT|MIN|MAX)$/i.test(leaf)) {
+                return (dir) => ({ id: dir });
+            }
             const rel =
                 (RELATION_FROM_PRIMARY[primaryTable] || {})[relTable] ||
                 relTable;
@@ -1213,10 +1227,64 @@ export class ReportExecutionService {
                     [rel]: { [nestedRel]: { [nestedLeaf]: dir } },
                 });
             }
+            // To-many relations cannot be ordered by a nested leaf scalar.
+            if (isPrismaListRelation(primaryTable, rel)) {
+                return (dir) => ({ id: dir });
+            }
             return (dir) => ({ [rel]: { [leaf]: dir } });
         }
 
         return null;
+    }
+
+    /**
+     * Map report builder sort keys like `Invoice.amount__COUNT` to Prisma
+     * relation aggregate orderBy. Falls back to stable `id` when unsupported.
+     */
+    private parseAggregationSortField(
+        sortField: string,
+        primaryTable: string
+    ): ((dir: "asc" | "desc") => PrismaWhere) | null {
+        const match = sortField.match(/^(.*)__(SUM|AVG|COUNT|MIN|MAX)$/i);
+        if (!match) {
+            return null;
+        }
+        const basePath = match[1];
+        const aggregation = match[2].toUpperCase();
+
+        let path = basePath;
+        if (path.startsWith(`${primaryTable}.`)) {
+            path = path.slice(primaryTable.length + 1);
+        }
+
+        const parts = path.split(".").filter(Boolean);
+        if (parts.length === 0) {
+            return (dir) => ({ id: dir });
+        }
+
+        // Primary-table aggregate (e.g. amount__COUNT) is not a Prisma orderBy.
+        if (parts.length === 1 || parts[0] === primaryTable) {
+            return (dir) => ({ id: dir });
+        }
+
+        const relTable = parts[0];
+        const rel =
+            (RELATION_FROM_PRIMARY[primaryTable] || {})[relTable] || relTable;
+
+        if (!isPrismaListRelation(primaryTable, rel)) {
+            return (dir) => ({ id: dir });
+        }
+
+        if (aggregation === "COUNT") {
+            // Prisma relation orderBy supports only `_count` (not _sum/_avg/…).
+            return (dir) => ({ [rel]: { _count: dir } });
+        }
+
+        // SUM / AVG / MIN / MAX cannot drive Prisma findMany orderBy on
+        // to-many relations — `{ Invoice: { _sum: { amount } } }` is rejected.
+        // Stable id keeps the query valid; true aggregate sort needs raw SQL
+        // or post-fetch sorting.
+        return (dir) => ({ id: dir });
     }
 
     private formatRow(
