@@ -57,6 +57,7 @@ import {
     isNoPolicyExposureCardCustomer,
     isUncoveredExposureCustomer,
 } from "./policyExclusion";
+import type { CreditDashboardAccountSettings } from "./creditAsOfBackfillRunContext";
 
 const COLLECTION_LIVE: record_status[] = [record_status.Active, record_status.Inactive];
 const DEFAULT_REPORTING_WINDOW_DAYS = 14;
@@ -1104,6 +1105,12 @@ export async function getCreditDashboardSummary(
         asOfDate?: Date;
         /** Preloaded payment-ledger rows for `asOfDate` (avoids N SQL loads per scope). */
         asOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[];
+        /** When set (e.g. Generate run context), skip repeated hasTopUpPolicies queries. */
+        hasTopUpPolicies?: boolean;
+        /** Preloaded account warning/currency settings (Generate run context). */
+        accountSettings?: CreditDashboardAccountSettings;
+        /** When true, skip insurancePolicy.findMany (alerts unused in daily snapshot upsert). */
+        skipPolicyExpirationLoad?: boolean;
     }
 ): Promise<CreditDashboardSummary> {
     const whereCust = customersScoped(accountId, policyId, businessUnitFilter);
@@ -1113,49 +1120,86 @@ export async function getCreditDashboardSummary(
     const asOfDate = options?.asOfDate;
     const asOfLines = options?.asOfLines;
 
-    const accountRow = await (prisma.account.findUnique as any)({
-        where: { id: accountId },
-        select: {
-            currency: true,
-            customer_limit_expiration_warning_days: true,
-            reporting_date_warning_days: true,
-            credit_limit_warning_threshold_pct: true,
-            credit_score_validity_warning_days: true,
-        },
-    }) as {
-        currency: string | null;
-        customer_limit_expiration_warning_days: number | null;
-        reporting_date_warning_days: number | null;
-        credit_limit_warning_threshold_pct: number | null;
-        credit_score_validity_warning_days: number | null;
-    } | null;
+    let accountCurrency: string;
+    let windowDays: number;
+    let limitWarnThresholdPct: number;
+    let scoreValidityWarnDays: number;
+    let limitExpirationWarnDays: number;
 
-    const windowDays = Math.max(
-        0,
-        accountRow?.reporting_date_warning_days ??
-            DEFAULT_REPORTING_WINDOW_DAYS
-    );
-    const limitWarnThresholdPct = Math.min(
-        100,
-        Math.max(
-            1,
-            accountRow?.credit_limit_warning_threshold_pct ??
-                DEFAULT_LIMIT_WARN_THRESHOLD_PCT
-        )
-    );
-    const scoreValidityWarnDays = Math.max(
-        0,
-        accountRow?.credit_score_validity_warning_days ??
-            DEFAULT_SCORE_VALIDITY_WARN_DAYS
-    );
-    const limitExpirationWarnDays = Math.max(
-        0,
-        accountRow?.customer_limit_expiration_warning_days ?? 0
-    );
-    const accountCurrency =
-        accountRow?.currency && String(accountRow.currency).trim()
-            ? String(accountRow.currency).trim().toUpperCase()
-            : "USD";
+    if (options?.accountSettings) {
+        accountCurrency = options.accountSettings.accountCurrency;
+        windowDays = options.accountSettings.reportingDateWarningDays;
+        limitWarnThresholdPct =
+            options.accountSettings.creditLimitWarningThresholdPct;
+        scoreValidityWarnDays =
+            options.accountSettings.creditScoreValidityWarningDays;
+        limitExpirationWarnDays =
+            options.accountSettings.customerLimitExpirationWarningDays;
+    } else {
+        const accountRow = await (prisma.account.findUnique as any)({
+            where: { id: accountId },
+            select: {
+                currency: true,
+                customer_limit_expiration_warning_days: true,
+                reporting_date_warning_days: true,
+                credit_limit_warning_threshold_pct: true,
+                credit_score_validity_warning_days: true,
+            },
+        }) as {
+            currency: string | null;
+            customer_limit_expiration_warning_days: number | null;
+            reporting_date_warning_days: number | null;
+            credit_limit_warning_threshold_pct: number | null;
+            credit_score_validity_warning_days: number | null;
+        } | null;
+
+        windowDays = Math.max(
+            0,
+            accountRow?.reporting_date_warning_days ??
+                DEFAULT_REPORTING_WINDOW_DAYS
+        );
+        limitWarnThresholdPct = Math.min(
+            100,
+            Math.max(
+                1,
+                accountRow?.credit_limit_warning_threshold_pct ??
+                    DEFAULT_LIMIT_WARN_THRESHOLD_PCT
+            )
+        );
+        scoreValidityWarnDays = Math.max(
+            0,
+            accountRow?.credit_score_validity_warning_days ??
+                DEFAULT_SCORE_VALIDITY_WARN_DAYS
+        );
+        limitExpirationWarnDays = Math.max(
+            0,
+            accountRow?.customer_limit_expiration_warning_days ?? 0
+        );
+        accountCurrency =
+            accountRow?.currency && String(accountRow.currency).trim()
+                ? String(accountRow.currency).trim().toUpperCase()
+                : "USD";
+    }
+
+    const scopedPoliciesPromise: Promise<
+        Array<{
+            id: number;
+            policy_number: string | null;
+            end_date: Date | null;
+        }>
+    > = options?.skipPolicyExpirationLoad
+        ? Promise.resolve([])
+        : prisma.insurancePolicy.findMany({
+              where:
+                  policyId != null
+                      ? { account_id: accountId, id: policyId }
+                      : { account_id: accountId },
+              select: {
+                  id: true,
+                  policy_number: true,
+                  end_date: true,
+              },
+          });
 
     const [
         customersRaw,
@@ -1182,17 +1226,7 @@ export async function getCreditDashboardSummary(
                 overdue_block: boolean | null;
             }>
         >,
-        prisma.insurancePolicy.findMany({
-            where:
-                policyId != null
-                    ? { account_id: accountId, id: policyId }
-                    : { account_id: accountId },
-            select: {
-                id: true,
-                policy_number: true,
-                end_date: true,
-            },
-        }),
+        scopedPoliciesPromise,
         prisma.customer.count({
             where: { ...whereCust, overdue_block: true },
         }),
@@ -1498,7 +1532,8 @@ export async function getCreditDashboardSummary(
         .filter((row): row is NonNullable<typeof row> => row != null)
         .sort((a, b) => a.endDate.localeCompare(b.endDate));
 
-    const accountHasTopUp = await hasTopUpPolicies(accountId);
+    const accountHasTopUp =
+        options?.hasTopUpPolicies ?? (await hasTopUpPolicies(accountId));
 
     let topUpBlock: TopUpDashboardBlock | null = null;
     let topUpExpirationAlerts: TopUpExpiringSoonAlert[] = [];

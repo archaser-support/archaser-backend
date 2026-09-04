@@ -244,58 +244,47 @@ async function resolveTopUpsFromRows(
     return { topUpByPolicy, topUpTotalInLimitCurrency, missingRate };
 }
 
-export async function resolveEffectiveApprovedLimit(
-    customerId: number,
+function emptyEffectiveLimitResult(args: {
+    baseLimit: Prisma.Decimal | null;
+    baseCurrency: string | null;
+}): EffectiveApprovedLimitResult {
+    const baseNumeric =
+        args.baseLimit != null ? new Prisma.Decimal(args.baseLimit).toNumber() : null;
+    return {
+        baseApprovedLimit: args.baseLimit,
+        baseApprovedLimitCurrency: args.baseCurrency,
+        topUpByPolicy: [],
+        topUpTotalInLimitCurrency: 0,
+        effectiveApprovedLimit: baseNumeric,
+        limitCurrency: args.baseCurrency,
+        missingRate: false,
+    };
+}
+
+/** Resolve effective limit from preloaded top-up rows (no extra DB round-trip). */
+export async function resolveEffectiveApprovedLimitFromTopUpRows(
+    activeTopUps: TopUpRowForResolution[],
     options?: ResolveTopUpOptions & { asOfDate?: Date }
 ): Promise<EffectiveApprovedLimitResult> {
     const asOfDate = options?.asOfDate ?? new Date();
-    const asOfUtcDay = startOfUtcDay(asOfDate);
-    const dbClient = options?.dbClient ?? prisma;
-
     const baseLimit = options?.baseApprovedLimit ?? null;
     const baseCurrency = options?.baseApprovedLimitCurrency ?? null;
     const outdatedDcl = options?.outdatedDcl ?? false;
     const excludedFromPolicy = options?.excludedFromPolicy ?? false;
 
     if (outdatedDcl || excludedFromPolicy || baseLimit == null) {
-        return {
-            baseApprovedLimit: baseLimit,
-            baseApprovedLimitCurrency: baseCurrency,
-            topUpByPolicy: [],
-            topUpTotalInLimitCurrency: 0,
-            effectiveApprovedLimit: baseLimit != null ? new Prisma.Decimal(baseLimit).toNumber() : null,
-            limitCurrency: baseCurrency,
-            missingRate: false,
-        };
+        return emptyEffectiveLimitResult({ baseLimit, baseCurrency });
     }
-
-    const activeTopUps = await dbClient.customerTopUp.findMany({
-        where: {
-            customer_id: customerId,
-            cancelled_at: null,
-            start_date: { lte: asOfUtcDay },
-            end_date: { gte: asOfUtcDay },
-            InsurancePolicy: {
-                policy_kind: "TopUp",
-            },
-        },
-        select: TOP_UP_SELECT,
-    });
 
     if (activeTopUps.length === 0) {
         return {
-            baseApprovedLimit: baseLimit,
-            baseApprovedLimitCurrency: baseCurrency,
-            topUpByPolicy: [],
-            topUpTotalInLimitCurrency: 0,
+            ...emptyEffectiveLimitResult({ baseLimit, baseCurrency }),
             effectiveApprovedLimit: new Prisma.Decimal(baseLimit).toNumber(),
-            limitCurrency: baseCurrency,
-            missingRate: false,
         };
     }
 
     const resolved = await resolveTopUpsFromRows(
-        activeTopUps as TopUpRowForResolution[],
+        activeTopUps,
         asOfDate,
         baseLimit,
         baseCurrency,
@@ -314,6 +303,42 @@ export async function resolveEffectiveApprovedLimit(
         limitCurrency: baseCurrency,
         missingRate: resolved.missingRate,
     };
+}
+
+export async function resolveEffectiveApprovedLimit(
+    customerId: number,
+    options?: ResolveTopUpOptions & { asOfDate?: Date }
+): Promise<EffectiveApprovedLimitResult> {
+    const asOfDate = options?.asOfDate ?? new Date();
+    const asOfUtcDay = startOfUtcDay(asOfDate);
+    const dbClient = options?.dbClient ?? prisma;
+
+    const baseLimit = options?.baseApprovedLimit ?? null;
+    const baseCurrency = options?.baseApprovedLimitCurrency ?? null;
+    const outdatedDcl = options?.outdatedDcl ?? false;
+    const excludedFromPolicy = options?.excludedFromPolicy ?? false;
+
+    if (outdatedDcl || excludedFromPolicy || baseLimit == null) {
+        return emptyEffectiveLimitResult({ baseLimit, baseCurrency });
+    }
+
+    const activeTopUps = await dbClient.customerTopUp.findMany({
+        where: {
+            customer_id: customerId,
+            cancelled_at: null,
+            start_date: { lte: asOfUtcDay },
+            end_date: { gte: asOfUtcDay },
+            InsurancePolicy: {
+                policy_kind: "TopUp",
+            },
+        },
+        select: TOP_UP_SELECT,
+    });
+
+    return resolveEffectiveApprovedLimitFromTopUpRows(
+        activeTopUps as TopUpRowForResolution[],
+        options
+    );
 }
 
 /**
