@@ -1,6 +1,6 @@
 ---
 name: to-issues
-description: Break a plan, spec, or PRD into independently-grabbable issues as local markdown files under `.scratch/` using tracer-bullet vertical slices. Does not create ClickUp tasks.
+description: Break a plan, spec, or PRD into independently-grabbable issues as commit-able markdown under `.cursor/plans/<feature-slug>/` using tracer-bullet vertical slices. Does not create ClickUp tasks.
 disable-model-invocation: true
 ---
 
@@ -8,21 +8,22 @@ disable-model-invocation: true
 
 Break a plan into independently-grabbable issues using vertical slices (tracer bullets).
 
-Issues are published as **local markdown files** under `.scratch/<feature-slug>/`. Do **not** create ClickUp tasks or call the ClickUp MCP from this skill.
+Issues are published as **commit-able markdown** under `.cursor/plans/<feature-slug>/`. Do **not** create ClickUp tasks or call the ClickUp MCP from this skill.
 
-**Project config:** Read path conventions and status defaults from **Local issue tracker** in `.cursorrules` (and `docs/agents/issue-tracker.md`). Do not hardcode tracker IDs in this skill.
+**Project config:** Read path conventions and status defaults from **Local issue tracker** in `.cursorrules` (and `docs/agents/issue-tracker.md`). Do not hardcode tracker IDs in this skill. Process contract: `docs/agents/clickup-git-workflow.md`.
 
 ## File conventions (this skill)
 
 Unless the user specifies otherwise:
 
-- **Feature directory:** `.scratch/<feature-slug>/` — derive `<feature-slug>` from the plan/PRD filename (e.g. `policy-mep-reporting-cutoff-days.prd.md` → `policy-mep-reporting-cutoff-days`) or from an explicit slug the user provides.
-- **Slice files:** `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` (zero-padded). `<slug>` is a short kebab-case title fragment.
-- **Parent overview (2+ slices):** `.scratch/<feature-slug>/OVERVIEW.md` — what the feature delivers, link to the repo plan when one exists, note that vertical slices live under `issues/`.
+- **Feature directory:** `.cursor/plans/<feature-slug>/` — derive `<feature-slug>` from the plan/PRD filename (e.g. `policy-mep-reporting-cutoff-days.prd.md` → `policy-mep-reporting-cutoff-days`) or from an explicit slug the user provides.
+- **Slice files:** `.cursor/plans/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` (zero-padded). `<slug>` is a short kebab-case title fragment.
+- **Parent overview (2+ slices):** `.cursor/plans/<feature-slug>/OVERVIEW.md` — what the feature delivers, link to the repo plan when one exists, note that vertical slices live under `issues/`.
 - **Single slice:** one file under `issues/` only — no `OVERVIEW.md`.
 - **How to test:** Every slice file must include a short **How to test** section.
 - **PRD / plan link:** Every slice file must include a **PRD** (or plan) line near the top pointing to the source file in the repo (see **Issue body template**).
 - **No approval quiz:** Draft slices from the plan and **publish directly** to markdown files. Do not ask the user to approve granularity, dependencies, or parent structure before writing files. Briefly summarize the breakdown in chat after publish.
+- **`.scratch/`:** Remains an optional **gitignored** local workspace only. Do **not** publish shippable slices there by default.
 
 ### Slice file header
 
@@ -49,13 +50,14 @@ Work from whatever is already in the conversation context.
 
 If the source is a repo plan or PRD (`.cursor/plans/*.plan.md` or `.cursor/plans/*.prd.md`), read it in full. Note the path for sync in step 6.
 
-If the user passes an existing issue file path or slice number, read that file and any siblings under the same `.scratch/<feature-slug>/issues/` directory.
+If the user passes an existing issue file path or slice number, read that file and any siblings under the same `.cursor/plans/<feature-slug>/issues/` directory.
 
 ### 2. Pre-flight — avoid duplicate breakdowns
 
 Before drafting slices, check for an existing breakdown of the same feature:
 
-- List `.scratch/<feature-slug>/issues/*.md` when the feature slug is known or inferable.
+- List `.cursor/plans/<feature-slug>/issues/*.md` when the feature slug is known or inferable (**primary** location).
+- Optionally note legacy files under `.scratch/<feature-slug>/issues/` if present (do not treat `.scratch/` as the publish target).
 - Read the plan's `## Issues (vertical slices)` section when a matching plan exists.
 
 If matching slice files or a populated summary table already exist, **stop publishing** and return in chat what you found (paths and titles). Do not blindly duplicate. Do **not** ask the user what to do — they can re-run `/to-issues` with explicit instructions if they want updates or missing slices only.
@@ -107,7 +109,7 @@ Before publishing, you may show a **short numbered breakdown** in chat (title, b
 
 **Parent source (2+ slices):**
 
-1. **Existing `OVERVIEW.md`** under `.scratch/<feature-slug>/` → leave it unless this session is intentionally replacing the breakdown; do not rewrite unrelated content.
+1. **Existing `OVERVIEW.md`** under `.cursor/plans/<feature-slug>/` → leave it unless this session is intentionally replacing the breakdown; do not rewrite unrelated content.
 2. **Repo plan or in-chat spec only** → create `OVERVIEW.md` with:
    - Feature title (from plan heading or PRD)
    - Short overview: what the feature delivers
@@ -116,7 +118,7 @@ Before publishing, you may show a **short numbered breakdown** in chat (title, b
 
 #### Create slice files
 
-For each slice, write `.scratch/<feature-slug>/issues/<NN>-<slug>.md` using the slice header template and issue body template below.
+For each slice, write `.cursor/plans/<feature-slug>/issues/<NN>-<slug>.md` using the slice header template and issue body template below.
 
 Create the feature directory and `issues/` subdirectory as needed. Write `OVERVIEW.md` first when the breakdown has 2+ slices, then all slice files in dependency order (blockers first) so **Blocked by** can reference real filenames.
 
@@ -145,9 +147,9 @@ Add a **Related** line in `OVERVIEW.md` or in a slice file when useful — prior
 ```markdown
 ## Issues (vertical slices)
 
-Tracer-bullet breakdown published as local markdown under `.scratch/<feature-slug>/`. **Hard blockers** are recorded in each slice's **Blocked by** header. Implement in dependency order; start a **fresh session per issue**.
+Tracer-bullet breakdown published as commit-able markdown under `.cursor/plans/<feature-slug>/`. **Hard blockers** are recorded in each slice's **Blocked by** header. Implement in dependency order; start a **fresh session per issue**.
 
-**Overview:** `.scratch/<feature-slug>/OVERVIEW.md` *(omit for single-slice breakdowns)*
+**Overview:** `.cursor/plans/<feature-slug>/OVERVIEW.md` *(omit for single-slice breakdowns)*
 
 | # | Title | File | Waiting on | User stories |
 |---|-------|------|------------|--------------|
@@ -160,7 +162,7 @@ Tracer-bullet breakdown published as local markdown under `.scratch/<feature-slu
 
 Do not delete or rewrite unrelated content in an existing plan file — only add or update the `## Issues (vertical slices)` section.
 
-Do **not** call ClickUp MCP from this skill. ClickUp remains for ad-hoc human workflow outside `/to-issues` (see `.cursorrules`).
+Do **not** call ClickUp MCP from this skill. ClickUp remains the human ticket (status, durable summary, How to test, branch/PR links) outside `/to-issues` — durable light sync after a PRD is **`/to-prd`** when a task is known; see `docs/agents/clickup-git-workflow.md` and `.cursorrules`.
 
 <issue-template>
 **PRD:** `.cursor/plans/<feature-slug>.prd.md` *(or `.cursor/plans/<feature-slug>.plan.md` when no PRD)*
