@@ -1,6 +1,6 @@
 ---
 name: start-work
-description: Orchestrate ClickUp ↔ Git work — full path (grill → PRD → slices → planning push), short path for tiny fixes, mid-task interrupt/park, coding status, ready-PR (merge staging, open review PRs, pending internal), and post-merge move to staging. Never auto-sets done.
+description: Orchestrate ClickUp ↔ Git work — full path, short path, interrupt, ready-PR, post-merge. Asks one intake question at a time when path/ClickUp/repo are missing; never creates ClickUp tasks unprompted; never auto-sets done.
 disable-model-invocation: true
 ---
 
@@ -20,6 +20,24 @@ This skill owns: ClickUp intake (create only on explicit ask), status ladder, pr
 
 **Never** set ClickUp status to `done` automatically — humans set `done` after deploy or final acceptance.
 
+## Intake — ask when missing (required)
+
+Bare `/start-work` (or a vague one-liner) is **not** enough to invent a path. **Do not guess** ClickUp create vs link, full vs short, or primary repo when ambiguous. **Do not** create a ClickUp task until the user confirms.
+
+**Before Phase 1 / short path / ready-PR:** collect what's missing. Prefer the **`AskQuestion` tool** (one question per turn, recommended option first + `(Recommended)`, ≥2 concrete options). If `AskQuestion` is unavailable, ask the **same** questions in chat — still **one at a time**, wait for the answer, then continue.
+
+Ask only what is still unknown (skip any answer already in the user message or recoverable from git/ClickUp context).
+
+| If missing… | Ask (recommended first) |
+|-------------|-------------------------|
+| What to work on | Short topic / goal (free text if needed; otherwise stop and ask) |
+| Which phase | Full path (plan then build) **(Recommended for non-trivial)** · Short path (tiny obvious fix) · Ready-PR (open review PRs) · Post-merge (status after merge) · Interrupt (park current WIP, start something else) |
+| ClickUp task | Create a new task for me **(Recommended when none given)** · I’ll paste an existing task URL · Task already exists in this chat/session |
+| Primary repo (only if ambiguous) | Backend / mixed **(Recommended)** · Frontend-only · Tests-only |
+| Dirty git / park | Stash or WIP-commit current work, then branch from `staging` **(Recommended)** · I already parked it · Work on current branch (only if they insist and it already matches the task) |
+
+After each answer, proceed; do not re-ask settled items. When the user says “create a ClickUp task”, that **is** the explicit ask for Phase 1 / short-path intake.
+
 ## Which path?
 
 | Situation | Path |
@@ -31,6 +49,8 @@ This skill owns: ClickUp intake (create only on explicit ask), status ladder, pr
 | PR(s) already merged to `staging` | **Post-merge** → `move to staging` |
 
 If short-path scope becomes unclear or grows, **upgrade to the full path** (grill → PRD → slices) before continuing.
+
+If path is unclear after reading the user message, use **Intake — ask when missing** (path question) before branching or writing a PRD.
 
 ---
 
@@ -58,9 +78,9 @@ Later: coding → Ready-PR → Post-merge (see below). Do not force full impleme
 **Completion:** A ClickUp task id/URL is known and status is `requirement definition` (full path).
 
 1. If the user already gave a task URL/id → use it. Fetch the task if useful.
-2. If no task exists → **create only when the user explicitly asks**. Use MCP from `.cursorrules` (discover tools first). Include title, short description, and **How to test** unless they opt out. Default list/assignee from `.cursorrules`.
+2. If no task is known → run **Intake — ask when missing** (ClickUp row). **Create only** when they choose create / say “create a ClickUp task”. Use MCP from `.cursorrules` (discover tools first). Include title, short description, and **How to test** unless they opt out. Default list/assignee from `.cursorrules`.
 3. Set status to `requirement definition` for full-path intake (existing ARchaser name only).
-4. Do **not** create tasks for every observation or mid-thought — wait for an explicit ask.
+4. Do **not** create tasks for every observation or mid-thought — wait for an explicit ask (including answering the intake question with “create”).
 
 ### Phase 2 — Grill
 
@@ -146,7 +166,7 @@ Allowed **only** for tiny, obvious fixes (e.g. typo, one-liner). Skips grill, PR
 
 **Completion:** Fix is on a named feature branch from `staging`, ready for (or past) the Ready-PR phase; ClickUp statuses follow the short ladder.
 
-1. **Ensure ClickUp task** — URL/id known, or create **only on explicit ask** (with How to test unless opted out). May start at `selected for development` (skip early design statuses).
+1. **Ensure ClickUp task** — if URL/id unknown, ask via **Intake**; create **only** when they confirm create. May start at `selected for development` (skip early design statuses).
 2. **Branch** from latest `staging` in the primary repo: `{type}/CU-{taskId}-{short-slug}`. Same naming and primary-repo rules as full path. Sibling repos only when touched.
 3. **Fix** on that branch. Set status to `in progress` when coding starts.
 4. If scope grows or becomes unclear → **stop short path** and **upgrade to full path** (grill → PRD → slices) before more code.
@@ -228,7 +248,8 @@ If invoked mid-flow (task exists, grill done, branch exists, coding done, etc.):
 
 ## Hard rules (checklist)
 
-- [ ] ClickUp create only on explicit ask
+- [ ] If path / ClickUp / primary repo / dirty-git handling is missing → **ask** (AskQuestion one-at-a-time); do not guess or create a task unprompted
+- [ ] ClickUp create only on explicit ask (including answering intake with “create”)
 - [ ] Full path: branch only after grill; from latest `staging`; primary repo only first
 - [ ] Short path: skip grill/PRD/slices only for tiny obvious fixes; still ClickUp + named branch + ready PR rules; upgrade when scope grows
 - [ ] Interrupt: park WIP; new task on ask; new branch from fresh `staging`; refuse mixing into parked branch
