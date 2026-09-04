@@ -20,7 +20,12 @@ import {
 } from "@archaser/database";
 import { QuietNestLogger } from "@archaser/auth";
 import type { Response } from "express";
-import { bindCreditInsurancePrisma } from "@archaser/credit-insurance-domain";
+import {
+    bindCreditInsurancePrisma,
+    creditAsOfBackfillBullJobId,
+    listRunningCreditAsOfBackfillAccountIds,
+    runCreditAsOfBackfillJob,
+} from "@archaser/credit-insurance-domain";
 import {
     createBillingConnectorMetricsSinkFromProm,
     finalizeAwaitingPostIngestDrainExecutions,
@@ -40,8 +45,17 @@ import {
     type CronJobResult,
 } from "@archaser/cron-jobs";
 import { registerBillingConnectorSyncCounters } from "./billing-connector-sync-counters";
+import { requeueCreditAsOfBackfillBullJob } from "./backfill-bull-job.util";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
+const BACKFILL_QUEUE_NAME =
+    process.env.BULLMQ_CREDIT_ASOF_BACKFILL_QUEUE ||
+    "archaser-credit-asof-backfill";
+
+/** Generate runs for hours; default BullMQ lock (30s) causes false stalls on restart. */
+const BACKFILL_LOCK_DURATION_MS = Number(
+    process.env.BULLMQ_CREDIT_ASOF_BACKFILL_LOCK_MS || 600_000
+);
 
 /** Same names as API business metrics so Grafana `{instance="Staging"}` scrapes worker runs. */
 const cronJobExecutionsTotal = new Counter({
@@ -58,7 +72,6 @@ const cronJobDurationSeconds = new Gauge({
     registers: [],
 });
 
-
 type RunNowData = {
     cronJobId: number;
     triggeredBy?: string;
@@ -70,7 +83,9 @@ class WorkerRuntimeService implements OnModuleDestroy {
     private readonly logger = new Logger(WorkerRuntimeService.name);
     private connection: IORedis | null = null;
     private worker: Worker | null = null;
+    private backfillWorker: Worker | null = null;
     private queue: Queue | null = null;
+    private backfillQueue: Queue | null = null;
     private prisma: PrismaClient | null = null;
     readonly register = new Registry();
 
@@ -114,6 +129,9 @@ class WorkerRuntimeService implements OnModuleDestroy {
             maxRetriesPerRequest: null,
         });
         this.queue = new Queue(QUEUE_NAME, { connection: this.connection });
+        this.backfillQueue = new Queue(BACKFILL_QUEUE_NAME, {
+            connection: this.connection,
+        });
 
         try {
             this.prisma = createPrismaClient({
@@ -138,11 +156,116 @@ class WorkerRuntimeService implements OnModuleDestroy {
             { connection: this.connection }
         );
 
+        this.backfillWorker = new Worker(
+            BACKFILL_QUEUE_NAME,
+            async (job) => this.handleCreditAsOfBackfillJob(job),
+            {
+                connection: this.connection,
+                concurrency: 1,
+                lockDuration: BACKFILL_LOCK_DURATION_MS,
+                maxStalledCount: 3,
+            }
+        );
+
+        this.logger.log(
+            `CreditAsOfBackfill worker listening on queue ${BACKFILL_QUEUE_NAME}`
+        );
+
+        this.backfillWorker.on("active", (job) => {
+            const accountId = Number(
+                (job.data as { accountId?: number }).accountId
+            );
+            this.logger.log(
+                `CreditAsOfBackfill queue active: jobId=${job.id} accountId=${accountId}`
+            );
+        });
+
+        this.backfillWorker.on("completed", (job) => {
+            this.logger.log(
+                `CreditAsOfBackfill queue completed: jobId=${job.id}`
+            );
+        });
+
+        this.backfillWorker.on("failed", (job, err) => {
+            this.logger.error(
+                `CreditAsOfBackfill job ${job?.id} failed: ${err.message}`
+            );
+        });
+
         this.worker.on("failed", (job, err) => {
             this.logger.error(`Job ${job?.id} failed: ${err.message}`);
         });
 
         await this.syncRepeatables("startup");
+        await this.reclaimRunningCreditAsOfBackfillJobs();
+    }
+
+    private async handleCreditAsOfBackfillJob(job: Job): Promise<unknown> {
+        if (!this.prisma) {
+            throw new Error("database unavailable");
+        }
+        bindCreditInsurancePrisma(this.prisma);
+        const data = job.data as { accountId: number };
+        const accountId = Number(data.accountId);
+        this.logger.log(
+            `CreditAsOfBackfill starting for account ${accountId}`
+        );
+        const result = await runCreditAsOfBackfillJob(accountId, {
+            dbClient: this.prisma,
+        });
+        this.logger.log(
+            `CreditAsOfBackfill finished for account ${accountId}: status=${result.status} daysDone=${result.daysDone}/${result.daysTotal}`
+        );
+        return result;
+    }
+
+    async onModuleDestroy(): Promise<void> {
+        await this.backfillWorker?.close();
+        await this.worker?.close();
+        await this.backfillQueue?.close();
+        await this.queue?.close();
+        await this.connection?.quit();
+        await this.prisma?.$disconnect();
+    }
+
+    private async reclaimRunningCreditAsOfBackfillJobs(): Promise<void> {
+        if (!this.prisma || !this.backfillQueue) {
+            return;
+        }
+        try {
+            const accountIds = await listRunningCreditAsOfBackfillAccountIds({
+                dbClient: this.prisma,
+            });
+            for (const accountId of accountIds) {
+                const jobId = creditAsOfBackfillBullJobId(accountId);
+                const legacyJob = await this.queue?.getJob(jobId);
+                if (legacyJob) {
+                    await legacyJob.remove();
+                    this.logger.log(
+                        `Removed legacy CreditAsOfBackfill job ${jobId} from cron queue`
+                    );
+                }
+                await requeueCreditAsOfBackfillBullJob(
+                    this.backfillQueue,
+                    jobId,
+                    accountId
+                );
+                this.logger.log(
+                    `Reclaimed CreditAsOfBackfill accountId=${accountId} jobId=${jobId} queue=${BACKFILL_QUEUE_NAME}`
+                );
+            }
+            if (accountIds.length > 0) {
+                this.logger.log(
+                    `Reclaimed ${accountIds.length} running CreditAsOfBackfill job(s)`
+                );
+            }
+        } catch (error) {
+            this.logger.warn(
+                `CreditAsOfBackfill reclaim skipped: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+        }
     }
 
     private async handleJob(job: Job): Promise<unknown> {
@@ -207,6 +330,13 @@ class WorkerRuntimeService implements OnModuleDestroy {
                 `AR post-ingest drain: ${result.itemsProcessed} processed, ${result.failures} failures, ${result.givenUp} given up`
             );
             return result;
+        }
+
+        if (job.name === "credit-asof-backfill") {
+            this.logger.warn(
+                "CreditAsOfBackfill job on cron queue (legacy); processing inline"
+            );
+            return this.handleCreditAsOfBackfillJob(job);
         }
 
         if (job.name.startsWith("cron:")) {
@@ -380,13 +510,6 @@ class WorkerRuntimeService implements OnModuleDestroy {
 
     async metrics(): Promise<string> {
         return this.register.metrics();
-    }
-
-    async onModuleDestroy() {
-        await this.worker?.close();
-        await this.queue?.close();
-        await this.connection?.quit();
-        await this.prisma?.$disconnect();
     }
 }
 
