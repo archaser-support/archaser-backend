@@ -83,6 +83,21 @@ BACKEND_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Ensure webroot directory exists for Let's Encrypt HTTP-01 challenge
 sudo mkdir -p /var/www/html
 
+# Clean up any dummy self-signed cert directories if force certs or invalid certs present
+cleanup_dummy_cert() {
+    local domain="$1"
+    local cert_file="/etc/letsencrypt/live/$domain/fullchain.pem"
+    if [[ -f "$cert_file" ]]; then
+        if sudo openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null | grep -q "CN = $domain"; then
+            log "Removing temporary self-signed certificate for $domain..."
+            sudo rm -rf "/etc/letsencrypt/live/$domain" "/etc/letsencrypt/archive/$domain" "/etc/letsencrypt/renewal/$domain.conf"
+        fi
+    fi
+}
+
+cleanup_dummy_cert "api.staging.archaser.com"
+cleanup_dummy_cert "api.production.archaser.com"
+
 # Ensure ssl parameters exist
 sudo mkdir -p /etc/letsencrypt
 if [[ ! -f /etc/letsencrypt/options-ssl-nginx.conf ]]; then
@@ -95,24 +110,59 @@ if [[ ! -f /etc/letsencrypt/ssl-dhparams.pem ]]; then
     sudo openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048 >/dev/null 2>&1 || true
 fi
 
-# Ensure self-signed temporary certificates exist so Nginx can validate config before Certbot runs
-ensure_dummy_cert() {
-    local domain="$1"
-    local cert_dir="/etc/letsencrypt/live/$domain"
-    if [[ ! -f "$cert_dir/fullchain.pem" || ! -f "$cert_dir/privkey.pem" ]]; then
-        log "Creating temporary certificate placeholder for $domain..."
-        sudo mkdir -p "$cert_dir"
-        sudo openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-            -keyout "$cert_dir/privkey.pem" \
-            -out "$cert_dir/fullchain.pem" \
-            -subj "/CN=$domain" >/dev/null 2>&1
-    fi
+if [[ "$SKIP_CERTS" == "false" ]]; then
+    log "Setting up temporary HTTP-01 challenge listener on Port 80 for Certbot..."
+    cat <<'HTTP_CONF' | sudo tee /etc/nginx/sites-available/archaser-single-ec2-api >/dev/null
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.staging.archaser.com api.production.archaser.com;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 200 "Certbot bootstrapping...";
+        add_header Content-Type text/plain;
+    }
 }
+HTTP_CONF
 
-ensure_dummy_cert "api.staging.archaser.com"
-ensure_dummy_cert "api.production.archaser.com"
+    sudo ln -sf /etc/nginx/sites-available/archaser-single-ec2-api /etc/nginx/sites-enabled/archaser-single-ec2-api
+    sudo rm -f /etc/nginx/sites-enabled/default
+    sudo nginx -t
+    sudo systemctl reload nginx
 
-log "Copying single EC2 Nginx configuration..."
+    issue_cert() {
+        local domain="$1"
+        log "Requesting official Let's Encrypt SSL certificate for $domain via webroot..."
+        local cmd=(sudo certbot certonly --webroot -w /var/www/html -d "$domain" --non-interactive --agree-tos)
+        if [[ "$FORCE_CERTS" == "true" ]]; then
+            cmd+=(--force-renewal)
+        fi
+        if [[ -n "$EMAIL" ]]; then
+            cmd+=(--email "$EMAIL")
+        else
+            cmd+=(--register-unsafely-without-email)
+        fi
+
+        if "${cmd[@]}"; then
+            log "✅ Successfully issued valid Let's Encrypt certificate for $domain"
+        else
+            echo "❌ Certbot webroot issuance failed for $domain."
+            echo "Please check:"
+            echo " 1. DNS A record for $domain points to this EC2 public IP."
+            echo " 2. AWS Security Group / Firewall allows HTTP (port 80) and HTTPS (port 443)."
+            exit 1
+        fi
+    }
+
+    issue_cert "api.staging.archaser.com"
+    issue_cert "api.production.archaser.com"
+fi
+
+log "Copying full single EC2 Nginx SSL configuration..."
 CONF_SRC="$BACKEND_DIR/nginx/archaser-single-ec2-api.conf"
 
 if [[ ! -f "$CONF_SRC" ]]; then
@@ -123,44 +173,10 @@ sudo cp "$CONF_SRC" /etc/nginx/sites-available/archaser-single-ec2-api
 sudo ln -sf /etc/nginx/sites-available/archaser-single-ec2-api /etc/nginx/sites-enabled/archaser-single-ec2-api
 sudo rm -f /etc/nginx/sites-enabled/default
 
-log "Testing Nginx configuration syntax..."
+log "Testing Nginx SSL configuration syntax..."
 sudo nginx -t
 
-log "Reloading Nginx..."
+log "Reloading Nginx with official SSL certs..."
 sudo systemctl reload nginx
 
-if [[ "$SKIP_CERTS" == "true" ]]; then
-    log "Skipping Let's Encrypt certificate generation (--skip-certs)"
-    exit 0
-fi
-
-issue_cert() {
-    local domain="$1"
-    log "Requesting official Let's Encrypt SSL certificate for $domain via webroot..."
-    local cmd=(sudo certbot certonly --webroot -w /var/www/html -d "$domain" --non-interactive --agree-tos)
-    if [[ "$FORCE_CERTS" == "true" ]]; then
-        cmd+=(--force-renewal)
-    fi
-    if [[ -n "$EMAIL" ]]; then
-        cmd+=(--email "$EMAIL")
-    else
-        cmd+=(--register-unsafely-without-email)
-    fi
-
-    if "${cmd[@]}"; then
-        log "✅ Successfully issued valid Let's Encrypt certificate for $domain"
-    else
-        echo "❌ Certbot webroot issuance failed for $domain."
-        echo "Please check:"
-        echo " 1. DNS A record for $domain points to this EC2 public IP."
-        echo " 2. AWS Security Group / Firewall allows HTTP (port 80) and HTTPS (port 443)."
-    fi
-}
-
-issue_cert "api.staging.archaser.com"
-issue_cert "api.production.archaser.com"
-
-log "Reloading Nginx with active valid SSL certs..."
-sudo nginx -t && sudo systemctl reload nginx
-
-log "Single-EC2 Nginx setup completed successfully!"
+log "Single-EC2 Nginx setup completed successfully! Real SSL certificates are now active."
