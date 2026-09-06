@@ -13,6 +13,8 @@ EMAIL=""
 SKIP_CERTS="false"
 FORCE_CERTS="false"
 
+USE_STANDALONE="false"
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -22,6 +24,7 @@ Options:
   --email <addr>       Let's Encrypt registration / renewal notices
   --skip-certs         Install nginx site configs only (no certbot)
   --force-certs        Re-issue certs even if they already exist
+  --standalone         Use certbot standalone mode instead of webroot
   -h, --help           Show help
 EOF
 }
@@ -47,6 +50,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force-certs)
             FORCE_CERTS="true"
+            shift
+            ;;
+        --standalone)
+            USE_STANDALONE="true"
             shift
             ;;
         -h|--help)
@@ -98,8 +105,6 @@ cleanup_dummy_cert() {
 
 cleanup_dummy_cert "api.staging.archaser.com"
 cleanup_dummy_cert "api.production.archaser.com"
-cleanup_dummy_cert "staging.archaser.com"
-cleanup_dummy_cert "production.archaser.com"
 
 # Ensure ssl parameters exist
 sudo mkdir -p /etc/letsencrypt
@@ -114,12 +119,16 @@ if [[ ! -f /etc/letsencrypt/ssl-dhparams.pem ]]; then
 fi
 
 if [[ "$SKIP_CERTS" == "false" ]]; then
-    log "Setting up temporary HTTP-01 challenge listener on Port 80 for Certbot..."
-    cat <<'HTTP_CONF' | sudo tee /etc/nginx/sites-available/archaser-single-ec2-api >/dev/null
+    if [[ "$USE_STANDALONE" == "true" ]]; then
+        log "Stopping Nginx to run Certbot in Standalone mode..."
+        sudo systemctl stop nginx || true
+    else
+        log "Setting up temporary HTTP-01 challenge listener on Port 80 for Certbot..."
+        cat <<'HTTP_CONF' | sudo tee /etc/nginx/sites-available/archaser-single-ec2-api >/dev/null
 server {
     listen 80;
     listen [::]:80;
-    server_name api.staging.archaser.com api.production.archaser.com staging.archaser.com production.archaser.com;
+    server_name api.staging.archaser.com api.production.archaser.com;
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -133,15 +142,22 @@ server {
 }
 HTTP_CONF
 
-    sudo ln -sf /etc/nginx/sites-available/archaser-single-ec2-api /etc/nginx/sites-enabled/archaser-single-ec2-api
-    sudo rm -f /etc/nginx/sites-enabled/default
-    sudo nginx -t
-    sudo systemctl reload nginx
+        sudo ln -sf /etc/nginx/sites-available/archaser-single-ec2-api /etc/nginx/sites-enabled/archaser-single-ec2-api
+        sudo rm -f /etc/nginx/sites-enabled/default
+        sudo nginx -t
+        sudo systemctl reload nginx
+    fi
 
     issue_cert() {
         local domain="$1"
-        log "Requesting official Let's Encrypt SSL certificate for $domain via webroot..."
-        local cmd=(sudo certbot certonly --webroot -w /var/www/html -d "$domain" --cert-name "$domain" --non-interactive --agree-tos)
+        log "Requesting official Let's Encrypt SSL certificate for $domain..."
+        local cmd=(sudo certbot certonly)
+        if [[ "$USE_STANDALONE" == "true" ]]; then
+            cmd+=(--standalone)
+        else
+            cmd+=(--webroot -w /var/www/html)
+        fi
+        cmd+=(-d "$domain" --cert-name "$domain" --non-interactive --agree-tos)
         if [[ "$FORCE_CERTS" == "true" ]]; then
             cmd+=(--force-renewal)
         fi
@@ -154,7 +170,24 @@ HTTP_CONF
         if "${cmd[@]}"; then
             log "✅ Successfully issued valid Let's Encrypt certificate for $domain"
         else
-            echo "❌ Certbot webroot issuance failed for $domain."
+            if [[ "$USE_STANDALONE" == "false" ]]; then
+                log "Webroot challenge failed for $domain. Attempting Standalone mode fallback..."
+                sudo systemctl stop nginx || true
+                local standalone_cmd=(sudo certbot certonly --standalone -d "$domain" --cert-name "$domain" --non-interactive --agree-tos)
+                if [[ "$FORCE_CERTS" == "true" ]]; then
+                    standalone_cmd+=(--force-renewal)
+                fi
+                if [[ -n "$EMAIL" ]]; then
+                    standalone_cmd+=(--email "$EMAIL")
+                else
+                    standalone_cmd+=(--register-unsafely-without-email)
+                fi
+                if "${standalone_cmd[@]}"; then
+                    log "✅ Successfully issued certificate for $domain using Standalone mode!"
+                    return 0
+                fi
+            fi
+            echo "❌ Certbot issuance failed for $domain."
             echo "Please check:"
             echo " 1. DNS A record for $domain points to this EC2 public IP."
             echo " 2. AWS Security Group / Firewall allows HTTP (port 80) and HTTPS (port 443)."
@@ -164,8 +197,6 @@ HTTP_CONF
 
     issue_cert "api.staging.archaser.com"
     issue_cert "api.production.archaser.com"
-    issue_cert "staging.archaser.com"
-    issue_cert "production.archaser.com"
 fi
 
 log "Copying full single EC2 Nginx SSL configuration..."
