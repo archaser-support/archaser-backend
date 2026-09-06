@@ -80,6 +80,9 @@ sudo apt-get install -y -qq nginx certbot python3-certbot-nginx openssl curl
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# Ensure webroot directory exists for Let's Encrypt HTTP-01 challenge
+sudo mkdir -p /var/www/html
+
 # Ensure ssl parameters exist
 sudo mkdir -p /etc/letsencrypt
 if [[ ! -f /etc/letsencrypt/options-ssl-nginx.conf ]]; then
@@ -97,7 +100,7 @@ ensure_dummy_cert() {
     local domain="$1"
     local cert_dir="/etc/letsencrypt/live/$domain"
     if [[ ! -f "$cert_dir/fullchain.pem" || ! -f "$cert_dir/privkey.pem" ]]; then
-        log "Creating self-signed temporary certificate for $domain (for initial Nginx validation)..."
+        log "Creating temporary certificate placeholder for $domain..."
         sudo mkdir -p "$cert_dir"
         sudo openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
             -keyout "$cert_dir/privkey.pem" \
@@ -133,21 +136,31 @@ fi
 
 issue_cert() {
     local domain="$1"
-    log "Requesting Let's Encrypt SSL certificate for $domain..."
-    local cmd=(sudo certbot --nginx -d "$domain" --non-interactive --agree-tos)
+    log "Requesting official Let's Encrypt SSL certificate for $domain via webroot..."
+    local cmd=(sudo certbot certonly --webroot -w /var/www/html -d "$domain" --non-interactive --agree-tos)
+    if [[ "$FORCE_CERTS" == "true" ]]; then
+        cmd+=(--force-renewal)
+    fi
     if [[ -n "$EMAIL" ]]; then
         cmd+=(--email "$EMAIL")
     else
         cmd+=(--register-unsafely-without-email)
     fi
 
-    "${cmd[@]}" || echo "Warning: Certbot issuance failed for $domain. Ensure DNS A record points to this EC2 instance."
+    if "${cmd[@]}"; then
+        log "✅ Successfully issued valid Let's Encrypt certificate for $domain"
+    else
+        echo "❌ Certbot webroot issuance failed for $domain."
+        echo "Please check:"
+        echo " 1. DNS A record for $domain points to this EC2 public IP."
+        echo " 2. AWS Security Group / Firewall allows HTTP (port 80) and HTTPS (port 443)."
+    fi
 }
 
 issue_cert "api.staging.archaser.com"
 issue_cert "api.production.archaser.com"
 
-log "Reloading Nginx with active SSL certs..."
+log "Reloading Nginx with active valid SSL certs..."
 sudo nginx -t && sudo systemctl reload nginx
 
 log "Single-EC2 Nginx setup completed successfully!"
