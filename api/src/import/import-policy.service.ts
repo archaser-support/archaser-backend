@@ -5,6 +5,8 @@ import { DatabaseService } from "../database/database.service";
 import {
     DAY_OF_MONTH_MAX,
     DAY_OF_MONTH_MIN,
+    SUBSTITUTE_EXTRA_DAYS_MAX,
+    SUBSTITUTE_EXTRA_DAYS_MIN,
     type MonthEndCutoffFields,
     validateMonthEndCutoffPair,
 } from "../credit-insurance/domain/shared/monthEndCutoffFields";
@@ -13,6 +15,27 @@ import {
     isAllowedPolicyExclusionReason,
     normalizePolicyExclusionReason,
 } from "@archaser/credit-insurance-domain";
+
+const LEGACY_MONTH_END_HEADERS = [
+    "mep_substitute_day_of_month",
+    "reporting_substitute_day_of_month",
+    "mep_cutoff_day_of_month",
+    "reporting_cutoff_day_of_month",
+    "payment_term_cutoff_day_of_month",
+    "payment_term_substitute_day_of_month",
+] as const;
+
+const DAY_OF_MONTH_FIELD_KEYS = [
+    "mep_cutoff_day",
+    "reporting_cutoff_day",
+    "payment_term_cutoff_day",
+    "payment_term_substitute_day",
+] as const satisfies ReadonlyArray<keyof MonthEndCutoffFields>;
+
+const SUBSTITUTE_EXTRA_DAYS_FIELD_KEYS = [
+    "mep_substitute_extra_days",
+    "reporting_substitute_extra_days",
+] as const satisfies ReadonlyArray<keyof MonthEndCutoffFields>;
 
 export type ImportPolicyRowInput = {
     policy_number?: unknown;
@@ -24,13 +47,13 @@ export type ImportPolicyRowInput = {
     approved_limit_currency?: unknown;
     max_payment_term?: unknown;
     max_allowed_mep?: unknown;
-    mep_cutoff_day_of_month?: unknown;
-    mep_substitute_day_of_month?: unknown;
+    mep_cutoff_day?: unknown;
+    mep_substitute_extra_days?: unknown;
     reporting_days?: unknown;
-    reporting_cutoff_day_of_month?: unknown;
-    reporting_substitute_day_of_month?: unknown;
-    payment_term_cutoff_day_of_month?: unknown;
-    payment_term_substitute_day_of_month?: unknown;
+    reporting_cutoff_day?: unknown;
+    reporting_substitute_extra_days?: unknown;
+    payment_term_cutoff_day?: unknown;
+    payment_term_substitute_day?: unknown;
     credit_score?: unknown;
     credit_score_input_date?: unknown;
     active_customer_since?: unknown;
@@ -48,12 +71,12 @@ type Prefill = {
     approved_limit: unknown;
     approved_limit_expiration_date: Date | null;
     customer_number_policy: string | null;
-    mep_cutoff_day_of_month: number | null;
-    mep_substitute_day_of_month: number | null;
-    reporting_cutoff_day_of_month: number | null;
-    reporting_substitute_day_of_month: number | null;
-    payment_term_cutoff_day_of_month: number | null;
-    payment_term_substitute_day_of_month: number | null;
+    mep_cutoff_day: number | null;
+    mep_substitute_extra_days: number | null;
+    reporting_cutoff_day: number | null;
+    reporting_substitute_extra_days: number | null;
+    payment_term_cutoff_day: number | null;
+    payment_term_substitute_day: number | null;
 };
 
 function isBlank(value: unknown): boolean {
@@ -114,6 +137,30 @@ function dayOrError(
     return parsed;
 }
 
+function extraDaysOrError(
+    value: unknown,
+    field: keyof MonthEndCutoffFields
+): number | null | ImportPolicyRowResult {
+    const parsed = integerOrError(value, field);
+    if (isFailure(parsed)) {
+        return fail(
+            "invalid_substitute_extra_days",
+            `import.validation.invalidSubstituteExtraDays:${field}`
+        );
+    }
+    if (parsed === null) return null;
+    if (
+        parsed < SUBSTITUTE_EXTRA_DAYS_MIN ||
+        parsed > SUBSTITUTE_EXTRA_DAYS_MAX
+    ) {
+        return fail(
+            "substitute_extra_days_out_of_range",
+            `import.validation.substituteExtraDaysOutOfRange:${field}`
+        );
+    }
+    return parsed;
+}
+
 function isFailure(value: unknown): value is ImportPolicyRowResult {
     return (
         typeof value === "object" &&
@@ -121,6 +168,21 @@ function isFailure(value: unknown): value is ImportPolicyRowResult {
         "success" in value &&
         (value as ImportPolicyRowResult).success === false
     );
+}
+
+function rejectLegacyMonthEndHeaders(
+    row: ImportPolicyRowInput
+): ImportPolicyRowResult | null {
+    const raw = row as Record<string, unknown>;
+    for (const header of LEGACY_MONTH_END_HEADERS) {
+        if (Object.prototype.hasOwnProperty.call(raw, header)) {
+            return fail(
+                "legacy_substitute_header",
+                `import.validation.legacySubstituteHeader:${header}`
+            );
+        }
+    }
+    return null;
 }
 
 function validateMonthEndFields(
@@ -136,22 +198,22 @@ function validateMonthEndFields(
         ]
     > = [
         [
-            "mep_cutoff_day_of_month",
-            "mep_substitute_day_of_month",
+            "mep_cutoff_day",
+            "mep_substitute_extra_days",
             "MEP",
             "mep_cutoff_requires_substitute",
             "mep_substitute_requires_cutoff",
         ],
         [
-            "reporting_cutoff_day_of_month",
-            "reporting_substitute_day_of_month",
+            "reporting_cutoff_day",
+            "reporting_substitute_extra_days",
             "Reporting",
             "reporting_cutoff_requires_substitute",
             "reporting_substitute_requires_cutoff",
         ],
         [
-            "payment_term_cutoff_day_of_month",
-            "payment_term_substitute_day_of_month",
+            "payment_term_cutoff_day",
+            "payment_term_substitute_day",
             "Payment term",
             "payment_term_cutoff_requires_substitute",
             "payment_term_substitute_requires_cutoff",
@@ -182,6 +244,9 @@ export class ImportPolicyService {
         row: ImportPolicyRowInput,
         context: { accountId: number; userId: string; businessUnitId: number | null; role: string }
     ): Promise<ImportPolicyRowResult> {
+        const legacyHeaderError = rejectLegacyMonthEndHeaders(row);
+        if (legacyHeaderError) return legacyHeaderError;
+
         const policyNumber = String(row.policy_number ?? "").trim();
         const customerNumber = String(row.customer_number ?? "").trim();
         if (!policyNumber) {
@@ -268,12 +333,12 @@ export class ImportPolicyService {
                 max_payment_term: true,
                 max_allowed_mep: true,
                 reporting_days: true,
-                mep_cutoff_day_of_month: true,
-                mep_substitute_day_of_month: true,
-                reporting_cutoff_day_of_month: true,
-                reporting_substitute_day_of_month: true,
-                payment_term_cutoff_day_of_month: true,
-                payment_term_substitute_day_of_month: true,
+                mep_cutoff_day: true,
+                mep_substitute_extra_days: true,
+                reporting_cutoff_day: true,
+                reporting_substitute_extra_days: true,
+                payment_term_cutoff_day: true,
+                payment_term_substitute_day: true,
                 cost_percent: true,
                 registration_fee_percent: true,
             },
@@ -374,12 +439,12 @@ export class ImportPolicyService {
             approved_limit: named?.customer_max_limit ?? null,
             approved_limit_expiration_date: named?.limit_expiration_date ?? null,
             customer_number_policy: named?.customer_number ?? null,
-            mep_cutoff_day_of_month: policy.mep_cutoff_day_of_month ?? null,
-            mep_substitute_day_of_month: policy.mep_substitute_day_of_month ?? null,
-            reporting_cutoff_day_of_month: policy.reporting_cutoff_day_of_month ?? null,
-            reporting_substitute_day_of_month: policy.reporting_substitute_day_of_month ?? null,
-            payment_term_cutoff_day_of_month: policy.payment_term_cutoff_day_of_month ?? null,
-            payment_term_substitute_day_of_month: policy.payment_term_substitute_day_of_month ?? null,
+            mep_cutoff_day: policy.mep_cutoff_day ?? null,
+            mep_substitute_extra_days: policy.mep_substitute_extra_days ?? null,
+            reporting_cutoff_day: policy.reporting_cutoff_day ?? null,
+            reporting_substitute_extra_days: policy.reporting_substitute_extra_days ?? null,
+            payment_term_cutoff_day: policy.payment_term_cutoff_day ?? null,
+            payment_term_substitute_day: policy.payment_term_substitute_day ?? null,
         };
 
         const dateFields = [
@@ -405,15 +470,20 @@ export class ImportPolicyService {
             parsedNumbers.set(field, parsed);
         }
         const monthEndFields: MonthEndCutoffFields = {
-            mep_cutoff_day_of_month: null,
-            mep_substitute_day_of_month: null,
-            reporting_cutoff_day_of_month: null,
-            reporting_substitute_day_of_month: null,
-            payment_term_cutoff_day_of_month: null,
-            payment_term_substitute_day_of_month: null,
+            mep_cutoff_day: null,
+            mep_substitute_extra_days: null,
+            reporting_cutoff_day: null,
+            reporting_substitute_extra_days: null,
+            payment_term_cutoff_day: null,
+            payment_term_substitute_day: null,
         };
-        for (const key of Object.keys(monthEndFields) as Array<keyof MonthEndCutoffFields>) {
+        for (const key of DAY_OF_MONTH_FIELD_KEYS) {
             const parsed = dayOrError(row[key], key);
+            if (isFailure(parsed)) return parsed;
+            monthEndFields[key] = parsed ?? prefill[key];
+        }
+        for (const key of SUBSTITUTE_EXTRA_DAYS_FIELD_KEYS) {
+            const parsed = extraDaysOrError(row[key], key);
             if (isFailure(parsed)) return parsed;
             monthEndFields[key] = parsed ?? prefill[key];
         }
