@@ -12,6 +12,7 @@ import {
     type CustomerPolicyRowSelected,
 } from "./customerPolicyTypes";
 import {
+    resolveApprovedLimitInAccountCurrency,
     sumInvoiceCapacityGapForCustomerPolicy,
     type CurrencyRateRow,
 } from "./invoiceCapacityGapAmounts";
@@ -24,6 +25,7 @@ import {
     hasActiveLinkedPolicy,
     isUncoveredExposureCustomer,
 } from "./policyExclusion";
+import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import { syncCreditInsuranceGapPipelineForCustomer } from "./syncCreditInsuranceGapPipeline";
 
 const POLICY_GAP_SELECT = {
@@ -159,9 +161,9 @@ async function resolveUninsuredFields(params: {
 }
 
 /**
- * Aggregate invoice SUMs onto CustomerPolicy rows (D8).
- * `capacity_gap_amount` stores the KPI rollup (same as golden harness), not raw invoice sum.
- * `retained_capacity_gap` holds rollup state between sync runs.
+ * Aggregate capacity gap onto CustomerPolicy rows.
+ * `capacity_gap_amount` = max(0, open AR − effective limit) in account currency.
+ * Invoice gaps are a live waterfall cache; Σ gaps should match the card in single-currency cases.
  */
 export async function syncCustomerPolicyGapAmountsForCustomer(
     customerId: number,
@@ -291,21 +293,50 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
                 policyId,
                 dbClient
             ));
-        const approvedLimit = Number(policyFields.approved_limit ?? 0);
+        const baseApprovedLimit = Number(policyFields.approved_limit ?? 0);
+        const resolved = await resolveEffectiveApprovedLimit(customerId, {
+            baseApprovedLimit: policyFields.approved_limit,
+            baseApprovedLimitCurrency: limitCurrency,
+            outdatedDcl: Boolean(policyFields.outdated_dcl),
+            excludedFromPolicy: Boolean(policyFields.excluded_from_policy),
+            parentPrimaryPolicyId: policyId,
+            asOfDate: options?.rateDate ?? startOfTodayUtc(),
+            dbClient,
+        });
+        if (resolved.missingRate) {
+            missingRate = true;
+        }
+        const effectiveLimitInLimitCcy = Math.max(
+            0,
+            Number(
+                resolved.effectiveApprovedLimit ?? baseApprovedLimit
+            )
+        );
+        const effectiveLimitInAccount =
+            await resolveApprovedLimitInAccountCurrency(
+                customer.account_id,
+                customerId,
+                policyId,
+                effectiveLimitInLimitCcy,
+                limitCurrency,
+                accountCurrency,
+                dbClient
+            );
         const kpi = computePolicyCapacityGapKpi({
             totalAr: openAr,
-            sumInvoiceGaps,
-            approvedLimit,
+            effectiveLimit: effectiveLimitInAccount,
             retainedCapacityGap: policyRow.retained_capacity_gap,
         });
         const capacityGapKpi = kpi.capacityGapAmount;
         const gapLimitKpi =
-            sumInvoiceGaps > 0
-                ? gapLimit * (capacityGapKpi / sumInvoiceGaps)
-                : 0;
+            limitCurrency &&
+            accountCurrency &&
+            limitCurrency === accountCurrency
+                ? capacityGapKpi
+                : Math.max(0, gapLimit);
 
         // Uninsured exposure is AR-bucket based, so it comes from the bucket
-        // computation. Capacity gap stays owned by the invoice-SUM KPI above.
+        // computation. Capacity gap card is AR − effective limit.
         const uninsuredFields = await resolveUninsuredFields({
             accountId: customer.account_id,
             customerId,

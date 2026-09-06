@@ -80,6 +80,8 @@ export {
     computeInvoiceCapacityGapContribution,
     computeInvoiceInsuranceRowData,
     computeLimitAssessedAmountForNewOpenInvoice,
+    allocateLiveCapacityGapWaterfall,
+    compareInvoicesForLiveCapacityGapWaterfall,
     invoiceOutstandingInLimitCurrency,
     parseImportDateToLocalCalendarDate,
     shouldSetReportingBreach,
@@ -128,8 +130,12 @@ export {
 export {
     asOfCustomerOverdueBlockAt,
     asOfTermsScopeKey,
+    buildAsOfAtRiskInvoiceInputsByCustomerInAccountCurrencyFromLines,
+    buildAsOfAtRiskInvoiceInputsFromLines,
     loadAsOfOpenInvoiceCandidates,
+    overlayAsOfLiveCapacityGapWaterfallOnLines,
     overlayAsOfTermsFlagsOnLines,
+    type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
     type AsOfPolicyTermsForBreach,
 } from "./credit-insurance/domain/asOfOpenAr";
@@ -200,3 +206,7 @@ export {
     recomputeGapInBaseCurrencyForCustomer,
     syncCustomerPolicyGapAmountsForCustomer,
 } from "./credit-insurance/domain/syncCustomerPolicyGapAmounts";
+export {
+    ensureCustomerCapacityGapStored,
+    syncCreditInsuranceGapPipelineForCustomer,
+} from "./credit-insurance/domain/syncCreditInsuranceGapPipeline";

@@ -1,10 +1,12 @@
 # 01 — Shared formula + customer live KPIs
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1, 2, 3, 4, 5, 6, 13, 15, 16, 17, 18
 **PRD:** `.cursor/plans/at-risk-per-invoice-max.prd.md`
+
+> **Re-verify after [05](05-live-capacity-gap-waterfall.md):** Ex1/Ex2 and card vs invoice gaps assume **live** waterfall gaps, not sticky open stamps.
 
 ## What to build
 
@@ -20,11 +22,11 @@ Introduce (or replace) the shared credit-insurance at-risk seam so customer live
 
 ## Acceptance criteria
 
-- [ ] Customer dashboard At Risk equals the manual sum of per-invoice max(gap, breach) for insured customers
-- [ ] Uncovered / excluded customers still show at-risk = total open AR
-- [ ] Terms Breach outstanding card behavior unchanged
-- [ ] Health index / compliant exposure use the new at-risk
-- [ ] Dual-currency secondary at-risk (when shown) uses the same rule
+- [x] Customer dashboard At Risk equals the manual sum of per-invoice max(gap, breach) for insured customers
+- [x] Uncovered / excluded customers still show at-risk = total open AR
+- [x] Terms Breach outstanding card behavior unchanged
+- [x] Health index / compliant exposure use the new at-risk
+- [x] Dual-currency secondary at-risk (when shown) uses the same rule
 
 ## How to test
 

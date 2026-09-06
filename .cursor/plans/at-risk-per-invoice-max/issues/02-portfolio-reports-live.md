@@ -1,6 +1,6 @@
 # 02 — Portfolio + report live enrichment
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-shared-formula-customer-kpis](01-shared-formula-customer-kpis.md)
 **User stories:** 7, 8, 9, 16
@@ -12,9 +12,9 @@ Wire portfolio credit-dashboard at-risk and report `at_risk_exposure` enrichment
 
 ## Acceptance criteria
 
-- [ ] Portfolio at-risk matches the sum of in-scope customer at-risk under the new formula
-- [ ] No extra policy residual is added on top of customer sums
-- [ ] Report enrichment `at_risk_exposure` matches the same formula for insured vs uncovered customers
+- [x] Portfolio at-risk matches the sum of in-scope customer at-risk under the new formula
+- [x] No extra policy residual is added on top of customer sums
+- [x] Report enrichment `at_risk_exposure` matches the same formula for insured vs uncovered customers
 
 ## How to test
 

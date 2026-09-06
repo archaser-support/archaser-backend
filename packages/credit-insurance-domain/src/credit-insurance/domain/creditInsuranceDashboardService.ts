@@ -31,6 +31,7 @@ import {
     invoiceOutstandingLeft,
     invoiceOutstandingInAccountCurrency,
     sumInvoiceCapacityGapContributions,
+    type CustomerAtRiskInvoiceInput,
     type InvoiceForCapacityGapSum,
 } from "./invoiceInsuranceFields";
 import {
@@ -243,20 +244,6 @@ function dashboardCapacityGapFromStored(c: {
     capacity_gap_amount?: number | null;
 }): number {
     return storedCapacityGapAmount(c);
-}
-
-function capacityGapForCustomerAtRisk(
-    c: {
-        id: number;
-        policy_id: number | null;
-        outdated_dcl?: boolean | null;
-        approved_limit?: Prisma.Decimal | null;
-        capacity_gap_amount?: number | null;
-    },
-    _useInvoiceSnapshots: boolean,
-    _invoiceGapByCustomerPolicy: Map<string, number>
-): number {
-    return dashboardCapacityGapFromStored(c);
 }
 
 function creditScoreExpiryOnCalendar(
@@ -593,6 +580,160 @@ export async function getCustomerTermsBreachOutstandingByCurrencyForAtRisk(
     );
 }
 
+type AtRiskInvoiceSqlRow = {
+    outstanding: number | null;
+    capacity_gap_amount: number | null;
+    has_terms_breach: boolean | null;
+};
+
+/**
+ * Open Due/Overdue invoices for per-invoice at-risk (account-currency gap + outstanding).
+ * Outstanding basis matches terms-breach line SQL; breach = any persisted terms-breach flag.
+ */
+export async function fetchCustomerAtRiskInvoiceInputs(
+    accountId: number,
+    customerId: number,
+    options?: { policyId?: number }
+): Promise<CustomerAtRiskInvoiceInput[]> {
+    const policyId = options?.policyId;
+    const rows = await prisma.$queryRaw<AtRiskInvoiceSqlRow[]>`
+        SELECT
+          (
+            CASE
+              WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
+              ELSE COALESCE(i.customer_outstanding_debt, 0)
+            END
+          )::float AS outstanding,
+          COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
+          (
+            i.reporting_breach = true
+            OR i.ctv_payment_term = true
+            OR i.ctv_customer_overdue_mep = true
+            OR i.ctv_outdated_dcl = true
+            OR i.ctv_invoice_after_policy_end = true
+          ) AS has_terms_breach
+        FROM "Invoice" i
+        WHERE i.account_id = ${accountId}
+          AND i.customer_id = ${customerId}
+          AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
+          ${policyId != null ? Prisma.sql`AND i.policy_id = ${policyId}` : Prisma.empty}
+    `;
+    return rows.map((row) => ({
+        outstanding: Math.max(0, Number(row.outstanding ?? 0)),
+        capacityGapAmount: Math.max(0, Number(row.capacity_gap_amount ?? 0)),
+        hasTermsBreach: row.has_terms_breach === true,
+    }));
+}
+
+/**
+ * Open Due/Overdue invoices in a customer/invoice currency for secondary at-risk.
+ * Uses limit-currency capacity gap and customer-side outstanding (same as secondary terms breach).
+ */
+export async function fetchCustomerAtRiskInvoiceInputsByCurrency(
+    accountId: number,
+    customerId: number,
+    currency: string,
+    options?: { policyId?: number }
+): Promise<CustomerAtRiskInvoiceInput[]> {
+    const code = currency.trim().toUpperCase();
+    if (!code) {
+        return [];
+    }
+    const policyId = options?.policyId;
+    const rows = await prisma.$queryRaw<AtRiskInvoiceSqlRow[]>`
+        SELECT
+          (
+            CASE
+              WHEN COALESCE(i.customer_outstanding_debt, 0) != 0 THEN i.customer_outstanding_debt
+              ELSE COALESCE(i.amount, 0)
+            END
+          )::float AS outstanding,
+          COALESCE(i.capacity_gap_amount_limit, 0)::float AS capacity_gap_amount,
+          (
+            i.reporting_breach = true
+            OR i.ctv_payment_term = true
+            OR i.ctv_customer_overdue_mep = true
+            OR i.ctv_outdated_dcl = true
+            OR i.ctv_invoice_after_policy_end = true
+          ) AS has_terms_breach
+        FROM "Invoice" i
+        WHERE i.account_id = ${accountId}
+          AND i.customer_id = ${customerId}
+          AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
+          AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
+          ${policyId != null ? Prisma.sql`AND i.policy_id = ${policyId}` : Prisma.empty}
+    `;
+    return rows.map((row) => ({
+        outstanding: Math.max(0, Number(row.outstanding ?? 0)),
+        capacityGapAmount: Math.max(0, Number(row.capacity_gap_amount ?? 0)),
+        hasTermsBreach: row.has_terms_breach === true,
+    }));
+}
+
+type AtRiskInvoiceByCustomerSqlRow = AtRiskInvoiceSqlRow & {
+    customer_id: number;
+};
+
+/**
+ * Open Due/Overdue at-risk invoice inputs grouped by customer (account-currency gap + outstanding).
+ * Same line basis as {@link fetchCustomerAtRiskInvoiceInputs}.
+ */
+export async function fetchAtRiskInvoiceInputsByCustomerMap(
+    accountId: number,
+    options?: { policyId?: number; customerIds?: number[] }
+): Promise<Map<number, CustomerAtRiskInvoiceInput[]>> {
+    const customerIds = options?.customerIds;
+    if (customerIds != null && customerIds.length === 0) {
+        return new Map();
+    }
+    const policyId = options?.policyId;
+    const customerFilter =
+        customerIds != null
+            ? Prisma.sql`AND i.customer_id IN (${Prisma.join(customerIds)})`
+            : Prisma.empty;
+    const rows = await prisma.$queryRaw<AtRiskInvoiceByCustomerSqlRow[]>`
+        SELECT
+          i.customer_id,
+          (
+            CASE
+              WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
+              ELSE COALESCE(i.customer_outstanding_debt, 0)
+            END
+          )::float AS outstanding,
+          COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
+          (
+            i.reporting_breach = true
+            OR i.ctv_payment_term = true
+            OR i.ctv_customer_overdue_mep = true
+            OR i.ctv_outdated_dcl = true
+            OR i.ctv_invoice_after_policy_end = true
+          ) AS has_terms_breach
+        FROM "Invoice" i
+        WHERE i.account_id = ${accountId}
+          AND i.status IN ('Due', 'Overdue')
+          AND i.amount >= 0
+          ${customerFilter}
+          ${policyId != null ? Prisma.sql`AND i.policy_id = ${policyId}` : Prisma.empty}
+    `;
+    const map = new Map<number, CustomerAtRiskInvoiceInput[]>();
+    for (const row of rows) {
+        const customerId = Number(row.customer_id);
+        if (!Number.isFinite(customerId)) {
+            continue;
+        }
+        const list = map.get(customerId) ?? [];
+        list.push({
+            outstanding: Math.max(0, Number(row.outstanding ?? 0)),
+            capacityGapAmount: Math.max(0, Number(row.capacity_gap_amount ?? 0)),
+            hasTermsBreach: row.has_terms_breach === true,
+        });
+        map.set(customerId, list);
+    }
+    return map;
+}
+
 type TermsBreachByCustomerRow = { customer_id: number; t: number | null };
 
 type OpenArByCustomerRow = { customer_id: number; ar: number | null };
@@ -850,14 +991,15 @@ export type CreditDashboardSummary = {
      */
     compliantExposure: number;
     /**
-     * Sum of per-customer allocated at-risk: no-policy customers → full AR;
-     * with policy → min(AR, capacity gap + terms breach outstanding);
-     * plus portfolio limit residual: max(0, Σ policy max(0, policy AR − max cover) − capacity gap total).
+     * Sum of per-customer at-risk under the shared formula: uncovered → full AR;
+     * insured → Σ max(capacity_gap_i, terms_breach_i) per open invoice.
+     * Live portfolio has no policy max-cover residual on top of customer sums.
      */
     atRiskExposure: number;
     /**
-     * Sum of min(AR, gap + terms breach) for customers with a linked policy only.
-     * Equals atRiskExposure minus withoutPolicy.totalAmount.
+     * Sum of insured-customer at-risk (same per-invoice max formula) only.
+     * Equals atRiskExposure minus withoutPolicy.totalAmount when without-policy
+     * cohort is included in scope.
      */
     policyRiskExposure: number;
     /**
@@ -865,8 +1007,8 @@ export type CreditDashboardSummary = {
      */
     policyRiskExposureCustomerCount: number;
     /**
-     * Uncapped driver sum: no-policy → full AR; with policy → capacity gap +
-     * terms breach net of invoice capacity gap (before min with AR).
+     * Same customer-sum drivers as {@link CreditDashboardSummary.atRiskExposure}
+     * (no post-sum AR min-cap; live path has no policy residual).
      */
     grossRiskExposure: number;
     overdueBlockCustomerCount: number;
@@ -1308,7 +1450,7 @@ export async function getCreditDashboardSummary(
         await fetchCustomerIdsWithActiveLinkedPolicy(customerIds);
     const customerHasActiveLinkedPolicy = (customerId: number): boolean =>
         activeLinkedPolicyCustomerIds.has(customerId);
-    const [openArByCustomer, termsOutstandingByCustomer, termsBreachForAtRiskByCustomer] =
+    const [openArByCustomer, termsOutstandingByCustomer] =
         asOfDate != null
             ? await (async () => {
                   const asOf = await import("./asOfOpenAr");
@@ -1336,16 +1478,6 @@ export async function getCreditDashboardSummary(
                               customerIds,
                           }
                       ),
-                      asOf.buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLines(
-                          lines,
-                          accountCurrency,
-                          asOfDate,
-                          {
-                              policyId,
-                              excludeCapacityGapInvoices: true,
-                              customerIds,
-                          }
-                      ),
                   ]);
               })()
             : await Promise.all([
@@ -1359,13 +1491,6 @@ export async function getCreditDashboardSummary(
                       accountCurrency,
                       policyId,
                       false,
-                      businessUnitFilter
-                  ),
-                  fetchTermsBreachOutstandingByCustomerInAccountCurrency(
-                      accountId,
-                      accountCurrency,
-                      policyId,
-                      true,
                       businessUnitFilter
                   ),
               ]);
@@ -1613,9 +1738,6 @@ export async function getCreditDashboardSummary(
     );
     const capacityTotal = policyGapRollup.gapBaseTotal;
     const customerOverLimit = policyGapRollup.customerOverLimitCount;
-    const policyCapacityGapById = policyGapRollup.gapByPolicyId;
-    const invoiceGapByCustomerPolicy = policyGapRollup.gapByCustomerPolicy;
-    const useInvoiceSnapshotsForAtRisk = false;
 
     const invRow = invAgg[0];
     let termsCount = invRow?.c ?? 0;
@@ -1708,73 +1830,151 @@ export async function getCreditDashboardSummary(
         : new Map<number, number>();
 
     /**
-     * Portfolio at-risk / compliant: per customer, no policy → all AR at-risk;
-     * with policy → min(AR, capacity gap + terms breach), terms breach excluding
-     * gap invoices so one invoice is not double-counted.
+     * Portfolio at-risk / compliant: sum of per-customer shared formula
+     * (uncovered → full AR; insured → Σ max(gap, breach)); no policy max-cover residual.
+     * As-of snapshot days use payment-ledger open invoices for that day.
      */
     let atRiskExposure = 0;
     let policyRiskExposure = 0;
     let policyRiskExposureCustomerCount = 0;
     let grossRiskExposure = 0;
-    const allocatedRiskByPolicyId = new Map<number, number>();
-    let withoutPolicyAtRisk = 0;
+
+    const insuredCustomerIdsForAtRisk = dashboardCustomers
+        .filter((c) => {
+            if (isUncoveredExposureCohortCustomer(c)) {
+                return false;
+            }
+            return openArForCustomer(c) > 0;
+        })
+        .map((c) => c.id);
+
+    const atRiskInvoicesByCustomer =
+        asOfDate != null
+            ? await (async () => {
+                  const asOf = await import("./asOfOpenAr");
+                  let lines =
+                      asOfLines ??
+                      (await asOf.loadAsOfOpenInvoiceCandidates(
+                          accountId,
+                          asOfDate,
+                          { customerIds: insuredCustomerIdsForAtRisk, policyId }
+                      ));
+                  const scopeByCustomerPolicy = new Map<
+                      string,
+                      import("./asOfOpenAr").AsOfCapacityGapWaterfallScope
+                  >();
+                  for (const c of dashboardCustomers) {
+                      if (isUncoveredExposureCohortCustomer(c)) {
+                          continue;
+                      }
+                      if (
+                          insuredCustomerIdsForAtRisk.length > 0 &&
+                          !insuredCustomerIdsForAtRisk.includes(c.id)
+                      ) {
+                          continue;
+                      }
+                      const limitCurrency =
+                          c.approved_limit_currency?.trim().toUpperCase() ||
+                          accountCurrency;
+                      let effectiveLimit = Math.max(
+                          0,
+                          Number(c.approved_limit ?? 0)
+                      );
+                      if (
+                          c.approved_limit != null &&
+                          c.outdated_dcl !== true &&
+                          c.excluded_from_policy !== true
+                      ) {
+                          const resolved = await resolveEffectiveApprovedLimit(
+                              c.id,
+                              {
+                                  baseApprovedLimit: c.approved_limit,
+                                  baseApprovedLimitCurrency: limitCurrency,
+                                  outdatedDcl: c.outdated_dcl ?? false,
+                                  excludedFromPolicy:
+                                      c.excluded_from_policy ?? false,
+                                  parentPrimaryPolicyId:
+                                      policyId ?? c.policy_id ?? undefined,
+                                  asOfDate,
+                              }
+                          );
+                          effectiveLimit = Math.max(
+                              0,
+                              Number(
+                                  resolved.effectiveApprovedLimit ??
+                                      effectiveLimit
+                              )
+                          );
+                      }
+                      const scopeKey = asOf.asOfTermsScopeKey(
+                          c.id,
+                          policyId ?? c.policy_id ?? null
+                      );
+                      scopeByCustomerPolicy.set(scopeKey, {
+                          effectiveLimit,
+                          limitCurrency,
+                          zeroGaps: Boolean(c.outdated_dcl),
+                      });
+                      if (
+                          c.policy_id != null &&
+                          (policyId == null || policyId === c.policy_id)
+                      ) {
+                          scopeByCustomerPolicy.set(
+                              asOf.asOfTermsScopeKey(c.id, c.policy_id),
+                              {
+                                  effectiveLimit,
+                                  limitCurrency,
+                                  zeroGaps: Boolean(c.outdated_dcl),
+                              }
+                          );
+                      }
+                  }
+                  lines = asOf.overlayAsOfLiveCapacityGapWaterfallOnLines(
+                      lines,
+                      asOfDate,
+                      {
+                          scopeByCustomerPolicy,
+                          accountCurrency,
+                      }
+                  );
+                  return asOf.buildAsOfAtRiskInvoiceInputsByCustomerInAccountCurrencyFromLines(
+                      lines,
+                      accountCurrency,
+                      asOfDate,
+                      {
+                          policyId,
+                          customerIds: insuredCustomerIdsForAtRisk,
+                      }
+                  );
+              })()
+            : await fetchAtRiskInvoiceInputsByCustomerMap(accountId, {
+                  policyId: policyId ?? undefined,
+                  customerIds: insuredCustomerIdsForAtRisk,
+              });
+
     for (const c of dashboardCustomers) {
         const ar = openArForCustomer(c);
         if (ar <= 0) {
             continue;
         }
-        let allocated: number;
-        if (isUncoveredExposureCohortCustomer(c)) {
-            allocated = ar;
-            if (isNoPolicyExposureCohortCustomer(c)) {
-                withoutPolicyAtRisk += ar;
-            }
-            grossRiskExposure += ar;
-        } else {
-            const gap = capacityGapForCustomerAtRisk(
-                c,
-                useInvoiceSnapshotsForAtRisk,
-                invoiceGapByCustomerPolicy
-            );
-            const tb = termsBreachForAtRiskByCustomer.get(c.id) ?? 0;
-            grossRiskExposure += gap + tb;
-            allocated = computeCustomerRiskExposure({
-                totalAr: ar,
-                capacityGapAmount: gap,
-                termsBreachOutstanding: tb,
-            });
+        const uncovered = isUncoveredExposureCohortCustomer(c);
+        const allocated = computeCustomerRiskExposure({
+            uncovered,
+            totalAr: ar,
+            invoices: uncovered
+                ? []
+                : (atRiskInvoicesByCustomer.get(c.id) ?? []),
+        });
+        if (!uncovered) {
             policyRiskExposure += allocated;
             policyRiskExposureCustomerCount += 1;
-            if (c.policy_id != null) {
-                const prev = allocatedRiskByPolicyId.get(c.policy_id) ?? 0;
-                allocatedRiskByPolicyId.set(c.policy_id, prev + allocated);
-            }
         }
+        grossRiskExposure += allocated;
         atRiskExposure += allocated;
     }
-    const residualAtRiskByPolicyId = new Map<number, number>();
-    for (const [pid, row] of Array.from(policyArUsage.entries())) {
-        const maxCoverAccount =
-            policyMaxCoverInAccount.get(pid) ?? row.maxCover;
-        const exceededForPolicy = Math.max(0, row.totalAr - maxCoverAccount);
-        const capacityGapForPolicy = policyCapacityGapById.get(pid) ?? 0;
-        residualAtRiskByPolicyId.set(
-            pid,
-            Math.max(0, exceededForPolicy - capacityGapForPolicy)
-        );
-    }
 
-    // Recompute at-risk exposure with per-policy caps so one policy cannot wipe out another's compliant remainder.
-    let insuredAtRisk = 0;
-    for (const [pid, row] of Array.from(policyArUsage.entries())) {
-        const allocated = allocatedRiskByPolicyId.get(pid) ?? 0;
-        const residual = residualAtRiskByPolicyId.get(pid) ?? 0;
-        insuredAtRisk += Math.min(row.totalAr, allocated + residual);
-    }
-    atRiskExposure = withoutPolicyAtRisk + insuredAtRisk;
-    /** At-risk is an allocation over open receivables and must not exceed portfolio AR. */
-    atRiskExposure = Math.min(totalReceivables, atRiskExposure);
-    const compliantExposure = Math.max(0, totalReceivables - atRiskExposure);
+    const atRiskForHealth = Math.min(totalReceivables, atRiskExposure);
+    const compliantExposure = Math.max(0, totalReceivables - atRiskForHealth);
     /** (compliant exposure ÷ total receivables) × 100; same as (1 − at-risk/total) × 100 when compliant = total − at-risk. */
     const healthIndex =
         totalReceivables > 0
@@ -2372,7 +2572,7 @@ export type PolicyRiskExposureReportRow = {
     openAR: number;
     capacityGap: number;
     termsBreachOutstanding: number;
-    /** min(open AR, capacity gap + terms breach outstanding) — same as dashboard policy risk per row. */
+    /** Σ max(capacity_gap_i, terms_breach_i) — same as dashboard policy risk per row. */
     policyRiskAllocated: number;
     currency: string;
 };
@@ -2441,7 +2641,7 @@ export async function getPolicyRiskExposureReport(
         options.businessUnitFilter
     );
 
-    const [allRaw, openArByCustomer, termsOutstandingByCustomer, termsBreachForAtRiskByCustomer] =
+    const [allRaw, openArByCustomer, termsOutstandingByCustomer, atRiskInvoicesByCustomer] =
         await Promise.all([
             prisma.customer.findMany({
                 where: whereAll,
@@ -2464,11 +2664,9 @@ export async function getPolicyRiskExposureReport(
                 options.policyId,
                 false
             ),
-            fetchTermsBreachOutstandingByCustomer(
-                accountId,
-                options.policyId,
-                true
-            ),
+            fetchAtRiskInvoiceInputsByCustomerMap(accountId, {
+                policyId: options.policyId,
+            }),
         ]);
 
     const { enrichCustomersWithPolicyScope } = await import(
@@ -2497,11 +2695,10 @@ export async function getPolicyRiskExposureReport(
         }
         const gap = dashboardCapacityGapFromStored(c);
         const tb = termsOutstandingByCustomer.get(c.id) ?? 0;
-        const tbForAtRisk = termsBreachForAtRiskByCustomer.get(c.id) ?? 0;
         const allocated = computeCustomerRiskExposure({
+            uncovered: false,
             totalAr: ar,
-            capacityGapAmount: gap,
-            termsBreachOutstanding: tbForAtRisk,
+            invoices: atRiskInvoicesByCustomer.get(c.id) ?? [],
         });
         built.push({
             customerId: c.id,
