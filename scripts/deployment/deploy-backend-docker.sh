@@ -238,7 +238,9 @@ if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
 fi
 
 if [[ -z "$APP_DIR" ]]; then
-    if [[ "$ENVIRONMENT" == "staging" ]]; then
+    if [[ -f "$(pwd)/docker-compose.backend.$ENVIRONMENT.yml" || -f "$(pwd)/backend/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
+        APP_DIR="$(pwd)"
+    elif [[ "$ENVIRONMENT" == "staging" ]]; then
         APP_DIR="/home/ubuntu/api"
     else
         APP_DIR="/home/ubuntu/production"
