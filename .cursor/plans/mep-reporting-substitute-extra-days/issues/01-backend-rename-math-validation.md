@@ -1,6 +1,6 @@
 # 01 — Backend rename, validation, and target-date math
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1, 2, 3, 4, 11, 12, 14, 15, 16, 18
@@ -14,13 +14,13 @@ Change MEP and Reporting target-date calculation so that when cutoff applies, th
 
 ## Acceptance criteria
 
-- [ ] Schema/API fields renamed; stored values preserved
-- [ ] On/after cutoff: MEP/Reporting targets use original target + extra days
-- [ ] Before cutoff / unset pair: targets remain due + offset only
-- [ ] Payment Term substitute formula and field names unchanged
-- [ ] Validation: extra days 1–365; day-of-month fields still 1–31; pairs still required together
-- [ ] Policy import uses new headers only
-- [ ] No one-off invoice target backfill
+- [x] Schema/API fields renamed; stored values preserved
+- [x] On/after cutoff: MEP/Reporting targets use original target + extra days
+- [x] Before cutoff / unset pair: targets remain due + offset only
+- [x] Payment Term substitute formula and field names unchanged
+- [x] Validation: extra days 1–365; day-of-month fields still 1–31; pairs still required together
+- [x] Policy import uses new headers only
+- [x] No one-off invoice target backfill
 
 ## How to test
 

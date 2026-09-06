@@ -465,12 +465,12 @@ export class InsuranceEntitiesService {
                 max_payment_term: true,
                 max_allowed_mep: true,
                 reporting_days: true,
-                mep_cutoff_day_of_month: true,
-                mep_substitute_day_of_month: true,
-                reporting_cutoff_day_of_month: true,
-                reporting_substitute_day_of_month: true,
-                payment_term_cutoff_day_of_month: true,
-                payment_term_substitute_day_of_month: true,
+                mep_cutoff_day: true,
+                mep_substitute_extra_days: true,
+                reporting_cutoff_day: true,
+                reporting_substitute_extra_days: true,
+                payment_term_cutoff_day: true,
+                payment_term_substitute_day: true,
                 min_credit_score: true,
                 max_dcl: true,
                 cost_percent: true,
@@ -575,17 +575,17 @@ export class InsuranceEntitiesService {
         }
 
         const monthEndFields = {
-            mep_cutoff_day_of_month: policy.mep_cutoff_day_of_month ?? null,
-            mep_substitute_day_of_month:
-                policy.mep_substitute_day_of_month ?? null,
-            reporting_cutoff_day_of_month:
-                policy.reporting_cutoff_day_of_month ?? null,
-            reporting_substitute_day_of_month:
-                policy.reporting_substitute_day_of_month ?? null,
-            payment_term_cutoff_day_of_month:
-                policy.payment_term_cutoff_day_of_month ?? null,
-            payment_term_substitute_day_of_month:
-                policy.payment_term_substitute_day_of_month ?? null,
+            mep_cutoff_day: policy.mep_cutoff_day ?? null,
+            mep_substitute_extra_days:
+                policy.mep_substitute_extra_days ?? null,
+            reporting_cutoff_day:
+                policy.reporting_cutoff_day ?? null,
+            reporting_substitute_extra_days:
+                policy.reporting_substitute_extra_days ?? null,
+            payment_term_cutoff_day:
+                policy.payment_term_cutoff_day ?? null,
+            payment_term_substitute_day:
+                policy.payment_term_substitute_day ?? null,
         };
 
         if (named) {

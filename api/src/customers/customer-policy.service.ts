@@ -38,12 +38,12 @@ export const CUSTOMER_POLICY_BODY_KEYS = [
     "max_payment_term",
     "max_allowed_mep",
     "reporting_days",
-    "mep_cutoff_day_of_month",
-    "mep_substitute_day_of_month",
-    "reporting_cutoff_day_of_month",
-    "reporting_substitute_day_of_month",
-    "payment_term_cutoff_day_of_month",
-    "payment_term_substitute_day_of_month",
+    "mep_cutoff_day",
+    "mep_substitute_extra_days",
+    "reporting_cutoff_day",
+    "reporting_substitute_extra_days",
+    "payment_term_cutoff_day",
+    "payment_term_substitute_day",
     "policy_exclusion_reason",
     "credit_score",
     "credit_score_input_date",
@@ -232,13 +232,13 @@ function rowToVersioningSnapshot(
         max_payment_term: row.max_payment_term,
         max_allowed_mep: row.max_allowed_mep,
         reporting_days: row.reporting_days,
-        mep_cutoff_day_of_month: row.mep_cutoff_day_of_month,
-        mep_substitute_day_of_month: row.mep_substitute_day_of_month,
-        reporting_cutoff_day_of_month: row.reporting_cutoff_day_of_month,
-        reporting_substitute_day_of_month: row.reporting_substitute_day_of_month,
-        payment_term_cutoff_day_of_month: row.payment_term_cutoff_day_of_month,
-        payment_term_substitute_day_of_month:
-            row.payment_term_substitute_day_of_month,
+        mep_cutoff_day: row.mep_cutoff_day,
+        mep_substitute_extra_days: row.mep_substitute_extra_days,
+        reporting_cutoff_day: row.reporting_cutoff_day,
+        reporting_substitute_extra_days: row.reporting_substitute_extra_days,
+        payment_term_cutoff_day: row.payment_term_cutoff_day,
+        payment_term_substitute_day:
+            row.payment_term_substitute_day,
         excluded_from_policy: row.excluded_from_policy,
         policy_exclusion_reason: row.policy_exclusion_reason,
         credit_score: row.credit_score,
@@ -260,16 +260,16 @@ function payloadToVersioningSnapshot(
         max_payment_term: payload.max_payment_term,
         max_allowed_mep: payload.max_allowed_mep,
         reporting_days: payload.reporting_days,
-        mep_cutoff_day_of_month: payload.monthEnd.mep_cutoff_day_of_month,
-        mep_substitute_day_of_month: payload.monthEnd.mep_substitute_day_of_month,
-        reporting_cutoff_day_of_month:
-            payload.monthEnd.reporting_cutoff_day_of_month,
-        reporting_substitute_day_of_month:
-            payload.monthEnd.reporting_substitute_day_of_month,
-        payment_term_cutoff_day_of_month:
-            payload.monthEnd.payment_term_cutoff_day_of_month,
-        payment_term_substitute_day_of_month:
-            payload.monthEnd.payment_term_substitute_day_of_month,
+        mep_cutoff_day: payload.monthEnd.mep_cutoff_day,
+        mep_substitute_extra_days: payload.monthEnd.mep_substitute_extra_days,
+        reporting_cutoff_day:
+            payload.monthEnd.reporting_cutoff_day,
+        reporting_substitute_extra_days:
+            payload.monthEnd.reporting_substitute_extra_days,
+        payment_term_cutoff_day:
+            payload.monthEnd.payment_term_cutoff_day,
+        payment_term_substitute_day:
+            payload.monthEnd.payment_term_substitute_day,
         excluded_from_policy: payload.excluded_from_policy,
         policy_exclusion_reason: payload.policy_exclusion_reason,
         credit_score: payload.credit_score,

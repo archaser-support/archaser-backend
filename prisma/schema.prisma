@@ -887,12 +887,12 @@ model CustomerPolicy {
   max_payment_term                      Int?
   max_allowed_mep                       Int?
   reporting_days                        Int?
-  mep_cutoff_day_of_month               Int?
-  mep_substitute_day_of_month           Int?
-  reporting_cutoff_day_of_month         Int?
-  reporting_substitute_day_of_month     Int?
-  payment_term_cutoff_day_of_month      Int?
-  payment_term_substitute_day_of_month  Int?
+  mep_cutoff_day                        Int?
+  mep_substitute_extra_days             Int?
+  reporting_cutoff_day                  Int?
+  reporting_substitute_extra_days       Int?
+  payment_term_cutoff_day               Int?
+  payment_term_substitute_day           Int?
   excluded_from_policy                  Boolean               @default(false)
   policy_exclusion_reason               String?
   credit_score                          Decimal?              @db.Decimal(10, 2)
@@ -945,12 +945,12 @@ model CustomerPolicyTrend {
   max_payment_term                     Int?
   max_allowed_mep                      Int?
   reporting_days                       Int?
-  mep_cutoff_day_of_month              Int?
-  mep_substitute_day_of_month          Int?
-  reporting_cutoff_day_of_month        Int?
-  reporting_substitute_day_of_month    Int?
-  payment_term_cutoff_day_of_month     Int?
-  payment_term_substitute_day_of_month Int?
+  mep_cutoff_day                       Int?
+  mep_substitute_extra_days            Int?
+  reporting_cutoff_day                 Int?
+  reporting_substitute_extra_days      Int?
+  payment_term_cutoff_day              Int?
+  payment_term_substitute_day          Int?
   excluded_from_policy                 Boolean                  @default(false)
   policy_exclusion_reason              String?
   credit_score                         Decimal?                 @db.Decimal(10, 2)
@@ -1161,12 +1161,12 @@ model InsurancePolicy {
   max_payment_term                       Int?
   max_allowed_mep                        Int?
   reporting_days                         Int?
-  mep_cutoff_day_of_month                Int?
-  mep_substitute_day_of_month            Int?
-  reporting_cutoff_day_of_month          Int?
-  reporting_substitute_day_of_month      Int?
-  payment_term_cutoff_day_of_month       Int?
-  payment_term_substitute_day_of_month   Int?
+  mep_cutoff_day                         Int?
+  mep_substitute_extra_days              Int?
+  reporting_cutoff_day                   Int?
+  reporting_substitute_extra_days        Int?
+  payment_term_cutoff_day                Int?
+  payment_term_substitute_day            Int?
   cost_calculation_method                cost_calculation_method?
   cost_percent                           Decimal?                      @db.Decimal(10, 2)
   registration_fee_percent               Decimal?                      @db.Decimal(10, 2)

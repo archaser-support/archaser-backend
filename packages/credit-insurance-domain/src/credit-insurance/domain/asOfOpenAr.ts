@@ -130,12 +130,12 @@ export type AsOfPolicyTermsForBreach = {
     maxPaymentTerm: number | null;
     maxAllowedMep: number | null;
     reportingDays: number | null;
-    mepCutoffDayOfMonth?: number | null;
-    mepSubstituteDayOfMonth?: number | null;
-    reportingCutoffDayOfMonth?: number | null;
-    reportingSubstituteDayOfMonth?: number | null;
-    paymentTermCutoffDayOfMonth?: number | null;
-    paymentTermSubstituteDayOfMonth?: number | null;
+    mepCutoffDay?: number | null;
+    mepSubstituteExtraDays?: number | null;
+    reportingCutoffDay?: number | null;
+    reportingSubstituteExtraDays?: number | null;
+    paymentTermCutoffDay?: number | null;
+    paymentTermSubstituteDay?: number | null;
     policyEndDate?: Date | null;
 };
 
@@ -274,14 +274,14 @@ export function overlayAsOfTermsFlagsOnLine(
             reporting_days: terms.reportingDays,
             max_allowed_mep: terms.maxAllowedMep,
             max_payment_term: terms.maxPaymentTerm,
-            mep_cutoff_day_of_month: terms.mepCutoffDayOfMonth,
-            mep_substitute_day_of_month: terms.mepSubstituteDayOfMonth,
-            reporting_cutoff_day_of_month: terms.reportingCutoffDayOfMonth,
-            reporting_substitute_day_of_month:
-                terms.reportingSubstituteDayOfMonth,
-            payment_term_cutoff_day_of_month: terms.paymentTermCutoffDayOfMonth,
-            payment_term_substitute_day_of_month:
-                terms.paymentTermSubstituteDayOfMonth,
+            mep_cutoff_day: terms.mepCutoffDay,
+            mep_substitute_extra_days: terms.mepSubstituteExtraDays,
+            reporting_cutoff_day: terms.reportingCutoffDay,
+            reporting_substitute_extra_days:
+                terms.reportingSubstituteExtraDays,
+            payment_term_cutoff_day: terms.paymentTermCutoffDay,
+            payment_term_substitute_day:
+                terms.paymentTermSubstituteDay,
         },
         today: asOfDate,
     });

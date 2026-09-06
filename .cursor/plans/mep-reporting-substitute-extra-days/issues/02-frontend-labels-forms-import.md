@@ -1,6 +1,6 @@
 # 02 — Frontend labels, forms, and import UI
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-backend-rename-math-validation](01-backend-rename-math-validation.md)
 **User stories:** 5, 6, 7, 8, 9, 10, 17
@@ -12,11 +12,11 @@ Update customer and insurance-policy UIs, customer-policy adapter/types, and pol
 
 ## Acceptance criteria
 
-- [ ] Customer + policy forms read/write the new field keys and labels
-- [ ] Client validation allows 1–365 for extra-days fields and still pairs with cutoff
-- [ ] EN + HE translations updated for labels, import descriptions, and validation messages
-- [ ] Import UI / field list shows new headers only
-- [ ] Payment Term substitute UI remains day-of-month naming and 1–31 validation
+- [x] Customer + policy forms read/write the new field keys and labels
+- [x] Client validation allows 1–365 for extra-days fields and still pairs with cutoff
+- [x] EN + HE translations updated for labels, import descriptions, and validation messages
+- [x] Import UI / field list shows new headers only
+- [x] Payment Term substitute UI remains day-of-month naming and 1–31 validation
 
 ## How to test
 
