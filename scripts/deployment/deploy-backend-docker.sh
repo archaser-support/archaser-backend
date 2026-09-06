@@ -139,13 +139,24 @@ sync_git_checkout() {
     fi
 
     git fetch origin
-    local branch
-    branch="$(git rev-parse --abbrev-ref HEAD)"
-    if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-        git reset --hard "origin/$branch"
-        log "Git at origin/$branch ($(git rev-parse --short HEAD))"
+    local target_branch="$ENVIRONMENT"
+    if [[ "$ENVIRONMENT" == "production" ]]; then
+        target_branch="main"
+    fi
+
+    if git show-ref --verify --quiet "refs/remotes/origin/$target_branch"; then
+        git checkout "$target_branch" 2>/dev/null || git checkout -b "$target_branch" "origin/$target_branch"
+        git reset --hard "origin/$target_branch"
+        log "Git checked out and reset to origin/$target_branch ($(git rev-parse --short HEAD))"
     else
-        echo "Warning: origin/$branch not found — continuing with current checkout"
+        local current_branch
+        current_branch="$(git rev-parse --abbrev-ref HEAD)"
+        if git show-ref --verify --quiet "refs/remotes/origin/$current_branch"; then
+            git reset --hard "origin/$current_branch"
+            log "Git at origin/$current_branch ($(git rev-parse --short HEAD))"
+        else
+            echo "Warning: origin/$target_branch not found — continuing with current checkout"
+        fi
     fi
 }
 

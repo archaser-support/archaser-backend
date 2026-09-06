@@ -410,7 +410,12 @@ class WorkerController {
     imports: [
         ConfigModule.forRoot({
             isGlobal: true,
-            envFilePath: [".env", "../.env"],
+            envFilePath: (() => {
+                const env = process.env.APP_ENV || process.env.NODE_ENV;
+                return env
+                    ? [`.env.${env}.local`, `.env.${env}`, ".env.local", ".env", `../.env.${env}.local`, `../.env.${env}`, "../.env.local", "../.env"]
+                    : [".env.local", ".env", "../.env.local", "../.env"];
+            })(),
         }),
     ],
     controllers: [WorkerController],
