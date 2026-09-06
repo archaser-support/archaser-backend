@@ -1,6 +1,6 @@
 # 01 — Mongo cache write + same-day replace
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1, 2, 3, 4, 5, 10, 11, 13, 14, 15, 16, 17, 20, 21, 23, 25, 27, 28
@@ -17,7 +17,7 @@ Add a new Mongo import-cache collection and helpers so every successful backfill
 - [ ] Preview runs do not write this collection.
 - [ ] Scheduled and manual backfill/incremental both write through the same helper.
 - [ ] Customer-scoped runs use a distinct `customer_scope` from full-account `"all"`.
-- [ ] Calendar day uses account timezone with `Asia/Jerusalem` fallback.
+- [ ] Calendar day uses `BillingConnector.time_zone` with `Asia/Jerusalem` default.
 - [ ] Documents carry metadata (`row_count`, `execution_id`, timestamps) and TTL ~180 days.
 - [ ] Large payloads that would exceed 16MB use chunked replace under the same key (or a documented spike outcome landed in code).
 

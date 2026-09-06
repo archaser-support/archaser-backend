@@ -16,6 +16,13 @@ import {
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "../import/entityImporter";
+import {
+    normalizeImportCacheCustomerScope,
+    resolveImportCacheDay,
+    rowsEnteringImport,
+    trySaveEntityImportCache,
+    type ImportCacheSyncMode,
+} from "../importCache";
 import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
 import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
 import {
@@ -162,6 +169,17 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
     overlapMinutes?: number;
     /** Account MEP breach start date — narrows AR replay event load when set. */
     mepBreachStartDate?: Date | null;
+    /** BACKFILL | INCREMENTAL — keys the Mongo import cache (not preview). */
+    syncMode?: ImportCacheSyncMode;
+    /** Sync execution id for cache metadata. */
+    executionId?: string | null;
+    /** Provider label for cache metadata (e.g. PRIORITY). */
+    providerLabel?: string | null;
+    /**
+     * IANA timezone from BillingConnector.time_zone for cache_day.
+     * Omit / null → Asia/Jerusalem.
+     */
+    timeZone?: string | null;
 }
 
 export interface RunStagedExtensionSyncResult {
@@ -453,6 +471,35 @@ export async function runStagedExtensionSync(
     const dryRun = options.dryRun === true;
     const tailSteps: Partial<Record<TailStepKey, TailStepState>> = {};
     const log = (message: string) => options.onLog?.(message);
+    const importCacheByEntity = new Map<
+        ExtensionEntityType,
+        Record<string, unknown>[]
+    >();
+    const cacheSyncMode: ImportCacheSyncMode =
+        options.syncMode === "INCREMENTAL" ? "INCREMENTAL" : "BACKFILL";
+    const cacheCustomerScope = normalizeImportCacheCustomerScope(
+        options.runtimeCustomerNumber
+    );
+    const flushEntityImportCache = async (entityType: ExtensionEntityType) => {
+        if (dryRun) {
+            return;
+        }
+        const rows = importCacheByEntity.get(entityType) ?? [];
+        await trySaveEntityImportCache(
+            {
+                accountId: options.accountId,
+                connectorId: options.connectorId,
+                provider: options.providerLabel?.trim() || "UNKNOWN",
+                importType: entityType,
+                syncMode: cacheSyncMode,
+                cacheDay: resolveImportCacheDay(new Date(), options.timeZone),
+                customerScope: cacheCustomerScope,
+                executionId: options.executionId ?? null,
+                rows,
+            },
+            log
+        );
+    };
     setPaymentImportTraceSink(log);
     const paymentTraceKeys = getPaymentImportTraceKeys();
     if (paymentTraceKeys.length > 0) {
@@ -1114,6 +1161,16 @@ export async function runStagedExtensionSync(
                             importResult.success,
                             importResult.failed
                         );
+                        const cacheRows = rowsEnteringImport(
+                            pageRows,
+                            importResult
+                        );
+                        if (cacheRows.length > 0) {
+                            const existing =
+                                importCacheByEntity.get(entityType) ?? [];
+                            existing.push(...cacheRows);
+                            importCacheByEntity.set(entityType, existing);
+                        }
                         windowImported += importResult.success;
                         windowErrors += importResult.failed;
                         if (
@@ -1316,6 +1373,10 @@ export async function runStagedExtensionSync(
                     runMaturity: false,
                 });
             }
+
+            // Entity finished this window without cancel — persist/replace Mongo
+            // import cache (accumulates across windows for multi-window runs).
+            await flushEntityImportCache(entityType);
         }
 
         windows.push({

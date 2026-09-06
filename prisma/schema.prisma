@@ -2643,6 +2643,8 @@ model BillingConnector {
   backfill_started_at               DateTime?               @db.Timestamptz(6)
   /// Optional cutover calendar day (UTC). Null = full-history backfill.
   backfill_start_date               DateTime?               @db.Date
+  /// IANA timezone for import-cache same-day keys (and related sync calendar semantics).
+  time_zone                         String                  @default("Asia/Jerusalem") @db.VarChar(50)
   /// Optional UTC calendar day; invoices issued before it are out of scope for MEP breach. Null = no gate.
   mep_breach_start_date             DateTime?               @db.Date
   /// When start date is set: also pull unpaid pre-date invoices + related payments.
