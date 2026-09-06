@@ -14,9 +14,11 @@ describe("Priority customer field enrichment", () => {
                 "STATECODE",
                 "STATEA",
                 "ADDRESS2",
-                "IDG_COMPANYNAME",
                 "MCUSTNAME",
             ])
+        );
+        expect(discoveryFields).not.toEqual(
+            expect.arrayContaining(["IDG_COMPANYNAME"])
         );
     });
 
@@ -37,9 +39,9 @@ describe("Priority customer field enrichment", () => {
             state_iso2: "STATECODE",
             postal_code: "ZIP",
             country_iso2: "COUNTRYCODE",
-            business_unit: "IDG_COMPANYNAME",
             parent_customer_number: "MCUSTNAME",
         });
+        expect(byArchaser.business_unit).toBeUndefined();
     });
 
     it("maps a Priority customer record through the expanded defaults", () => {
@@ -56,7 +58,6 @@ describe("Priority customer field enrichment", () => {
                 STATECODE: "CA",
                 ZIP: "94105",
                 COUNTRYCODE: "US",
-                IDG_COMPANYNAME: "BU-001",
                 MCUSTNAME: "P000001",
             },
             rules
@@ -73,8 +74,8 @@ describe("Priority customer field enrichment", () => {
             state_iso2: "CA",
             postal_code: "94105",
             country_iso2: "US",
-            business_unit: "BU-001",
             parent_customer_number: "P000001",
         });
+        expect(mapped.business_unit).toBeUndefined();
     });
 });

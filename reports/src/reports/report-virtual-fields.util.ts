@@ -1,12 +1,12 @@
 import { Prisma } from "@prisma/client";
-import { getCustomerPolicyRow } from "./report-customer-policy-fields.util";
-import { mergeActiveCustomerPolicySelect } from "./report-customer-policy-fields.util";
+import { getCustomerPolicyRow } from "@archaser/credit-insurance-domain";
+import { mergeActiveCustomerPolicySelect } from "@archaser/credit-insurance-domain";
+import { getFieldOutputKey } from "./report.constants";
 
 /** Report table name → Prisma DMMF model name. */
 const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
     Customer: "Customer",
     Invoice: "Invoice",
-    Payment: "Payment",
     InvoicePayment: "InvoicePayment",
     Contact: "Contact",
     Activity: "Activity",
@@ -83,6 +83,128 @@ export function extractTermsBreachReasonCodes(row: {
     return codes.join(" · ");
 }
 
+/**
+ * A computed field whose value reads as a set of codes, each backed by one
+ * boolean column. Presence operators test the whole set; pick-list operators
+ * test only the selected subset.
+ */
+type BooleanSetComputedField = {
+    table: string;
+    field: string;
+    kind: "boolean_set";
+    /** Filter value code → boolean column backing it. */
+    columnByCode: Record<string, string>;
+};
+
+/**
+ * Computed report fields have no column of their own, so filters on them must
+ * be rewritten against the columns they derive from. The mapping lives here as
+ * data so `computedFieldToPrismaWhere` stays generic: supporting another field
+ * is a new entry, not another branch.
+ */
+const COMPUTED_FILTER_MAPPINGS: BooleanSetComputedField[] = [
+    {
+        table: "Invoice",
+        field: "terms_breach_reason",
+        kind: "boolean_set",
+        // Deliberately excludes ctv_customer_excluded_from_policy, matching
+        // extractTermsBreachReasonCodes.
+        columnByCode: {
+            reporting_breach: "reporting_breach",
+            ctv_payment_term: "ctv_payment_term",
+            ctv_customer_overdue_mep: "ctv_customer_overdue_mep",
+            ctv_outdated_dcl: "ctv_outdated_dcl",
+            ctv_invoice_after_policy_end: "ctv_invoice_after_policy_end",
+        },
+    },
+];
+
+const PRESENCE_OPERATORS = new Set([
+    "is_not_empty",
+    "is_not_null",
+    "isnotnull",
+]);
+const ABSENCE_OPERATORS = new Set(["is_empty", "is_null", "isnull"]);
+const ANY_OF_OPERATORS = new Set(["in", "equals", "="]);
+const NONE_OF_OPERATORS = new Set(["not_in", "not_equals", "not", "!="]);
+
+function matchesAnyColumn(columns: string[]): Record<string, unknown> {
+    return { OR: columns.map((column) => ({ [column]: true })) };
+}
+
+function matchesNoColumn(columns: string[]): Record<string, unknown> {
+    // `not: true` also matches NULL, which reads as "flag not set".
+    return { AND: columns.map((column) => ({ [column]: { not: true } })) };
+}
+
+function parseFilterCodes(value: unknown): string[] {
+    const raw = Array.isArray(value)
+        ? value
+        : typeof value === "string"
+          ? value.split(",")
+          : value == null
+            ? []
+            : [value];
+    return raw.map((item) => String(item).trim()).filter(Boolean);
+}
+
+/**
+ * Prisma where clause for a filter on a computed report field. Returns null
+ * when the field or operator is unsupported, and the caller then drops the
+ * filter as before.
+ */
+export function computedFieldToPrismaWhere(
+    table: string,
+    field: string,
+    operator: string,
+    value?: unknown
+): Record<string, unknown> | null {
+    const mapping = COMPUTED_FILTER_MAPPINGS.find(
+        (candidate) => candidate.table === table && candidate.field === field
+    );
+    if (!mapping) {
+        return null;
+    }
+
+    const op = (operator || "").toLowerCase();
+    if (PRESENCE_OPERATORS.has(op)) {
+        return matchesAnyColumn(Object.values(mapping.columnByCode));
+    }
+    if (ABSENCE_OPERATORS.has(op)) {
+        return matchesNoColumn(Object.values(mapping.columnByCode));
+    }
+
+    const isAnyOf = ANY_OF_OPERATORS.has(op);
+    if (!isAnyOf && !NONE_OF_OPERATORS.has(op)) {
+        return null;
+    }
+
+    const columns = Array.from(
+        new Set(
+            parseFilterCodes(value)
+                .map((code) => mapping.columnByCode[code])
+                .filter((column): column is string => !!column)
+        )
+    );
+    // An empty or unrecognised selection carries no intent; drop it rather
+    // than match nothing.
+    if (columns.length === 0) {
+        return null;
+    }
+    return isAnyOf ? matchesAnyColumn(columns) : matchesNoColumn(columns);
+}
+
+/** Filter value codes offered for a computed field, for report metadata. */
+export function getComputedFieldFilterCodes(
+    table: string,
+    field: string
+): string[] {
+    const mapping = COMPUTED_FILTER_MAPPINGS.find(
+        (candidate) => candidate.table === table && candidate.field === field
+    );
+    return mapping ? Object.keys(mapping.columnByCode) : [];
+}
+
 const TERMS_BREACH_CODE_TO_CAUSE: Record<string, string> = {
     reporting_breach: "reporting_breach",
     ctv_payment_term: "payment_term",
@@ -91,20 +213,25 @@ const TERMS_BREACH_CODE_TO_CAUSE: Record<string, string> = {
     ctv_invoice_after_policy_end: "invoice_after_policy_end",
 };
 
+// Wording mirrors locales/{en,he}/invoices.json so the report cell and the
+// filter pick-list name each reason identically.
 const TERMS_BREACH_CAUSE_LABELS: Record<"en" | "he", Record<string, string>> = {
     en: {
-        reporting_breach: "Reporting breach",
-        payment_term: "Payment term violation",
-        customer_overdue_mep: "Customer overdue (MEP) at creation",
-        outdated_dcl: "Outdated DCL at creation",
-        invoice_after_policy_end: "Invoice dated after policy end",
+        reporting_breach: "Reporting Breach",
+        payment_term: "Terms violation at creation (payment term)",
+        customer_overdue_mep:
+            "Terms violation at creation (customer overdue MEP)",
+        outdated_dcl: "Terms violation at creation (outdated DCL)",
+        invoice_after_policy_end:
+            "Terms violation at creation (invoice after policy end)",
     },
     he: {
         reporting_breach: "חריגת דיווח",
-        payment_term: "הפרת תנאי תשלום",
-        customer_overdue_mep: "לקוח בפיגור MEP בעת יצירה",
-        outdated_dcl: "DCL לא עדכני בעת יצירה",
-        invoice_after_policy_end: "חשבונית לאחר סיום הפוליסה",
+        payment_term: "הפרת תנאים בעת יצירה (תנאי תשלום)",
+        customer_overdue_mep: "הפרת תנאים בעת יצירה (לקוח בפיגור MEP)",
+        outdated_dcl: "הפרת תנאים בעת יצירה (DCL לא עדכני)",
+        invoice_after_policy_end:
+            "הפרת תנאים בעת יצירה (חשבונית לאחר סיום הפוליסה)",
     },
 };
 
@@ -240,6 +367,24 @@ export function applyComputedFieldSelect(
             };
             return true;
         }
+        // Enriched-only fields: keep them out of the Prisma select.
+        if (
+            field === "open_receivable_amount" ||
+            field === "open_invoice_count" ||
+            field === "terms_breach_outstanding" ||
+            field === "policy_risk_allocated" ||
+            field === "at_risk_exposure" ||
+            field === "limit_warning_summary" ||
+            field === "top_up_type" ||
+            field === "top_up_value" ||
+            field === "top_up_resolved_amount" ||
+            field === "top_up_end_date" ||
+            field === "top_up_days_left" ||
+            field === "as_of_utilization_pct" ||
+            field === "as_of_usage_amount"
+        ) {
+            return true;
+        }
         return false;
     }
 
@@ -306,6 +451,25 @@ export function extractComputedFieldValue(
                 | undefined;
             return company?.company_number ?? null;
         }
+        // Post-query enrichment (Open AR, policy risk, as-of utilization, …)
+        // writes these onto the row; treat as computed so we never hit Prisma.
+        if (
+            field === "open_receivable_amount" ||
+            field === "open_invoice_count" ||
+            field === "terms_breach_outstanding" ||
+            field === "policy_risk_allocated" ||
+            field === "at_risk_exposure" ||
+            field === "limit_warning_summary" ||
+            field === "top_up_type" ||
+            field === "top_up_value" ||
+            field === "top_up_resolved_amount" ||
+            field === "top_up_end_date" ||
+            field === "top_up_days_left" ||
+            field === "as_of_utilization_pct" ||
+            field === "as_of_usage_amount"
+        ) {
+            return row[field] ?? null;
+        }
         return undefined;
     }
 
@@ -336,12 +500,15 @@ export function isComputedReportField(
             field === "open_invoice_count" ||
             field === "terms_breach_outstanding" ||
             field === "policy_risk_allocated" ||
+            field === "at_risk_exposure" ||
             field === "limit_warning_summary" ||
             field === "top_up_type" ||
             field === "top_up_value" ||
             field === "top_up_resolved_amount" ||
             field === "top_up_end_date" ||
-            field === "top_up_days_left"
+            field === "top_up_days_left" ||
+            field === "as_of_utilization_pct" ||
+            field === "as_of_usage_amount"
         );
     }
     if (primaryTable === "Activity") {
@@ -357,4 +524,105 @@ export function isComputedReportField(
         );
     }
     return false;
+}
+
+export type ReportFieldRef = {
+    table: string;
+    field: string;
+    alias?: string;
+};
+
+export type ComputedSortTarget = {
+    table: string;
+    field: string;
+    outputKey: string;
+};
+
+/** Match a client sort field to a computed column that must sort after formatRow. */
+export function resolveComputedSortTarget(
+    sortField: string | undefined,
+    primaryTable: string,
+    fields: ReportFieldRef[]
+): ComputedSortTarget | null {
+    const raw = (sortField || "").trim();
+    if (!raw) {
+        return null;
+    }
+
+    for (const f of fields) {
+        const outputKey = getFieldOutputKey(f);
+        const matches =
+            outputKey === raw ||
+            f.field === raw ||
+            `${f.table}.${f.field}` === raw ||
+            (raw.startsWith(`${primaryTable}.`) &&
+                raw.slice(primaryTable.length + 1) === f.field);
+        if (matches && isComputedReportField(f.table, f.field)) {
+            return { table: f.table, field: f.field, outputKey };
+        }
+    }
+
+    const normalized =
+        raw.startsWith(`${primaryTable}.`) && raw.split(".").length === 2
+            ? raw.slice(primaryTable.length + 1)
+            : raw;
+    if (
+        !normalized.includes(".") &&
+        isComputedReportField(primaryTable, normalized)
+    ) {
+        const match = fields.find(
+            (f) => f.table === primaryTable && f.field === normalized
+        );
+        return {
+            table: primaryTable,
+            field: normalized,
+            outputKey: match ? getFieldOutputKey(match) : normalized,
+        };
+    }
+
+    return null;
+}
+
+function compareSortValues(a: unknown, b: unknown): number {
+    if (a == null && b == null) {
+        return 0;
+    }
+    if (a == null) {
+        return 1;
+    }
+    if (b == null) {
+        return -1;
+    }
+    if (typeof a === "number" && typeof b === "number") {
+        if (Number.isNaN(a) && Number.isNaN(b)) {
+            return 0;
+        }
+        if (Number.isNaN(a)) {
+            return 1;
+        }
+        if (Number.isNaN(b)) {
+            return -1;
+        }
+        return a - b;
+    }
+    return String(a).localeCompare(String(b), undefined, {
+        numeric: true,
+        sensitivity: "base",
+    });
+}
+
+/** Sort formatted report rows by a column output key (computed / display values). */
+export function sortFormattedReportRows(
+    rows: Record<string, unknown>[],
+    outputKey: string,
+    direction: "asc" | "desc" = "asc"
+): Record<string, unknown>[] {
+    const factor = direction === "desc" ? -1 : 1;
+    return [...rows].sort((left, right) => {
+        const leftValue =
+            left[outputKey] ?? left[`___formatted_${outputKey}`];
+        const rightValue =
+            right[outputKey] ?? right[`___formatted_${outputKey}`];
+        return factor * compareSortValues(leftValue, rightValue);
+    });
 }

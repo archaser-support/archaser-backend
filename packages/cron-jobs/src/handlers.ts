@@ -1,7 +1,19 @@
 import type { PrismaClient } from "@prisma/client";
-import { syncDueBillingConnectors } from "@archaser/billing-connector";
+import {
+    finalizeAwaitingPostIngestDrainExecutions,
+    syncDueBillingConnectors,
+    touchAwaitingPostIngestDrainProgress,
+} from "@archaser/billing-connector";
+import {
+    bindCreditInsurancePrisma,
+    drainAsOfRewriteQueue,
+    syncAllCustomerPolicyGapAmounts,
+    takeCreditDashboardDailySnapshots,
+    takeCustomerPolicyTrendSnapshots,
+    takeInsurancePolicyTrendSnapshots,
+} from "@archaser/credit-insurance-domain";
+import { drainArPostIngestRetryQueue, countPendingArPostIngestCustomers } from "./credit/arPostIngestRetryQueue";
 import { fetchAndStoreCurrencyRates } from "./currencyRateService";
-import { bindCreditDomain, requireCreditDomainModule } from "./creditDomain";
 import { computeCustomerOverdueMetrics } from "./computeCustomerOverdueMetrics";
 import { closeZeroOutstandingDebtInvoices } from "./closeZeroOutstandingDebtInvoices";
 import { fixClosedCollectionData } from "./fixClosedCollectionData";
@@ -13,6 +25,7 @@ import { processNotificationRules } from "./processNotificationRules";
 import { processDueNotifications } from "./processDueNotifications";
 import { processAutomatedCollectionPeriods } from "./processAutomatedCollectionPeriods";
 import { activityWorkflowManager } from "./activityWorkflowManager";
+import { beginCronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 
 export type CronJobResult = {
     success: boolean;
@@ -77,15 +90,18 @@ const fetchCurrencyRates: Handler = (prisma) =>
 
 const computeGapInBaseCurrency: Handler = (prisma) =>
     timed("Compute Gap In Base Currency", async () => {
-        bindCreditDomain(prisma);
+        bindCreditInsurancePrisma(prisma);
+        const freeze = await beginCronFrozenAccountGuard(
+            prisma,
+            "Compute Gap In Base Currency"
+        );
         const fxResult = await fetchAndStoreCurrencyRates(prisma);
-        const gapMod = requireCreditDomainModule<{
-            syncAllCustomerPolicyGapAmounts: () => Promise<{
-                customersUpdated: number;
-                missingRates: number;
-            }>;
-        }>("domain/syncCustomerPolicyGapAmounts.js");
-        const gapResult = await gapMod.syncAllCustomerPolicyGapAmounts();
+        const gapResult = await syncAllCustomerPolicyGapAmounts({
+            excludeAccountIds: freeze.frozenAccountIds,
+        });
+        if (gapResult.skippedAccountIds.length > 0) {
+            freeze.reportSkips(gapResult.skippedAccountIds);
+        }
         return {
             message: `FX ${fxResult.ratesStored} rates; base-currency gaps: ${gapResult.customersUpdated} customers updated (missing rates: ${gapResult.missingRates})`,
             summary: { fxResult, gapResult },
@@ -94,13 +110,17 @@ const computeGapInBaseCurrency: Handler = (prisma) =>
 
 const creditDashboardDailySnapshot: Handler = (prisma) =>
     timed("Credit Dashboard Daily Snapshot", async () => {
-        bindCreditDomain(prisma);
-        const mod = requireCreditDomainModule<{
-            takeCreditDashboardDailySnapshots: () => Promise<{
-                scopesProcessed: number;
-            }>;
-        }>("domain/creditDashboardSnapshotService.js");
-        const result = await mod.takeCreditDashboardDailySnapshots();
+        bindCreditInsurancePrisma(prisma);
+        const freeze = await beginCronFrozenAccountGuard(
+            prisma,
+            "Credit Dashboard Daily Snapshot"
+        );
+        const result = await takeCreditDashboardDailySnapshots({
+            excludeAccountIds: freeze.frozenAccountIds,
+        });
+        if (result.skippedAccountIds.length > 0) {
+            freeze.reportSkips(result.skippedAccountIds);
+        }
         return {
             message: `Credit dashboard daily snapshots completed: ${result.scopesProcessed} scopes`,
             summary: result,
@@ -109,16 +129,17 @@ const creditDashboardDailySnapshot: Handler = (prisma) =>
 
 const insurancePolicyTrendDailySnapshot: Handler = (prisma) =>
     timed("Insurance Policy Trend Daily Snapshot", async () => {
-        bindCreditDomain(prisma);
-        const mod = requireCreditDomainModule<{
-            takeInsurancePolicyTrendSnapshots: () => Promise<{
-                policyRowsUpserted: number;
-                countryRowsUpserted: number;
-                namedRowsUpserted: number;
-                accountsProcessed: number;
-            }>;
-        }>("domain/insurancePolicyTrendService.js");
-        const result = await mod.takeInsurancePolicyTrendSnapshots();
+        bindCreditInsurancePrisma(prisma);
+        const freeze = await beginCronFrozenAccountGuard(
+            prisma,
+            "Insurance Policy Trend Daily Snapshot"
+        );
+        const result = await takeInsurancePolicyTrendSnapshots({
+            excludeAccountIds: freeze.frozenAccountIds,
+        });
+        if (result.skippedAccountIds.length > 0) {
+            freeze.reportSkips(result.skippedAccountIds);
+        }
         return {
             message: `Insurance policy trend snapshots: ${result.policyRowsUpserted} policies, ${result.countryRowsUpserted} countries, ${result.namedRowsUpserted} named rows across ${result.accountsProcessed} accounts`,
             summary: result,
@@ -127,36 +148,15 @@ const insurancePolicyTrendDailySnapshot: Handler = (prisma) =>
 
 const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
     timed("Customer Policy Trend Daily Snapshot", async () => {
-        bindCreditDomain(prisma);
-        const trendMod = requireCreditDomainModule<{
-            takeCustomerPolicyTrendSnapshots: () => Promise<{
-                rowsUpserted: number;
-                accountsProcessed: number;
-                gapFillWarnings: Array<{
-                    accountId: number;
-                    gapDays: number;
-                    gapFillDaysApplied: number;
-                }>;
-            }>;
-        }>("domain/customerPolicyTrendService.js");
-        const drainMod = requireCreditDomainModule<{
-            drainAsOfRewriteQueue: () => Promise<{
-                itemsProcessed: number;
-                daysRewritten: number;
-                failures: number;
-                skippedForBackfill: number;
-            }>;
-        }>("domain/asOfRewriteQueue.js");
+        bindCreditInsurancePrisma(prisma);
 
         let todayResult:
-            | Awaited<
-                  ReturnType<typeof trendMod.takeCustomerPolicyTrendSnapshots>
-              >
+            | Awaited<ReturnType<typeof takeCustomerPolicyTrendSnapshots>>
             | undefined;
         let todayError: Error | undefined;
 
         try {
-            todayResult = await trendMod.takeCustomerPolicyTrendSnapshots();
+            todayResult = await takeCustomerPolicyTrendSnapshots();
         } catch (error: unknown) {
             todayError =
                 error instanceof Error
@@ -166,7 +166,7 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
 
         let drainError: Error | undefined;
         try {
-            const drain = await drainMod.drainAsOfRewriteQueue();
+            const drain = await drainAsOfRewriteQueue();
             if (drain.failures > 0) {
                 drainError = new Error(
                     `As-of rewrite drain: ${drain.itemsProcessed} items, ${drain.daysRewritten} days, ${drain.failures} failures, ${drain.skippedForBackfill} skipped for admin backfill`
@@ -179,22 +179,70 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
                     : new Error("As-of rewrite drain failed");
         }
 
+        // Customers whose post-ingest refresh failed mid-import keep stale
+        // capacity gaps until this runs, so retry before reporting.
+        let retryError: Error | undefined;
+        let retryResult:
+            | Awaited<ReturnType<typeof drainArPostIngestRetryQueue>>
+            | undefined;
+        try {
+            retryResult = await drainArPostIngestRetryQueue({
+                onItemProcessed: async (accountId) => {
+                    await touchAwaitingPostIngestDrainProgress(accountId, {
+                        countPendingForAccount:
+                            countPendingArPostIngestCustomers,
+                    });
+                    await finalizeAwaitingPostIngestDrainExecutions({
+                        accountId,
+                        countPendingForAccount:
+                            countPendingArPostIngestCustomers,
+                    });
+                },
+            });
+            await finalizeAwaitingPostIngestDrainExecutions({
+                countPendingForAccount: countPendingArPostIngestCustomers,
+            });
+            if (retryResult.failures > 0) {
+                retryError = new Error(
+                    `AR post-ingest retry drain: ${retryResult.itemsProcessed} retried, ${retryResult.failures} failures, ${retryResult.givenUp} given up`
+                );
+            }
+        } catch (error: unknown) {
+            retryError =
+                error instanceof Error
+                    ? error
+                    : new Error("AR post-ingest retry drain failed");
+        }
+
         if (todayError) {
             throw todayError;
         }
         if (drainError) {
             throw drainError;
         }
+        if (retryError) {
+            throw retryError;
+        }
 
         return {
-            message: `Customer policy trend snapshots: ${todayResult!.rowsUpserted} rows across ${todayResult!.accountsProcessed} accounts`,
+            message: `Customer policy trend snapshots: ${todayResult!.rowsUpserted} rows across ${todayResult!.accountsProcessed} accounts; AR post-ingest retries: ${retryResult?.itemsProcessed ?? 0}`,
             summary: todayResult,
         };
     });
 
+/** Requires `MONGODB_URI` so scheduled sync history can persist (shared syncHistory). */
 const syncBillingConnectors: Handler = async (prisma) => {
     const start = Date.now();
-    const result = await syncDueBillingConnectors(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Sync Billing Connectors"
+    );
+    const result = await syncDueBillingConnectors(prisma, {
+        excludeAccountIds: freeze.frozenAccountIds,
+    });
+    if (result.skippedFrozenAccountIds.length > 0) {
+        freeze.reportSkips(result.skippedFrozenAccountIds);
+    }
     return {
         success: result.success,
         message: result.message,
@@ -204,7 +252,11 @@ const syncBillingConnectors: Handler = async (prisma) => {
 };
 
 const computeOverdueMetrics: Handler = async (prisma) => {
-    const result = await computeCustomerOverdueMetrics(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Compute Customer Overdue Metrics"
+    );
+    const result = await computeCustomerOverdueMetrics(prisma, undefined, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -214,7 +266,11 @@ const computeOverdueMetrics: Handler = async (prisma) => {
 };
 
 const closeZeroDebt: Handler = async (prisma) => {
-    const result = await closeZeroOutstandingDebtInvoices(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Close Zero Outstanding Debt Invoices"
+    );
+    const result = await closeZeroOutstandingDebtInvoices(prisma, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -225,7 +281,11 @@ const closeZeroDebt: Handler = async (prisma) => {
 
 const fixClosedCollection: Handler = async (prisma, ctx) => {
     const lastRunAt = ctx?.lastRunAt ?? new Date(0);
-    const result = await fixClosedCollectionData(prisma, lastRunAt);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Fix Closed Collection Data"
+    );
+    const result = await fixClosedCollectionData(prisma, lastRunAt, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -235,15 +295,27 @@ const fixClosedCollection: Handler = async (prisma, ctx) => {
 };
 
 const inforuSmsStatus: Handler = async (prisma) => {
-    return checkInforuSmsStatus(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Inforu SMS Status Check"
+    );
+    return checkInforuSmsStatus(prisma, freeze);
 };
 
 const moveCollectionCategory: Handler = async (prisma) => {
-    return moveCollectionToNextCategory(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Move Collection To Next Category"
+    );
+    return moveCollectionToNextCategory(prisma, freeze);
 };
 
 const processOverdueInvoices: Handler = async (prisma) => {
-    const result = await handleOverdueInvoices(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Process Overdue Invoices"
+    );
+    const result = await handleOverdueInvoices(prisma, undefined, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -253,7 +325,11 @@ const processOverdueInvoices: Handler = async (prisma) => {
 };
 
 const reportScheduler: Handler = async (prisma) => {
-    const result = await executeScheduledReports(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Report Scheduler"
+    );
+    const result = await executeScheduledReports(prisma, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -263,7 +339,11 @@ const reportScheduler: Handler = async (prisma) => {
 };
 
 const notificationRules: Handler = async (prisma) => {
-    const result = await processNotificationRules(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Process Notification Rules"
+    );
+    const result = await processNotificationRules(prisma, freeze);
     return {
         success: result.success,
         message: result.message,
@@ -273,7 +353,11 @@ const notificationRules: Handler = async (prisma) => {
 };
 
 const dueNotifications: Handler = async (prisma) => {
-    const result = await processDueNotifications(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Process Due Notifications"
+    );
+    const result = await processDueNotifications(prisma, { freeze });
     return {
         success: result.success,
         message: result.message,
@@ -283,13 +367,30 @@ const dueNotifications: Handler = async (prisma) => {
 };
 
 const processAutomatedPeriods: Handler = async (prisma) => {
-    return processAutomatedCollectionPeriods(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Process Automated Collection Periods"
+    );
+    return processAutomatedCollectionPeriods(prisma, freeze);
 };
 
 const activityWorkflow: Handler = async (prisma) => {
-    return activityWorkflowManager(prisma);
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Activity Workflow Manager"
+    );
+    return activityWorkflowManager(prisma, { freeze });
 };
 
+/**
+ * Cron handler registry.
+ *
+ * Freeze exemptions (no beginCronFrozenAccountGuard at handler entry):
+ * - Fetch Currency Rates — global FX fetch; must run during import freeze.
+ * - Customer Policy Trend Daily Snapshot — snapshot pass may skip frozen accounts
+ *   internally, but AR post-ingest retry drain and as-of rewrite drain must still
+ *   run for frozen accounts (deadlock avoidance, PRD D17).
+ */
 const HANDLERS: Record<string, Handler> = {
     "Fetch Currency Rates": fetchCurrencyRates,
     "Compute Gap In Base Currency": computeGapInBaseCurrency,

@@ -125,7 +125,6 @@ BEGIN
 END $del$;
 
 SELECT pg_temp.safe_delete_account_rows('CustomerCheckpoint');
-SELECT pg_temp.safe_delete_account_rows('Payment');
 SELECT pg_temp.safe_delete_account_rows('CustomerBanks');
 
 DO $del$

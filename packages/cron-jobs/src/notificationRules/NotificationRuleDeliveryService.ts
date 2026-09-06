@@ -10,7 +10,10 @@ import {
     PrismaNotificationRuleEvaluatorProvider,
     type NotificationDeliveryIntent,
 } from "./NotificationRuleEvaluator";
-import { requireCreditDomainModule, bindCreditDomain } from "../creditDomain";
+import {
+    bindCreditInsurancePrisma,
+    fetchUncoveredCustomerIdsForAccount,
+} from "@archaser/credit-insurance-domain";
 
 function parseEntityFromDedupKey(
     dedupKey: string
@@ -183,11 +186,13 @@ export class NotificationRuleDeliveryService {
     async processAllCreditInsuranceAccounts(input?: {
         now?: Date;
         accountId?: number;
+        excludeAccountIds?: ReadonlySet<number>;
     }): Promise<{
         accountsProcessed: number;
         delivered: number;
         skipped: number;
         cleared: number;
+        skippedFrozenAccountIds: number[];
     }> {
         const accounts = await this.prisma.account.findMany({
             where: {
@@ -201,8 +206,13 @@ export class NotificationRuleDeliveryService {
         let delivered = 0;
         let skipped = 0;
         let cleared = 0;
+        const skippedFrozenAccountIds: number[] = [];
 
         for (const account of accounts) {
+            if (input?.excludeAccountIds?.has(account.id)) {
+                skippedFrozenAccountIds.push(account.id);
+                continue;
+            }
             const enabledRuleCount = await (
                 this.prisma as any
             ).notificationRuleSet.count({
@@ -226,18 +236,19 @@ export class NotificationRuleDeliveryService {
             cleared += result.cleared;
         }
 
-        return { accountsProcessed, delivered, skipped, cleared };
+        return {
+            accountsProcessed,
+            delivered,
+            skipped,
+            cleared,
+            skippedFrozenAccountIds,
+        };
     }
 
     static async createService(
         prisma: PrismaClient
     ): Promise<NotificationRuleDeliveryService> {
-        bindCreditDomain(prisma);
-        const { fetchUncoveredCustomerIdsForAccount } = requireCreditDomainModule<{
-            fetchUncoveredCustomerIdsForAccount: (
-                accountId: number
-            ) => Promise<Set<number>>;
-        }>("domain/termBreachResolver.js");
+        bindCreditInsurancePrisma(prisma);
 
         return new NotificationRuleDeliveryService(
             prisma,

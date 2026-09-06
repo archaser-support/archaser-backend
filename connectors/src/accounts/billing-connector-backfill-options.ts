@@ -27,8 +27,10 @@ export function areBackfillOptionsLocked(
  * Normalize PUT input: undefined = omit, null/"" = clear, YYYY-MM-DD = set.
  * Stored as UTC midnight for the calendar day (@db.Date).
  */
-export function normalizeBackfillStartDateInput(
-    input: string | null | undefined
+function normalizeCalendarDateInput(
+    input: string | null | undefined,
+    field: string,
+    code: string
 ): Date | null | undefined {
     if (input === undefined) {
         return undefined;
@@ -40,9 +42,9 @@ export function normalizeBackfillStartDateInput(
     const trimmed = String(input).trim();
     const match = CALENDAR_DATE_RE.exec(trimmed);
     if (!match) {
-        throw Object.assign(new Error("backfill_start_date must be YYYY-MM-DD"), {
+        throw Object.assign(new Error(`${field} must be YYYY-MM-DD`), {
             statusCode: 400,
-            code: "INVALID_BACKFILL_START_DATE",
+            code,
         });
     }
 
@@ -57,10 +59,31 @@ export function normalizeBackfillStartDateInput(
     ) {
         throw Object.assign(new Error(`Invalid calendar date: ${trimmed}`), {
             statusCode: 400,
-            code: "INVALID_BACKFILL_START_DATE",
+            code,
         });
     }
     return utc;
+}
+
+export function normalizeBackfillStartDateInput(
+    input: string | null | undefined
+): Date | null | undefined {
+    return normalizeCalendarDateInput(
+        input,
+        "backfill_start_date",
+        "INVALID_BACKFILL_START_DATE"
+    );
+}
+
+/** Same normalization as the backfill start date; UTC calendar day. */
+export function normalizeMepBreachStartDateInput(
+    input: string | null | undefined
+): Date | null | undefined {
+    return normalizeCalendarDateInput(
+        input,
+        "mep_breach_start_date",
+        "INVALID_MEP_BREACH_START_DATE"
+    );
 }
 
 function sameCalendarDay(
@@ -101,6 +124,37 @@ export function resolveBackfillStartDateChange(params: {
         code: "BACKFILL_OPTIONS_LOCKED",
         message:
             "Backfill start date is locked after backfill has started. Reset backfill to change it.",
+    };
+}
+
+export type MepBreachStartDateChangeResult =
+    | { ok: true; value: Date | null | undefined }
+    | { ok: false; code: "BACKFILL_OPTIONS_LOCKED"; message: string };
+
+export function resolveMepBreachStartDateChange(params: {
+    backfillStartedAt: Date | null | undefined;
+    existingStartDate: Date | null | undefined;
+    nextInput: string | null | undefined;
+}): MepBreachStartDateChangeResult {
+    if (params.nextInput === undefined) {
+        return { ok: true, value: undefined };
+    }
+
+    const normalized = normalizeMepBreachStartDateInput(params.nextInput);
+
+    if (!areBackfillOptionsLocked(params.backfillStartedAt)) {
+        return { ok: true, value: normalized ?? null };
+    }
+
+    if (sameCalendarDay(params.existingStartDate, normalized ?? null)) {
+        return { ok: true, value: params.existingStartDate ?? null };
+    }
+
+    return {
+        ok: false,
+        code: "BACKFILL_OPTIONS_LOCKED",
+        message:
+            "MEP breach start date is locked after backfill has started. Reset backfill to change it.",
     };
 }
 

@@ -103,9 +103,6 @@ BEGIN
     IF to_regclass('public."CustomerCheckpoint"') IS NOT NULL THEN
         DELETE FROM "CustomerCheckpoint" WHERE account_id IN (SELECT id FROM target_accounts);
     END IF;
-    IF to_regclass('public."Payment"') IS NOT NULL THEN
-        DELETE FROM "Payment" WHERE account_id IN (SELECT id FROM target_accounts);
-    END IF;
     IF to_regclass('public."CustomerBanks"') IS NOT NULL THEN
         DELETE FROM "CustomerBanks" WHERE account_id IN (SELECT id FROM target_accounts);
     END IF;

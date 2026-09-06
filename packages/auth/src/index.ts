@@ -5,7 +5,6 @@ export {
     type PrismaWhere,
 } from "./access-scope.service";
 export { ArchaserAuthModule, type ArchaserAuthModuleOptions } from "./auth.module";
-export { CronSecretGuard } from "./cron-secret.guard";
 export { CurrentUser } from "./current-user.decorator";
 export { DualAuthGuard, type DualAuthRequest } from "./dual-auth.guard";
 export { InternalSecretGuard } from "./internal-secret.guard";
@@ -20,3 +19,4 @@ export {
     parseCorsOrigins,
     PUBLIC_CORS_ALLOWED_HEADERS,
 } from "./public-cors";
+export { QuietNestLogger } from "./quiet-nest-logger";

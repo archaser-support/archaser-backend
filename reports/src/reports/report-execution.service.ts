@@ -23,15 +23,15 @@ import {
     OPERATION_DASHBOARD_CONTEXTS,
     RELATION_FROM_PRIMARY,
 } from "./report.constants";
-import { bindCreditInsurancePrisma } from "../credit-insurance/domain-db";
 import {
+    bindCreditInsurancePrisma,
     enrichCreditDashboardCustomerRows,
     fetchTopUpExpiringReportAsCustomerRows,
+    getLimitWarningReport,
     isCreditDashboardEnrichedSortField,
     reportConfigNeedsCreditDashboardEnrichment,
     sortCreditDashboardEnrichedRows,
-} from "../credit-insurance/domain/creditDashboardReportEnrichment";
-import { getLimitWarningReport } from "../credit-insurance/domain/creditInsuranceDashboardService";
+} from "@archaser/credit-insurance-domain";
 import { prepareDashboardActivityMarkers } from "./dashboard-activity-markers.util";
 import { prepareDashboardCreditCustomerMarkers } from "./dashboard-credit-customer-markers.util";
 import { prepareDashboardCreditInvoiceMarkers } from "./dashboard-credit-invoice-markers.util";
@@ -44,7 +44,7 @@ import {
     extractCustomerPolicyReportField,
     isCustomerPolicyBackedReportField,
     mergeActiveCustomerPolicySelect,
-} from "./report-customer-policy-fields.util";
+} from "@archaser/credit-insurance-domain";
 import {
     attachLinkingIds,
     getFieldLinkMetadata,
@@ -66,8 +66,13 @@ import {
     isComputedReportField,
     isPrismaListRelation,
     isPrismaScalarField,
+    resolveComputedSortTarget,
+    sortFormattedReportRows,
 } from "./report-virtual-fields.util";
-import { REPORT_METADATA } from "./report-metadata";
+import {
+    REPORT_METADATA,
+    resolveReportFieldType,
+} from "./report-metadata";
 import {
     applyFormulasToRows,
     mergeFormulaOperandFieldsIntoConfig,
@@ -75,8 +80,12 @@ import {
 import {
     FormulaWarningSummary,
     ReportFormula,
+    FORMULA_OUTPUT_KEY_PREFIX,
 } from "./report-formula/types";
-import { formatReportDateTime } from "./report-datetime.util";
+import {
+    formatReportDate,
+    formatReportDateTime,
+} from "./report-datetime.util";
 
 type ReportConfig = {
     tables?: string[];
@@ -188,6 +197,7 @@ export class ReportExecutionService {
         let creditInvoiceExtras: PrismaWhere | undefined;
         let creditDashboardPolicyId: number | undefined;
         let creditDashboardWithinDays: number | undefined;
+        let creditDashboardAsOfDate: string | undefined;
         let creditCustomerMembershipType:
             | "capacity"
             | "policy_risk"
@@ -196,6 +206,7 @@ export class ReportExecutionService {
             | "no_policy_exposure"
             | "top_up"
             | "top_up_expiring"
+            | "utilization_bin"
             | null
             | undefined;
         if (report.context === "dashboard_credit_customers") {
@@ -207,6 +218,7 @@ export class ReportExecutionService {
             creditCustomerExtras = prepared.primaryWhereExtras;
             creditDashboardPolicyId = prepared.policyId;
             creditDashboardWithinDays = prepared.withinDays;
+            creditDashboardAsOfDate = prepared.asOfDate;
             creditCustomerMembershipType = prepared.membershipType;
         } else if (report.context === "dashboard_credit_invoices") {
             const prepared = await prepareDashboardCreditInvoiceMarkers(
@@ -317,11 +329,22 @@ export class ReportExecutionService {
             (config.sorting?.[0]?.direction?.toLowerCase() === "asc"
                 ? "asc"
                 : "desc");
-        const needsInMemorySort =
-            report.context === "dashboard_credit_customers" &&
+        const computedSortTarget = resolveComputedSortTarget(
+            effectiveSortField,
+            primaryTable,
+            fields
+        );
+        const needsComputedFormattedSort = computedSortTarget != null;
+        // Enriched metrics (Open AR, policy risk, …) must sort in memory after
+        // enrichment — independent of report.context so builder/copied reports work.
+        const needsCreditDashboardInMemorySort =
+            primaryTable === "Customer" &&
             !!effectiveSortField &&
             (isCreditDashboardEnrichedSortField(effectiveSortField) ||
-                isCustomerPolicyBackedReportField(effectiveSortField));
+                (report.context === "dashboard_credit_customers" &&
+                    isCustomerPolicyBackedReportField(effectiveSortField)));
+        const needsInMemorySort =
+            needsCreditDashboardInMemorySort || needsComputedFormattedSort;
 
         const orderBy = needsInMemorySort
             ? []
@@ -345,14 +368,27 @@ export class ReportExecutionService {
             delegate.count({ where }),
         ]);
 
+        // Open AR / related metrics are not Prisma columns — always enrich when
+        // requested, even if context is wrong/null (staging copied reports, builder).
         if (
-            report.context === "dashboard_credit_customers" &&
             primaryTable === "Customer" &&
             reportConfigNeedsCreditDashboardEnrichment(fields)
         ) {
             const requestedCustomerFields = fields
                 .filter((f) => f.table === "Customer" && f.field)
                 .map((f) => f.field as string);
+            // Sorting by an enriched field must still compute it even if hidden.
+            if (
+                effectiveSortField &&
+                isCreditDashboardEnrichedSortField(effectiveSortField)
+            ) {
+                const sortLeaf = effectiveSortField.startsWith("Customer.")
+                    ? effectiveSortField.slice("Customer.".length)
+                    : effectiveSortField;
+                if (!requestedCustomerFields.includes(sortLeaf)) {
+                    requestedCustomerFields.push(sortLeaf);
+                }
+            }
             let limitWarningByCustomerId:
                 | Map<
                       number,
@@ -377,10 +413,11 @@ export class ReportExecutionService {
                 policyId: creditDashboardPolicyId,
                 requestedFields: requestedCustomerFields,
                 limitWarningByCustomerId,
+                asOfDate: creditDashboardAsOfDate,
             });
         }
 
-        if (needsInMemorySort && effectiveSortField) {
+        if (needsCreditDashboardInMemorySort && effectiveSortField) {
             rows = sortCreditDashboardEnrichedRows(
                 rows,
                 effectiveSortField,
@@ -407,8 +444,19 @@ export class ReportExecutionService {
             metadataTables: REPORT_METADATA.tables,
         });
 
+        let resultRows = formulaResult.rows;
+        if (needsComputedFormattedSort && computedSortTarget) {
+            resultRows = sortFormattedReportRows(
+                resultRows,
+                computedSortTarget.outputKey,
+                effectiveSortDirection === "desc" ? "desc" : "asc"
+            );
+            totalRecords = resultRows.length;
+            resultRows = resultRows.slice(skip, skip + limit);
+        }
+
         return serializeBigInt({
-            data: formulaResult.rows,
+            data: resultRows,
             totalRecords,
             ...(formulaResult.warnings.length
                 ? { formulaWarnings: formulaResult.warnings }
@@ -1067,6 +1115,21 @@ export class ReportExecutionService {
             return null;
         }
 
+        // Formula results are computed after fetch; they cannot drive SQL ORDER BY.
+        if (raw.startsWith(FORMULA_OUTPUT_KEY_PREFIX)) {
+            return null;
+        }
+
+        // Aggregated output keys (e.g. Invoice.amount__COUNT) must not be treated as
+        // nested scalar paths — Prisma rejects `{ Invoice: { amount__COUNT: "asc" } }`.
+        const aggregationOrderBy = this.parseAggregationSortField(
+            raw,
+            primaryTable
+        );
+        if (aggregationOrderBy) {
+            return aggregationOrderBy;
+        }
+
         // Normalize "Customer.name" → compare as field on primary
         const normalized =
             raw.startsWith(`${primaryTable}.`) && raw.split(".").length === 2
@@ -1147,6 +1210,10 @@ export class ReportExecutionService {
         if (parts.length >= 2) {
             const relTable = parts[0];
             const leaf = parts.slice(1).join(".");
+            // Never treat aggregation suffixes as relation scalars.
+            if (/__(SUM|AVG|COUNT|MIN|MAX)$/i.test(leaf)) {
+                return (dir) => ({ id: dir });
+            }
             const rel =
                 (RELATION_FROM_PRIMARY[primaryTable] || {})[relTable] ||
                 relTable;
@@ -1160,10 +1227,64 @@ export class ReportExecutionService {
                     [rel]: { [nestedRel]: { [nestedLeaf]: dir } },
                 });
             }
+            // To-many relations cannot be ordered by a nested leaf scalar.
+            if (isPrismaListRelation(primaryTable, rel)) {
+                return (dir) => ({ id: dir });
+            }
             return (dir) => ({ [rel]: { [leaf]: dir } });
         }
 
         return null;
+    }
+
+    /**
+     * Map report builder sort keys like `Invoice.amount__COUNT` to Prisma
+     * relation aggregate orderBy. Falls back to stable `id` when unsupported.
+     */
+    private parseAggregationSortField(
+        sortField: string,
+        primaryTable: string
+    ): ((dir: "asc" | "desc") => PrismaWhere) | null {
+        const match = sortField.match(/^(.*)__(SUM|AVG|COUNT|MIN|MAX)$/i);
+        if (!match) {
+            return null;
+        }
+        const basePath = match[1];
+        const aggregation = match[2].toUpperCase();
+
+        let path = basePath;
+        if (path.startsWith(`${primaryTable}.`)) {
+            path = path.slice(primaryTable.length + 1);
+        }
+
+        const parts = path.split(".").filter(Boolean);
+        if (parts.length === 0) {
+            return (dir) => ({ id: dir });
+        }
+
+        // Primary-table aggregate (e.g. amount__COUNT) is not a Prisma orderBy.
+        if (parts.length === 1 || parts[0] === primaryTable) {
+            return (dir) => ({ id: dir });
+        }
+
+        const relTable = parts[0];
+        const rel =
+            (RELATION_FROM_PRIMARY[primaryTable] || {})[relTable] || relTable;
+
+        if (!isPrismaListRelation(primaryTable, rel)) {
+            return (dir) => ({ id: dir });
+        }
+
+        if (aggregation === "COUNT") {
+            // Prisma relation orderBy supports only `_count` (not _sum/_avg/…).
+            return (dir) => ({ [rel]: { _count: dir } });
+        }
+
+        // SUM / AVG / MIN / MAX cannot drive Prisma findMany orderBy on
+        // to-many relations — `{ Invoice: { _sum: { amount } } }` is rejected.
+        // Stable id keeps the query valid; true aggregate sort needs raw SQL
+        // or post-fetch sorting.
+        return (dir) => ({ id: dir });
     }
 
     private formatRow(
@@ -1227,7 +1348,8 @@ export class ReportExecutionService {
                 value,
                 f.field,
                 locale,
-                timezone
+                timezone,
+                resolveReportFieldType(f.table, f.field)
             );
             // dispute_number aliases the primary key. Override display to
             // "DIS-000726" so formatValue's thousands separator does not turn
@@ -1678,7 +1800,8 @@ export class ReportExecutionService {
         value: unknown,
         field: string,
         locale: string,
-        timezone?: string
+        timezone?: string,
+        metadataType?: string
     ): string | null {
         if (value == null) {
             return null;
@@ -1688,6 +1811,9 @@ export class ReportExecutionService {
                 value instanceof Date ? value : new Date(String(value));
             if (!Number.isNaN(d.getTime())) {
                 try {
+                    if (this.shouldFormatAsDateOnly(field, metadataType)) {
+                        return formatReportDate(d, locale);
+                    }
                     return formatReportDateTime(d, locale, timezone);
                 } catch {
                     return d.toISOString();
@@ -1725,12 +1851,38 @@ export class ReportExecutionService {
         }
     }
 
+    private shouldFormatAsDateOnly(
+        field: string,
+        metadataType?: string
+    ): boolean {
+        const normalized = metadataType?.toLowerCase();
+        if (normalized === "date") {
+            return true;
+        }
+        if (
+            normalized === "datetime" ||
+            normalized === "timestamp"
+        ) {
+            return false;
+        }
+        // Fallback when metadata is missing: *_date calendar fields vs event stamps.
+        if (field.includes("_at") || field === "schedule_time") {
+            return false;
+        }
+        return (
+            field.includes("_date") ||
+            field === "due_date" ||
+            field === "date_of_birth"
+        );
+    }
+
     private looksLikeDateField(field: string, value: unknown): boolean {
         if (
             field.includes("_at") ||
             field.includes("_date") ||
             field === "due_date" ||
-            field === "schedule_time"
+            field === "schedule_time" ||
+            field === "date_of_birth"
         ) {
             return true;
         }

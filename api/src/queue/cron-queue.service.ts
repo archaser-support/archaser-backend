@@ -6,6 +6,7 @@ import {
     CRON_QUEUE_NAME,
     CronRunNowJobData,
     CronSyncSchedulesJobData,
+    ArPostIngestDrainJobData,
 } from "./cron-queue.types";
 
 @Injectable()
@@ -97,6 +98,111 @@ export class CronQueueService implements OnModuleDestroy {
             });
             return { queued: true, jobId: String(job.id) };
         } catch (error) {
+            return {
+                queued: false,
+                reason: error instanceof Error ? error.message : "enqueue failed",
+            };
+        }
+    }
+
+    /**
+     * Wait until Redis is ready. Avoids `connect()` while status is already
+     * `connecting` (ioredis throws "Redis is already connecting/connected").
+     */
+    private async ensureRedisReady(): Promise<{
+        ok: boolean;
+        reason?: string;
+    }> {
+        if (!this.connection) {
+            return { ok: false, reason: "Redis connection not initialized" };
+        }
+        const connection = this.connection;
+        if (connection.status === "ready") {
+            return { ok: true };
+        }
+        if (
+            connection.status === "connecting" ||
+            connection.status === "connect" ||
+            connection.status === "reconnecting"
+        ) {
+            try {
+                await new Promise<void>((resolve, reject) => {
+                    const onReady = () => {
+                        cleanup();
+                        resolve();
+                    };
+                    const onError = (err: Error) => {
+                        cleanup();
+                        reject(err);
+                    };
+                    const cleanup = () => {
+                        connection.off("ready", onReady);
+                        connection.off("error", onError);
+                    };
+                    connection.once("ready", onReady);
+                    connection.once("error", onError);
+                    if (connection.status === "ready") {
+                        cleanup();
+                        resolve();
+                    }
+                });
+                return { ok: true };
+            } catch (error) {
+                return {
+                    ok: false,
+                    reason:
+                        error instanceof Error
+                            ? error.message
+                            : "Redis connect wait failed",
+                };
+            }
+        }
+        try {
+            await connection.connect();
+            return { ok: true };
+        } catch (error) {
+            return {
+                ok: false,
+                reason:
+                    error instanceof Error
+                        ? error.message
+                        : "Redis connect failed",
+            };
+        }
+    }
+
+    async enqueueArPostIngestDrain(
+        data: ArPostIngestDrainJobData = {}
+    ): Promise<{ queued: boolean; jobId?: string; reason?: string }> {
+        const queue = this.ensureQueue();
+        if (!queue) {
+            return {
+                queued: false,
+                reason: "BULLMQ_ENABLED=false or Redis unavailable",
+            };
+        }
+        const ready = await this.ensureRedisReady();
+        if (!ready.ok) {
+            this.logger.error(
+                `enqueueArPostIngestDrain failed: ${ready.reason ?? "Redis not ready"}`
+            );
+            return {
+                queued: false,
+                reason: ready.reason ?? "Redis not ready",
+            };
+        }
+        try {
+            const job = await queue.add("ar-post-ingest-drain", data, {
+                removeOnComplete: 100,
+                removeOnFail: 200,
+            });
+            return { queued: true, jobId: String(job.id) };
+        } catch (error) {
+            this.logger.error(
+                `enqueueArPostIngestDrain failed: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
             return {
                 queued: false,
                 reason: error instanceof Error ? error.message : "enqueue failed",

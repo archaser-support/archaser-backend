@@ -11,6 +11,8 @@ import type { PrismaClient } from "@prisma/client";
 import { scheduleDateTime } from "./scheduling/scheduleDateTime";
 import { getRawTemplateContent } from "./templates/processTemplateContent";
 import { getSystemUserId } from "./users/getSystemUserId";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
+import { partitionByFrozenAccount } from "./accountFreeze/cronFrozenAccountGuard";
 
 const BATCH_SIZE = 100;
 const LOOK_AHEAD_DAYS = 15; // Pre-create activities for invoices due within the next 15 days
@@ -21,6 +23,7 @@ export async function processDueNotifications(
         customerId?: number;
         skipSmsSend?: boolean;
         fastForwardScheduledActivities?: boolean;
+        freeze?: CronFrozenAccountGuard;
     }
 ): Promise<{
     success: boolean;
@@ -69,7 +72,7 @@ export async function processDueNotifications(
             customerAccountId = customer?.account_id ?? undefined;
         }
 
-        const dueSteps = await prisma.activitiesSequence.findMany({
+        const dueStepsRaw = await prisma.activitiesSequence.findMany({
             where: {
                 category: "Automated",
                 active: true,
@@ -88,6 +91,16 @@ export async function processDueNotifications(
             },
             orderBy: { days_before_due: "desc" },
         });
+
+        const { kept: dueSteps, skippedAccountIds } = options?.freeze
+            ? partitionByFrozenAccount(
+                  dueStepsRaw,
+                  options.freeze.frozenAccountIds
+              )
+            : { kept: dueStepsRaw, skippedAccountIds: [] as number[] };
+        if (options?.freeze && skippedAccountIds.length > 0) {
+            options.freeze.reportSkips(skippedAccountIds);
+        }
 
         if (dueSteps.length === 0) {
             return {
@@ -321,8 +334,7 @@ export async function processDueNotifications(
                             prisma,
                             customerInvoices,
                             step,
-                            scheduledTime,
-                            options
+                            scheduledTime
                         );
 
                         stats.processed += customerInvoices.length;
@@ -373,11 +385,7 @@ async function processInvoicesForDueStep(
     prisma: PrismaClient,
     invoices: any[],
     step: any,
-    scheduledTime: Date,
-    options?: {
-        skipSmsSend?: boolean;
-        fastForwardScheduledActivities?: boolean;
-    }
+    scheduledTime: Date
 ): Promise<{ sent: boolean; sentCount: number; skippedCount: number }> {
     const customer = invoices[0]?.Customer;
     if (!customer)
@@ -522,7 +530,7 @@ async function processInvoicesForDueStep(
         );
     }
 
-    const activity = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
         const activity = await tx.activity.create({
             data: {
                 customer_id: customer.id,

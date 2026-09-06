@@ -1,0 +1,30 @@
+{
+  "name": "@archaser/credit-insurance-domain",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared credit-insurance domain logic. Leaf package: depends on no other @archaser workspace package.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "prebuild": "node scripts/check-leaf.js",
+    "build": "tsc -p tsconfig.json",
+    "check:leaf": "node scripts/check-leaf.js"
+  },
+  "dependencies": {
+    "date-fns": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@prisma/client": "^6.4.1"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.4.1",
+    "@types/node": "^20.19.0",
+    "typescript": "^5.9.2"
+  }
+}

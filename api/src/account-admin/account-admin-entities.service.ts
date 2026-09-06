@@ -9,6 +9,10 @@ import * as bcrypt from "bcryptjs";
 import { randomBytes, randomUUID } from "crypto";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
+import {
+    parseEnabledEntitiesForSyncDate,
+    pickAccountLastSyncDate,
+} from "../billing-connector/account-last-sync-date";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import { SystemEmailService } from "../email/system-email.service";
@@ -1296,7 +1300,44 @@ export class AccountAdminEntitiesService {
             }
         }
 
+        if (entityType === "accounts") {
+            return serializeBigInt({
+                ...row,
+                last_sync_date: await this.resolveAccountLastSyncDate(
+                    row.id as number
+                ),
+            });
+        }
+
         return serializeBigInt(row);
+    }
+
+    /**
+     * Derived from connector sync state — the header's freshness pill reads this
+     * for every user, so it must not require billing-connector permissions.
+     */
+    private async resolveAccountLastSyncDate(
+        accountId: number
+    ): Promise<Date | null> {
+        const connector = await this.db.billingConnector.findUnique({
+            where: { account_id: accountId },
+            select: {
+                enabled_entities: true,
+                ConnectorSyncState: {
+                    select: {
+                        entity_type: true,
+                        last_successful_run_at: true,
+                    },
+                },
+            },
+        });
+        if (!connector) {
+            return null;
+        }
+        return pickAccountLastSyncDate(
+            parseEnabledEntitiesForSyncDate(connector.enabled_entities),
+            connector.ConnectorSyncState
+        );
     }
 
     async update(

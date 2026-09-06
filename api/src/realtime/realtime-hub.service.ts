@@ -80,7 +80,6 @@ export class RealtimeHubService implements OnModuleInit, OnModuleDestroy {
             });
             this.publisher = publisher;
             this.subscriber = subscriber;
-            this.logger.log(`Realtime Redis pub/sub ready @ ${redisUrl}`);
         } catch (error) {
             this.logger.warn(
                 `Realtime Redis unavailable — in-process fan-out only: ${

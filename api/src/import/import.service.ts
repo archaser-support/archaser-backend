@@ -1,11 +1,20 @@
 import { randomUUID } from "crypto";
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+    ConflictException,
+    Injectable,
+    NotFoundException,
+} from "@nestjs/common";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { importMappedEntityBatch } from "@archaser/billing-connector";
 import { DatabaseService } from "../database/database.service";
-import { enqueueRewriteForImport } from "../credit-insurance/domain/asOfRewriteQueue";
+import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
+import {
+    enqueueRewriteForImport,
+    refreshInsuranceTargetDatesForInvoiceIds,
+} from "@archaser/credit-insurance-domain";
+import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 import { ImportPolicyService } from "./import-policy.service";
 
 const IMPORT_TYPE_MAP: Record<string, string> = {
@@ -64,6 +73,8 @@ export class ImportService {
         if (!job) {
             throw new NotFoundException({ error: "Import job not found" });
         }
+
+        await this.assertNoImportInProgress(accountId, jobId);
 
         const key = LEAF_BODY_KEYS[leaf];
         const rows = Array.isArray(body[key])
@@ -165,6 +176,21 @@ export class ImportService {
                 null,
                 userInfo.userId
             );
+            // Amount (and date) upserts must refresh insurance targets immediately
+            // so sign flips are not stuck until job-complete post-ingest.
+            if (
+                importType === "Invoice" &&
+                entityImport.entityIds.length > 0
+            ) {
+                try {
+                    await refreshInsuranceTargetDatesForInvoiceIds(
+                        entityImport.entityIds,
+                        this.db
+                    );
+                } catch {
+                    // Non-fatal: rows imported; post-ingest / stamp can catch up.
+                }
+            }
             const recordRows: Array<Record<string, unknown>> = [];
             for (let i = 0; i < rows.length; i++) {
                 const row = rows[i] || {};
@@ -223,7 +249,7 @@ export class ImportService {
         await this.db.importJob.update({
             where: { id: jobId },
             data: {
-                status: "InProgress",
+                status: "Processing",
                 successful_records: { increment: successCount },
                 failed_records: { increment: failCount },
                 metadata: {
@@ -235,7 +261,7 @@ export class ImportService {
                     ],
                 } as never,
                 modified_at: new Date(),
-            } as never,
+            },
         });
 
         return serializeBigInt({
@@ -255,6 +281,8 @@ export class ImportService {
         const userInfo = await this.accessScope.resolveUserInfo(user);
         const accountId = this.accessScope.getEffectiveAccountId(userInfo);
         const effectiveUserId = this.accessScope.getEffectiveUserId(userInfo);
+
+        await this.assertNoImportInProgress(accountId);
 
         const rawType = String(body.import_type || body.type || "Customer");
         const importType =
@@ -288,38 +316,204 @@ export class ImportService {
             throw new NotFoundException({ error: "Import job not found" });
         }
 
+        const isArImport =
+            existing.import_type === "Invoice" ||
+            existing.import_type === "Payment";
+
+        if (!isArImport) {
+            const job = await this.db.importJob.update({
+                where: { id: jobId },
+                data: {
+                    status: "Completed",
+                    completed_at: new Date(),
+                    ...(body.successful_records !== undefined
+                        ? {
+                              successful_records: Number(
+                                  body.successful_records
+                              ),
+                          }
+                        : {}),
+                    ...(body.failed_records !== undefined
+                        ? { failed_records: Number(body.failed_records) }
+                        : {}),
+                },
+            });
+            return serializeBigInt(job);
+        }
+
+        const countUpdate: Record<string, unknown> = {
+            modified_at: new Date(),
+        };
+        if (body.successful_records !== undefined) {
+            countUpdate.successful_records = Number(body.successful_records);
+        }
+        if (body.failed_records !== undefined) {
+            countUpdate.failed_records = Number(body.failed_records);
+        }
+        if (Object.keys(countUpdate).length > 1) {
+            await this.db.importJob.update({
+                where: { id: jobId },
+                data: countUpdate,
+            });
+        }
+
+        const importType = existing.import_type as "Invoice" | "Payment";
+        const customerIds = readNumberArray(
+            existing.metadata,
+            "asOfRewriteCustomerIds"
+        );
+        const entityIds = readNumberArray(
+            existing.metadata,
+            "asOfRewriteEntityIds"
+        );
+
+        // Shared AR post-ingest (replay + Process Overdue + live MEP/gap + as-of).
+        // Job stays Processing until orchestrator returns (success or best-effort).
+        let postIngestSkipped = false;
+        let postIngestErrors: Array<{
+            step: string;
+            customerId?: number;
+            message: string;
+            stack?: string;
+        }> = [];
+        try {
+            const result = await runArPostIngestForCustomers({
+                accountId,
+                customerIds,
+                runReplay: true,
+                runLiveRefresh: true,
+                enqueueAsOfRewrite: true,
+                asOfRewrite: { importType, entityIds },
+            });
+            postIngestSkipped = result.skipped;
+            postIngestErrors = result.errors;
+        } catch (error) {
+            postIngestSkipped = true;
+            postIngestErrors = [
+                {
+                    step: "orchestrator",
+                    message:
+                        error instanceof Error ? error.message : String(error),
+                    ...(error instanceof Error && error.stack
+                        ? { stack: error.stack }
+                        : {}),
+                },
+            ];
+        }
+
+        if (postIngestErrors.length > 0) {
+            await this.recordPostIngestFailures(jobId, postIngestErrors);
+        }
+
+        // Collection-only (orchestrator CI gate) and unexpected throws still
+        // keep today's as-of enqueue behavior. Overdue already ran inside
+        // the orchestrator for non-CI accounts before skipped=true.
+        if (postIngestSkipped) {
+            try {
+                await enqueueRewriteForImport({
+                    accountId,
+                    importType,
+                    entityIds,
+                    customerIds,
+                });
+            } catch {
+                // Import completion should not fail if as-of enqueue fails.
+            }
+        }
+
+        if (customerIds.length > 0) {
+            try {
+                await recalculateCustomerAmounts(customerIds, this.db);
+            } catch {
+                // Import completion should not fail if rollup refresh fails.
+            }
+        }
+
         const job = await this.db.importJob.update({
             where: { id: jobId },
             data: {
                 status: "Completed",
                 completed_at: new Date(),
-                ...(body.successful_records !== undefined
-                    ? { successful_records: Number(body.successful_records) }
-                    : {}),
-                ...(body.failed_records !== undefined
-                    ? { failed_records: Number(body.failed_records) }
-                    : {}),
             },
         });
-        if (
-            existing.import_type === "Invoice" ||
-            existing.import_type === "Payment"
-        ) {
-            await enqueueRewriteForImport({
-                accountId,
-                importType: existing.import_type,
-                entityIds: readNumberArray(
-                    existing.metadata,
-                    "asOfRewriteEntityIds"
-                ),
-                customerIds: readNumberArray(
-                    existing.metadata,
-                    "asOfRewriteCustomerIds"
-                ),
-            });
-        }
 
         return serializeBigInt(job);
+    }
+
+    /**
+     * Rejects starting import work when another job on the account is Processing.
+     * The current job id is excluded so subsequent batches on the same job are allowed.
+     */
+    private async assertNoImportInProgress(
+        accountId: number,
+        excludeJobId?: string
+    ): Promise<void> {
+        const conflicting = await this.db.importJob.findFirst({
+            where: {
+                account_id: accountId,
+                status: "Processing",
+                ...(excludeJobId ? { id: { not: excludeJobId } } : {}),
+            },
+            select: { id: true },
+        });
+        if (conflicting) {
+            throw new ConflictException({
+                code: "IMPORT_IN_PROGRESS",
+                error: "An import is already in progress for this account",
+            });
+        }
+    }
+
+    /**
+     * Persists post-ingest step failures on the job so a swallowed error is
+     * visible afterwards. Rows are already imported at this point; for
+     * Invoice/Payment the job may still be Processing until orchestrator exits.
+     * This never throws.
+     */
+    private async recordPostIngestFailures(
+        jobId: string,
+        failures: Array<{
+            step: string;
+            customerId?: number;
+            message: string;
+            stack?: string;
+        }>
+    ): Promise<void> {
+        try {
+            const job = await this.db.importJob.findUnique({
+                where: { id: jobId },
+                select: { metadata: true },
+            });
+            const metadata =
+                job?.metadata && typeof job.metadata === "object"
+                    ? (job.metadata as Record<string, unknown>)
+                    : {};
+            const summary = failures
+                .map((failure) =>
+                    failure.customerId != null
+                        ? `${failure.step} (customer ${failure.customerId}): ${failure.message}`
+                        : `${failure.step}: ${failure.message}`
+                )
+                .join("; ");
+
+            await this.db.importJob.update({
+                where: { id: jobId },
+                data: {
+                    error_message: `Post-ingest refresh incomplete — ${summary}`,
+                    metadata: {
+                        ...metadata,
+                        postIngestErrors: failures,
+                        postIngestFailedAt: new Date().toISOString(),
+                    },
+                },
+            });
+        } catch (error) {
+            console.error("[import] failed to record post-ingest errors", {
+                jobId,
+                errorMessage:
+                    error instanceof Error ? error.message : String(error),
+            });
+        }
     }
 
     async getJobById(user: JwtPayload, jobId: string) {
@@ -347,10 +541,16 @@ export class ImportService {
             (record) => record.status === "Failed"
         ).length;
 
+        const customerInfo = await this.resolveCustomerInfoForRecords(
+            accountId,
+            records.map((record) => record.original_data)
+        );
+
         return serializeBigInt({
             ...jobFields,
             jobId: job.id,
             records,
+            customer_info: customerInfo,
             results: records.map((record) => ({
                 index: record.row_index,
                 success:
@@ -368,6 +568,79 @@ export class ImportService {
             },
             metadata: job.metadata,
         });
+    }
+
+    /**
+     * Maps the customer numbers found in a job's rows to display name + id so the
+     * import result grid can show a name for non-Customer imports (policy,
+     * invoice, payment, contact), where the name is not part of the uploaded row.
+     */
+    private async resolveCustomerInfoForRecords(
+        accountId: number,
+        originalDataRows: unknown[]
+    ): Promise<Record<string, { name: string; customerId: number }>> {
+        const customerNumbers = new Set<string>();
+        for (const row of originalDataRows) {
+            const data = asObject(row);
+            const raw =
+                data.customer_number ?? data.temp__customer_number ?? null;
+            if (raw == null) {
+                continue;
+            }
+            const customerNumber = String(raw).trim();
+            if (customerNumber) {
+                customerNumbers.add(customerNumber);
+            }
+        }
+
+        if (customerNumbers.size === 0) {
+            return {};
+        }
+
+        const customers = await this.db.customer.findMany({
+            where: {
+                account_id: accountId,
+                customer_number: { in: [...customerNumbers] },
+            },
+            select: {
+                id: true,
+                customer_number: true,
+                Company: { select: { name: true } },
+                Person: {
+                    select: {
+                        full_name: true,
+                        first_name: true,
+                        last_name: true,
+                    },
+                },
+            },
+        });
+
+        const customerInfo: Record<
+            string,
+            { name: string; customerId: number }
+        > = {};
+        for (const customer of customers) {
+            if (!customer.customer_number) {
+                continue;
+            }
+            const personName =
+                customer.Person?.full_name?.trim() ||
+                [customer.Person?.first_name, customer.Person?.last_name]
+                    .filter(Boolean)
+                    .join(" ")
+                    .trim();
+            const name =
+                customer.Company?.name?.trim() ||
+                personName ||
+                customer.customer_number;
+            customerInfo[customer.customer_number] = {
+                name,
+                customerId: customer.id,
+            };
+        }
+
+        return customerInfo;
     }
 }
 

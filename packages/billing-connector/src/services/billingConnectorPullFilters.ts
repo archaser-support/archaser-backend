@@ -3,6 +3,7 @@ import type { ImportType, Prisma } from "@prisma/client";
 import {
     andODataFilters,
     compileEntityPullFilter,
+    escapeODataStringLiteral,
 } from "./billingConnectorPullFilterCompile";
 
 export type PullFilterOperator =
@@ -262,21 +263,95 @@ export function resolveRelatedCustomerPullFilterOData(
  * OData $filter for a live import pull: the entity's own pull filter, plus a
  * CUSTNAME-only Customer filter on related entities so invoices/payments/
  * contacts stay inside the same customer subset.
+ *
+ * Optional Start-backfill `runtimeCustomerNumber` is AND-ed as `CUSTNAME eq …`
+ * so customer-scoped pulls do not page the full table. Account extensions may
+ * replace that clause via `buildRuntimeCustomerScopeOData` (account 10149 owns
+ * IDG_CUSTNAME / IDC_CUSTNAMEIV on IDG_ARFNCITEMS*).
  */
 export function resolveImportPullFilterOData(
     raw: unknown,
-    importType: ImportType
+    importType: ImportType,
+    options?: {
+        runtimeCustomerNumber?: string | null;
+        /** Extra values OR'd into the runtime customer-scope clause. */
+        additionalCustomerNumbers?: string[] | null;
+        entitySet?: string | null;
+    }
 ): string | null {
     const entityFilter = resolveEntityPullFilterOData(raw, importType);
+    const runtimeScope = resolveRuntimeCustomerScopeOData({
+        customerNumber: options?.runtimeCustomerNumber,
+        additionalCustomerNumbers: options?.additionalCustomerNumbers,
+        entityType: importType,
+        entitySet: options?.entitySet,
+    });
     if (
         importType !== "Invoice" &&
         importType !== "Payment" &&
         importType !== "Contact"
     ) {
-        return entityFilter;
+        return andODataFilters(entityFilter, runtimeScope);
     }
     return andODataFilters(
         resolveRelatedCustomerPullFilterOData(raw),
-        entityFilter
+        entityFilter,
+        runtimeScope
     );
+}
+
+/**
+ * Generic ERP customer-number $filter for Start backfill customer scope.
+ * Always uses `CUSTNAME`. Custom IDG_* customer fields belong in account
+ * extensions (`buildRuntimeCustomerScopeOData`).
+ *
+ * When `additionalCustomerNumbers` is set (account extensions), builds
+ * `(CUSTNAME eq 'A' or CUSTNAME eq 'B' or …)`.
+ */
+export function resolveRuntimeCustomerScopeOData(params: {
+    customerNumber: string | null | undefined;
+    additionalCustomerNumbers?: string[] | null;
+    /** Kept for call-site compatibility; generic scope always uses CUSTNAME. */
+    entityType: ImportType;
+    entitySet?: string | null;
+}): string | null {
+    if (typeof params.customerNumber !== "string") {
+        return null;
+    }
+    const trimmed = params.customerNumber.trim();
+    if (!trimmed) {
+        return null;
+    }
+    const values = new Set<string>([trimmed]);
+    for (const extra of params.additionalCustomerNumbers ?? []) {
+        if (typeof extra !== "string") {
+            continue;
+        }
+        const value = extra.trim();
+        if (value) {
+            values.add(value);
+        }
+    }
+    const clauses = [...values].map(
+        (value) => `CUSTNAME eq ${escapeODataStringLiteral(value)}`
+    );
+    if (clauses.length === 1) {
+        return clauses[0] ?? null;
+    }
+    return `(${clauses.join(" or ")})`;
+}
+
+/**
+ * @deprecated Prefer {@link resolveRuntimeCustomerScopeOData}.
+ */
+export function compileRuntimeCustomerNumberOData(
+    customerNumber: string | null | undefined,
+    entityType: ImportType = "Invoice",
+    entitySet?: string | null
+): string | null {
+    return resolveRuntimeCustomerScopeOData({
+        customerNumber,
+        entityType,
+        entitySet,
+    });
 }

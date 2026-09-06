@@ -12,6 +12,7 @@ import { BankAccountsLeafController } from "./bank-accounts-leaf.controller";
 import { BusinessUnitBanksController } from "./business-unit-banks.controller";
 import { CustomerBanksController } from "./customer-banks.controller";
 import { createAccountAdminController } from "./create-account-admin.controller";
+import { UserImportMappingsController } from "./user-import-mappings.controller";
 import {
     AccountsExtrasController,
     UsersExtrasController,
@@ -23,6 +24,9 @@ const GENERIC_ACCOUNT_ADMIN_ENTITY_TYPES = ACCOUNT_ADMIN_ENTITY_TYPES.filter(
 );
 
 const controllers = [
+    // Registered before the generic `users` CRUD so `:id` does not swallow
+    // `/api/entities/users/import-mappings`.
+    UserImportMappingsController,
     ...GENERIC_ACCOUNT_ADMIN_ENTITY_TYPES.map((t) =>
         createAccountAdminController(t)
     ),

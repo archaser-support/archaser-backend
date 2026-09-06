@@ -2,6 +2,9 @@
 # Start every local Nest microservice together:
 #   api :3002, worker :3003, sms :3004, connectors :3005, reports :3006
 #
+# Workspace packages under packages/ are built first; a build failure aborts
+# startup instead of running the services against stale compiled output.
+#
 # Usage (from backend/):
 #   npm run dev:all
 #   bash ./scripts/startup/dev-microservices.sh
@@ -19,7 +22,7 @@ for arg in "$@"; do
     case "$arg" in
         --skip-redis) SKIP_REDIS=1 ;;
         -h | --help)
-            sed -n '2,12p' "$0"
+            sed -n '2,13p' "$0"
             exit 0
             ;;
         *)
@@ -108,6 +111,30 @@ ensure_redis() {
     docker compose -f "$ROOT/docker-compose.redis.yml" up -d
 }
 
+# Workspace packages resolve through node_modules symlinks to their compiled
+# output, so they must be built from source before the services start.
+# Order mirrors scripts/deployment/deploy-backend-docker.sh (dependents last).
+PACKAGES=(
+    "@archaser/database"
+    "@archaser/auth"
+    "@archaser/sms-send"
+    "@archaser/credit-insurance-domain"
+    "@archaser/billing-connector"
+    "@archaser/cron-jobs"
+    "@archaser/openapi-client"
+)
+
+build_packages() {
+    echo "$(color 34 "Building workspace packages...")"
+    for pkg in "${PACKAGES[@]}"; do
+        echo "$(color 34 "  build ${pkg}")"
+        if ! npm run build -w "$pkg"; then
+            echo "$(color 31 "Package build failed: ${pkg}. Fix it before starting services (no service was started).")" >&2
+            exit 1
+        fi
+    done
+}
+
 compile_nocheck() {
     local dir="$1"
     local tsconfig="$2"
@@ -155,6 +182,8 @@ for spec in \
         exit 1
     fi
 done
+
+build_packages
 
 compile_nocheck api tsconfig.build.json
 mkdir -p "$ROOT/api/dist/email/assets"

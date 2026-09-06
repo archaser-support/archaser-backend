@@ -3,6 +3,8 @@
  * This file contains static metadata definitions for report tables and fields
  */
 
+import { getComputedFieldFilterCodes } from "./report-virtual-fields.util";
+
 export interface TableMetadata {
     name: string;
     label: string;
@@ -20,6 +22,18 @@ export interface FieldMetadata {
     translationNamespace?: string; // Translation namespace (e.g., "customers", "disputes", "common")
     enumValueKeyPrefix?: string; // Prefix for enum value translation keys (e.g., "status", "dispute_status")
     // If not provided, uses field name. Used to construct keys like: values.{enumValueKeyPrefix}_{value}
+}
+
+/** Resolve report-builder field type from static metadata (date vs datetime). */
+export function resolveReportFieldType(
+    table: string,
+    field: string
+): string | undefined {
+    const tableMeta = REPORT_METADATA.tables.find((t) => t.name === table);
+    if (!tableMeta) {
+        return undefined;
+    }
+    return tableMeta.fields.find((entry) => entry.name === field)?.type;
 }
 
 export const REPORT_METADATA: { tables: TableMetadata[] } = {
@@ -379,10 +393,31 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
                     translationNamespace: "dashboard",
                 },
                 {
+                    name: "at_risk_exposure",
+                    type: "number",
+                    label: "At Risk Exposure",
+                    translationKey: "at_risk_exposure",
+                    translationNamespace: "dashboard",
+                },
+                {
                     name: "limit_warning_summary",
                     type: "string",
                     label: "Warning Reason",
                     translationKey: "warning_reason",
+                    translationNamespace: "dashboard",
+                },
+                {
+                    name: "as_of_utilization_pct",
+                    type: "number",
+                    label: "As-of utilization %",
+                    translationKey: "as_of_utilization_pct",
+                    translationNamespace: "dashboard",
+                },
+                {
+                    name: "as_of_usage_amount",
+                    type: "number",
+                    label: "As-of usage",
+                    translationKey: "as_of_usage_amount",
                     translationNamespace: "dashboard",
                 },
                 {
@@ -600,7 +635,13 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
                 },
                 {
                     name: "terms_breach_reason",
-                    type: "string",
+                    // Computed from boolean columns, so it filters as a
+                    // pick-list of reason codes rather than free text.
+                    type: "enum",
+                    options: getComputedFieldFilterCodes(
+                        "Invoice",
+                        "terms_breach_reason"
+                    ),
                     label: "Terms Breach Reason",
                     translationKey: "terms_breach_reason",
                     translationNamespace: "dashboard",
@@ -783,63 +824,8 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
             ],
         },
         {
-            name: "Payment",
-            label: "Payments",
-            fields: [
-                {
-                    name: "id",
-                    type: "number",
-                    label: "ID",
-                    translationKey: "id",
-                    translationNamespace: "common",
-                },
-                {
-                    name: "amount",
-                    type: "number",
-                    label: "Amount",
-                    translationKey: "amount",
-                    translationNamespace: "invoices",
-                },
-                {
-                    name: "payment_date",
-                    type: "date",
-                    label: "Payment Date",
-                    translationKey: "payment_date",
-                    translationNamespace: "invoices",
-                },
-                {
-                    name: "payment_method",
-                    type: "string",
-                    label: "Payment Method",
-                    translationKey: "payment_method",
-                    translationNamespace: "invoices",
-                },
-                {
-                    name: "created_at",
-                    type: "datetime",
-                    label: "Created At",
-                    translationKey: "created_at",
-                    translationNamespace: "common",
-                },
-                {
-                    name: "modified_at",
-                    type: "datetime",
-                    label: "Modified At",
-                    translationKey: "modified_at",
-                    translationNamespace: "common",
-                },
-                {
-                    name: "reference",
-                    type: "string",
-                    label: "Reference",
-                    translationKey: "reference",
-                    translationNamespace: "invoices",
-                },
-            ],
-        },
-        {
             name: "InvoicePayment",
-            label: "Invoice Payments",
+            label: "Payments",
             fields: [
                 {
                     name: "id",

@@ -60,7 +60,7 @@ export class BillingConnectorController {
     @Post("sync")
     @ApiOperation({
         summary:
-            "Run preview (awaits), or start backfill/incremental sync in-process",
+            "Start preview/backfill/incremental sync in-process (preview is async like backfill)",
     })
     async sync(
         @CurrentUser() user: JwtPayload,
@@ -75,8 +75,47 @@ export class BillingConnectorController {
             user,
             accountId,
             mode,
-            importType ?? bodyImportType
+            importType ?? bodyImportType,
+            body
         );
+    }
+
+    @Get("preview-result")
+    @ApiOperation({
+        summary:
+            "Latest async preview job status and sample-row payload for this account",
+    })
+    async previewResult(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number
+    ) {
+        return this.service.getPreviewResult(user, accountId);
+    }
+
+    @Get("customers/by-id")
+    @ApiOperation({
+        summary:
+            "Look up a customer by Archaser customer_id on this account (Start backfill scope validation)",
+    })
+    async lookupCustomerById(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number,
+        @Query("customer_id") customerId?: string
+    ) {
+        return this.service.lookupCustomerById(user, accountId, customerId);
+    }
+
+    @Get("customers/search")
+    @ApiOperation({
+        summary:
+            "Typeahead search customers on this account (Start backfill customer scope)",
+    })
+    async searchCustomers(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number,
+        @Query("q") q?: string
+    ) {
+        return this.service.searchCustomers(user, accountId, q);
     }
 
     @Post("sync/cancel")
@@ -89,13 +128,27 @@ export class BillingConnectorController {
     }
 
     @Get("sync-runs")
-    @ApiOperation({ summary: "List recent billing connector sync runs" })
+    @ApiOperation({
+        summary: "List in-memory billing connector sync runs (live progress)",
+    })
     async syncRuns(
         @CurrentUser() user: JwtPayload,
         @Param("accountId", ParseIntPipe) accountId: number,
         @Query("limit") limit?: string
     ) {
         return this.service.listSyncRuns(user, accountId, limit);
+    }
+
+    @Get("sync-history")
+    @ApiOperation({
+        summary:
+            "List durable billing connector sync history from Mongo (last 90 days)",
+    })
+    async syncHistory(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number
+    ) {
+        return this.service.listSyncHistory(user, accountId);
     }
 
     @Post("backfill/reset")

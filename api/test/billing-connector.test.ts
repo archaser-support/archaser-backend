@@ -20,6 +20,11 @@ jest.mock("@archaser/billing-connector", () => {
         isBillingConnectorEncryptionConfigured: jest.fn(() => true),
         testBillingConnectorConnection: jest.fn(),
         discoverConnectorFields: jest.fn(),
+        createRunningExecution: jest.fn().mockResolvedValue(null),
+        completeExecution: jest.fn().mockResolvedValue(null),
+        markExecutionCancelled: jest.fn().mockResolvedValue(null),
+        listExecutionsForAccount: jest.fn().mockResolvedValue([]),
+        sweepStaleRunning: jest.fn().mockResolvedValue(0),
     };
 });
 
@@ -45,6 +50,24 @@ function accessScope(accountId: number, allowed = true) {
     };
 }
 
+
+function mockCronQueue() {
+    return {
+        enqueueArPostIngestDrain: jest.fn().mockResolvedValue({ queued: true }),
+    };
+}
+
+function mockMetrics() {
+    return {
+        business: {
+            billingConnectorSyncTotal: { inc: jest.fn() },
+            billingConnectorSyncDuration: { observe: jest.fn() },
+            billingConnectorErrorsTotal: { inc: jest.fn() },
+            billingConnectorRecordsProcessed: { inc: jest.fn() },
+        },
+    };
+}
+
 const CONNECTOR_NOW = new Date("2026-08-01T00:00:00.000Z");
 
 function connectorRow(overrides: Record<string, unknown> = {}) {
@@ -66,6 +89,7 @@ function connectorRow(overrides: Record<string, unknown> = {}) {
         backfill_start_date: null,
         include_older_open_invoices: true,
         skip_reporting_breach_on_backfill: false,
+        invoice_paid_tolerance: 0.2,
         pull_filters: {},
         entity_sets: {},
         entity_set_catalog: null,
@@ -82,6 +106,15 @@ function connectorRow(overrides: Record<string, unknown> = {}) {
     };
 }
 
+function billingConnectorDb(
+    billingConnector: Record<string, unknown>
+): Record<string, unknown> {
+    return {
+        billingConnector,
+        $queryRaw: jest.fn().mockResolvedValue([{ count: 0n }]),
+    };
+}
+
 describe("billing connector Nest API", () => {
     beforeEach(() => {
         resetConnectorSyncCancelRegistryForTests();
@@ -92,7 +125,9 @@ describe("billing connector Nest API", () => {
     it("rejects a caller without billing-connector permission", async () => {
         const service = new BillingConnectorApiService(
             {} as never,
-            accessScope(42, false) as never
+            accessScope(42, false) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         await expect(
             service.getConfig(user(42), 42)
@@ -102,7 +137,9 @@ describe("billing connector Nest API", () => {
     it("rejects cross-account access unless super-admin", async () => {
         const service = new BillingConnectorApiService(
             {} as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         await expect(
             service.getConfig(user(42), 99)
@@ -132,7 +169,9 @@ describe("billing connector Nest API", () => {
         };
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         await expect(
             service.runSync(user(42), 42, "backfill")
@@ -160,11 +199,14 @@ describe("billing connector Nest API", () => {
                     include_older_open_invoices: true,
                     skip_reporting_breach_on_backfill: false,
                 }),
+                update: jest.fn().mockResolvedValue({}),
             },
         };
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         const result = await service.runSync(user(42), 42, "backfill");
         expect(result.result.status).toBe("RUNNING");
@@ -172,6 +214,7 @@ describe("billing connector Nest API", () => {
         expect(result.result.execution_id).toEqual(expect.any(String));
         await Promise.resolve();
         expect(billingConnector.runInProcessSync).toHaveBeenCalled();
+        expect(db.billingConnector.update).not.toHaveBeenCalled();
         resolveSync?.({
             ok: true,
             cancelled: false,
@@ -183,10 +226,59 @@ describe("billing connector Nest API", () => {
         });
     });
 
+    it("sets backfill_started_at on the first accepted backfill run", async () => {
+        billingConnector.runInProcessSync.mockResolvedValue({
+            ok: true,
+            cancelled: false,
+            accountId: 42,
+            provider: "PRIORITY",
+            stats: {},
+            entity_stats: {},
+            message: "ok",
+        });
+        const db = {
+            billingConnector: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    account_id: 42,
+                    enabled_entities: ["Customer"],
+                    preview_passes: {
+                        Customer: {
+                            passed: true,
+                            completed_at: "2026-08-04T00:00:00.000Z",
+                        },
+                    },
+                    backfill_started_at: null,
+                    sync_mode: "BACKFILL",
+                    backfill_start_date: null,
+                    include_older_open_invoices: true,
+                    skip_reporting_breach_on_backfill: false,
+                }),
+                update: jest.fn().mockResolvedValue({}),
+            },
+        };
+        const service = new BillingConnectorApiService(
+            db as never,
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
+        );
+        await service.runSync(user(42), 42, "backfill");
+        expect(db.billingConnector.update).toHaveBeenCalledWith({
+            where: { id: 1 },
+            data: {
+                backfill_started_at: expect.any(Date),
+                modified_at: expect.any(Date),
+            },
+        });
+    });
+
     it("requires preview, backfill, or incremental mode", async () => {
         const service = new BillingConnectorApiService(
             {} as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         await expect(
             service.runSync(user(42), 42, "nope")
@@ -207,7 +299,9 @@ describe("billing connector Nest API", () => {
         });
         const service = new BillingConnectorApiService(
             {} as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         const result = await service.cancelSync(user(42), 42);
         expect(result.result).toEqual({
@@ -218,19 +312,19 @@ describe("billing connector Nest API", () => {
     });
 
     it("returns extension_key and extension_config on get", async () => {
-        const db = {
-            billingConnector: {
-                findUnique: jest.fn().mockResolvedValue(
-                    connectorRow({
-                        extension_key: ACCOUNT_10149_EXTENSION_KEY,
-                        extension_config: {},
-                    })
-                ),
-            },
-        };
+        const db = billingConnectorDb({
+            findUnique: jest.fn().mockResolvedValue(
+                connectorRow({
+                    extension_key: ACCOUNT_10149_EXTENSION_KEY,
+                    extension_config: {},
+                })
+            ),
+        });
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         const result = await service.getConfig(user(42), 42);
         expect(result.config.extension_key).toBe(ACCOUNT_10149_EXTENSION_KEY);
@@ -243,15 +337,15 @@ describe("billing connector Nest API", () => {
             extension_key: ACCOUNT_10149_EXTENSION_KEY,
             extension_config: {},
         });
-        const db = {
-            billingConnector: {
-                findUnique: jest.fn().mockResolvedValue(existing),
-                update: jest.fn().mockResolvedValue(updated),
-            },
-        };
+        const db = billingConnectorDb({
+            findUnique: jest.fn().mockResolvedValue(existing),
+            update: jest.fn().mockResolvedValue(updated),
+        });
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         const result = await service.upsertConfig(user(42), 42, {
             extension_key: ACCOUNT_10149_EXTENSION_KEY,
@@ -278,15 +372,15 @@ describe("billing connector Nest API", () => {
             extension_key: null,
             extension_config: null,
         });
-        const db = {
-            billingConnector: {
-                findUnique: jest.fn().mockResolvedValue(existing),
-                update: jest.fn().mockResolvedValue(updated),
-            },
-        };
+        const db = billingConnectorDb({
+            findUnique: jest.fn().mockResolvedValue(existing),
+            update: jest.fn().mockResolvedValue(updated),
+        });
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         const result = await service.upsertConfig(user(42), 42, {
             extension_key: null,
@@ -313,7 +407,9 @@ describe("billing connector Nest API", () => {
         };
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never
+            accessScope(42, true) as never,
+            mockCronQueue() as never,
+            mockMetrics() as never
         );
         await expect(
             service.upsertConfig(user(42), 42, {

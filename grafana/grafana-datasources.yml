@@ -1,26 +1,34 @@
 apiVersion: 1
 
+# Force-refresh provisioned datasources on Grafana start
+deleteDatasources:
+  - name: Loki
+    orgId: 1
+  - name: Prometheus
+    orgId: 1
+  - name: Postgres
+    orgId: 1
+
 datasources:
   - name: Loki
     type: loki
     access: proxy
     url: http://loki:3100
     uid: Loki
+    editable: false
     jsonData:
-      derivedFields:
-        - datasourceUid: Loki
-          matcherRegex: "trace_id=(\\w+)"
-          name: TraceID
-          url: "${__value.raw}"
+      maxLines: 1000
   - name: Prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
     uid: Prometheus
     isDefault: true
+    editable: false
     jsonData:
-      httpMethod: POST
+      httpMethod: GET
       manageAlerts: true
+      timeInterval: 15s
   - name: Postgres
     type: postgres
     uid: Postgres
@@ -28,8 +36,10 @@ datasources:
     database: ${GRAFANA_DB_NAME}
     user: ${GRAFANA_DB_USER}
     isDefault: false
+    editable: false
     jsonData:
       sslmode: ${GRAFANA_DB_SSLMODE}
+      postgresVersion: 1500
       database: ${GRAFANA_DB_NAME}
     secureJsonData:
       password: ${GRAFANA_DB_PASSWORD}

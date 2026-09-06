@@ -91,9 +91,14 @@ export class ReportsController {
     }
 
     @Post("sync-system")
-    @ApiOperation({ summary: "Sync system reports (admin)" })
-    async syncSystem(@CurrentUser() user: JwtPayload) {
-        return this.reports.syncSystem(user);
+    @ApiOperation({
+        summary: "Sync selected master system reports to all active accounts",
+    })
+    async syncSystem(
+        @CurrentUser() user: JwtPayload,
+        @Body() body: { reportIds?: number[] }
+    ) {
+        return this.reports.syncSystem(user, body);
     }
 }
 

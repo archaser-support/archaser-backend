@@ -37,6 +37,7 @@ import {
     listSyncRuns,
     mergeEntitySetsPatch,
     mergePullFiltersPatch,
+    normalizeInvoicePaidTolerance,
     parseEntitySetCatalog,
     parseEntitySetsMap,
     parseMappingRules,
@@ -49,21 +50,57 @@ import {
     runInProcessSync,
     runPreviewSync,
     clearRunningSync,
+    completePreviewJob,
+    getPreviewJob,
+    setPreviewJobRunning,
     resolveExtensionAttachmentInput,
     toPublicPullFilters,
     upsertSyncRun,
-    patchSyncRunEntityStats,
+    patchSyncRunProgress,
+    createRunningExecution,
+    createSyncProgressHeartbeat,
+    finalizeSyncHistoryAfterRun,
+    markExecutionCancelled,
+    listExecutionsForAccount,
+    sweepStaleRunning,
+    syncHistoryExecutionToSummary,
+    listMergedInProcessSyncRuns,
+    createBillingConnectorMetricsSinkFromProm,
+    resolveSyncExecutionStatus,
+    resolveSyncErrorType,
+    parseClearBeforeImport,
+    parseCustomerIdForClearBeforeImport,
+    resolveAccountCustomerById,
+    searchAccountCustomers,
+    type ClearBeforeImportEntity,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
     type PullFiltersMap,
+    type BillingConnectorSyncMetricsSink,
 } from "@archaser/billing-connector";
 import {
     areBackfillOptionsLocked,
     formatBackfillStartDateForApi,
     resolveBackfillStartDateChange,
     resolveIncludeOlderOpenInvoicesChange,
+    resolveMepBreachStartDateChange,
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
+import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
+import { MetricsService } from "../metrics/metrics.service";
+import { CronQueueService } from "../queue/cron-queue.service";
+import {
+    countPendingArPostIngestCustomers,
+    enqueueArPostIngestSteps,
+    handleOverdueInvoices,
+    runArPostIngestForCustomers,
+    type ArPostIngestStep,
+} from "@archaser/cron-jobs";
+import {
+    bindCreditInsurancePrisma,
+    clearInvoicePaidToleranceCache,
+    enqueueRewriteForImport,
+} from "@archaser/credit-insurance-domain";
 
 const ADMIN_ACCOUNT_ID = 10013;
 
@@ -135,11 +172,63 @@ function rethrowCoded(error: unknown): never {
 @Injectable()
 export class BillingConnectorApiService {
     private readonly logger = new Logger(BillingConnectorApiService.name);
+    private readonly syncMetrics: BillingConnectorSyncMetricsSink;
 
     constructor(
         private readonly db: DatabaseService,
-        private readonly accessScope: AccessScopeService
-    ) {}
+        private readonly accessScope: AccessScopeService,
+        private readonly cronQueue: CronQueueService,
+        metrics: MetricsService
+    ) {
+        this.syncMetrics = createBillingConnectorMetricsSinkFromProm({
+            syncTotal: metrics.business.billingConnectorSyncTotal,
+            syncDuration: metrics.business.billingConnectorSyncDuration,
+            errorsTotal: metrics.business.billingConnectorErrorsTotal,
+            recordsProcessed: metrics.business.billingConnectorRecordsProcessed,
+        });
+    }
+
+    private shouldDeferPostIngest(_mode: "backfill" | "incremental"): boolean {
+        return process.env.BILLING_CONNECTOR_DEFER_POST_INGEST === "true";
+    }
+
+    private buildPostIngestDeferOptions(
+        accountId: number,
+        mode: "backfill" | "incremental"
+    ) {
+        if (!this.shouldDeferPostIngest(mode)) {
+            return {};
+        }
+        return {
+            deferPostIngest: true,
+            enqueueDeferredSteps: async (args: {
+                accountId: number;
+                customerIds: number[];
+                steps: ArPostIngestStep[];
+            }) => {
+                bindCreditInsurancePrisma(this.db);
+                await enqueueArPostIngestSteps(
+                    args.accountId,
+                    args.customerIds,
+                    args.steps
+                );
+            },
+            schedulePostIngestDrain: async () => {
+                const result = await this.cronQueue.enqueueArPostIngestDrain({
+                    accountId,
+                    // Backfills can touch hundreds of customers; one drain pass
+                    // must cover the enqueue or CI steps stall until overnight.
+                    maxItems: 500,
+                });
+                if (!result.queued) {
+                    this.logger.warn(
+                        `[account ${accountId}] AR post-ingest drain not queued: ${result.reason ?? "unknown"}`
+                    );
+                }
+                return result;
+            },
+        };
+    }
 
     async assertAccess(
         user: JwtPayload,
@@ -168,6 +257,85 @@ export class BillingConnectorApiService {
         return userInfo;
     }
 
+    private connectorHasPartialBackfillProgress(
+        syncStates:
+            | Array<{
+                  entity_type: string;
+                  backfill_completed: boolean;
+                  backfill_cursor: string | null;
+                  backfill_records_pulled: number;
+                  last_attempt_at: Date | null;
+              }>
+            | undefined,
+        enabledEntities?: string[]
+    ): boolean {
+        if (!syncStates?.length) {
+            return false;
+        }
+        const enabled = enabledEntities?.length
+            ? new Set(enabledEntities)
+            : null;
+        const scoped = enabled
+            ? syncStates.filter((state) => enabled.has(state.entity_type))
+            : syncStates;
+        if (!scoped.length) {
+            return false;
+        }
+        return scoped.some((state) => {
+            if (state.backfill_completed) {
+                return false;
+            }
+            return (
+                state.backfill_cursor != null ||
+                state.backfill_records_pulled > 0 ||
+                state.last_attempt_at != null
+            );
+        });
+    }
+
+    /**
+     * Backfill runs before this field was written left `backfill_started_at` null
+     * while sync_state rows show progress — repair once on config read so the UI
+     * can offer Resume instead of Start.
+     */
+    private async repairBackfillStartedAtIfNeeded(connector: {
+        id: number;
+        backfill_started_at?: Date | null;
+        enabled_entities?: unknown;
+        ConnectorSyncState?: Array<{
+            entity_type: string;
+            backfill_completed: boolean;
+            backfill_cursor: string | null;
+            backfill_records_pulled: number;
+            last_attempt_at: Date | null;
+        }>;
+    }): Promise<Date | null> {
+        if (connector.backfill_started_at != null) {
+            return connector.backfill_started_at;
+        }
+        if (
+            !this.connectorHasPartialBackfillProgress(
+                connector.ConnectorSyncState,
+                parseEnabledEntities(connector.enabled_entities)
+            )
+        ) {
+            return null;
+        }
+        const earliestAttempt = (connector.ConnectorSyncState ?? [])
+            .map((state) => state.last_attempt_at)
+            .filter((value): value is Date => value != null)
+            .sort((a, b) => a.getTime() - b.getTime())[0];
+        const startedAt = earliestAttempt ?? new Date();
+        await this.db.billingConnector.update({
+            where: { id: connector.id },
+            data: {
+                backfill_started_at: startedAt,
+                modified_at: new Date(),
+            },
+        });
+        return startedAt;
+    }
+
     private async toPublicConfig(connector: {
         id: number;
         account_id: number;
@@ -184,8 +352,10 @@ export class BillingConnectorApiService {
         consecutive_auth_failures: number;
         backfill_started_at?: Date | null;
         backfill_start_date?: Date | null;
+        mep_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
         skip_reporting_breach_on_backfill?: boolean;
+        invoice_paid_tolerance?: number;
         pull_filters?: unknown;
         entity_sets?: unknown;
         entity_set_catalog?: unknown;
@@ -223,6 +393,10 @@ export class BillingConnectorApiService {
             connector.modified_at
         );
         const preset = cronToPreset(connector.sync_cron_expression);
+        const pendingArPostIngestCustomers =
+            await countPendingArPostIngestCustomers(connector.account_id, {
+                dbClient: this.db as never,
+            });
 
         return {
             id: connector.id,
@@ -241,10 +415,14 @@ export class BillingConnectorApiService {
             backfill_start_date: formatBackfillStartDateForApi(
                 connector.backfill_start_date
             ),
+            mep_breach_start_date: formatBackfillStartDateForApi(
+                connector.mep_breach_start_date
+            ),
             include_older_open_invoices:
                 connector.include_older_open_invoices ?? true,
             skip_reporting_breach_on_backfill:
                 connector.skip_reporting_breach_on_backfill ?? false,
+            invoice_paid_tolerance: connector.invoice_paid_tolerance ?? 0.2,
             pull_filters: pullFilterFields.pull_filters,
             effective_pull_filters: pullFilterFields.effective_pull_filters,
             entity_sets: entitySets,
@@ -278,6 +456,7 @@ export class BillingConnectorApiService {
             daily_time_utc: preset.daily_time_utc,
             weekly_day: preset.weekly_day,
             schedule_warning: null,
+            pending_ar_post_ingest_customers: pendingArPostIngestCustomers,
             sync_states: (connector.ConnectorSyncState ?? []).map((state) => ({
                 entity_type: state.entity_type,
                 backfill_completed: state.backfill_completed,
@@ -305,9 +484,55 @@ export class BillingConnectorApiService {
         if (!connector) {
             return { config: null };
         }
+        const repairedStartedAt =
+            await this.repairBackfillStartedAtIfNeeded(connector);
+        if (repairedStartedAt) {
+            connector.backfill_started_at = repairedStartedAt;
+        }
         return serializeBigInt({
             config: await this.toPublicConfig(connector),
         });
+    }
+
+    async lookupCustomerById(
+        user: JwtPayload,
+        accountId: number,
+        customerIdRaw: string | undefined
+    ) {
+        await this.assertAccess(user, accountId, "manage_billing_connector");
+        const customerId = parseCustomerIdForClearBeforeImport(customerIdRaw);
+        if (customerId == null) {
+            throw new BadRequestException({
+                error: "customer_id is required",
+                code: "CUSTOMER_ID_REQUIRED",
+            });
+        }
+        const customer = await resolveAccountCustomerById({
+            prisma: this.db,
+            accountId,
+            customerId,
+        });
+        if (!customer) {
+            throw new NotFoundException({
+                error: `Customer not found on this account: id ${customerId}`,
+                code: "CUSTOMER_NOT_FOUND",
+            });
+        }
+        return serializeBigInt({ customer });
+    }
+
+    async searchCustomers(
+        user: JwtPayload,
+        accountId: number,
+        q?: string
+    ) {
+        await this.assertAccess(user, accountId, "manage_billing_connector");
+        const items = await searchAccountCustomers({
+            prisma: this.db,
+            accountId,
+            q,
+        });
+        return serializeBigInt({ items });
     }
 
     async upsertConfig(
@@ -418,6 +643,32 @@ export class BillingConnectorApiService {
                 code: startDateChange.code,
             });
         }
+        let mepBreachStartDateChange;
+        try {
+            mepBreachStartDateChange = resolveMepBreachStartDateChange({
+                backfillStartedAt: existing?.backfill_started_at,
+                existingStartDate: existing?.mep_breach_start_date,
+                nextInput:
+                    body.mep_breach_start_date === undefined
+                        ? undefined
+                        : (body.mep_breach_start_date as string | null),
+            });
+        } catch (error: unknown) {
+            const err = error as { code?: string; message?: string };
+            if (err?.code === "INVALID_MEP_BREACH_START_DATE") {
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid mep_breach_start_date",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (!mepBreachStartDateChange.ok) {
+            throw new ConflictException({
+                error: mepBreachStartDateChange.message,
+                code: mepBreachStartDateChange.code,
+            });
+        }
         const includeOlderChange = resolveIncludeOlderOpenInvoicesChange({
             backfillStartedAt: existing?.backfill_started_at,
             existingValue: existing?.include_older_open_invoices,
@@ -449,11 +700,27 @@ export class BillingConnectorApiService {
         if (startDateChange.value !== undefined) {
             data.backfill_start_date = startDateChange.value;
         }
+        if (mepBreachStartDateChange.value !== undefined) {
+            data.mep_breach_start_date = mepBreachStartDateChange.value;
+        }
         if (includeOlderChange.value !== undefined) {
             data.include_older_open_invoices = includeOlderChange.value;
         }
         if (skipBreachChange.value !== undefined) {
             data.skip_reporting_breach_on_backfill = skipBreachChange.value;
+        }
+        if (body.invoice_paid_tolerance !== undefined) {
+            try {
+                data.invoice_paid_tolerance = normalizeInvoicePaidTolerance(
+                    body.invoice_paid_tolerance
+                );
+            } catch (error: unknown) {
+                const err = error as { code?: string; message?: string };
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid invoice_paid_tolerance",
+                    code: err.code ?? "INVALID_INVOICE_PAID_TOLERANCE",
+                });
+            }
         }
 
         let extensionPatch;
@@ -571,6 +838,9 @@ export class BillingConnectorApiService {
                   },
                   include: { ConnectorSyncState: true },
               });
+        if (data.invoice_paid_tolerance !== undefined) {
+            clearInvoicePaidToleranceCache(accountId);
+        }
         return serializeBigInt({
             config: await this.toPublicConfig(connector),
         });
@@ -652,7 +922,8 @@ export class BillingConnectorApiService {
         user: JwtPayload,
         accountId: number,
         modeRaw: string | undefined,
-        importTypeRaw?: string
+        importTypeRaw?: string,
+        body?: Record<string, unknown>
     ) {
         const userInfo = await this.assertAccess(
             user,
@@ -667,16 +938,93 @@ export class BillingConnectorApiService {
                 typeof importTypeRaw === "string" && importTypeRaw.trim()
                     ? (importTypeRaw.trim() as ImportType)
                     : undefined;
-            try {
-                const result = await runPreviewSync({
+            if (getRunningSync(accountId)) {
+                throw new ConflictException({
+                    error: "A sync is already running for this account",
+                    code: "SYNC_IN_PROGRESS",
+                });
+            }
+
+            const previewCustomerId = parseCustomerIdForClearBeforeImport(
+                body?.customer_id
+            );
+            let runtimeCustomerNumber: string | null = null;
+            if (previewCustomerId != null) {
+                const customer = await resolveAccountCustomerById({
                     prisma: this.db,
                     accountId,
-                    importType,
+                    customerId: previewCustomerId,
                 });
-                return { result };
-            } catch (error) {
-                rethrowCoded(error);
+                if (!customer) {
+                    throw new BadRequestException({
+                        error: `Customer not found on this account: id ${previewCustomerId}`,
+                        code: "CUSTOMER_NOT_FOUND",
+                    });
+                }
+                runtimeCustomerNumber = customer.customer_number;
             }
+
+            const executionId = randomUUID();
+            const startedAt = new Date();
+            const runningSummary: ConnectorSyncRunSummary = {
+                id: executionId,
+                trigger: "preview",
+                sync_mode: "PREVIEW",
+                status: "RUNNING",
+                started_at: startedAt.toISOString(),
+                completed_at: null,
+                duration_seconds: null,
+                entity_stats: {},
+                error_message: null,
+                error_type: null,
+                cutover_options: null,
+                cutover_summary: null,
+            };
+            registerRunningSync({
+                accountId,
+                executionId,
+                startedAt,
+                mode: "preview",
+                trigger: "preview",
+            });
+            setPreviewJobRunning(accountId, executionId, startedAt);
+            upsertSyncRun(accountId, runningSummary);
+
+            const onLog = (message: string) => {
+                this.logger.log(`[account ${accountId}] ${message}`);
+            };
+            onLog(
+                `Starting preview (execution ${executionId})` +
+                    (runtimeCustomerNumber
+                        ? ` customer=${runtimeCustomerNumber} (id=${previewCustomerId})`
+                        : "")
+            );
+
+            void this.runAcceptedPreview({
+                accountId,
+                executionId,
+                importType,
+                runtimeCustomerNumber,
+                runningSummary,
+                onLog,
+            });
+
+            return {
+                result: {
+                    ok: true,
+                    accepted: true,
+                    execution_id: executionId,
+                    status: "RUNNING",
+                    sync_mode: "PREVIEW",
+                    trigger: "preview",
+                    ...(previewCustomerId != null
+                        ? { customer_id: previewCustomerId }
+                        : {}),
+                    ...(runtimeCustomerNumber
+                        ? { customer_number: runtimeCustomerNumber }
+                        : {}),
+                },
+            };
         }
 
         if (!["backfill", "incremental"].includes(mode)) {
@@ -688,6 +1036,9 @@ export class BillingConnectorApiService {
 
         const connector = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
+            include: {
+                ConnectorSyncState: true,
+            },
         });
         if (!connector) {
             throw new NotFoundException({
@@ -719,8 +1070,47 @@ export class BillingConnectorApiService {
             });
         }
 
+        // Start backfill only — Resume / incremental ignore clear options.
+        const isResumeBackfill =
+            mode === "backfill" &&
+            this.connectorHasPartialBackfillProgress(
+                connector.ConnectorSyncState,
+                parseEnabledEntities(connector.enabled_entities)
+            );
+        const clearBeforeImport =
+            mode === "backfill" && !isResumeBackfill
+                ? parseClearBeforeImport(body?.clear_before_import)
+                : [];
+        const customerId =
+            mode === "backfill" && !isResumeBackfill
+                ? parseCustomerIdForClearBeforeImport(body?.customer_id)
+                : null;
+        if (customerId != null) {
+            const customer = await resolveAccountCustomerById({
+                prisma: this.db,
+                accountId,
+                customerId,
+            });
+            if (!customer) {
+                throw new BadRequestException({
+                    error: `Customer not found on this account: id ${customerId}`,
+                    code: "CUSTOMER_NOT_FOUND",
+                });
+            }
+        }
+
         const executionId = randomUUID();
         const startedAt = new Date();
+
+        if (mode === "backfill" && connector.backfill_started_at == null) {
+            await this.db.billingConnector.update({
+                where: { id: connector.id },
+                data: {
+                    backfill_started_at: startedAt,
+                    modified_at: startedAt,
+                },
+            });
+        }
         const syncMode = mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
         const trigger = mode === "backfill" ? "backfill" : "manual";
         const runningSummary: ConnectorSyncRunSummary = {
@@ -738,6 +1128,9 @@ export class BillingConnectorApiService {
                 backfill_start_date: formatBackfillStartDateForApi(
                     connector.backfill_start_date
                 ),
+                mep_breach_start_date: formatBackfillStartDateForApi(
+                    connector.mep_breach_start_date
+                ),
                 include_older_open_invoices:
                     connector.include_older_open_invoices ?? true,
                 skip_reporting_breach_on_backfill:
@@ -753,6 +1146,23 @@ export class BillingConnectorApiService {
             trigger,
         });
         upsertSyncRun(accountId, runningSummary);
+        try {
+            await createRunningExecution({
+                executionId,
+                accountId,
+                connectorId: connector.id,
+                provider: connector.provider,
+                trigger: trigger as "backfill" | "manual",
+                syncMode,
+                startedAt,
+            });
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] Failed to create sync history stub ${executionId}: ${message}`
+            );
+        }
         const onLog = (message: string) => {
             this.logger.log(`[account ${accountId}] ${message}`);
         };
@@ -767,6 +1177,8 @@ export class BillingConnectorApiService {
             syncMode,
             runningSummary,
             onLog,
+            clearBeforeImport,
+            customerId,
         });
 
         return {
@@ -781,58 +1193,44 @@ export class BillingConnectorApiService {
         };
     }
 
-    private async runAcceptedSync(params: {
+    private async runAcceptedPreview(params: {
         accountId: number;
-        actor: string | undefined;
         executionId: string;
-        mode: "backfill" | "incremental";
-        trigger: string;
-        syncMode: string;
+        importType?: ImportType;
+        runtimeCustomerNumber?: string | null;
         runningSummary: ConnectorSyncRunSummary;
         onLog: (message: string) => void;
     }) {
         const {
             accountId,
-            actor,
             executionId,
-            mode,
-            trigger,
-            syncMode,
+            importType,
+            runtimeCustomerNumber,
             runningSummary,
             onLog,
         } = params;
         try {
-            const result = await runInProcessSync({
+            const result = await runPreviewSync({
                 prisma: this.db,
                 accountId,
-                trigger,
-                userId: actor,
-                executionId,
-                mode,
+                importType,
+                runtimeCustomerNumber,
                 onLog,
-                onProgress: (entityStats) => {
-                    patchSyncRunEntityStats(
-                        accountId,
-                        executionId,
-                        entityStats,
-                        runningSummary
-                    );
-                },
             });
             const completedAt = new Date();
-            const status = result.cancelled
-                ? "TIMEOUT"
-                : result.ok
-                  ? "SUCCESS"
-                  : "FAILED";
-            onLog(
-                `Finished ${mode}: ${status}${
-                    result.error ? ` — ${result.error}` : ""
-                }`
-            );
+            // Always keep sample rows for the UI; go/no-go is reflected on the payload.
+            completePreviewJob({
+                accountId,
+                executionId,
+                status: "SUCCESS",
+                result,
+                error: null,
+                completedAt,
+            });
+            const runStatus = result.go_no_go.passed ? "SUCCESS" : "FAILED";
             upsertSyncRun(accountId, {
                 ...runningSummary,
-                status,
+                status: runStatus,
                 completed_at: completedAt.toISOString(),
                 duration_seconds: Math.max(
                     1,
@@ -842,26 +1240,46 @@ export class BillingConnectorApiService {
                             1000
                     )
                 ),
-                entity_stats: result.entity_stats ?? {},
-                error_message: result.error ?? null,
-                error_type: result.cancelled
-                    ? "cancelled"
-                    : result.error ?? null,
+                entity_stats: Object.fromEntries(
+                    result.entities.map((entity) => [
+                        entity.import_type,
+                        {
+                            pulled: entity.pulled,
+                            success: entity.importable_count,
+                            failed: entity.validation_errors.length,
+                            skipped: Math.max(
+                                0,
+                                entity.pulled - entity.importable_count
+                            ),
+                            sample_errors: entity.validation_errors.slice(0, 5),
+                        },
+                    ])
+                ),
+                error_message: result.go_no_go.passed
+                    ? null
+                    : "Preview completed with validation issues",
+                error_type: result.go_no_go.passed ? null : "validation",
             });
         } catch (error) {
             const message =
                 error instanceof Error ? error.message : String(error);
-            this.logger.error(
-                `[account ${accountId}] ${mode} crashed: ${message}`
-            );
+            onLog(`Preview failed: ${message.slice(0, 300)}`);
+            const completedAt = new Date();
+            completePreviewJob({
+                accountId,
+                executionId,
+                status: "FAILED",
+                error: message,
+                completedAt,
+            });
             upsertSyncRun(accountId, {
                 ...runningSummary,
                 status: "FAILED",
-                completed_at: new Date().toISOString(),
+                completed_at: completedAt.toISOString(),
                 duration_seconds: Math.max(
                     1,
                     Math.round(
-                        (Date.now() -
+                        (completedAt.getTime() -
                             new Date(runningSummary.started_at).getTime()) /
                             1000
                     )
@@ -874,23 +1292,362 @@ export class BillingConnectorApiService {
         }
     }
 
+    async getPreviewResult(user: JwtPayload, accountId: number) {
+        await this.assertAccess(user, accountId, "view_billing_connector");
+        const job = getPreviewJob(accountId);
+        if (!job) {
+            return {
+                execution_id: null,
+                status: null,
+                started_at: null,
+                completed_at: null,
+                result: null,
+                error: null,
+            };
+        }
+        return {
+            execution_id: job.executionId,
+            status: job.status,
+            started_at: job.started_at,
+            completed_at: job.completed_at,
+            result: job.result,
+            error: job.error,
+        };
+    }
+
+    private async runAcceptedSync(params: {
+        accountId: number;
+        actor: string | undefined;
+        executionId: string;
+        mode: "backfill" | "incremental";
+        trigger: string;
+        syncMode: string;
+        runningSummary: ConnectorSyncRunSummary;
+        onLog: (message: string) => void;
+        clearBeforeImport?: ClearBeforeImportEntity[];
+        customerId?: number | null;
+    }) {
+        const {
+            accountId,
+            actor,
+            executionId,
+            mode,
+            trigger,
+            runningSummary,
+            onLog,
+            clearBeforeImport,
+            customerId,
+        } = params;
+        try {
+            const heartbeat = createSyncProgressHeartbeat(executionId);
+            const result = await runInProcessSync({
+                prisma: this.db,
+                accountId,
+                trigger,
+                userId: actor,
+                executionId,
+                mode,
+                ...(clearBeforeImport?.length
+                    ? { clearBeforeImport }
+                    : {}),
+                ...(customerId != null ? { customerId } : {}),
+                onLog,
+                ...this.buildPostIngestDeferOptions(accountId, mode),
+                observability: {
+                    metrics: this.syncMetrics,
+                },
+                onProgress: (patch) => {
+                    const entityStats = patch.entity_stats;
+                    patchSyncRunProgress(
+                        accountId,
+                        executionId,
+                        patch,
+                        runningSummary
+                    );
+                    void heartbeat(entityStats);
+                },
+                onCustomerBalancesFinal: async (customerIds, options) => {
+                    await recalculateCustomerAmounts(
+                        customerIds,
+                        this.db,
+                        options
+                    );
+                },
+                onProcessOverdueCustomers: async (customerIds) => {
+                    if (customerIds.length === 0) {
+                        return;
+                    }
+                    const scope =
+                        customerIds.length === 1
+                            ? customerIds[0]
+                            : { customerIds };
+                    await handleOverdueInvoices(this.db, scope);
+                },
+                onArPostIngest: async (input) => {
+                    bindCreditInsurancePrisma(this.db);
+                    let skipped = false;
+                    let thrown: unknown;
+                    try {
+                        const result = await runArPostIngestForCustomers({
+                            accountId: input.accountId,
+                            customerIds: input.customerIds,
+                            runReplay: input.runReplay === true,
+                            runMaturity: input.runMaturity === true,
+                            ...(input.runProcessOverdue !== undefined
+                                ? {
+                                      runProcessOverdue:
+                                          input.runProcessOverdue,
+                                  }
+                                : {}),
+                            runLiveRefresh: input.runLiveRefresh === true,
+                            enqueueAsOfRewrite:
+                                input.enqueueAsOfRewrite === true,
+                            dryRun: input.dryRun === true,
+                            asOfRewrite: input.asOfRewrite,
+                            ...(input.affectedInvoiceIds !== undefined
+                                ? {
+                                      affectedInvoiceIds:
+                                          input.affectedInvoiceIds,
+                                  }
+                                : {}),
+                            ...(input.mepBreachStartDate !== undefined
+                                ? {
+                                      mepBreachStartDate:
+                                          input.mepBreachStartDate,
+                                  }
+                                : {}),
+                            ...(input.onProgress
+                                ? { onProgress: input.onProgress }
+                                : {}),
+                        });
+                        skipped = result.skipped;
+                        for (const failure of result.errors) {
+                            this.logger.error(
+                                `[account ${accountId}] AR post-ingest step "${failure.step}" failed` +
+                                    (failure.customerId != null
+                                        ? ` for customer ${failure.customerId}`
+                                        : "") +
+                                    `: ${failure.message}\n${failure.stack ?? ""}`
+                            );
+                        }
+                    } catch (error) {
+                        skipped = true;
+                        thrown = error;
+                        const message =
+                            error instanceof Error
+                                ? error.message
+                                : String(error);
+                        this.logger.error(
+                            `[account ${accountId}] AR post-ingest failed: ${message}`
+                        );
+                    }
+                    // Collection-only / unexpected throw: still enqueue as-of
+                    // (same as file import complete). Overdue already ran for
+                    // non-CI when the orchestrator returned skipped.
+                    if (
+                        skipped &&
+                        input.enqueueAsOfRewrite &&
+                        input.asOfRewrite
+                    ) {
+                        try {
+                            await enqueueRewriteForImport({
+                                accountId: input.accountId,
+                                importType: input.asOfRewrite.importType,
+                                entityIds: input.asOfRewrite.entityIds,
+                                customerIds: input.customerIds,
+                            });
+                        } catch {
+                            // Best-effort; do not fail sync for as-of enqueue.
+                        }
+                    }
+                    if (thrown) {
+                        throw thrown;
+                    }
+                },
+            });
+            const completedAt = new Date();
+            const status = resolveSyncExecutionStatus(result) as
+                | "SUCCESS"
+                | "FAILED"
+                | "PARTIAL"
+                | "TIMEOUT";
+            const errorType =
+                resolveSyncErrorType(result, status) ??
+                (result.error ?? null);
+            onLog(
+                result.postIngestDeferred
+                    ? `Entity ingest finished; awaiting post-import drain (${status})`
+                    : `Finished ${mode}: ${status}${
+                          result.error ? ` — ${result.error}` : ""
+                      }`
+            );
+            upsertSyncRun(accountId, {
+                ...runningSummary,
+                status: result.postIngestDeferred ? "RUNNING" : status,
+                completed_at: result.postIngestDeferred
+                    ? null
+                    : completedAt.toISOString(),
+                duration_seconds: result.postIngestDeferred
+                    ? null
+                    : Math.max(
+                          1,
+                          Math.round(
+                              (completedAt.getTime() -
+                                  new Date(
+                                      runningSummary.started_at
+                                  ).getTime()) /
+                                  1000
+                          )
+                      ),
+                entity_stats: result.entity_stats ?? {},
+                error_message: result.postIngestDeferred
+                    ? null
+                    : result.error ?? null,
+                error_type: result.postIngestDeferred ? null : errorType,
+            });
+            try {
+                await finalizeSyncHistoryAfterRun(
+                    executionId,
+                    result,
+                    completedAt
+                );
+            } catch (historyError) {
+                const historyMessage =
+                    historyError instanceof Error
+                        ? historyError.message
+                        : String(historyError);
+                this.logger.error(
+                    `[account ${accountId}] Failed to complete sync history ${executionId}: ${historyMessage}`
+                );
+            }
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] ${mode} crashed: ${message}`
+            );
+            const completedAt = new Date();
+            upsertSyncRun(accountId, {
+                ...runningSummary,
+                status: "FAILED",
+                completed_at: completedAt.toISOString(),
+                duration_seconds: Math.max(
+                    1,
+                    Math.round(
+                        (completedAt.getTime() -
+                            new Date(runningSummary.started_at).getTime()) /
+                            1000
+                    )
+                ),
+                error_message: message,
+                error_type: "unexpected",
+            });
+            try {
+                await finalizeSyncHistoryAfterRun(
+                    executionId,
+                    {
+                        ok: false,
+                        accountId,
+                        provider: runningSummary.sync_mode,
+                        stats: {
+                            customersProcessed: 0,
+                            contactsProcessed: 0,
+                            invoicesProcessed: 0,
+                            paymentsProcessed: 0,
+                            customersImported: 0,
+                            contactsImported: 0,
+                            invoicesImported: 0,
+                            paymentsImported: 0,
+                            importErrors: 0,
+                        },
+                        message,
+                        error: message,
+                    },
+                    completedAt
+                );
+            } catch (historyError) {
+                const historyMessage =
+                    historyError instanceof Error
+                        ? historyError.message
+                        : String(historyError);
+                this.logger.error(
+                    `[account ${accountId}] Failed to complete sync history ${executionId}: ${historyMessage}`
+                );
+            }
+        } finally {
+            clearRunningSync(accountId);
+        }
+    }
+
     async cancelSync(user: JwtPayload, accountId: number) {
         await this.assertAccess(user, accountId, "manage_billing_connector");
         const running = getRunningSync(accountId);
         if (!running) {
             return { result: { cancelled: false, execution_id: null } };
         }
+        const cancelledAt = new Date();
+        if (running.mode === "preview") {
+            completePreviewJob({
+                accountId,
+                executionId: running.executionId,
+                status: "FAILED",
+                error: "Preview stopped by operator",
+                completedAt: cancelledAt,
+            });
+            const existing = listSyncRuns(accountId).find(
+                (run: ConnectorSyncRunSummary) =>
+                    run.id === running.executionId
+            );
+            if (existing) {
+                const startedMs = new Date(existing.started_at).getTime();
+                upsertSyncRun(accountId, {
+                    ...existing,
+                    status: "TIMEOUT",
+                    completed_at: cancelledAt.toISOString(),
+                    duration_seconds: Math.max(
+                        1,
+                        Math.round((cancelledAt.getTime() - startedMs) / 1000)
+                    ),
+                    error_message: "Preview stopped by operator",
+                    error_type: "cancelled",
+                });
+            }
+            clearRunningSync(accountId);
+            return {
+                result: {
+                    cancelled: true,
+                    execution_id: running.executionId,
+                },
+            };
+        }
         requestConnectorSyncCancel(running.executionId);
         const existing = listSyncRuns(accountId).find(
             (run: ConnectorSyncRunSummary) => run.id === running.executionId
         );
         if (existing) {
+            const startedMs = new Date(existing.started_at).getTime();
             upsertSyncRun(accountId, {
                 ...existing,
                 status: "TIMEOUT",
+                completed_at: cancelledAt.toISOString(),
+                duration_seconds: Math.max(
+                    1,
+                    Math.round((cancelledAt.getTime() - startedMs) / 1000)
+                ),
                 error_message: "Sync stopped by operator",
                 error_type: "cancelled",
             });
+        }
+        try {
+            await markExecutionCancelled(running.executionId, {
+                errorMessage: "Sync stopped by operator",
+            });
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] Failed to mark sync history cancelled ${running.executionId}: ${message}`
+            );
         }
         return {
             result: { cancelled: true, execution_id: running.executionId },
@@ -900,7 +1657,30 @@ export class BillingConnectorApiService {
     async listSyncRuns(user: JwtPayload, accountId: number, limitRaw?: string) {
         await this.assertAccess(user, accountId, "view_billing_connector");
         const limit = Number.parseInt(String(limitRaw ?? "25"), 10);
-        return { runs: listSyncRuns(accountId, Number.isFinite(limit) ? limit : 25) };
+        const runs = await listMergedInProcessSyncRuns(
+            accountId,
+            Number.isFinite(limit) ? limit : 25,
+            (message) => this.logger.warn(message)
+        );
+        return { runs };
+    }
+
+    async listSyncHistory(user: JwtPayload, accountId: number) {
+        await this.assertAccess(user, accountId, "view_billing_connector");
+        try {
+            await sweepStaleRunning({ accountId, olderThanHours: 2 });
+            const docs = await listExecutionsForAccount(accountId);
+            return {
+                runs: docs.map(syncHistoryExecutionToSummary),
+            };
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] Failed to list sync history: ${message}`
+            );
+            throw error;
+        }
     }
 
     async resetBackfill(
@@ -942,6 +1722,7 @@ export class BillingConnectorApiService {
                     backfill_last_checkpoint_at: null,
                     backfill_total_records: null,
                     last_max_updated_at: null,
+                    last_attempt_at: null,
                     last_error: null,
                 },
             });
@@ -967,6 +1748,7 @@ export class BillingConnectorApiService {
                 backfill_last_checkpoint_at: null,
                 backfill_total_records: null,
                 last_max_updated_at: null,
+                last_attempt_at: null,
                 last_error: null,
             },
         });

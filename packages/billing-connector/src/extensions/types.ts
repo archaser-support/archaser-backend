@@ -3,6 +3,8 @@
  * Transform runs after field mapping and before entity import.
  * Optional payment-close hooks run during payment import and invoice recalc.
  */
+import type { PrismaClient } from "@prisma/client";
+
 export type ExtensionEntityType =
     | "Customer"
     | "Payment"
@@ -24,16 +26,74 @@ export interface ExtensionTransformContext {
     window: ExtensionSyncWindow;
     batch: ExtensionMappedBatch;
     extension_config: Record<string, unknown> | null;
+    /** When set, extension may write during transform (rare). */
+    prisma?: Pick<PrismaClient, "invoice" | "invoicePayment">;
+    userId?: string;
+    /** Preview / dry-run — no DB writes from the extension. */
+    dryRun?: boolean;
+    /**
+     * Sync-scoped invoice numbers to settle after Invoice ingest when they
+     * were not present yet during Payment transform (Payment-first order).
+     */
+    pendingInvoiceCloses?: Set<string>;
+    /**
+     * ERP close date (Priority CURDATE) per pending invoice number, so a
+     * virtual close carries the ERP date instead of the import timestamp.
+     */
+    pendingInvoiceCloseDates?: Map<string, Date>;
 }
 
 export type ExtensionLinkedPayment = {
     payment_method: string | null;
+    /** Import identity / Priority recon key when present (e.g. FRECONNUM|FNCNUM|KLINE). */
+    reference?: string | null;
 };
 
-export type ExtensionCreditPaymentCloseInput = {
+/** Map payment amounts onto the linked invoice's currency using ERP dual-currency fields. */
+export type ExtensionAlignPaymentAmountsInput = {
+    amount?: number;
+    customer_amount: number;
+    customer_currency: string;
+    invoiceCustomerCurrency: string | null | undefined;
+    /** Invoice base-currency amount; with `invoiceCustomerAmount` gives the FX ratio. */
+    invoiceAmount: number | null | undefined;
+    invoiceCustomerAmount: number | null | undefined;
     rawErpRow: Record<string, unknown>;
-    invoiceCustomCode1: string | null | undefined;
-    customerAmount: number;
+};
+
+export type ExtensionAlignedPaymentAmounts = {
+    amount?: number;
+    customer_amount: number;
+    customer_currency: string;
+};
+
+/** One payment that was linked (or re-confirmed linked) during import. */
+export type ExtensionPaymentLinkedCandidate = {
+    invoiceId: number;
+    customerId: number;
+    invoiceNumber: string;
+    paymentDate: Date;
+    rawErpRow: Record<string, unknown>;
+};
+
+export type ExtensionAfterPaymentLinkedContext = {
+    prisma: Pick<
+        PrismaClient,
+        "invoice" | "invoicePayment" | "billingConnector" | "$transaction"
+    >;
+    accountId: number;
+    userId?: string;
+    candidates: ExtensionPaymentLinkedCandidate[];
+};
+
+export type ExtensionAfterPaymentLinkedResult = {
+    /** Invoice ids that need paid-total recalc after the extension ran. */
+    invoiceIdsToRecalc: number[];
+    /**
+     * Invoice ids already stamped Paid by the extension — exclude from
+     * payment-sum recalc so totals are not overwritten.
+     */
+    invoiceIdsSkipRecalc?: number[];
 };
 
 export interface BillingAccountExtension {
@@ -53,13 +113,88 @@ export interface BillingAccountExtension {
      */
     isForcePaidClose?(payment: ExtensionLinkedPayment): boolean;
     /**
-     * Use absolute payment amounts when closing a credit invoice.
+     * After payments are linked to invoices (including unchanged re-sync skips),
+     * run account-specific close behavior (e.g. virtual gap payments).
      */
-    shouldNormalizeNegativeCreditPayments?(
-        row: ExtensionCreditPaymentCloseInput
-    ): boolean;
+    afterPaymentLinked?(
+        ctx: ExtensionAfterPaymentLinkedContext
+    ):
+        | ExtensionAfterPaymentLinkedResult
+        | Promise<ExtensionAfterPaymentLinkedResult>;
+    /**
+     * Flush invoice numbers queued during Payment transform (reconciled
+     * IDG_ARFNCITEMS4 lines) after Invoice ingest — virtual fill + paid recalc.
+     */
+    flushPendingInvoiceCloses?(ctx: {
+        prisma: Pick<
+            PrismaClient,
+            "invoice" | "invoicePayment" | "billingConnector" | "$transaction"
+        >;
+        accountId: number;
+        userId?: string;
+        invoiceNumbers: string[];
+        /** ERP CURDATE per invoice number for virtual-close payment dates. */
+        invoiceCloseDates?: Map<string, Date>;
+        /** Live progress for the Settle closed invoices tail step. */
+        onProgress?: (progress: {
+            processed: number;
+            total: number;
+        }) => void;
+    }): Promise<{ closedIds: number[]; customerIds?: number[] }>;
     /** Canonicalize payment vs invoice currency before attach. */
     normalizePaymentCurrency?(currency: string | null | undefined): string;
+    /**
+     * Optional dual-currency / FX alignment before amount resolution
+     * (e.g. Priority CODE/CREDIT1 vs CODE5/CREDIT5).
+     */
+    alignPaymentAmountsForInvoice?(
+        input: ExtensionAlignPaymentAmountsInput
+    ): ExtensionAlignedPaymentAmounts;
+/**
+     * Extra OData $select columns for live/preview pulls (account-specific
+     * ERP fields such as IDG_*). Merged with mapping-derived select.
+     */
+    extraSelectFields?(params: {
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string[];
+    /**
+     * Extra ERP customer-number values for Start customer-scoped pulls
+     * (OR'd with the Archaser customer_number). Account-specific — e.g.
+     * IDG_ARFNCITEMS IDG_CUSTNAME = customer + company suffix.
+     */
+    expandRuntimeCustomerScopeNumbers?(params: {
+        customerNumber: string;
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string[];
+    /**
+     * Optional full OData customer-scope clause for Start / preview pulls.
+     * When a non-empty string is returned, it replaces the generic
+     * `CUSTNAME` clause from `resolveRuntimeCustomerScopeOData`.
+     * Return null to keep the generic clause.
+     * Account 10149 uses this for IDG_CUSTNAME (fast path).
+     */
+    buildRuntimeCustomerScopeOData?(params: {
+        customerNumber: string;
+        additionalCustomerNumbers: string[];
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string | null;
+    /**
+     * Optional second customer-scope clause run after the primary Payment pull
+     * (e.g. IDC_CUSTNAMEIV when IDG_CUSTNAME is null). Must not be OR'd into
+     * the primary filter — Priority full-scans and hangs.
+     */
+    buildRuntimeCustomerScopeFallbackOData?(params: {
+        customerNumber: string;
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string | null;
 }
 
 export type ExtensionAttachmentUpsertInput = {

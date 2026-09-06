@@ -1,12 +1,15 @@
 import { ForbiddenException } from "@nestjs/common";
 
-jest.mock("../src/credit-insurance/domain/asOfRewriteQueue", () => ({
+jest.mock("../../packages/credit-insurance-domain/src/credit-insurance/domain/asOfRewriteQueue", () => ({
+    ...jest.requireActual(
+        "../../packages/credit-insurance-domain/src/credit-insurance/domain/asOfRewriteQueue"
+    ),
     enqueueAsOfRewrite: jest.fn().mockResolvedValue(undefined),
 }));
 
 import { AsOfBackfillController } from "../src/credit-insurance/as-of-backfill.controller";
 import { InsuranceEntitiesService } from "../src/credit-insurance/insurance-entities.service";
-import { enqueueAsOfRewrite } from "../src/credit-insurance/domain/asOfRewriteQueue";
+import { enqueueAsOfRewrite } from "@archaser/credit-insurance-domain";
 
 describe("as-of backfill controls", () => {
     it("rejects a non-super-admin before reading backfill status", async () => {
