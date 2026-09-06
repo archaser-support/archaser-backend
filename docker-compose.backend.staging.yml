@@ -25,6 +25,7 @@ services:
       NEST_PORT: 3010
       PORT: 3010
       SERVICE_NAME: archaser-api-staging
+      NEST_CORS_ORIGINS: "https://staging.archaser.com,https://api.staging.archaser.com"
       REDIS_URL: redis://redis:6379
       BULLMQ_ENABLED: "true"
       BULLMQ_QUEUE: archaser-cron
