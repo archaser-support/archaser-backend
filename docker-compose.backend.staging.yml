@@ -27,7 +27,7 @@ services:
       SERVICE_NAME: archaser-api-staging
       NEST_PUBLIC_URL: "https://api.staging.archaser.com"
       NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
-      NEST_CORS_ORIGINS: "https://staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
+      NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
       REDIS_URL: redis://redis:6379
       BULLMQ_ENABLED: "true"
       BULLMQ_QUEUE: archaser-cron
@@ -93,6 +93,8 @@ services:
       NODE_ENV: production
       SMS_PORT: 3004
       CONNECTION_LIMIT_SMS: 5
+      NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
+      NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
@@ -111,6 +113,8 @@ services:
       # Path flip enabled on staging nginx — connectors owns sync schedules (D72).
       ENABLE_CONNECTORS_SYNC_WORKERS: "true"
       REDIS_URL: redis://redis:6379
+      NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
+      NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
@@ -129,6 +133,8 @@ services:
     environment:
       NODE_ENV: production
       REPORTS_PORT: 3006
+      NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
+      NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
