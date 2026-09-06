@@ -126,6 +126,22 @@ export {
     resolveRewriteDrainStart,
 } from "./credit-insurance/domain/asOfRewriteQueue";
 export {
+    __resetCreditAsOfBackfillRunnersForTests,
+    countInclusiveUtcDays,
+    CreditAsOfBackfillConflictError,
+    enumerateUtcDaysInclusive,
+    getCreditAsOfBackfillJobStatus,
+    listRunningCreditAsOfBackfillAccountIds,
+    pauseCreditAsOfBackfillJob,
+    registerCreditAsOfBackfillDispatch,
+    creditAsOfBackfillBullJobId,
+    retryCreditAsOfBackfillJob,
+    runCreditAsOfBackfillJob,
+    startCreditAsOfBackfillJob,
+    type CreditAsOfBackfillJobView,
+    type CreditAsOfBackfillStatus,
+} from "./credit-insurance/domain/creditAsOfBackfillJob";
+export {
     asOfCustomerOverdueBlockAt,
     asOfTermsScopeKey,
     loadAsOfOpenInvoiceCandidates,
@@ -133,6 +149,28 @@ export {
     type AsOfOpenInvoiceLine,
     type AsOfPolicyTermsForBreach,
 } from "./credit-insurance/domain/asOfOpenAr";
+export {
+    aggregateLedgerPaymentsOnOrBefore,
+    deriveAsOfOpenInvoiceCandidatesFromLedger,
+    loadAsOfOpenInvoiceLedgerRange,
+    type AsOfLedgerInvoiceRow,
+    type AsOfLedgerPaymentRow,
+    type AsOfOpenInvoiceLedger,
+} from "./credit-insurance/domain/asOfOpenArLedgerPreload";
+export {
+    buildCreditAsOfBackfillRunContext,
+    createMinimalCreditAsOfBackfillRunContext,
+    deriveDashboardSnapshotScopes,
+    ensureCapacityGapsForBackfillRun,
+    loadActiveCustomerPoliciesForTrendSync,
+    type CreditAsOfBackfillRunContext,
+    type CreditDashboardSnapshotScope,
+} from "./credit-insurance/domain/creditAsOfBackfillRunContext";
+export {
+    batchUpsertCustomerPolicyTrendRows,
+    CUSTOMER_POLICY_TREND_BATCH_UPSERT_CHUNK_SIZE,
+    type CustomerPolicyTrendUpsertRow,
+} from "./credit-insurance/domain/customerPolicyTrendBatchUpsert";
 export {
     computeCreditDashboardHealthIndex,
     getCreditDashboardSummaryHistory,
@@ -182,6 +220,7 @@ export { resolveCustomerHeaderOpenArAmounts } from "./credit-insurance/domain/op
 export {
     isActiveTopUp,
     resolveEffectiveApprovedLimit,
+    resolveEffectiveApprovedLimitFromTopUpRows,
     resolveTopUpTotalsForAsOfDates,
 } from "./credit-insurance/domain/resolveEffectiveApprovedLimit";
 export {
