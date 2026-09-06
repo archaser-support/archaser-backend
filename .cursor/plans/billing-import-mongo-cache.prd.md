@@ -40,7 +40,7 @@ After each successful entity type in a backfill or incremental run (manual or sc
 20. As a product owner, I want this separate from sync execution history, so that 90-day run audit TTL is unchanged.
 21. As an analyst on a large Invoice backfill, I want the system to handle payloads that would exceed a single Mongo document limit, so that large accounts still get a usable backup (chunking or equivalent after size spike).
 22. As a developer, I want a single import-cache module seam for write/read, so that tests can assert backup replace and replay without driving the full ERP.
-23. As an admin, I want missing account timezone to fall back to `Asia/Jerusalem`, so that day keys remain defined.
+23. As an admin, I want billing connector settings to include an IANA `time_zone` (default Asia/Jerusalem), so that import-cache same-day keys follow the connector calendar.
 24. As an analyst, I want cache suggestion only on manual Start, so that automated jobs stay predictable.
 25. As a developer, I want cron and manual paths to share the same write helper, so that scheduled and manual backups use one code path.
 26. As a QA engineer, I want replay to skip ERP network calls for selected entities, so that we can prove cache use without ERP credentials in a controlled test harness.
@@ -68,7 +68,7 @@ Unique logical key per backup:
 - `account_id`
 - `import_type` (`Customer` | `Contact` | `Invoice` | `Payment`)
 - `sync_mode` (`BACKFILL` | `INCREMENTAL`)
-- `cache_day` — calendar date in the **account timezone** (`Account.time_zone`, default `Asia/Jerusalem` if null)
+- `cache_day` — calendar date in **`BillingConnector.time_zone`** (IANA; default `Asia/Jerusalem`)
 - `customer_scope` — customer number string, or sentinel `"all"` for full-account runs
 
 Same-day second write for the same key **replaces** the document (and any chunks).
@@ -146,7 +146,8 @@ Do not require new automated tests in slices unless the user explicitly asks at 
 | D1/D15 | Stored payload | Mapped rows entering import |
 | D2 | Override key | account + entity + sync mode + day (+ customer scope) |
 | D3 | Reuse UX | Pre-check + confirm flag |
-| D4 | Calendar day | Account timezone |
+| D4 | Calendar day | **BillingConnector.time_zone** (IANA), default `Asia/Jerusalem` |
+| D19 | Timezone source | Explicit `time_zone` on **BillingConnector** (billing settings), not Account/User |
 | D5 | Write timing | After entity completes successfully |
 | D6 | Replay | Skip ERP → import from Mongo to Postgres |
 | D7 | Flag scope | Per entity type |
@@ -165,7 +166,7 @@ Do not require new automated tests in slices unless the user explicitly asks at 
 | Gate | If Yes | If No | Blocks |
 |------|--------|-------|--------|
 | Payload exceeds 16MB single doc | Chunked docs under same key | Ship single-doc design | Large backfill write path |
-| Account `time_zone` null | Fall back `Asia/Jerusalem` | Use IANA zone | Informational |
+| Invalid `BillingConnector.time_zone` | Reject on PUT; fall back to Asia/Jerusalem on read/cache day | Store valid IANA | Informational |
 
 ### Codebase scan
 

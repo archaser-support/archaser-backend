@@ -18,7 +18,14 @@ import {
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "../import/entityImporter";
-import { parseMappingRules, type MappingRule } from "../utils/connectorFieldUtils";
+import {
+    normalizeImportCacheCustomerScope,
+    resolveImportCacheDay,
+    rowsEnteringImport,
+    trySaveEntityImportCache,
+    type ImportCacheSyncMode,
+} from "../importCache";
+import { parseMappingRules, mapErpRecord, type MappingRule } from "../utils/connectorFieldUtils";
 import { PRIORITY_RATE_LIMITS } from "../priority/priorityApiContract";
 import { odataSelectFieldsFromMapping } from "../priority/prioritySelectFields";
 import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
@@ -921,6 +928,13 @@ async function runInProcessSyncBody(
                 entitySets: connector.entity_sets,
                 dateFieldByType,
                 overlapMinutes: connector.sync_overlap_minutes,
+                syncMode:
+                    options.mode === "incremental"
+                        ? "INCREMENTAL"
+                        : "BACKFILL",
+                executionId: options.executionId ?? null,
+                providerLabel: connector.provider,
+                timeZone: connector.time_zone,
             });
 
             const imported =
@@ -1199,6 +1213,37 @@ async function runInProcessSyncBody(
                                 : null,
                     },
                 });
+
+                const rules = parseMappingRules(mapping.mapping);
+                const forCache =
+                    rules.length > 0
+                        ? (pullResult.records as Record<string, unknown>[]).map(
+                              (raw) => mapErpRecord(raw, rules)
+                          )
+                        : (pullResult.records as Record<string, unknown>[]);
+                const cacheSyncMode: ImportCacheSyncMode =
+                    options.mode === "incremental"
+                        ? "INCREMENTAL"
+                        : "BACKFILL";
+                await trySaveEntityImportCache(
+                    {
+                        accountId,
+                        connectorId: connector.id,
+                        provider: connector.provider,
+                        importType: entityType,
+                        syncMode: cacheSyncMode,
+                        cacheDay: resolveImportCacheDay(
+                            new Date(),
+                            connector.time_zone
+                        ),
+                        customerScope: normalizeImportCacheCustomerScope(
+                            runtimeCustomerNumber
+                        ),
+                        executionId: options.executionId ?? null,
+                        rows: rowsEnteringImport(forCache, importResult),
+                    },
+                    log
+                );
             } catch (err) {
                 const message =
                     err instanceof Error ? err.message : "Unknown error";

@@ -352,6 +352,7 @@ export class BillingConnectorApiService {
         consecutive_auth_failures: number;
         backfill_started_at?: Date | null;
         backfill_start_date?: Date | null;
+        time_zone?: string | null;
         mep_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
         skip_reporting_breach_on_backfill?: boolean;
@@ -415,6 +416,11 @@ export class BillingConnectorApiService {
             backfill_start_date: formatBackfillStartDateForApi(
                 connector.backfill_start_date
             ),
+            time_zone:
+                typeof connector.time_zone === "string" &&
+                connector.time_zone.trim().length > 0
+                    ? connector.time_zone.trim()
+                    : "Asia/Jerusalem",
             mep_breach_start_date: formatBackfillStartDateForApi(
                 connector.mep_breach_start_date
             ),
@@ -721,6 +727,25 @@ export class BillingConnectorApiService {
                     code: err.code ?? "INVALID_INVOICE_PAID_TOLERANCE",
                 });
             }
+        }
+        if (body.time_zone !== undefined) {
+            const raw =
+                typeof body.time_zone === "string" ? body.time_zone.trim() : "";
+            if (!raw) {
+                throw new BadRequestException({
+                    error: "time_zone must be a non-empty IANA timezone",
+                    code: "INVALID_TIME_ZONE",
+                });
+            }
+            try {
+                Intl.DateTimeFormat(undefined, { timeZone: raw });
+            } catch {
+                throw new BadRequestException({
+                    error: `Invalid IANA time_zone: ${raw}`,
+                    code: "INVALID_TIME_ZONE",
+                });
+            }
+            data.time_zone = raw;
         }
 
         let extensionPatch;
