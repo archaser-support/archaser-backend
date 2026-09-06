@@ -150,6 +150,18 @@ HTTP_CONF
 
     issue_cert() {
         local domain="$1"
+        local cert_file="/etc/letsencrypt/live/$domain/fullchain.pem"
+        
+        if [[ -f "$cert_file" ]]; then
+            if sudo openssl x509 -in "$cert_file" -noout -checkend 86400 2>/dev/null; then
+                log "Found valid existing SSL certificate for $domain."
+                if [[ "$FORCE_CERTS" != "true" ]]; then
+                    log "✅ Skipping cert re-issuance (valid cert active at $cert_file)"
+                    return 0
+                fi
+            fi
+        fi
+
         log "Requesting official Let's Encrypt SSL certificate for $domain..."
         local cmd=(sudo certbot certonly)
         if [[ "$USE_STANDALONE" == "true" ]]; then
@@ -170,6 +182,11 @@ HTTP_CONF
         if "${cmd[@]}"; then
             log "✅ Successfully issued valid Let's Encrypt certificate for $domain"
         else
+            if [[ -f "$cert_file" ]] && sudo openssl x509 -in "$cert_file" -noout -checkend 86400 2>/dev/null; then
+                log "⚠️ Certbot renewal hit Let's Encrypt rate limits (5 certs/week). Re-using existing valid certificate at $cert_file!"
+                return 0
+            fi
+
             if [[ "$USE_STANDALONE" == "false" ]]; then
                 log "Webroot challenge failed for $domain. Attempting Standalone mode fallback..."
                 sudo systemctl stop nginx || true
