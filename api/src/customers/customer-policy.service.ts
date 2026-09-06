@@ -10,6 +10,7 @@ import {
 } from "@prisma/client";
 import {
     deriveExcludedFromPolicy,
+    ensureCustomerCapacityGapStored,
     freezeCustomerPolicyGapOnDeactivation,
     isAllowedPolicyExclusionReason,
     isPrimaryPolicyAssignable,
@@ -526,6 +527,7 @@ export class CustomerPolicyService {
                 validateZeroLimitDate: false,
                 refreshTermsBreachFlags: payload.explicitExclusionReason,
             });
+            await ensureCustomerCapacityGapStored(customerId);
         } catch (error) {
             const message =
                 error instanceof Error ? error.message : String(error);

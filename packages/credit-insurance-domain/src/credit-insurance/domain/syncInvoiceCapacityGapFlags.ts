@@ -9,7 +9,7 @@ export type InvoiceForCapacityGapFlag = {
 };
 
 /**
- * Sticky {@link Invoice.in_capacity_gap} from stored per-invoice gap limit amount.
+ * {@link Invoice.in_capacity_gap} from stored per-invoice gap limit amount (live waterfall).
  */
 export function computeInvoiceCapacityGapFlagsFromStored(
     invoices: InvoiceForCapacityGapFlag[]
