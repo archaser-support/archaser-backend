@@ -27,6 +27,9 @@ services:
       NEST_PORT: 4010
       PORT: 4010
       SERVICE_NAME: archaser-api-production
+      NEST_PUBLIC_URL: "https://api.production.archaser.com"
+      NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
+      NEST_CORS_ORIGINS: "https://production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://archaser.com"
       REDIS_URL: redis://redis:6379
       BULLMQ_ENABLED: "true"
       BULLMQ_QUEUE: archaser-cron-prod
