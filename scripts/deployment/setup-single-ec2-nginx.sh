@@ -142,8 +142,13 @@ server {
 }
 HTTP_CONF
 
+        sudo rm -f /etc/nginx/sites-enabled/default \
+                    /etc/nginx/sites-enabled/archaser-staging-api* \
+                    /etc/nginx/sites-enabled/archaser-production-api* \
+                    /etc/nginx/sites-enabled/archaser-staging* \
+                    /etc/nginx/sites-enabled/archaser-production* \
+                    /etc/nginx/sites-enabled/archaser
         sudo ln -sf /etc/nginx/sites-available/archaser-single-ec2-api /etc/nginx/sites-enabled/archaser-single-ec2-api
-        sudo rm -f /etc/nginx/sites-enabled/default
         sudo nginx -t
         sudo systemctl restart nginx || sudo systemctl start nginx
     fi
@@ -224,8 +229,13 @@ if [[ ! -f "$CONF_SRC" ]]; then
 fi
 
 sudo cp "$CONF_SRC" /etc/nginx/sites-available/archaser-single-ec2-api
+sudo rm -f /etc/nginx/sites-enabled/default \
+            /etc/nginx/sites-enabled/archaser-staging-api* \
+            /etc/nginx/sites-enabled/archaser-production-api* \
+            /etc/nginx/sites-enabled/archaser-staging* \
+            /etc/nginx/sites-enabled/archaser-production* \
+            /etc/nginx/sites-enabled/archaser
 sudo ln -sf /etc/nginx/sites-available/archaser-single-ec2-api /etc/nginx/sites-enabled/archaser-single-ec2-api
-sudo rm -f /etc/nginx/sites-enabled/default
 
 log "Testing Nginx SSL configuration syntax..."
 sudo nginx -t
