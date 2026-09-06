@@ -73,12 +73,41 @@ require_sudo() {
 
 require_sudo
 
-log "Installing Nginx and Certbot dependencies..."
+log "Installing Nginx, OpenSSL, and Certbot dependencies..."
 sudo apt-get update -qq
-sudo apt-get install -y -qq nginx certbot python3-certbot-nginx
+sudo apt-get install -y -qq nginx certbot python3-certbot-nginx openssl curl
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Ensure ssl parameters exist
+sudo mkdir -p /etc/letsencrypt
+if [[ ! -f /etc/letsencrypt/options-ssl-nginx.conf ]]; then
+    log "Creating default /etc/letsencrypt/options-ssl-nginx.conf..."
+    sudo curl -sSL https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf -o /etc/letsencrypt/options-ssl-nginx.conf || true
+fi
+
+if [[ ! -f /etc/letsencrypt/ssl-dhparams.pem ]]; then
+    log "Generating /etc/letsencrypt/ssl-dhparams.pem..."
+    sudo openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048 >/dev/null 2>&1 || true
+fi
+
+# Ensure self-signed temporary certificates exist so Nginx can validate config before Certbot runs
+ensure_dummy_cert() {
+    local domain="$1"
+    local cert_dir="/etc/letsencrypt/live/$domain"
+    if [[ ! -f "$cert_dir/fullchain.pem" || ! -f "$cert_dir/privkey.pem" ]]; then
+        log "Creating self-signed temporary certificate for $domain (for initial Nginx validation)..."
+        sudo mkdir -p "$cert_dir"
+        sudo openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout "$cert_dir/privkey.pem" \
+            -out "$cert_dir/fullchain.pem" \
+            -subj "/CN=$domain" >/dev/null 2>&1
+    fi
+}
+
+ensure_dummy_cert "api.staging.archaser.com"
+ensure_dummy_cert "api.production.archaser.com"
 
 log "Copying single EC2 Nginx configuration..."
 CONF_SRC="$BACKEND_DIR/nginx/archaser-single-ec2-api.conf"
@@ -104,11 +133,6 @@ fi
 
 issue_cert() {
     local domain="$1"
-    if [[ "$FORCE_CERTS" == "false" && -d "/etc/letsencrypt/live/$domain" ]]; then
-        log "Certificate for $domain already exists (skipping certbot)"
-        return 0
-    fi
-
     log "Requesting Let's Encrypt SSL certificate for $domain..."
     local cmd=(sudo certbot --nginx -d "$domain" --non-interactive --agree-tos)
     if [[ -n "$EMAIL" ]]; then
@@ -127,4 +151,3 @@ log "Reloading Nginx with active SSL certs..."
 sudo nginx -t && sudo systemctl reload nginx
 
 log "Single-EC2 Nginx setup completed successfully!"
-EOF
