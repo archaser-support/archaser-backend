@@ -82,8 +82,9 @@ BACKEND_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Ensure webroot directory exists for Let's Encrypt HTTP-01 challenge
 sudo mkdir -p /var/www/html
+sudo chmod 755 /var/www/html
 
-# Clean up any dummy self-signed cert directories if force certs or invalid certs present
+# Clean up any dummy self-signed cert directories if force certs or non-certbot dummy certs present
 cleanup_dummy_cert() {
     local domain="$1"
     local cert_file="/etc/letsencrypt/live/$domain/fullchain.pem"
@@ -120,6 +121,7 @@ server {
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/html;
+        default_type "text/plain";
     }
 
     location / {
@@ -137,7 +139,7 @@ HTTP_CONF
     issue_cert() {
         local domain="$1"
         log "Requesting official Let's Encrypt SSL certificate for $domain via webroot..."
-        local cmd=(sudo certbot certonly --webroot -w /var/www/html -d "$domain" --non-interactive --agree-tos)
+        local cmd=(sudo certbot certonly --webroot -w /var/www/html -d "$domain" --cert-name "$domain" --non-interactive --agree-tos)
         if [[ "$FORCE_CERTS" == "true" ]]; then
             cmd+=(--force-renewal)
         fi
@@ -178,5 +180,8 @@ sudo nginx -t
 
 log "Reloading Nginx with official SSL certs..."
 sudo systemctl reload nginx
+
+log "Active certificates on this server:"
+sudo certbot certificates || true
 
 log "Single-EC2 Nginx setup completed successfully! Real SSL certificates are now active."
