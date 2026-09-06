@@ -29,7 +29,7 @@ services:
       SERVICE_NAME: archaser-api-production
       NEST_PUBLIC_URL: "https://api.production.archaser.com"
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
-      NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com"
+      NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
       REDIS_URL: redis://redis:6379
       BULLMQ_ENABLED: "true"
       BULLMQ_QUEUE: archaser-cron-prod
@@ -99,7 +99,7 @@ services:
       SMS_PORT: 3004
       CONNECTION_LIMIT_SMS: 5
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
-      NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com"
+      NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
     ports:
@@ -120,7 +120,7 @@ services:
       ENABLE_CONNECTORS_SYNC_WORKERS: "true"
       REDIS_URL: redis://redis:6379
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
-      NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com"
+      NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
     ports:
@@ -142,7 +142,7 @@ services:
       APP_ENV: production
       REPORTS_PORT: 3006
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
-      NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com"
+      NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
     ports:
