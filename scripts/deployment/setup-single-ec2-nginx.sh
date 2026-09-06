@@ -98,6 +98,8 @@ cleanup_dummy_cert() {
 
 cleanup_dummy_cert "api.staging.archaser.com"
 cleanup_dummy_cert "api.production.archaser.com"
+cleanup_dummy_cert "staging.archaser.com"
+cleanup_dummy_cert "production.archaser.com"
 
 # Ensure ssl parameters exist
 sudo mkdir -p /etc/letsencrypt
@@ -117,7 +119,7 @@ if [[ "$SKIP_CERTS" == "false" ]]; then
 server {
     listen 80;
     listen [::]:80;
-    server_name api.staging.archaser.com api.production.archaser.com;
+    server_name api.staging.archaser.com api.production.archaser.com staging.archaser.com production.archaser.com;
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -162,6 +164,8 @@ HTTP_CONF
 
     issue_cert "api.staging.archaser.com"
     issue_cert "api.production.archaser.com"
+    issue_cert "staging.archaser.com"
+    issue_cert "production.archaser.com"
 fi
 
 log "Copying full single EC2 Nginx SSL configuration..."
