@@ -1,0 +1,49 @@
+# Local Podman override (Fedora SELinux + no Docker socket):
+# - fully-qualified image names
+# - :Z on bind mounts for rootless Podman/SELinux
+# - scrape Nest on the host via prometheus-local.yml
+# - skip Promtail
+#
+# Usage (from backend/grafana):
+#   podman-compose --project-name archaser-monitoring-local \
+#     --env-file .env.local \
+#     -f docker-compose.logging.yml -f docker-compose.local.yml up -d
+
+services:
+  loki:
+    image: docker.io/grafana/loki:3.4.2
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:Z,ro
+      - loki-data:/loki
+
+  grafana-db:
+    image: docker.io/library/postgres:16-alpine
+
+  grafana:
+    image: docker.io/grafana/grafana:11.5.2
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasource.yaml:Z,ro
+      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboard.yaml:Z,ro
+      - ./provisioning/dashboards/${MONITORING_ENV:-staging}:/etc/grafana/provisioning/dashboards_files/current_env:Z,ro
+      - ./provisioning/alerting/rules-${MONITORING_ENV:-staging}.yaml:/etc/grafana/provisioning/alerting/rules.yaml:Z,ro
+      - ./provisioning/alerting/contact-points.yaml:/etc/grafana/provisioning/alerting/contact-points.yaml:Z,ro
+      - ./provisioning/alerting/mute-timings.yaml:/etc/grafana/provisioning/alerting/mute-timings.yaml:Z,ro
+      - ./provisioning/alerting/notification-policies.yaml:/etc/grafana/provisioning/alerting/notification-policies.yaml:Z,ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "host.containers.internal:host-gateway"
+
+  prometheus:
+    image: docker.io/prom/prometheus:v2.55.1
+    user: "0:0"
+    volumes:
+      - ./prometheus-local.yml:/etc/prometheus/prometheus.yml:Z,ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "host.containers.internal:host-gateway"
+
+  promtail:
+    profiles: ["disabled"]
+    image: docker.io/grafana/promtail:3.4.2

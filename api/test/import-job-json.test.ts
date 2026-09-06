@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { ImportService } from "../src/import/import.service";
 
 function user() {
@@ -26,6 +27,7 @@ describe("ImportService job JSON", () => {
         };
         const db = {
             importJob: {
+                findFirst: jest.fn().mockResolvedValue(null),
                 create: jest.fn().mockResolvedValue(created),
             },
         };
@@ -39,6 +41,52 @@ describe("ImportService job JSON", () => {
             total_records: 2,
         });
         expect(result).toEqual(expect.objectContaining({ jobId: "job-1" }));
+    });
+
+    it("createJob rejects when another job is Processing", async () => {
+        const db = {
+            importJob: {
+                findFirst: jest.fn().mockResolvedValue({ id: "job-other" }),
+            },
+        };
+        const service = new ImportService(
+            db as never,
+            accessScope() as never,
+            {} as never
+        );
+
+        await expect(
+            service.createJob(user(), { import_type: "Customer" })
+        ).rejects.toMatchObject({
+            response: {
+                code: "IMPORT_IN_PROGRESS",
+                error: expect.any(String),
+            },
+        });
+        expect(db.importJob.findFirst).toHaveBeenCalledWith({
+            where: {
+                account_id: 42,
+                status: "Processing",
+            },
+            select: { id: true },
+        });
+    });
+
+    it("createJob throws ConflictException on concurrent Processing job", async () => {
+        const db = {
+            importJob: {
+                findFirst: jest.fn().mockResolvedValue({ id: "job-other" }),
+            },
+        };
+        const service = new ImportService(
+            db as never,
+            accessScope() as never,
+            {} as never
+        );
+
+        await expect(
+            service.createJob(user(), { import_type: "Invoice" })
+        ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it("getJobById returns records, results, and statistics", async () => {

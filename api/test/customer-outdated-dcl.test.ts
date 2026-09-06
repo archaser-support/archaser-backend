@@ -3,7 +3,7 @@ import {
     computeCustomerOutdatedDcl,
     isDclCustomerCreditScoreBelowPolicyMin,
     resolveDclApprovedLimitAfterOutdatedRecompute,
-} from "../src/credit-insurance/domain/customerOutdatedDcl";
+} from "@archaser/credit-insurance-domain";
 
 describe("computeCustomerOutdatedDcl", () => {
     it("returns false when limit type is not DCL", () => {

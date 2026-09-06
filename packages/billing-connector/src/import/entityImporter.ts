@@ -1,14 +1,20 @@
 import type { PrismaClient } from "@prisma/client";
 import {
     mapErpRecord,
+    parseErpDateOnly,
     parseMappingRules,
     type MappingRule,
 } from "../utils/connectorFieldUtils";
+import { appendBatchImportIssue } from "./aggregateEntityImportStats";
 import { applyMaturedDeferredPayments } from "./applyMaturedDeferredPayments";
 import { commitOps, lastWinsByKey } from "./bulkWrite";
 import { importPayments } from "./importPaymentService";
 import { normalizeInvoiceImportInput } from "./normalizeInvoiceImportInput";
 import { toPaymentInput } from "./normalizePaymentInput";
+import {
+    formatImportIssueMessage,
+    validateConnectorLiveImportRow,
+} from "./validateConnectorLiveImportRow";
 import { sortInvoicesForImport } from "./sortInvoicesForImport";
 import { linkOrphanedCreditNotes } from "../invoice/linkOrphanedCreditNotes";
 import type { BillingAccountExtension } from "../extensions/types";
@@ -28,6 +34,8 @@ export interface EntityImportBatchResult {
     success: number;
     failed: number;
     skipped: number;
+    mandatoryFieldSkips?: number;
+    issueMessages?: string[];
     affectedCustomerIds: number[];
     entityIds: number[];
     errors: string[];
@@ -36,7 +44,15 @@ export interface EntityImportBatchResult {
 }
 
 export interface EntityImportBatchOptions {
+    /** Billing-connector live sync only — skip incomplete invoice/payment rows. */
+    enforceMandatoryFields?: boolean;
     skipReportingBreach?: boolean;
+    /**
+     * When true, skip deferred-payment maturity after this invoice batch.
+     * Connector staged sync sets this and runs maturity once after all
+     * Invoice pages instead.
+     */
+    skipDeferredPaymentMaturity?: boolean;
     onLog?: (message: string) => void;
     shouldCancel?: () => boolean;
     extension?: BillingAccountExtension;
@@ -85,6 +101,8 @@ function emptyBatchResult(): EntityImportBatchResult {
         success: 0,
         failed: 0,
         skipped: 0,
+        mandatoryFieldSkips: 0,
+        issueMessages: [],
         affectedCustomerIds: [],
         entityIds: [],
         errors: [],
@@ -127,6 +145,10 @@ async function importCustomerBatch(
         address_line2: str(row.address_line2) || null,
         postal_code: str(row.postal_code) || null,
         crn: str(row.crn) || null,
+        businessUnit: str(row.business_unit) || null,
+        ownerEmail: str(row.owner_email) || null,
+        stateIso2: str(row.state_iso2) || null,
+        parentCustomerNumber: str(row.parent_customer_number) || null,
     }));
 
     for (const row of prepared) {
@@ -145,28 +167,133 @@ async function importCustomerBatch(
     const countryCodes = [...new Set(winners.map((row) => row.countryIso2))];
     const customerNumbers = winners.map((row) => row.customerNumber);
 
-    const [countries, existingCustomers] = await Promise.all([
-        countryCodes.length === 0
-            ? Promise.resolve([])
-            : prisma.country.findMany({
-                  where: { iso2: { in: countryCodes } },
-                  select: { id: true, iso2: true },
-              }),
-        customerNumbers.length === 0
-            ? Promise.resolve([])
-            : prisma.customer.findMany({
-                  where: {
-                      account_id: accountId,
-                      customer_number: { in: customerNumbers },
-                  },
-                  select: { id: true, customer_number: true, company_id: true },
-              }),
-    ]);
+    const needsOwnerLookup = winners.some((row) => row.ownerEmail);
+    const needsStateLookup = winners.some((row) => row.stateIso2);
+
+    const [countries, existingCustomers, businessUnits, accountUsers] =
+        await Promise.all([
+            countryCodes.length === 0
+                ? Promise.resolve([])
+                : prisma.country.findMany({
+                      where: { iso2: { in: countryCodes } },
+                      select: { id: true, iso2: true },
+                  }),
+            customerNumbers.length === 0
+                ? Promise.resolve([])
+                : prisma.customer.findMany({
+                      where: {
+                          account_id: accountId,
+                          customer_number: { in: customerNumbers },
+                      },
+                      select: {
+                          id: true,
+                          customer_number: true,
+                          company_id: true,
+                      },
+                  }),
+            prisma.businessUnit.findMany({
+                where: { account_id: accountId },
+                select: {
+                    id: true,
+                    name: true,
+                    external_id: true,
+                    is_primary: true,
+                },
+            }),
+            needsOwnerLookup
+                ? prisma.user.findMany({
+                      where: { account_id: accountId },
+                      select: { id: true, email: true, status: true },
+                  })
+                : Promise.resolve([]),
+        ]);
 
     const countryByIso2 = new Map<string, number>();
     for (const country of countries) {
         if (country.iso2) countryByIso2.set(country.iso2, country.id);
     }
+
+    const primaryBusinessUnitId =
+        businessUnits.find((unit) => unit.is_primary)?.id ?? null;
+    const businessUnitByKey = new Map<string, number>();
+    for (const unit of businessUnits) {
+        const name = unit.name?.trim().toLowerCase();
+        if (name) businessUnitByKey.set(name, unit.id);
+    }
+    // external_id wins over name, so it is registered last.
+    for (const unit of businessUnits) {
+        const externalId = unit.external_id?.trim().toLowerCase();
+        if (externalId) businessUnitByKey.set(externalId, unit.id);
+    }
+
+    // Several users can share an email; prefer an active one, then the lowest id
+    // so repeated imports resolve to the same owner.
+    const ownerByEmail = new Map<string, { id: string; active: boolean }>();
+    for (const user of accountUsers) {
+        const email = user.email?.trim().toLowerCase();
+        if (!email) continue;
+        const candidate = { id: user.id, active: user.status === "Active" };
+        const current = ownerByEmail.get(email);
+        if (
+            current == null ||
+            (candidate.active && !current.active) ||
+            (candidate.active === current.active && candidate.id < current.id)
+        ) {
+            ownerByEmail.set(email, candidate);
+        }
+    }
+
+    // States are only unique per country, so the lookup key carries both.
+    const countryIds = [...new Set(countryByIso2.values())];
+    const states =
+        needsStateLookup && countryIds.length > 0
+            ? await prisma.state.findMany({
+                  where: { country_id: { in: countryIds } },
+                  select: { id: true, iso2: true, country_id: true },
+              })
+            : [];
+    const stateByCountryAndIso2 = new Map<string, number>();
+    for (const state of states) {
+        const iso2 = state.iso2?.trim().toLowerCase();
+        if (!iso2) continue;
+        stateByCountryAndIso2.set(`${state.country_id}::${iso2}`, state.id);
+    }
+
+    // A whole batch usually trips the same lookup miss, so report each distinct
+    // warning once instead of per row.
+    const seenWarnings = new Set<string>();
+    const warn = (key: string, message: string) => {
+        if (seenWarnings.has(key)) return;
+        seenWarnings.add(key);
+        result.errors.push(message);
+        options?.onLog?.(message);
+    };
+
+    const resolveBusinessUnitId = (row: {
+        customerNumber: string;
+        businessUnit: string | null;
+    }): number | null => {
+        if (row.businessUnit) {
+            const matched = businessUnitByKey.get(
+                row.businessUnit.toLowerCase()
+            );
+            if (matched != null) {
+                return matched;
+            }
+            warn(
+                `bu:${row.businessUnit.toLowerCase()}`,
+                `Unknown business unit "${row.businessUnit}" (first seen on customer ${row.customerNumber}); affected customers fall back to the primary business unit`
+            );
+        }
+        if (primaryBusinessUnitId == null) {
+            warn(
+                "bu:no-primary",
+                `Account ${accountId} has no primary business unit; imported customers will have no business unit assigned`
+            );
+        }
+        return primaryBusinessUnitId;
+    };
+
     const existingByNumber = new Map<
         string,
         { id: number; company_id: number | null }
@@ -275,7 +402,7 @@ async function importCustomerBatch(
             );
             continue;
         }
-        const data = {
+        const data: Record<string, unknown> = {
             customer_number: item.row.customerNumber,
             account_id: accountId,
             country_id: item.countryId,
@@ -287,7 +414,42 @@ async function importCustomerBatch(
             type: item.row.customerType as "Company" | "Person",
             company_id: companyId,
             modified_by: userId || null,
+            // Always assigned: an unmapped or unknown unit falls back to the
+            // account's primary business unit rather than leaving the customer
+            // unscoped.
+            business_unit_id: resolveBusinessUnitId(item.row),
         };
+
+        // Owner, state and parent preserve whatever Archaser already holds when
+        // the incoming value is empty, so the key is only added once resolved.
+        if (item.row.ownerEmail) {
+            const ownerId = ownerByEmail.get(
+                item.row.ownerEmail.toLowerCase()
+            )?.id;
+            if (ownerId) {
+                data.owner_id = ownerId;
+            } else {
+                warn(
+                    `owner:${item.row.ownerEmail.toLowerCase()}`,
+                    `Unknown owner email "${item.row.ownerEmail}" (first seen on customer ${item.row.customerNumber}); owner left unchanged`
+                );
+            }
+        }
+
+        if (item.row.stateIso2) {
+            const stateId = stateByCountryAndIso2.get(
+                `${item.countryId}::${item.row.stateIso2.toLowerCase()}`
+            );
+            if (stateId != null) {
+                data.state_id = stateId;
+            } else {
+                warn(
+                    `state:${item.countryId}:${item.row.stateIso2.toLowerCase()}`,
+                    `Unknown state "${item.row.stateIso2}" (first seen on customer ${item.row.customerNumber}); state left unchanged`
+                );
+            }
+        }
+
         if (item.existingId != null) {
             updates.push({ id: item.existingId, data });
         } else {
@@ -329,6 +491,95 @@ async function importCustomerBatch(
         );
     }
 
+    // Parent links are a second pass: a parent may be created in this same
+    // batch, or may only arrive in a later page.
+    const parentCandidates = ready
+        .map((item) => ({
+            entityId:
+                item.existingId ??
+                createdByNumber.get(item.row.customerNumber) ??
+                null,
+            customerNumber: item.row.customerNumber,
+            parentNumber: item.row.parentCustomerNumber,
+        }))
+        .filter(
+            (
+                candidate
+            ): candidate is {
+                entityId: number;
+                customerNumber: string;
+                parentNumber: string;
+            } => Boolean(candidate.parentNumber) && candidate.entityId != null
+        );
+
+    if (parentCandidates.length > 0) {
+        const parentIdByNumber = new Map<string, number>();
+        for (const [number, existing] of existingByNumber) {
+            parentIdByNumber.set(number, existing.id);
+        }
+        for (const [number, id] of createdByNumber) {
+            parentIdByNumber.set(number, id);
+        }
+
+        const unresolvedParentNumbers = [
+            ...new Set(
+                parentCandidates
+                    .map((candidate) => candidate.parentNumber)
+                    .filter((number) => !parentIdByNumber.has(number))
+            ),
+        ];
+        if (unresolvedParentNumbers.length > 0) {
+            const fetchedParents = await prisma.customer.findMany({
+                where: {
+                    account_id: accountId,
+                    customer_number: { in: unresolvedParentNumbers },
+                },
+                select: { id: true, customer_number: true },
+            });
+            for (const parent of fetchedParents) {
+                if (parent.customer_number) {
+                    parentIdByNumber.set(parent.customer_number, parent.id);
+                }
+            }
+        }
+
+        const parentUpdates: Array<{ id: number; parentId: number }> = [];
+        for (const candidate of parentCandidates) {
+            const parentId = parentIdByNumber.get(candidate.parentNumber);
+            if (
+                candidate.parentNumber === candidate.customerNumber ||
+                parentId === candidate.entityId
+            ) {
+                warn(
+                    `parent:self:${candidate.customerNumber}`,
+                    `Customer ${candidate.customerNumber} lists itself as its own parent; parent left unchanged`
+                );
+                continue;
+            }
+            if (parentId == null) {
+                warn(
+                    `parent:missing:${candidate.parentNumber}`,
+                    `Parent customer "${candidate.parentNumber}" not found (first seen on customer ${candidate.customerNumber}); parent left unchanged`
+                );
+                continue;
+            }
+            parentUpdates.push({ id: candidate.entityId, parentId });
+        }
+
+        if (parentUpdates.length > 0) {
+            await commitOps(
+                prisma,
+                parentUpdates.map((update) =>
+                    prisma.customer.update({
+                        where: { id: update.id },
+                        data: { parent_customer_id: update.parentId },
+                        select: { id: true },
+                    })
+                )
+            );
+        }
+    }
+
     for (const item of ready) {
         const entityId =
             item.existingId ?? createdByNumber.get(item.row.customerNumber);
@@ -349,9 +600,6 @@ async function importCustomerBatch(
         }
     }
 
-    options?.onLog?.(
-        `Customer import: ${inserts.length} created, ${updates.length} updated, ${result.failed} failed, ${result.skipped} skipped`
-    );
     result.rowResults = rowResults;
     return markCancelled(result, options);
 }
@@ -602,9 +850,6 @@ async function importContactBatch(
         }
     }
 
-    options?.onLog?.(
-        `Contact import: ${inserts.length} created, ${updates.length} updated, ${result.failed} failed, ${result.skipped} skipped`
-    );
     result.rowResults = rowResults;
     return markCancelled(result, options);
 }
@@ -637,6 +882,21 @@ async function getInvoiceNumbersWithPayments(
             .map((r: { invoice_number: string | null }) => r.invoice_number)
             .filter((n): n is string => Boolean(n))
     );
+}
+
+/**
+ * Archaser open-AR statuses are Due/Overdue. Import defaults missing/Open to Due
+ * (including credit notes with negative outstanding). Explicit non-Open mapped
+ * statuses are preserved.
+ */
+function resolveImportedInvoiceStatus(
+    mappedStatus: string | null | undefined
+): string {
+    const trimmed = mappedStatus?.trim();
+    if (!trimmed || trimmed === "Open") {
+        return "Due";
+    }
+    return trimmed;
 }
 
 async function importInvoiceBatch(
@@ -703,7 +963,7 @@ async function importInvoiceBatch(
                           account_id: accountId,
                           invoice_number: { in: invoiceNumbers },
                       },
-                      select: { id: true, invoice_number: true },
+                      select: { id: true, invoice_number: true, status: true },
                   }),
             getInvoiceNumbersWithPayments(prisma, accountId, invoiceNumbers),
         ]);
@@ -715,9 +975,14 @@ async function importInvoiceBatch(
         }
     }
     const existingByNumber = new Map<string, number>();
+    const existingStatusByNumber = new Map<string, string>();
     for (const invoice of existingInvoices) {
         if (invoice.invoice_number) {
             existingByNumber.set(invoice.invoice_number, invoice.id);
+            existingStatusByNumber.set(
+                invoice.invoice_number,
+                String(invoice.status)
+            );
         }
     }
 
@@ -759,13 +1024,17 @@ async function importInvoiceBatch(
         const customerTotalPaid = paymentsWin
             ? 0
             : (invoice.customer_total_paid ?? 0);
-        const netAmount = customerAmount;
+        // Account currency from `amount`; invoice currency from `customer_amount`.
+        // Do not copy customer amounts into net/outstanding — per-invoice FX is already
+        // baked into `amount` and must stay distinct for dual-currency header totals.
+        const netAmount = amount;
         const customerNetAmount = customerAmount;
         const outstanding = netAmount - totalPaid;
         const customerOutstanding = customerNetAmount - customerTotalPaid;
         const existingId = existingByNumber.get(invoiceNumber) ?? null;
+        const importStatus = resolveImportedInvoiceStatus(invoice.status);
 
-        const data = {
+        const data: Record<string, unknown> = {
             invoice_number: invoiceNumber,
             account_id: accountId,
             customer_id: customerId,
@@ -784,21 +1053,24 @@ async function importInvoiceBatch(
             ...(options?.skipReportingBreach === true
                 ? { reporting_breach: false }
                 : {}),
-            invoice_date: invoice.invoice_date
-                ? new Date(invoice.invoice_date)
-                : now,
-            due_date: invoice.due_date ? new Date(invoice.due_date) : null,
+            invoice_date: parseErpDateOnly(invoice.invoice_date) ?? now,
+            due_date: parseErpDateOnly(invoice.due_date),
             modified_by: userId || null,
             modified_at: now,
         };
 
         if (existingId != null) {
+            const existingStatus = existingStatusByNumber.get(invoiceNumber);
+            // Promote Open (legacy import default) to Due; never overwrite Paid/Overdue/etc.
+            if (!existingStatus || existingStatus === "Open") {
+                data.status = importStatus;
+            }
             updates.push({ id: existingId, data });
         } else {
             inserts.push({
                 ...data,
                 created_by: userId || null,
-                status: (invoice.status as never) ?? "Open",
+                status: importStatus,
             });
         }
         prepared.push({ invoiceNumber, customerId, existingId });
@@ -859,10 +1131,6 @@ async function importInvoiceBatch(
         }
     }
 
-    options?.onLog?.(
-        `Invoice import: ${inserts.length} created, ${updates.length} updated, ${result.failed} failed, ${result.skipped} skipped`
-    );
-
     const followUpNumbers = sorted.flatMap((invoice) =>
         [invoice.invoice_number, invoice.credit_for_invoice_number].filter(
             (n): n is string => Boolean(n)
@@ -878,14 +1146,22 @@ async function importInvoiceBatch(
             console.error("Failed to link orphaned credit notes:", error);
         }
     }
-    const importedNumbers = prepared.map((item) => item.invoiceNumber);
-    if (importedNumbers.length > 0) {
+
+    if (
+        options?.skipDeferredPaymentMaturity !== true &&
+        prepared.length > 0
+    ) {
         try {
-            await applyMaturedDeferredPayments(
+            const maturityStarted = Date.now();
+            const maturityResult = await applyMaturedDeferredPayments(
                 prisma,
                 accountId,
                 new Date(),
-                importedNumbers
+                prepared.map((item) => item.invoiceNumber),
+                { userId }
+            );
+            options?.onLog?.(
+                `Invoice follow-up maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
             );
         } catch (error) {
             console.error("Failed to apply matured deferred payments:", error);
@@ -938,7 +1214,10 @@ export async function importMappedEntityBatch(
         payments,
         accountId,
         userId,
-        { extension: options?.extension }
+        {
+            extension: options?.extension,
+            shouldCancel: options?.shouldCancel,
+        }
     );
 
     result.rowResults = paymentResults.map((paymentResult) => ({
@@ -975,19 +1254,5 @@ export async function importMappedEntityBatch(
         }
     }
 
-    options?.onLog?.(
-        `Payment import: ${result.success} saved, ${result.failed} failed, ${result.skipped} skipped`
-    );
     return markCancelled(result, options);
-}
-
-export async function updateAccountLastSyncDate(
-    prisma: PrismaClient,
-    accountId: number,
-    syncedAt: Date = new Date()
-): Promise<void> {
-    await prisma.account.update({
-        where: { id: accountId },
-        data: { last_sync_date: syncedAt },
-    });
 }

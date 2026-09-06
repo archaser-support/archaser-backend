@@ -1,6 +1,6 @@
 import type { cost_calculation_method, invoice_status } from "@prisma/client";
 
-import { normalizePolicyExclusionReason } from "./shared/policyExclusion";
+import { normalizePolicyExclusionReason } from "@archaser/credit-insurance-domain";
 
 export const RANGE_COST_EXCLUDED_INVOICE_STATUSES: readonly invoice_status[] = [
     "Draft",

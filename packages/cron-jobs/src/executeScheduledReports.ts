@@ -2,6 +2,8 @@ import type { PrismaClient } from "@prisma/client";
 
 import { resolveAccountEmailSender } from "./email/accountSender";
 import { sendSmtpHtmlEmail } from "./email/sendSmtpHtmlEmail";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
+import { partitionByFrozenAccount } from "./accountFreeze/cronFrozenAccountGuard";
 
 type ScheduleConfig = {
     cron?: string;
@@ -65,7 +67,8 @@ type ExportResponse = {
  * is set; email CSV/Excel attachment to schedule_config.recipients when configured.
  */
 export async function executeScheduledReports(
-    prisma: PrismaClient
+    prisma: PrismaClient,
+    freeze?: CronFrozenAccountGuard
 ): Promise<{
     success: boolean;
     message: string;
@@ -80,7 +83,7 @@ export async function executeScheduledReports(
 }> {
     const start = Date.now();
     const now = new Date();
-    const due = await prisma.reportSchedule.findMany({
+    const dueRaw = await prisma.reportSchedule.findMany({
         where: {
             is_active: true,
             OR: [{ next_run_at: null }, { next_run_at: { lte: now } }],
@@ -97,6 +100,25 @@ export async function executeScheduledReports(
         },
         take: 50,
     });
+
+    const { kept: due, skippedAccountIds } = freeze
+        ? partitionByFrozenAccount(
+              dueRaw.map((schedule) => ({
+                  ...schedule,
+                  account_id: schedule.Report?.account_id ?? null,
+              })),
+              freeze.frozenAccountIds
+          )
+        : {
+              kept: dueRaw.map((schedule) => ({
+                  ...schedule,
+                  account_id: schedule.Report?.account_id ?? null,
+              })),
+              skippedAccountIds: [] as number[],
+          };
+    if (freeze && skippedAccountIds.length > 0) {
+        freeze.reportSkips(skippedAccountIds);
+    }
 
     const reportsBase = process.env.REPORTS_SERVICE_URL?.replace(/\/$/, "");
     const internalSecret = process.env.INTERNAL_SERVICE_SECRET;

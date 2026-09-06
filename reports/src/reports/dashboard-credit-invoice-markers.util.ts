@@ -4,7 +4,7 @@ import {
     reportingCountdownMembershipWhere,
     resolveReportingCountdownWindowDays,
     termsBreachMembershipWhere,
-} from "../credit-insurance/domain/creditDashboardInvoiceMembership";
+} from "@archaser/credit-insurance-domain";
 
 type PrismaWhere = Record<string, unknown>;
 

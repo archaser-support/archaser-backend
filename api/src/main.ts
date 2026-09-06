@@ -4,7 +4,7 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { ValidationPipe } from "@nestjs/common";
 import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module";
-import { enablePublicCors } from "@archaser/auth";
+import { enablePublicCors, QuietNestLogger } from "@archaser/auth";
 import {
     enrichStranglerOpenApi,
     SWAGGER_DESCRIPTION,
@@ -20,7 +20,9 @@ if (
 }
 
 async function bootstrap() {
-    const app = await NestFactory.create(AppModule);
+    const app = await NestFactory.create(AppModule, {
+        logger: new QuietNestLogger(),
+    });
 
     app.use(cookieParser());
 

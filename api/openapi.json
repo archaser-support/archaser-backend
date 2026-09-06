@@ -45,7 +45,7 @@
             "description": "Invalid credentials"
           }
         },
-        "summary": "Credentials login — issue Bearer JWT",
+        "summary": "Credentials login \u2014 issue Bearer JWT",
         "tags": [
           "auth"
         ]
@@ -181,7 +181,7 @@
             "bearer": []
           }
         ],
-        "summary": "Account-scope probe — 200 if JWT account_id matches query",
+        "summary": "Account-scope probe \u2014 200 if JWT account_id matches query",
         "tags": [
           "auth"
         ]
@@ -342,7 +342,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → SMS send",
+        "summary": "Gateway \u2192 SMS send",
         "security": [
           {
             "bearer": []
@@ -356,7 +356,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -364,7 +364,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → SMS send",
+        "summary": "Gateway \u2192 SMS send",
         "security": [
           {
             "bearer": []
@@ -378,7 +378,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -386,7 +386,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → SMS send",
+        "summary": "Gateway \u2192 SMS send",
         "security": [
           {
             "bearer": []
@@ -400,7 +400,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -408,7 +408,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → SMS send",
+        "summary": "Gateway \u2192 SMS send",
         "security": [
           {
             "bearer": []
@@ -422,7 +422,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -430,7 +430,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → SMS send",
+        "summary": "Gateway \u2192 SMS send",
         "security": [
           {
             "bearer": []
@@ -444,7 +444,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -454,7 +454,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → connectors sync",
+        "summary": "Gateway \u2192 connectors sync",
         "security": [
           {
             "bearer": []
@@ -468,7 +468,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -476,7 +476,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → connectors sync",
+        "summary": "Gateway \u2192 connectors sync",
         "security": [
           {
             "bearer": []
@@ -490,7 +490,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -498,7 +498,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → connectors sync",
+        "summary": "Gateway \u2192 connectors sync",
         "security": [
           {
             "bearer": []
@@ -512,7 +512,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -520,7 +520,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → connectors sync",
+        "summary": "Gateway \u2192 connectors sync",
         "security": [
           {
             "bearer": []
@@ -534,7 +534,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -542,7 +542,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → connectors sync",
+        "summary": "Gateway \u2192 connectors sync",
         "security": [
           {
             "bearer": []
@@ -556,7 +556,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -566,7 +566,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → reports execute",
+        "summary": "Gateway \u2192 reports execute",
         "security": [
           {
             "bearer": []
@@ -580,7 +580,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -588,7 +588,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → reports execute",
+        "summary": "Gateway \u2192 reports execute",
         "security": [
           {
             "bearer": []
@@ -602,7 +602,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -610,7 +610,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → reports execute",
+        "summary": "Gateway \u2192 reports execute",
         "security": [
           {
             "bearer": []
@@ -624,7 +624,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -632,7 +632,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → reports execute",
+        "summary": "Gateway \u2192 reports execute",
         "security": [
           {
             "bearer": []
@@ -646,7 +646,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -654,7 +654,7 @@
         "tags": [
           "gateway-peel"
         ],
-        "summary": "Gateway → reports execute",
+        "summary": "Gateway \u2192 reports execute",
         "security": [
           {
             "bearer": []
@@ -668,7 +668,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -750,7 +750,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -772,7 +772,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -794,7 +794,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -816,7 +816,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -838,7 +838,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -862,7 +862,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -884,7 +884,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -906,7 +906,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -928,7 +928,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -950,7 +950,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -960,7 +960,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customers",
+        "summary": "Entity list/create \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -974,7 +974,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -982,7 +982,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customers",
+        "summary": "Entity list/create \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -996,7 +996,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1004,7 +1004,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customers",
+        "summary": "Entity list/create \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -1018,7 +1018,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1026,7 +1026,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customers",
+        "summary": "Entity list/create \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -1040,7 +1040,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1048,7 +1048,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customers",
+        "summary": "Entity list/create \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -1062,7 +1062,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -1072,7 +1072,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customers",
+        "summary": "Entity by id \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -1086,7 +1086,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1094,7 +1094,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customers",
+        "summary": "Entity by id \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -1108,7 +1108,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1116,7 +1116,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customers",
+        "summary": "Entity by id \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -1130,7 +1130,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1138,7 +1138,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customers",
+        "summary": "Entity by id \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -1152,7 +1152,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1160,7 +1160,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customers",
+        "summary": "Entity by id \u2014 customers",
         "security": [
           {
             "bearer": []
@@ -1174,7 +1174,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -1816,7 +1816,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — invoices",
+        "summary": "Entity list/create \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -1830,7 +1830,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1838,7 +1838,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — invoices",
+        "summary": "Entity list/create \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -1852,7 +1852,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1860,7 +1860,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — invoices",
+        "summary": "Entity list/create \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -1874,7 +1874,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1882,7 +1882,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — invoices",
+        "summary": "Entity list/create \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -1896,7 +1896,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1904,7 +1904,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — invoices",
+        "summary": "Entity list/create \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -1918,7 +1918,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -1928,7 +1928,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — invoices",
+        "summary": "Entity by id \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -1942,7 +1942,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1950,7 +1950,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — invoices",
+        "summary": "Entity by id \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -1964,7 +1964,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1972,7 +1972,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — invoices",
+        "summary": "Entity by id \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -1986,7 +1986,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -1994,7 +1994,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — invoices",
+        "summary": "Entity by id \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -2008,7 +2008,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2016,7 +2016,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — invoices",
+        "summary": "Entity by id \u2014 invoices",
         "security": [
           {
             "bearer": []
@@ -2030,7 +2030,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -2060,7 +2060,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — contacts",
+        "summary": "Entity list/create \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2074,7 +2074,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2082,7 +2082,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — contacts",
+        "summary": "Entity list/create \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2096,7 +2096,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2104,7 +2104,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — contacts",
+        "summary": "Entity list/create \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2118,7 +2118,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2126,7 +2126,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — contacts",
+        "summary": "Entity list/create \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2140,7 +2140,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2148,7 +2148,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — contacts",
+        "summary": "Entity list/create \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2162,7 +2162,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -2172,7 +2172,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — contacts",
+        "summary": "Entity by id \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2186,7 +2186,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2194,7 +2194,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — contacts",
+        "summary": "Entity by id \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2208,7 +2208,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2216,7 +2216,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — contacts",
+        "summary": "Entity by id \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2230,7 +2230,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2238,7 +2238,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — contacts",
+        "summary": "Entity by id \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2252,7 +2252,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2260,7 +2260,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — contacts",
+        "summary": "Entity by id \u2014 contacts",
         "security": [
           {
             "bearer": []
@@ -2274,7 +2274,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -2284,7 +2284,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-collection-period",
+        "summary": "Entity by id \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -2298,7 +2298,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2306,7 +2306,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-collection-period",
+        "summary": "Entity by id \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -2320,7 +2320,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2328,7 +2328,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-collection-period",
+        "summary": "Entity by id \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -2342,7 +2342,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2350,7 +2350,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-collection-period",
+        "summary": "Entity by id \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -2364,7 +2364,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2372,7 +2372,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-collection-period",
+        "summary": "Entity by id \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -2386,7 +2386,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -2396,7 +2396,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — accounts",
+        "summary": "Entity list/create \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2410,7 +2410,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2418,7 +2418,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — accounts",
+        "summary": "Entity list/create \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2432,7 +2432,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2440,7 +2440,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — accounts",
+        "summary": "Entity list/create \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2454,7 +2454,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2462,7 +2462,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — accounts",
+        "summary": "Entity list/create \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2476,7 +2476,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2484,7 +2484,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — accounts",
+        "summary": "Entity list/create \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2498,7 +2498,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -2557,7 +2557,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — accounts",
+        "summary": "Entity by id \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2571,7 +2571,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2579,7 +2579,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — accounts",
+        "summary": "Entity by id \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2593,7 +2593,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2601,7 +2601,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — accounts",
+        "summary": "Entity by id \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2615,7 +2615,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2623,7 +2623,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — accounts",
+        "summary": "Entity by id \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2637,7 +2637,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2645,7 +2645,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — accounts",
+        "summary": "Entity by id \u2014 accounts",
         "security": [
           {
             "bearer": []
@@ -2659,7 +2659,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -2669,7 +2669,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — users",
+        "summary": "Entity list/create \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2683,7 +2683,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2691,7 +2691,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — users",
+        "summary": "Entity list/create \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2705,7 +2705,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2713,7 +2713,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — users",
+        "summary": "Entity list/create \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2727,7 +2727,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2735,7 +2735,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — users",
+        "summary": "Entity list/create \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2749,7 +2749,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2757,7 +2757,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — users",
+        "summary": "Entity list/create \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2771,7 +2771,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -2830,7 +2830,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — users",
+        "summary": "Entity by id \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2844,7 +2844,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2852,7 +2852,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — users",
+        "summary": "Entity by id \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2866,7 +2866,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2874,7 +2874,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — users",
+        "summary": "Entity by id \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2888,7 +2888,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2896,7 +2896,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — users",
+        "summary": "Entity by id \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2910,7 +2910,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2918,7 +2918,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — users",
+        "summary": "Entity by id \u2014 users",
         "security": [
           {
             "bearer": []
@@ -2932,7 +2932,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -2942,7 +2942,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-units",
+        "summary": "Entity list/create \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -2956,7 +2956,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2964,7 +2964,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-units",
+        "summary": "Entity list/create \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -2978,7 +2978,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -2986,7 +2986,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-units",
+        "summary": "Entity list/create \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -3000,7 +3000,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3008,7 +3008,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-units",
+        "summary": "Entity list/create \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -3022,7 +3022,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3030,7 +3030,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-units",
+        "summary": "Entity list/create \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -3044,7 +3044,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -3103,7 +3103,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-units",
+        "summary": "Entity by id \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -3117,7 +3117,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3125,7 +3125,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-units",
+        "summary": "Entity by id \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -3139,7 +3139,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3147,7 +3147,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-units",
+        "summary": "Entity by id \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -3161,7 +3161,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3169,7 +3169,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-units",
+        "summary": "Entity by id \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -3183,7 +3183,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3191,7 +3191,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-units",
+        "summary": "Entity by id \u2014 business-units",
         "security": [
           {
             "bearer": []
@@ -3205,7 +3205,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -3215,7 +3215,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — bank-accounts",
+        "summary": "Entity list/create \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3229,7 +3229,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3237,7 +3237,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — bank-accounts",
+        "summary": "Entity list/create \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3251,7 +3251,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3259,7 +3259,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — bank-accounts",
+        "summary": "Entity list/create \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3273,7 +3273,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3281,7 +3281,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — bank-accounts",
+        "summary": "Entity list/create \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3295,7 +3295,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3303,7 +3303,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — bank-accounts",
+        "summary": "Entity list/create \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3317,7 +3317,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -3376,7 +3376,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — bank-accounts",
+        "summary": "Entity by id \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3390,7 +3390,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3398,7 +3398,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — bank-accounts",
+        "summary": "Entity by id \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3412,7 +3412,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3420,7 +3420,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — bank-accounts",
+        "summary": "Entity by id \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3434,7 +3434,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3442,7 +3442,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — bank-accounts",
+        "summary": "Entity by id \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3456,7 +3456,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3464,7 +3464,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — bank-accounts",
+        "summary": "Entity by id \u2014 bank-accounts",
         "security": [
           {
             "bearer": []
@@ -3478,7 +3478,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -3488,7 +3488,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-banks",
+        "summary": "Entity list/create \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3502,7 +3502,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3510,7 +3510,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-banks",
+        "summary": "Entity list/create \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3524,7 +3524,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3532,7 +3532,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-banks",
+        "summary": "Entity list/create \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3546,7 +3546,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3554,7 +3554,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-banks",
+        "summary": "Entity list/create \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3568,7 +3568,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3576,7 +3576,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-banks",
+        "summary": "Entity list/create \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3590,7 +3590,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -3649,7 +3649,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-banks",
+        "summary": "Entity by id \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3663,7 +3663,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3671,7 +3671,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-banks",
+        "summary": "Entity by id \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3685,7 +3685,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3693,7 +3693,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-banks",
+        "summary": "Entity by id \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3707,7 +3707,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3715,7 +3715,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-banks",
+        "summary": "Entity by id \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3729,7 +3729,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -3737,7 +3737,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — customer-banks",
+        "summary": "Entity by id \u2014 customer-banks",
         "security": [
           {
             "bearer": []
@@ -3751,7 +3751,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -6028,7 +6028,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — notifications",
+        "summary": "Operations by id \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6042,7 +6042,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -6050,7 +6050,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — notifications",
+        "summary": "Operations by id \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6064,7 +6064,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -6072,7 +6072,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — notifications",
+        "summary": "Operations by id \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6086,7 +6086,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -6094,7 +6094,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — notifications",
+        "summary": "Operations by id \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6108,7 +6108,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -6116,7 +6116,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — notifications",
+        "summary": "Operations by id \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6130,7 +6130,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -6140,7 +6140,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — notifications",
+        "summary": "Operations \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6154,7 +6154,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -6162,7 +6162,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — notifications",
+        "summary": "Operations \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6176,7 +6176,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -6184,7 +6184,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — notifications",
+        "summary": "Operations \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6198,7 +6198,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -6206,7 +6206,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — notifications",
+        "summary": "Operations \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6220,7 +6220,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -6228,7 +6228,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — notifications",
+        "summary": "Operations \u2014 notifications",
         "security": [
           {
             "bearer": []
@@ -6242,7 +6242,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -6876,7 +6876,7 @@
             "bearer": []
           }
         ],
-        "summary": "List country–vendor mappings",
+        "summary": "List country\u2013vendor mappings",
         "tags": [
           "sms-country-vendors"
         ]
@@ -6894,7 +6894,7 @@
             "bearer": []
           }
         ],
-        "summary": "Create country–vendor mapping",
+        "summary": "Create country\u2013vendor mapping",
         "tags": [
           "sms-country-vendors"
         ]
@@ -6923,7 +6923,7 @@
             "bearer": []
           }
         ],
-        "summary": "Get country–vendor mapping",
+        "summary": "Get country\u2013vendor mapping",
         "tags": [
           "sms-country-vendors"
         ]
@@ -6950,7 +6950,7 @@
             "bearer": []
           }
         ],
-        "summary": "Update country–vendor mapping",
+        "summary": "Update country\u2013vendor mapping",
         "tags": [
           "sms-country-vendors"
         ]
@@ -6977,7 +6977,7 @@
             "bearer": []
           }
         ],
-        "summary": "Delete country–vendor mapping",
+        "summary": "Delete country\u2013vendor mapping",
         "tags": [
           "sms-country-vendors"
         ]
@@ -7369,7 +7369,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7391,7 +7391,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7413,7 +7413,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7435,7 +7435,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7457,7 +7457,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -7481,7 +7481,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7503,7 +7503,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7525,7 +7525,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7547,7 +7547,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7569,7 +7569,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -7593,7 +7593,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7615,7 +7615,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7637,7 +7637,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7659,7 +7659,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7681,7 +7681,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -7705,7 +7705,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7727,7 +7727,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7749,7 +7749,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7771,7 +7771,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7793,7 +7793,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -7817,7 +7817,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7839,7 +7839,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7861,7 +7861,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7883,7 +7883,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7905,7 +7905,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -7929,7 +7929,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7951,7 +7951,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7973,7 +7973,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -7995,7 +7995,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8017,7 +8017,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -8041,7 +8041,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8063,7 +8063,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8085,7 +8085,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8107,7 +8107,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8129,7 +8129,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -8153,7 +8153,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8175,7 +8175,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8197,7 +8197,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8219,7 +8219,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8241,7 +8241,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -8614,7 +8614,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policies",
+        "summary": "Entity list/create \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8628,7 +8628,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8636,7 +8636,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policies",
+        "summary": "Entity list/create \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8650,7 +8650,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8658,7 +8658,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policies",
+        "summary": "Entity list/create \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8672,7 +8672,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8680,7 +8680,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policies",
+        "summary": "Entity list/create \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8694,7 +8694,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8702,7 +8702,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policies",
+        "summary": "Entity list/create \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8716,7 +8716,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -8726,7 +8726,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policies",
+        "summary": "Entity by id \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8740,7 +8740,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8748,7 +8748,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policies",
+        "summary": "Entity by id \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8762,7 +8762,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8770,7 +8770,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policies",
+        "summary": "Entity by id \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8784,7 +8784,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8792,7 +8792,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policies",
+        "summary": "Entity by id \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8806,7 +8806,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8814,7 +8814,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policies",
+        "summary": "Entity by id \u2014 insurance-policies",
         "security": [
           {
             "bearer": []
@@ -8828,7 +8828,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -8838,7 +8838,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-countries",
+        "summary": "Entity list/create \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -8852,7 +8852,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8860,7 +8860,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-countries",
+        "summary": "Entity list/create \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -8874,7 +8874,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8882,7 +8882,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-countries",
+        "summary": "Entity list/create \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -8896,7 +8896,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8904,7 +8904,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-countries",
+        "summary": "Entity list/create \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -8918,7 +8918,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8926,7 +8926,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-countries",
+        "summary": "Entity list/create \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -8940,7 +8940,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -8950,7 +8950,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-countries",
+        "summary": "Entity by id \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -8964,7 +8964,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8972,7 +8972,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-countries",
+        "summary": "Entity by id \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -8986,7 +8986,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -8994,7 +8994,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-countries",
+        "summary": "Entity by id \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -9008,7 +9008,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9016,7 +9016,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-countries",
+        "summary": "Entity by id \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -9030,7 +9030,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9038,7 +9038,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-countries",
+        "summary": "Entity by id \u2014 insurance-policy-countries",
         "security": [
           {
             "bearer": []
@@ -9052,7 +9052,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -9062,7 +9062,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-named-policies",
+        "summary": "Entity list/create \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9076,7 +9076,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9084,7 +9084,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-named-policies",
+        "summary": "Entity list/create \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9098,7 +9098,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9106,7 +9106,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-named-policies",
+        "summary": "Entity list/create \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9120,7 +9120,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9128,7 +9128,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-named-policies",
+        "summary": "Entity list/create \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9142,7 +9142,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9150,7 +9150,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — insurance-policy-named-policies",
+        "summary": "Entity list/create \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9164,7 +9164,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -9174,7 +9174,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-named-policies",
+        "summary": "Entity by id \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9188,7 +9188,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9196,7 +9196,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-named-policies",
+        "summary": "Entity by id \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9210,7 +9210,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9218,7 +9218,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-named-policies",
+        "summary": "Entity by id \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9232,7 +9232,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9240,7 +9240,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-named-policies",
+        "summary": "Entity by id \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9254,7 +9254,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9262,7 +9262,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — insurance-policy-named-policies",
+        "summary": "Entity by id \u2014 insurance-policy-named-policies",
         "security": [
           {
             "bearer": []
@@ -9276,7 +9276,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -9296,7 +9296,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9314,7 +9314,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9332,7 +9332,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9350,7 +9350,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9368,7 +9368,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -9388,7 +9388,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9406,7 +9406,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9424,7 +9424,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9442,7 +9442,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -9460,7 +9460,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -10812,44 +10812,6 @@
         ]
       }
     },
-    "/api/system/cron": {
-      "get": {
-        "operationId": "SystemController_cronAlias",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "Cron jobs alias (Nest-native)",
-        "tags": [
-          "system"
-        ]
-      },
-      "post": {
-        "operationId": "SystemController_cronAliasPost",
-        "parameters": [],
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "Cron trigger alias (Nest stub ack)",
-        "tags": [
-          "system"
-        ]
-      }
-    },
     "/api/system/shared-stats/{operation}": {
       "get": {
         "operationId": "SystemController_sharedStats",
@@ -10899,7 +10861,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-collection-period",
+        "summary": "Entity list/create \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -10913,7 +10875,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -10921,7 +10883,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-collection-period",
+        "summary": "Entity list/create \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -10935,7 +10897,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -10943,7 +10905,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-collection-period",
+        "summary": "Entity list/create \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -10957,7 +10919,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -10965,7 +10927,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-collection-period",
+        "summary": "Entity list/create \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -10979,7 +10941,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -10987,7 +10949,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — customer-collection-period",
+        "summary": "Entity list/create \u2014 customer-collection-period",
         "security": [
           {
             "bearer": []
@@ -11001,7 +10963,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -11011,7 +10973,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-unit-banks",
+        "summary": "Entity list/create \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11025,7 +10987,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11033,7 +10995,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-unit-banks",
+        "summary": "Entity list/create \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11047,7 +11009,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11055,7 +11017,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-unit-banks",
+        "summary": "Entity list/create \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11069,7 +11031,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11077,7 +11039,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-unit-banks",
+        "summary": "Entity list/create \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11091,7 +11053,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11099,7 +11061,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity list/create — business-unit-banks",
+        "summary": "Entity list/create \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11113,7 +11075,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -11123,7 +11085,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "summary": "Entity by id \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11137,7 +11099,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11145,7 +11107,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "summary": "Entity by id \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11159,7 +11121,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11167,7 +11129,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "summary": "Entity by id \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11181,7 +11143,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11189,7 +11151,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "summary": "Entity by id \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11203,7 +11165,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11211,7 +11173,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Entity by id — business-unit-banks",
+        "summary": "Entity by id \u2014 business-unit-banks",
         "security": [
           {
             "bearer": []
@@ -11225,7 +11187,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -11235,7 +11197,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — disputes",
+        "summary": "Operations \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11249,7 +11211,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11257,7 +11219,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — disputes",
+        "summary": "Operations \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11271,7 +11233,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11279,7 +11241,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — disputes",
+        "summary": "Operations \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11293,7 +11255,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11301,7 +11263,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — disputes",
+        "summary": "Operations \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11315,7 +11277,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11323,7 +11285,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — disputes",
+        "summary": "Operations \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11337,7 +11299,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -11347,7 +11309,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — disputes",
+        "summary": "Operations by id \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11361,7 +11323,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11369,7 +11331,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — disputes",
+        "summary": "Operations by id \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11383,7 +11345,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11391,7 +11353,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — disputes",
+        "summary": "Operations by id \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11405,7 +11367,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11413,7 +11375,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — disputes",
+        "summary": "Operations by id \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11427,7 +11389,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11435,7 +11397,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — disputes",
+        "summary": "Operations by id \u2014 disputes",
         "security": [
           {
             "bearer": []
@@ -11449,7 +11411,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -11459,7 +11421,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — dispute-reasons",
+        "summary": "Operations \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11473,7 +11435,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11481,7 +11443,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — dispute-reasons",
+        "summary": "Operations \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11495,7 +11457,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11503,7 +11465,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — dispute-reasons",
+        "summary": "Operations \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11517,7 +11479,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11525,7 +11487,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — dispute-reasons",
+        "summary": "Operations \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11539,7 +11501,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11547,7 +11509,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — dispute-reasons",
+        "summary": "Operations \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11561,7 +11523,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -11571,7 +11533,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — dispute-reasons",
+        "summary": "Operations by id \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11585,7 +11547,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11593,7 +11555,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — dispute-reasons",
+        "summary": "Operations by id \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11607,7 +11569,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11615,7 +11577,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — dispute-reasons",
+        "summary": "Operations by id \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11629,7 +11591,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11637,7 +11599,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — dispute-reasons",
+        "summary": "Operations by id \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11651,7 +11613,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11659,7 +11621,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — dispute-reasons",
+        "summary": "Operations by id \u2014 dispute-reasons",
         "security": [
           {
             "bearer": []
@@ -11673,7 +11635,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -11683,7 +11645,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — promise-to-pay",
+        "summary": "Operations \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11697,7 +11659,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11705,7 +11667,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — promise-to-pay",
+        "summary": "Operations \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11719,7 +11681,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11727,7 +11689,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — promise-to-pay",
+        "summary": "Operations \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11741,7 +11703,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11749,7 +11711,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — promise-to-pay",
+        "summary": "Operations \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11763,7 +11725,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11771,7 +11733,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — promise-to-pay",
+        "summary": "Operations \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11785,7 +11747,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -11795,7 +11757,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — promise-to-pay",
+        "summary": "Operations by id \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11809,7 +11771,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11817,7 +11779,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — promise-to-pay",
+        "summary": "Operations by id \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11831,7 +11793,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11839,7 +11801,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — promise-to-pay",
+        "summary": "Operations by id \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11853,7 +11815,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11861,7 +11823,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — promise-to-pay",
+        "summary": "Operations by id \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11875,7 +11837,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11883,7 +11845,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — promise-to-pay",
+        "summary": "Operations by id \u2014 promise-to-pay",
         "security": [
           {
             "bearer": []
@@ -11897,7 +11859,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -11907,7 +11869,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — legal-cases",
+        "summary": "Operations \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -11921,7 +11883,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11929,7 +11891,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — legal-cases",
+        "summary": "Operations \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -11943,7 +11905,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11951,7 +11913,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — legal-cases",
+        "summary": "Operations \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -11965,7 +11927,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11973,7 +11935,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — legal-cases",
+        "summary": "Operations \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -11987,7 +11949,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -11995,7 +11957,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — legal-cases",
+        "summary": "Operations \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -12009,7 +11971,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -12019,7 +11981,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — legal-cases",
+        "summary": "Operations by id \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -12033,7 +11995,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12041,7 +12003,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — legal-cases",
+        "summary": "Operations by id \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -12055,7 +12017,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12063,7 +12025,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — legal-cases",
+        "summary": "Operations by id \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -12077,7 +12039,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12085,7 +12047,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — legal-cases",
+        "summary": "Operations by id \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -12099,7 +12061,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12107,7 +12069,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — legal-cases",
+        "summary": "Operations by id \u2014 legal-cases",
         "security": [
           {
             "bearer": []
@@ -12121,7 +12083,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -12131,7 +12093,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — sms",
+        "summary": "Operations \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12145,7 +12107,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12153,7 +12115,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — sms",
+        "summary": "Operations \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12167,7 +12129,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12175,7 +12137,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — sms",
+        "summary": "Operations \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12189,7 +12151,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12197,7 +12159,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — sms",
+        "summary": "Operations \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12211,7 +12173,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12219,7 +12181,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — sms",
+        "summary": "Operations \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12233,7 +12195,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -12243,7 +12205,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — sms",
+        "summary": "Operations by id \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12257,7 +12219,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12265,7 +12227,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — sms",
+        "summary": "Operations by id \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12279,7 +12241,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12287,7 +12249,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — sms",
+        "summary": "Operations by id \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12301,7 +12263,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12309,7 +12271,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — sms",
+        "summary": "Operations by id \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12323,7 +12285,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12331,7 +12293,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — sms",
+        "summary": "Operations by id \u2014 sms",
         "security": [
           {
             "bearer": []
@@ -12345,7 +12307,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -12355,7 +12317,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — email",
+        "summary": "Operations \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12369,7 +12331,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12377,7 +12339,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — email",
+        "summary": "Operations \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12391,7 +12353,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12399,7 +12361,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — email",
+        "summary": "Operations \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12413,7 +12375,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12421,7 +12383,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — email",
+        "summary": "Operations \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12435,7 +12397,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12443,7 +12405,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations — email",
+        "summary": "Operations \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12457,7 +12419,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -12467,7 +12429,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — email",
+        "summary": "Operations by id \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12481,7 +12443,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12489,7 +12451,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — email",
+        "summary": "Operations by id \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12503,7 +12465,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12511,7 +12473,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — email",
+        "summary": "Operations by id \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12525,7 +12487,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12533,7 +12495,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — email",
+        "summary": "Operations by id \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12547,7 +12509,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12555,7 +12517,7 @@
         "tags": [
           "operations"
         ],
-        "summary": "Operations by id — email",
+        "summary": "Operations by id \u2014 email",
         "security": [
           {
             "bearer": []
@@ -12569,7 +12531,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -12579,7 +12541,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary",
+        "summary": "Credit insurance \u2014 summary",
         "security": [
           {
             "bearer": []
@@ -12593,7 +12555,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12601,7 +12563,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary",
+        "summary": "Credit insurance \u2014 summary",
         "security": [
           {
             "bearer": []
@@ -12615,7 +12577,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12623,7 +12585,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary",
+        "summary": "Credit insurance \u2014 summary",
         "security": [
           {
             "bearer": []
@@ -12637,7 +12599,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12645,7 +12607,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary",
+        "summary": "Credit insurance \u2014 summary",
         "security": [
           {
             "bearer": []
@@ -12659,7 +12621,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12667,7 +12629,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary",
+        "summary": "Credit insurance \u2014 summary",
         "security": [
           {
             "bearer": []
@@ -12681,7 +12643,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -12691,7 +12653,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary-history",
+        "summary": "Credit insurance \u2014 summary-history",
         "security": [
           {
             "bearer": []
@@ -12705,7 +12667,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12713,7 +12675,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary-history",
+        "summary": "Credit insurance \u2014 summary-history",
         "security": [
           {
             "bearer": []
@@ -12727,7 +12689,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12735,7 +12697,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary-history",
+        "summary": "Credit insurance \u2014 summary-history",
         "security": [
           {
             "bearer": []
@@ -12749,7 +12711,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12757,7 +12719,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary-history",
+        "summary": "Credit insurance \u2014 summary-history",
         "security": [
           {
             "bearer": []
@@ -12771,7 +12733,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12779,7 +12741,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — summary-history",
+        "summary": "Credit insurance \u2014 summary-history",
         "security": [
           {
             "bearer": []
@@ -12793,7 +12755,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -12803,7 +12765,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — portfolio-health",
+        "summary": "Credit insurance \u2014 portfolio-health",
         "security": [
           {
             "bearer": []
@@ -12817,7 +12779,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12825,7 +12787,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — portfolio-health",
+        "summary": "Credit insurance \u2014 portfolio-health",
         "security": [
           {
             "bearer": []
@@ -12839,7 +12801,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12847,7 +12809,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — portfolio-health",
+        "summary": "Credit insurance \u2014 portfolio-health",
         "security": [
           {
             "bearer": []
@@ -12861,7 +12823,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12869,7 +12831,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — portfolio-health",
+        "summary": "Credit insurance \u2014 portfolio-health",
         "security": [
           {
             "bearer": []
@@ -12883,7 +12845,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12891,7 +12853,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — portfolio-health",
+        "summary": "Credit insurance \u2014 portfolio-health",
         "security": [
           {
             "bearer": []
@@ -12905,7 +12867,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -12915,7 +12877,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-dashboard-kpis",
+        "summary": "Credit insurance \u2014 customer-dashboard-kpis",
         "security": [
           {
             "bearer": []
@@ -12929,7 +12891,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12937,7 +12899,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-dashboard-kpis",
+        "summary": "Credit insurance \u2014 customer-dashboard-kpis",
         "security": [
           {
             "bearer": []
@@ -12951,7 +12913,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12959,7 +12921,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-dashboard-kpis",
+        "summary": "Credit insurance \u2014 customer-dashboard-kpis",
         "security": [
           {
             "bearer": []
@@ -12973,7 +12935,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -12981,7 +12943,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-dashboard-kpis",
+        "summary": "Credit insurance \u2014 customer-dashboard-kpis",
         "security": [
           {
             "bearer": []
@@ -12995,7 +12957,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13003,7 +12965,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-dashboard-kpis",
+        "summary": "Credit insurance \u2014 customer-dashboard-kpis",
         "security": [
           {
             "bearer": []
@@ -13017,7 +12979,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13027,7 +12989,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-policy-trend",
+        "summary": "Credit insurance \u2014 customer-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13041,7 +13003,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13049,7 +13011,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-policy-trend",
+        "summary": "Credit insurance \u2014 customer-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13063,7 +13025,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13071,7 +13033,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-policy-trend",
+        "summary": "Credit insurance \u2014 customer-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13085,7 +13047,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13093,7 +13055,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-policy-trend",
+        "summary": "Credit insurance \u2014 customer-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13107,7 +13069,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13115,7 +13077,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — customer-policy-trend",
+        "summary": "Credit insurance \u2014 customer-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13129,7 +13091,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13139,7 +13101,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — report",
+        "summary": "Credit insurance \u2014 report",
         "security": [
           {
             "bearer": []
@@ -13153,7 +13115,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13161,7 +13123,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — report",
+        "summary": "Credit insurance \u2014 report",
         "security": [
           {
             "bearer": []
@@ -13175,7 +13137,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13183,7 +13145,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — report",
+        "summary": "Credit insurance \u2014 report",
         "security": [
           {
             "bearer": []
@@ -13197,7 +13159,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13205,7 +13167,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — report",
+        "summary": "Credit insurance \u2014 report",
         "security": [
           {
             "bearer": []
@@ -13219,7 +13181,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13227,7 +13189,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — report",
+        "summary": "Credit insurance \u2014 report",
         "security": [
           {
             "bearer": []
@@ -13241,7 +13203,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13251,7 +13213,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — insurance-policy-trend",
+        "summary": "Credit insurance \u2014 insurance-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13265,7 +13227,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13273,7 +13235,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — insurance-policy-trend",
+        "summary": "Credit insurance \u2014 insurance-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13287,7 +13249,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13295,7 +13257,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — insurance-policy-trend",
+        "summary": "Credit insurance \u2014 insurance-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13309,7 +13271,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13317,7 +13279,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — insurance-policy-trend",
+        "summary": "Credit insurance \u2014 insurance-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13331,7 +13293,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13339,7 +13301,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — insurance-policy-trend",
+        "summary": "Credit insurance \u2014 insurance-policy-trend",
         "security": [
           {
             "bearer": []
@@ -13353,7 +13315,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13363,7 +13325,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported",
+        "summary": "Credit insurance \u2014 mark-reported",
         "security": [
           {
             "bearer": []
@@ -13377,7 +13339,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13385,7 +13347,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported",
+        "summary": "Credit insurance \u2014 mark-reported",
         "security": [
           {
             "bearer": []
@@ -13399,7 +13361,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13407,7 +13369,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported",
+        "summary": "Credit insurance \u2014 mark-reported",
         "security": [
           {
             "bearer": []
@@ -13421,7 +13383,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13429,7 +13391,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported",
+        "summary": "Credit insurance \u2014 mark-reported",
         "security": [
           {
             "bearer": []
@@ -13443,7 +13405,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13451,7 +13413,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported",
+        "summary": "Credit insurance \u2014 mark-reported",
         "security": [
           {
             "bearer": []
@@ -13465,7 +13427,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13475,7 +13437,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported-bulk",
+        "summary": "Credit insurance \u2014 mark-reported-bulk",
         "security": [
           {
             "bearer": []
@@ -13489,7 +13451,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13497,7 +13459,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported-bulk",
+        "summary": "Credit insurance \u2014 mark-reported-bulk",
         "security": [
           {
             "bearer": []
@@ -13511,7 +13473,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13519,7 +13481,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported-bulk",
+        "summary": "Credit insurance \u2014 mark-reported-bulk",
         "security": [
           {
             "bearer": []
@@ -13533,7 +13495,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13541,7 +13503,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported-bulk",
+        "summary": "Credit insurance \u2014 mark-reported-bulk",
         "security": [
           {
             "bearer": []
@@ -13555,7 +13517,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13563,7 +13525,7 @@
         "tags": [
           "credit-insurance"
         ],
-        "summary": "Credit insurance — mark-reported-bulk",
+        "summary": "Credit insurance \u2014 mark-reported-bulk",
         "security": [
           {
             "bearer": []
@@ -13577,7 +13539,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13587,7 +13549,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — portal-data",
+        "summary": "Portal customer \u2014 portal-data",
         "security": [],
         "responses": {
           "200": {
@@ -13597,7 +13559,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13605,7 +13567,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — portal-data",
+        "summary": "Portal customer \u2014 portal-data",
         "security": [],
         "responses": {
           "200": {
@@ -13615,7 +13577,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13623,7 +13585,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — portal-data",
+        "summary": "Portal customer \u2014 portal-data",
         "security": [],
         "responses": {
           "200": {
@@ -13633,7 +13595,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13641,7 +13603,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — portal-data",
+        "summary": "Portal customer \u2014 portal-data",
         "security": [],
         "responses": {
           "200": {
@@ -13651,7 +13613,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13659,7 +13621,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — portal-data",
+        "summary": "Portal customer \u2014 portal-data",
         "security": [],
         "responses": {
           "200": {
@@ -13669,7 +13631,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13679,7 +13641,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — agent-portal",
+        "summary": "Portal customer \u2014 agent-portal",
         "security": [],
         "responses": {
           "200": {
@@ -13689,7 +13651,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13697,7 +13659,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — agent-portal",
+        "summary": "Portal customer \u2014 agent-portal",
         "security": [],
         "responses": {
           "200": {
@@ -13707,7 +13669,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13715,7 +13677,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — agent-portal",
+        "summary": "Portal customer \u2014 agent-portal",
         "security": [],
         "responses": {
           "200": {
@@ -13725,7 +13687,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13733,7 +13695,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — agent-portal",
+        "summary": "Portal customer \u2014 agent-portal",
         "security": [],
         "responses": {
           "200": {
@@ -13743,7 +13705,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13751,7 +13713,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — agent-portal",
+        "summary": "Portal customer \u2014 agent-portal",
         "security": [],
         "responses": {
           "200": {
@@ -13761,7 +13723,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13771,7 +13733,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — invoices",
+        "summary": "Portal customer \u2014 invoices",
         "security": [],
         "responses": {
           "200": {
@@ -13781,7 +13743,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13789,7 +13751,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — invoices",
+        "summary": "Portal customer \u2014 invoices",
         "security": [],
         "responses": {
           "200": {
@@ -13799,7 +13761,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13807,7 +13769,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — invoices",
+        "summary": "Portal customer \u2014 invoices",
         "security": [],
         "responses": {
           "200": {
@@ -13817,7 +13779,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13825,7 +13787,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — invoices",
+        "summary": "Portal customer \u2014 invoices",
         "security": [],
         "responses": {
           "200": {
@@ -13835,7 +13797,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13843,7 +13805,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — invoices",
+        "summary": "Portal customer \u2014 invoices",
         "security": [],
         "responses": {
           "200": {
@@ -13853,7 +13815,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13863,7 +13825,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — bank-details",
+        "summary": "Portal customer \u2014 bank-details",
         "security": [],
         "responses": {
           "200": {
@@ -13873,7 +13835,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13881,7 +13843,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — bank-details",
+        "summary": "Portal customer \u2014 bank-details",
         "security": [],
         "responses": {
           "200": {
@@ -13891,7 +13853,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13899,7 +13861,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — bank-details",
+        "summary": "Portal customer \u2014 bank-details",
         "security": [],
         "responses": {
           "200": {
@@ -13909,7 +13871,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13917,7 +13879,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — bank-details",
+        "summary": "Portal customer \u2014 bank-details",
         "security": [],
         "responses": {
           "200": {
@@ -13927,7 +13889,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13935,7 +13897,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — bank-details",
+        "summary": "Portal customer \u2014 bank-details",
         "security": [],
         "responses": {
           "200": {
@@ -13945,7 +13907,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -13955,7 +13917,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — banks",
+        "summary": "Portal customer \u2014 banks",
         "security": [],
         "responses": {
           "200": {
@@ -13965,7 +13927,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13973,7 +13935,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — banks",
+        "summary": "Portal customer \u2014 banks",
         "security": [],
         "responses": {
           "200": {
@@ -13983,7 +13945,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -13991,7 +13953,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — banks",
+        "summary": "Portal customer \u2014 banks",
         "security": [],
         "responses": {
           "200": {
@@ -14001,7 +13963,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14009,7 +13971,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — banks",
+        "summary": "Portal customer \u2014 banks",
         "security": [],
         "responses": {
           "200": {
@@ -14019,7 +13981,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14027,7 +13989,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — banks",
+        "summary": "Portal customer \u2014 banks",
         "security": [],
         "responses": {
           "200": {
@@ -14037,7 +13999,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -14047,7 +14009,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — disputes",
+        "summary": "Portal customer \u2014 disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14057,7 +14019,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14065,7 +14027,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — disputes",
+        "summary": "Portal customer \u2014 disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14075,7 +14037,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14083,7 +14045,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — disputes",
+        "summary": "Portal customer \u2014 disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14093,7 +14055,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14101,7 +14063,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — disputes",
+        "summary": "Portal customer \u2014 disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14111,7 +14073,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14119,7 +14081,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — disputes",
+        "summary": "Portal customer \u2014 disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14129,7 +14091,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -14139,7 +14101,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — create-dispute",
+        "summary": "Portal customer \u2014 create-dispute",
         "security": [],
         "responses": {
           "200": {
@@ -14149,7 +14111,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14157,7 +14119,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — create-dispute",
+        "summary": "Portal customer \u2014 create-dispute",
         "security": [],
         "responses": {
           "200": {
@@ -14167,7 +14129,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14175,7 +14137,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — create-dispute",
+        "summary": "Portal customer \u2014 create-dispute",
         "security": [],
         "responses": {
           "200": {
@@ -14185,7 +14147,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14193,7 +14155,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — create-dispute",
+        "summary": "Portal customer \u2014 create-dispute",
         "security": [],
         "responses": {
           "200": {
@@ -14203,7 +14165,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14211,7 +14173,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — create-dispute",
+        "summary": "Portal customer \u2014 create-dispute",
         "security": [],
         "responses": {
           "200": {
@@ -14221,7 +14183,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -14231,7 +14193,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — view-disputes",
+        "summary": "Portal customer \u2014 view-disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14241,7 +14203,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14249,7 +14211,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — view-disputes",
+        "summary": "Portal customer \u2014 view-disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14259,7 +14221,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14267,7 +14229,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — view-disputes",
+        "summary": "Portal customer \u2014 view-disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14277,7 +14239,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14285,7 +14247,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — view-disputes",
+        "summary": "Portal customer \u2014 view-disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14295,7 +14257,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14303,7 +14265,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — view-disputes",
+        "summary": "Portal customer \u2014 view-disputes",
         "security": [],
         "responses": {
           "200": {
@@ -14313,7 +14275,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -14323,7 +14285,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — wrong-contact",
+        "summary": "Portal customer \u2014 wrong-contact",
         "security": [],
         "responses": {
           "200": {
@@ -14333,7 +14295,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14341,7 +14303,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — wrong-contact",
+        "summary": "Portal customer \u2014 wrong-contact",
         "security": [],
         "responses": {
           "200": {
@@ -14351,7 +14313,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14359,7 +14321,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — wrong-contact",
+        "summary": "Portal customer \u2014 wrong-contact",
         "security": [],
         "responses": {
           "200": {
@@ -14369,7 +14331,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14377,7 +14339,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — wrong-contact",
+        "summary": "Portal customer \u2014 wrong-contact",
         "security": [],
         "responses": {
           "200": {
@@ -14387,7 +14349,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       },
@@ -14395,7 +14357,7 @@
         "tags": [
           "portal-customers"
         ],
-        "summary": "Portal customer — wrong-contact",
+        "summary": "Portal customer \u2014 wrong-contact",
         "security": [],
         "responses": {
           "200": {
@@ -14405,7 +14367,7 @@
             "description": "Unauthorized"
           },
           "404": {
-            "description": "Not found / not strangler’d"
+            "description": "Not found / not strangler\u2019d"
           }
         }
       }
@@ -14428,7 +14390,7 @@
         "tags": [
           "proxy-keep-on-next"
         ],
-        "summary": "NextAuth — keep on Next at reverse proxy until Amplify cutover (D2=A)",
+        "summary": "NextAuth \u2014 keep on Next at reverse proxy until Amplify cutover (D2=A)",
         "responses": {
           "200": {
             "description": "Served by Next pages/api/auth"
@@ -14439,7 +14401,7 @@
   },
   "info": {
     "title": "Archaser API",
-    "description": "Archaser Nest API — Nest-native product HTTP (reports, system, activities, search, roles/permissions, entities, operations, import, portal, credit-insurance, gateway, and more). Nest owns /api/ws SSE; reverse proxy keeps /api/auth on Next until Amplify-only.",
+    "description": "Archaser Nest API \u2014 Nest-native product HTTP (reports, system, activities, search, roles/permissions, entities, operations, import, portal, credit-insurance, gateway, and more). Nest owns /api/ws SSE; reverse proxy keeps /api/auth on Next until Amplify-only.",
     "version": "0.4.0",
     "contact": {}
   },

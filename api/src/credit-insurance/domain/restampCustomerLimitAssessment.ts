@@ -1,13 +1,13 @@
 import { invoice_status, Prisma } from "@prisma/client";
 
-import { DbClient, prisma } from "../domain-db";
-
-import { loadEffectiveInsuranceForCustomers } from "./loadEffectiveInsuranceForCustomers";
-import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import {
     computeLimitAssessedAmountForNewOpenInvoice,
+    creditInsurancePrisma as prisma,
     invoiceOutstandingInLimitCurrency,
-} from "./invoiceInsuranceFields";
+    loadEffectiveInsuranceForCustomers,
+    resolveEffectiveApprovedLimit,
+    type DbClient,
+} from "@archaser/credit-insurance-domain";
 
 type OpenInvoiceForRestamp = {
     id: number;

@@ -10,14 +10,5 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*"],
-  "exclude": [
-    "src/services/BillingConnectorService.ts",
-    "src/services/BillingConnectorSyncService.ts",
-    "src/services/ConnectorFieldMappingService.ts",
-    "src/services/ConnectorSyncExecutionService.ts",
-    "src/services/syncBillingConnectors.ts",
-    "src/billing/staleSyncExecutionSweeper.ts",
-    "src/models/**"
-  ]
+  "include": ["src/**/*"]
 }

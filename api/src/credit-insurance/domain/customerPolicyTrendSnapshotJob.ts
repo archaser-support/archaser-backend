@@ -1,5 +1,7 @@
-import { drainAsOfRewriteQueue } from "./asOfRewriteQueue";
-import { takeCustomerPolicyTrendSnapshots } from "./customerPolicyTrendService";
+import {
+    drainAsOfRewriteQueue,
+    takeCustomerPolicyTrendSnapshots,
+} from "@archaser/credit-insurance-domain";
 
 /**
  * Future Nest CPT scheduler entrypoint.

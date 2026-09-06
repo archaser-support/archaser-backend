@@ -2,7 +2,6 @@
 export const MODEL_NAME_MAP: Record<string, string> = {
     Customer: "customer",
     Invoice: "invoice",
-    Payment: "payment",
     InvoicePayment: "invoicePayment",
     Contact: "contact",
     Activity: "activity",
@@ -25,7 +24,6 @@ export const CONTEXT_PRIMARY_TABLE: Record<string, string> = {
     customer_banks: "CustomerBanks",
     customer_unpaid_invoices: "Invoice",
     disputes: "Dispute",
-    payments: "Payment",
     activities: "Activity",
     "customer-collection-period": "CustomerCollectionPeriod",
     dashboard_customers: "Customer",
@@ -50,7 +48,6 @@ export const ENTITY_LIST_REPORT_CONTEXTS = new Set([
     "customer_banks",
     "customer_unpaid_invoices",
     "disputes",
-    "payments",
     "activities",
     "customer-collection-period",
 ]);
@@ -98,6 +95,8 @@ export const RELATION_FROM_PRIMARY: Record<
         Country: "Country",
         State: "State",
         ParentCustomer: "ParentCustomer",
+        Invoice: "Invoice",
+        InvoicePayment: "InvoicePayment",
     },
     Invoice: {
         Customer: "Customer",
@@ -131,13 +130,8 @@ export const RELATION_FROM_PRIMARY: Record<
     CustomerCollectionPeriod: {
         Customer: "Customer",
     },
-    Payment: {
-        Customer: "Customer",
-        Invoice: "Invoice",
-    },
     InvoicePayment: {
         Invoice: "Invoice",
-        Payment: "Payment",
         Customer: "Customer",
     },
 };

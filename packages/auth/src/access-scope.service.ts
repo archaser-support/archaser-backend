@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { AUTH_DATABASE, AuthDatabase } from "./auth-database";
 import { JwtPayload } from "./jwt-payload";
 
@@ -44,7 +44,7 @@ export class AccessScopeService {
     async resolveUserInfo(user: JwtPayload): Promise<AccessUserInfo> {
         const userId = user.sub;
         if (!userId || user.account_id == null) {
-            throw new Error("Unauthorized");
+            throw new UnauthorizedException("Unauthorized");
         }
 
         const dbUser = await this.db.user.findUnique({

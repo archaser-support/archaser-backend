@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { CronJobResult } from "./handlers";
 import { jobLog } from "./logging/jobLog";
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 
 /**
  * Check SMS delivery status for pending Inforu messages
@@ -8,7 +9,8 @@ import { jobLog } from "./logging/jobLog";
  * server/services/InforuStatusChecker.ts
  */
 export async function checkInforuSmsStatus(
-    prisma: PrismaClient
+    prisma: PrismaClient,
+    freeze?: CronFrozenAccountGuard
 ): Promise<CronJobResult> {
     const start = Date.now();
     const summary = {
@@ -31,6 +33,15 @@ export async function checkInforuSmsStatus(
                     { message_id: { not: null } },
                 ],
                 created_at: { gte: sevenDaysAgo },
+                ...(freeze && freeze.frozenAccountIds.size > 0
+                    ? {
+                          Activity: {
+                              account_id: {
+                                  notIn: [...freeze.frozenAccountIds],
+                              },
+                          },
+                      }
+                    : {}),
             },
             include: {
                 SMSVendor: true,
@@ -54,7 +65,37 @@ export async function checkInforuSmsStatus(
 
         summary.pendingMessagesFound = pendingMessages.length;
 
+        const reportFrozenSkips = async () => {
+            if (!freeze || freeze.frozenAccountIds.size === 0) {
+                return;
+            }
+            const skippedRows = await prisma.activityContact.findMany({
+                where: {
+                    status: { in: ["Sent", "Scheduled"] },
+                    communication_channel: "SMS",
+                    SMSVendor: { provider: "inforu" },
+                    OR: [
+                        { vendor_message_id: { not: null } },
+                        { message_id: { not: null } },
+                    ],
+                    created_at: { gte: sevenDaysAgo },
+                    Activity: {
+                        account_id: { in: [...freeze.frozenAccountIds] },
+                    },
+                },
+                select: {
+                    Activity: { select: { account_id: true } },
+                },
+            });
+            freeze.reportSkips(
+                skippedRows
+                    .map((row) => row.Activity?.account_id)
+                    .filter((id): id is number => id != null)
+            );
+        };
+
         if (pendingMessages.length === 0) {
+            await reportFrozenSkips();
             return {
                 success: true,
                 message: "No pending Inforu SMS messages to check",
@@ -91,6 +132,8 @@ export async function checkInforuSmsStatus(
                 await new Promise((resolve) => setTimeout(resolve, 200));
             }
         }
+
+        await reportFrozenSkips();
 
         return {
             success: true,

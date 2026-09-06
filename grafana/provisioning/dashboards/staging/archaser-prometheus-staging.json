@@ -24,6 +24,510 @@
     "panels": [
         {
             "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 2
+            },
+            "id": 700,
+            "title": "Nest services",
+            "type": "row",
+            "collapsed": false
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 0,
+                "y": 3
+            },
+            "id": 701,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-api\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "API",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 4,
+                "y": 3
+            },
+            "id": 702,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-worker\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "Worker",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 8,
+                "y": 3
+            },
+            "id": 703,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-sms\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "SMS",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 4,
+                "x": 12,
+                "y": 3
+            },
+            "id": 704,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-connectors\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "Connectors",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "text": "DOWN"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "text": "UP"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                }
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 8,
+                "x": 16,
+                "y": 3
+            },
+            "id": 705,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "targets": [
+                {
+                    "expr": "up{job=\"archaser-reports\"}",
+                    "legendFormat": "up",
+                    "refId": "A"
+                }
+            ],
+            "title": "Reports",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 7
+            },
+            "id": 710,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(nest_http_requests_total{instance=\"Staging\",service=\"archaser-api\"}[5m])) by (status_code)",
+                    "legendFormat": "{{status_code}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "API request rate",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "min": 0,
+                    "max": 1,
+                    "noValue": "0"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 7
+            },
+            "id": 711,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "(sum(rate(nest_http_requests_total{instance=\"Staging\",service=\"archaser-api\",status_code=~\"5..\"}[5m])) or vector(0)) / clamp_min((sum(rate(nest_http_requests_total{instance=\"Staging\",service=\"archaser-api\"}[5m])) or vector(0)), 1e-9)",
+                    "legendFormat": "5xx rate",
+                    "refId": "A"
+                }
+            ],
+            "title": "API 5xx rate",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percent"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 15
+            },
+            "id": 712,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "rate(archaser_worker_process_cpu_seconds_total{job=\"archaser-worker\"}[1m]) * 100",
+                    "legendFormat": "worker CPU",
+                    "refId": "A"
+                }
+            ],
+            "title": "Worker CPU",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bytes"
+                }
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 15
+            },
+            "id": 713,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "archaser_worker_nodejs_heap_size_used_bytes{job=\"archaser-worker\"}",
+                    "legendFormat": "heap used",
+                    "refId": "A"
+                },
+                {
+                    "expr": "archaser_worker_nodejs_heap_size_total_bytes{job=\"archaser-worker\"}",
+                    "legendFormat": "heap total",
+                    "refId": "B"
+                }
+            ],
+            "title": "Worker heap",
+            "type": "timeseries"
+        },
+        {
+            "gridPos": {
                 "h": 2,
                 "w": 24,
                 "x": 0,
@@ -32,7 +536,7 @@
             "id": 10,
             "options": {
                 "mode": "markdown",
-                "content": "**Domain dashboards:** [ARChaser Home](/d/archaser-unified-v1-staging/archaser-home-staging) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-staging/cron-health-staging) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-staging/communications-staging) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-staging/alert-drilldown-staging)"
+                "content": "**Dashboards:** [Home](/d/archaser-unified-v1-staging/archaser-home-staging) &nbsp;|&nbsp; [Cron Health](/d/archaser-cron-v1-staging/cron-health-staging) &nbsp;|&nbsp; [Communications](/d/archaser-comm-unified-staging/communications-staging) &nbsp;|&nbsp; [Infrastructure](/d/archaser-prometheus-v1-staging/infrastructure-staging) &nbsp;|&nbsp; [Alert Drilldown](/d/alert-drilldown-staging/alert-drilldown-staging) &nbsp;|&nbsp; [Postgres Logs](/d/archaser-postgres-logs-stag/postgres-logs-staging) &nbsp;|&nbsp; [Billing Connector](/d/archaser-billing-connector-stag/billing-connector-staging)"
             },
             "title": "",
             "type": "text",
@@ -43,7 +547,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 2
+                "y": 24
             },
             "id": 1,
             "title": "Server Availability (Uptime)",
@@ -88,9 +592,9 @@
             },
             "gridPos": {
                 "h": 4,
-                "w": 6,
-                "x": 6,
-                "y": 3
+                "w": 12,
+                "x": 0,
+                "y": 25
             },
             "id": 3,
             "options": {
@@ -149,7 +653,7 @@
                 "h": 4,
                 "w": 6,
                 "x": 12,
-                "y": 3
+                "y": 25
             },
             "id": 1001,
             "options": {
@@ -200,7 +704,7 @@
                 "h": 4,
                 "w": 6,
                 "x": 12,
-                "y": 7
+                "y": 29
             },
             "id": 1003,
             "options": {
@@ -255,7 +759,7 @@
                 "h": 4,
                 "w": 6,
                 "x": 18,
-                "y": 3
+                "y": 25
             },
             "id": 1002,
             "options": {
@@ -306,7 +810,7 @@
                 "h": 4,
                 "w": 6,
                 "x": 18,
-                "y": 7
+                "y": 29
             },
             "id": 1004,
             "options": {
@@ -334,7 +838,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 7
+                "y": 29
             },
             "id": 109,
             "title": "Resource Utilization (Core)",
@@ -349,7 +853,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 8
+                "y": 30
             },
             "id": 71,
             "options": {
@@ -363,13 +867,13 @@
             },
             "targets": [
                 {
-                    "expr": "nodejs_heap_size_used_bytes{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} - Heap Used",
+                    "expr": "nest_nodejs_heap_size_used_bytes{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api - Heap Used",
                     "refId": "A"
                 },
                 {
-                    "expr": "nodejs_heap_size_total_bytes{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} - Heap Total",
+                    "expr": "nest_nodejs_heap_size_total_bytes{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api - Heap Total",
                     "refId": "B"
                 }
             ],
@@ -385,7 +889,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 8
+                "y": 30
             },
             "id": 72,
             "options": {
@@ -399,8 +903,8 @@
             },
             "targets": [
                 {
-                    "expr": "rate(process_cpu_seconds_total{instance=\"Staging\"}[1m])",
-                    "legendFormat": "{{instance}} CPU %",
+                    "expr": "rate(nest_process_cpu_seconds_total{job=\"archaser-api\", instance=\"Staging\"}[1m])",
+                    "legendFormat": "api CPU %",
                     "refId": "A"
                 }
             ],
@@ -412,7 +916,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 16
+                "y": 38
             },
             "id": 400,
             "title": "Infrastructure Statistics",
@@ -427,13 +931,13 @@
                 "h": 8,
                 "w": 8,
                 "x": 0,
-                "y": 17
+                "y": 39
             },
             "id": 401,
             "targets": [
                 {
-                    "expr": "nodejs_eventloop_lag_seconds{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} Lag",
+                    "expr": "nest_nodejs_eventloop_lag_seconds{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api Lag",
                     "refId": "A"
                 }
             ],
@@ -449,18 +953,18 @@
                 "h": 8,
                 "w": 8,
                 "x": 8,
-                "y": 17
+                "y": 39
             },
             "id": 402,
             "targets": [
                 {
-                    "expr": "nodejs_active_handles_total{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} Handles",
+                    "expr": "nest_nodejs_active_handles_total{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api Handles",
                     "refId": "A"
                 },
                 {
-                    "expr": "nodejs_active_requests_total{instance=\"Staging\"}",
-                    "legendFormat": "{{instance}} Requests",
+                    "expr": "nest_nodejs_active_requests_total{job=\"archaser-api\", instance=\"Staging\"}",
+                    "legendFormat": "api Requests",
                     "refId": "B"
                 }
             ],
@@ -476,13 +980,13 @@
                 "h": 8,
                 "w": 8,
                 "x": 16,
-                "y": 17
+                "y": 39
             },
             "id": 403,
             "targets": [
                 {
-                    "expr": "sum by(instance, space) (nodejs_heap_space_size_used_bytes{instance=\"Staging\"})",
-                    "legendFormat": "{{instance}} - {{space}}",
+                    "expr": "sum by(instance, space) (nest_nodejs_heap_space_size_used_bytes{job=\"archaser-api\", instance=\"Staging\"})",
+                    "legendFormat": "api - {{space}}",
                     "refId": "A"
                 }
             ],
@@ -494,7 +998,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 25
+                "y": 47
             },
             "id": 500,
             "title": "Runtime KPIs",
@@ -509,13 +1013,13 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 26
+                "y": 48
             },
             "id": 501,
             "targets": [
                 {
-                    "expr": "rate(nodejs_gc_duration_seconds_sum{instance=\"Staging\"}[5m])",
-                    "legendFormat": "{{instance}} GC Rate",
+                    "expr": "rate(nest_nodejs_gc_duration_seconds_sum{job=\"archaser-api\", instance=\"Staging\"}[5m])",
+                    "legendFormat": "api GC Rate",
                     "refId": "A"
                 }
             ],
@@ -531,7 +1035,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 26
+                "y": 48
             },
             "id": 502,
             "targets": [
@@ -549,7 +1053,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 34
+                "y": 56
             },
             "id": 503,
             "title": "Email/SMS Connectivity Status",
@@ -600,7 +1104,7 @@
                 "h": 4,
                 "w": 4,
                 "x": 0,
-                "y": 35
+                "y": 57
             },
             "id": 504,
             "options": {
@@ -671,7 +1175,7 @@
                 "h": 4,
                 "w": 4,
                 "x": 4,
-                "y": 35
+                "y": 57
             },
             "id": 505,
             "options": {
@@ -714,33 +1218,76 @@
                         },
                         "inspect": false
                     },
-                    "mappings": [
-                        {
-                            "options": {
-                                "0": {
-                                    "index": 0,
-                                    "text": "Disconnected"
-                                },
-                                "1": {
-                                    "index": 1,
-                                    "text": "Misconfigured"
-                                },
-                                "2": {
-                                    "index": 2,
-                                    "text": "Connected"
-                                }
-                            },
-                            "type": "value"
-                        }
-                    ]
+                    "mappings": []
                 },
-                "overrides": []
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Status"
+                        },
+                        "properties": [
+                            {
+                                "id": "mappings",
+                                "value": [
+                                    {
+                                        "type": "value",
+                                        "options": {
+                                            "0": {
+                                                "index": 0,
+                                                "text": "Disconnected"
+                                            },
+                                            "1": {
+                                                "index": 1,
+                                                "text": "Misconfigured"
+                                            },
+                                            "2": {
+                                                "index": 2,
+                                                "text": "Connected"
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Value"
+                        },
+                        "properties": [
+                            {
+                                "id": "mappings",
+                                "value": [
+                                    {
+                                        "type": "value",
+                                        "options": {
+                                            "0": {
+                                                "index": 0,
+                                                "text": "Disconnected"
+                                            },
+                                            "1": {
+                                                "index": 1,
+                                                "text": "Misconfigured"
+                                            },
+                                            "2": {
+                                                "index": 2,
+                                                "text": "Connected"
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
             },
             "gridPos": {
                 "h": 8,
                 "w": 16,
                 "x": 8,
-                "y": 35
+                "y": 57
             },
             "id": 506,
             "options": {
@@ -797,7 +1344,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 43
+                "y": 65
             },
             "id": 600,
             "title": "Log Analysis",
@@ -808,11 +1355,12 @@
                 "type": "loki",
                 "uid": "Loki"
             },
+            "description": "Nest app containers only (api, worker, sms, connectors, reports). Ignores service dropdown.",
             "gridPos": {
                 "h": 8,
                 "w": 8,
                 "x": 0,
-                "y": 44
+                "y": 66
             },
             "id": 110,
             "options": {
@@ -825,12 +1373,12 @@
             },
             "targets": [
                 {
-                    "expr": "sum by(level) (count_over_time({service=\"archaser-core\", host=\"staging\"} [$__range]))",
-                    "legendFormat": "{{level}}",
+                    "expr": "sum by(compose_service) (count_over_time({job=\"nest-docker\", environment=\"staging\", compose_service=~\"api|worker|sms|connectors|reports\"} [$__range]))",
+                    "legendFormat": "{{compose_service}}",
                     "refId": "A"
                 }
             ],
-            "title": "Log Level Distribution",
+            "title": "Log volume by service",
             "type": "piechart"
         },
         {
@@ -838,16 +1386,17 @@
                 "type": "loki",
                 "uid": "Loki"
             },
+            "description": "Error/exception/fatal rate across all Nest app services. Ignores service dropdown.",
             "gridPos": {
                 "h": 8,
                 "w": 16,
                 "x": 8,
-                "y": 44
+                "y": 66
             },
             "id": 111,
             "targets": [
                 {
-                    "expr": "sum(count_over_time({service=\"archaser-core\", level=~\"error|critical|fatal\", host=\"staging\"} [$__interval])) or sum(count_over_time({job=\"pm2\", app_name=~\".+\", log_type=\"error\", host=\"staging\"} [$__interval]))",
+                    "expr": "sum(count_over_time({job=\"nest-docker\", environment=\"staging\", compose_service=~\"api|worker|sms|connectors|reports\"} |~ \"(?i)error|exception|fatal\" [$__interval]))",
                     "legendFormat": "Errors",
                     "refId": "A"
                 }
@@ -860,21 +1409,25 @@
                 "type": "loki",
                 "uid": "Loki"
             },
+            "description": "Filtered by $compose_service and $search.",
             "gridPos": {
                 "h": 8,
                 "w": 24,
                 "x": 0,
-                "y": 52
+                "y": 74
             },
             "id": 112,
             "options": {
                 "showTime": true,
+                "showLevel": false,
                 "enableLogDetails": true,
+                "syntaxHighlighting": false,
+                "wrapLogMessage": true,
                 "sortOrder": "Descending"
             },
             "targets": [
                 {
-                    "expr": "{job=~\"pm2|archaser-core\", level=~\"(?i)error|critical|fatal\", host=\"staging\"}",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} | regexp `(?is)(?P<_s>.*$search.*)` | regexp `(?is)(?P<_e>.*(error|critical|fatal|exception).*)` | line_format \"\\033[31m{{__line__}}\\033[0m\" | label_format level=\"unknown\"",
                     "refId": "A"
                 }
             ],
@@ -886,62 +1439,111 @@
                 "type": "loki",
                 "uid": "Loki"
             },
+            "description": "Full Nest container stdout/stderr. Filtered by $compose_service and $search. Font color: green=info, yellow=warn, red=error.",
             "gridPos": {
-                "h": 8,
+                "h": 12,
                 "w": 24,
                 "x": 0,
-                "y": 60
+                "y": 82
             },
-            "id": 113,
+            "id": 114,
+            "options": {
+                "showTime": true,
+                "showLevel": false,
+                "enableLogDetails": true,
+                "syntaxHighlighting": false,
+                "wrapLogMessage": true,
+                "sortOrder": "Descending"
+            },
             "targets": [
                 {
-                    "expr": "sum by(source) (count_over_time({service=\"archaser-core\", host=\"staging\"} [$__range]))",
-                    "legendFormat": "{{source}}",
-                    "queryType": "instant",
+                    "expr": "{job=\"nest-docker\", environment=\"staging\", compose_service=~\"$compose_service\"} | regexp `(?is)(?P<_s>.*$search.*)` | regexp `(?i)(?P<level>error|fatal|critical|exception|warn|warning)|(?P<_rest>[\\s\\S]*)` | line_format \"{{ if or (eq (lower .level) \\\"warn\\\") (eq (lower .level) \\\"warning\\\") }}\\033[33m{{__line__}}\\033[0m{{ else if .level }}\\033[31m{{__line__}}\\033[0m{{ else }}\\033[32m{{__line__}}\\033[0m{{ end }}\" | label_format level=\"unknown\"",
                     "refId": "A"
                 }
             ],
-            "transformations": [
-                {
-                    "id": "labelsToFields"
-                },
-                {
-                    "id": "organize",
-                    "options": {
-                        "renameByName": {
-                            "Value": "Count"
-                        }
-                    }
-                },
-                {
-                    "id": "sortBy",
-                    "options": {
-                        "sort": [
-                            {
-                                "field": "Count",
-                                "desc": true
-                            }
-                        ]
-                    }
-                }
-            ],
-            "title": "Top Reporting Services",
-            "type": "table"
+            "title": "Live Nest logs",
+            "type": "logs"
         }
     ],
     "refresh": "10s",
     "schemaVersion": 36,
     "style": "dark",
     "tags": [
-        "app",
-        "prometheus",
-        "health",
-        "production",
-        "staging",
-        "infra"
+        "archaser",
+        "infra",
+        "staging"
     ],
     "templating": {
-        "list": []
+        "list": [
+            {
+                "current": {
+                    "selected": true,
+                    "text": "api",
+                    "value": "api"
+                },
+                "description": "Filters Recent Error Records and Live Nest logs only. Overview pie/error-rate stay all Nest apps.",
+                "hide": 0,
+                "includeAll": false,
+                "label": "Service",
+                "multi": false,
+                "name": "compose_service",
+                "options": [
+                    {
+                        "selected": true,
+                        "text": "api",
+                        "value": "api"
+                    },
+                    {
+                        "selected": false,
+                        "text": "worker",
+                        "value": "worker"
+                    },
+                    {
+                        "selected": false,
+                        "text": "sms",
+                        "value": "sms"
+                    },
+                    {
+                        "selected": false,
+                        "text": "connectors",
+                        "value": "connectors"
+                    },
+                    {
+                        "selected": false,
+                        "text": "reports",
+                        "value": "reports"
+                    },
+                    {
+                        "selected": false,
+                        "text": "All",
+                        "value": "api|worker|sms|connectors|reports"
+                    }
+                ],
+                "query": "api,worker,sms,connectors,reports,All : api|worker|sms|connectors|reports",
+                "skipUrlSync": false,
+                "type": "custom"
+            },
+            {
+                "current": {
+                    "selected": true,
+                    "text": "",
+                    "value": ""
+                },
+                "description": "Optional case-insensitive substring/regex for log panels. Leave blank for all lines.",
+                "label": "Search",
+                "name": "search",
+                "options": [
+                    {
+                        "selected": true,
+                        "text": "",
+                        "value": ""
+                    }
+                ],
+                "query": "",
+                "skipUrlSync": false,
+                "type": "textbox"
+            }
+        ]
     },
     "time": {
         "from": "now-3h",
@@ -950,5 +1552,5 @@
     "timezone": "browser",
     "title": "Infrastructure - Staging",
     "uid": "archaser-prometheus-v1-staging",
-    "version": 4
+    "version": 5
 }

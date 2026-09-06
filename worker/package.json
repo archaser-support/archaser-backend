@@ -10,6 +10,7 @@
     "test": "echo \"worker: add consumer tests in peel CI\""
   },
   "dependencies": {
+    "@archaser/auth": "*",
     "@archaser/billing-connector": "*",
     "@archaser/cron-jobs": "*",
     "@archaser/database": "*",

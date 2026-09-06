@@ -1,5 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
-import { bindCreditDomain, requireCreditDomainModule } from "./creditDomain";
+import {
+    bindCreditInsurancePrisma,
+    syncCustomerInsuranceFields,
+} from "@archaser/credit-insurance-domain";
+
+import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 import { recalculateCustomerAmountsViaApi } from "./customersDomain";
 
 /**
@@ -8,7 +13,8 @@ import { recalculateCustomerAmountsViaApi } from "./customersDomain";
  */
 export async function fixClosedCollectionData(
     prisma: PrismaClient,
-    lastRunAt: Date
+    lastRunAt: Date,
+    freeze?: CronFrozenAccountGuard
 ): Promise<{
     success: boolean;
     message: string;
@@ -27,10 +33,38 @@ export async function fixClosedCollectionData(
                 period_end_date: {
                     gte: lastRunAt,
                 },
+                ...(freeze && freeze.frozenAccountIds.size > 0
+                    ? {
+                          Customer: {
+                              account_id: {
+                                  notIn: [...freeze.frozenAccountIds],
+                              },
+                          },
+                      }
+                    : {}),
             },
         });
 
     if (collectionPeriodsCount === 0) {
+        if (freeze && freeze.frozenAccountIds.size > 0) {
+            const skippedRows = await prisma.invoice.findMany({
+                where: {
+                    customer_outstanding_debt: 0,
+                    status: "Overdue",
+                    account_id: { in: [...freeze.frozenAccountIds] },
+                    CustomerCollectionPeriod: {
+                        period_end_date: { gte: lastRunAt },
+                    },
+                },
+                select: { account_id: true },
+                distinct: ["account_id"],
+            });
+            freeze.reportSkips(
+                skippedRows
+                    .map((row) => row.account_id)
+                    .filter((id): id is number => id != null)
+            );
+        }
         return {
             success: true,
             message: "No closed collection periods since last run",
@@ -47,6 +81,7 @@ export async function fixClosedCollectionData(
         where: {
             customer_outstanding_debt: 0,
             status: "Overdue",
+            ...(freeze ? freeze.accountIdNotInFilter() : {}),
             CustomerCollectionPeriod: {
                 period_end_date: {
                     gte: lastRunAt,
@@ -55,6 +90,7 @@ export async function fixClosedCollectionData(
         },
         select: {
             customer_id: true,
+            account_id: true,
         },
     });
 
@@ -73,6 +109,7 @@ export async function fixClosedCollectionData(
         where: {
             customer_outstanding_debt: 0,
             status: "Overdue",
+            ...(freeze ? freeze.accountIdNotInFilter() : {}),
             CustomerCollectionPeriod: {
                 period_end_date: {
                     gte: lastRunAt,
@@ -85,15 +122,32 @@ export async function fixClosedCollectionData(
         },
     });
 
-    bindCreditDomain(prisma);
-    const syncMod = requireCreditDomainModule<{
-        syncCustomerInsuranceFields: (customerId: number) => Promise<unknown>;
-    }>("domain/syncCustomerInsuranceFields.js");
+    bindCreditInsurancePrisma(prisma);
     for (const affectedCustomerId of affectedCustomerIds) {
-        await syncMod.syncCustomerInsuranceFields(affectedCustomerId);
+        await syncCustomerInsuranceFields(affectedCustomerId);
     }
 
     await recalculateCustomerAmountsViaApi(affectedCustomerIds, prisma);
+
+    if (freeze && freeze.frozenAccountIds.size > 0) {
+        const skippedRows = await prisma.invoice.findMany({
+            where: {
+                customer_outstanding_debt: 0,
+                status: "Overdue",
+                account_id: { in: [...freeze.frozenAccountIds] },
+                CustomerCollectionPeriod: {
+                    period_end_date: { gte: lastRunAt },
+                },
+            },
+            select: { account_id: true },
+            distinct: ["account_id"],
+        });
+        freeze.reportSkips(
+            skippedRows
+                .map((row) => row.account_id)
+                .filter((id): id is number => id != null)
+        );
+    }
 
     return {
         success: true,

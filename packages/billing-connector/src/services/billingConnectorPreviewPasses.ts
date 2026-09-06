@@ -131,8 +131,10 @@ export function computeEntityPreviewPassed(entity: {
     if (entity.validation_errors.length > 0) {
         return false;
     }
+    // Empty samples are allowed — a customer (or account) may have no
+    // payments/invoices for the cutover window; that must not block import.
     if (entity.sample_rows.length === 0) {
-        return false;
+        return true;
     }
     if (entity.import_type === "Invoice" && !entity.sorted_preview) {
         return false;

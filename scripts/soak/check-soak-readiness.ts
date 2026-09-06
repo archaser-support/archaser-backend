@@ -152,10 +152,8 @@ async function main(): Promise<void> {
         `\nENABLE_CONNECTORS_SYNC_WORKERS=${connectorsWorkers ? "true" : "false"} (compose sets true on connectors service)`
     );
 
-    // ENABLE_CRON_JOBS: false means worker-owned (cutover complete)
-    const enableCron = process.env.ENABLE_CRON_JOBS;
     console.log(
-        `\nENABLE_CRON_JOBS=${enableCron ?? "(unset)"} — staging/production compose set false (worker owns schedules)`
+        "\nCron: worker owns schedules via BullMQ; Lambda /api/system/cron endpoint removed"
     );
 
     // --- Optional worker health ---
@@ -175,12 +173,13 @@ async function main(): Promise<void> {
     }
 
     console.log("\n=== Deploy cutover checklist ===");
-    console.log("1. Redeploy compose (api ENABLE_CRON_JOBS=false; connectors workers on)");
+    console.log("1. Redeploy compose (connectors workers on; worker owns cron schedules; Lambda endpoint removed)");
     console.log("2. Reload nginx from repo templates (staging + production peels)");
     console.log("3. Staging UI: Amplify redirect + NEST_CORS_ORIGINS includes Amplify origin");
     console.log("4. Production UI: remains EC2 Next (Amplify prod cutover optional)");
     console.log("5. Confirm worker CronJobExecution + peel smoke (sms/accounts/reports)");
     console.log("6. Known gaps accepted: email SMTP stub, AWM template/schedule extras");
+    console.log("7. After prod: delete EventBridge + cron Lambda; scrub CRON_SECRET / ENABLE_CRON_JOBS from host env");
 
     if (blocked) {
         console.log("\nRESULT: BLOCKED — fix issues above before declaring cutover complete");

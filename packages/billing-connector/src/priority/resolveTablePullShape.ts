@@ -32,6 +32,14 @@ export const DATE_FIELD_FALLBACKS = [
     "UDATE",
 ] as const;
 
+/**
+ * Secondary sort for keyset pagination when the primary order-by is not unique
+ * (e.g. IDG_ARFNCITEMS4: many KLINE rows share one FNCNUM).
+ */
+export const KEYSET_TIE_BREAKER_FIELDS = ["KLINE"] as const;
+
+const KEYSET_CURSOR_SEP = "|";
+
 export function columnNameSet(headers: readonly string[]): Set<string> {
     return new Set(
         headers.map((name) => name.trim()).filter((name) => name.length > 0)
@@ -53,6 +61,90 @@ export function pickOrderByField(
     throw new Error(
         `No sort column on this table (tried ${defaultOrderBy}, ${ORDER_BY_FALLBACKS.join(", ")})`
     );
+}
+
+/** Prefer KLINE when present and not already the primary order-by. */
+export function pickKeysetTieBreaker(
+    columns: Set<string>,
+    primaryOrderBy: string
+): string | null {
+    for (const name of KEYSET_TIE_BREAKER_FIELDS) {
+        if (name !== primaryOrderBy && columns.has(name)) {
+            return name;
+        }
+    }
+    return null;
+}
+
+export function encodeKeysetCursor(
+    primary: string,
+    secondary?: string | null
+): string {
+    const p = primary.trim();
+    const s = secondary?.trim();
+    if (!s) {
+        return p;
+    }
+    return `${p}${KEYSET_CURSOR_SEP}${s}`;
+}
+
+export function parseKeysetCursor(afterKey: string): {
+    primary: string;
+    secondary: string | null;
+} {
+    const trimmed = afterKey.trim();
+    const sep = trimmed.indexOf(KEYSET_CURSOR_SEP);
+    if (sep < 0) {
+        return { primary: trimmed, secondary: null };
+    }
+    const primary = trimmed.slice(0, sep).trim();
+    const secondary = trimmed.slice(sep + 1).trim();
+    return {
+        primary,
+        secondary: secondary.length > 0 ? secondary : null,
+    };
+}
+
+function odataQuotedString(value: string): string {
+    return `'${value.replace(/'/g, "''")}'`;
+}
+
+/** KLINE is usually Edm.Int32; other keyset fields are Edm.String. */
+function odataTieBreakerLiteral(value: string): string {
+    if (/^-?\d+$/.test(value)) {
+        return value;
+    }
+    return odataQuotedString(value);
+}
+
+/**
+ * Keyset filter after `afterKey`.
+ * With a tie-breaker and composite cursor `primary|secondary`:
+ *   (orderBy gt primary) or ((orderBy eq primary) and (tieBreaker gt secondary))
+ * Legacy single-field cursors keep `orderBy gt primary`.
+ */
+export function buildKeysetFilter(
+    orderBy: string,
+    afterKey: string,
+    tieBreaker: string | null
+): string {
+    const { primary, secondary } = parseKeysetCursor(afterKey);
+    const primaryLit = odataQuotedString(primary);
+    if (!tieBreaker || secondary == null) {
+        return `${orderBy} gt ${primaryLit}`;
+    }
+    const secondaryLit = odataTieBreakerLiteral(secondary);
+    return (
+        `(${orderBy} gt ${primaryLit}) or ` +
+        `((${orderBy} eq ${primaryLit}) and (${tieBreaker} gt ${secondaryLit}))`
+    );
+}
+
+export function formatOrderByClause(
+    orderBy: string,
+    tieBreaker: string | null
+): string {
+    return tieBreaker ? `${orderBy},${tieBreaker}` : orderBy;
 }
 
 export function pickDateField(

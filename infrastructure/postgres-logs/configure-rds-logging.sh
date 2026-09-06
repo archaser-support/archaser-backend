@@ -71,7 +71,7 @@ fi
 echo ""
 echo "→ Deploying parameter group stack..."
 if aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --region "${REGION}" >/dev/null 2>&1; then
-  aws cloudformation update-stack \
+  if aws cloudformation update-stack \
     --stack-name "${STACK_NAME}" \
     --template-body "file://${SCRIPT_DIR}/cloudformation-rds-logging.yaml" \
     --parameters \
@@ -79,8 +79,11 @@ if aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --region "${R
       "ParameterKey=Family,ParameterValue=${FAMILY}" \
       "ParameterKey=LogDestination,ParameterValue=${LOG_DESTINATION}" \
       "ParameterKey=SlowQueryMs,ParameterValue=${SLOW_QUERY_MS}" \
-    --region "${REGION}" || true
-  aws cloudformation wait stack-update-complete --stack-name "${STACK_NAME}" --region "${REGION}" 2>/dev/null || true
+    --region "${REGION}"; then
+    aws cloudformation wait stack-update-complete --stack-name "${STACK_NAME}" --region "${REGION}"
+  else
+    echo "No CloudFormation updates (or update not started); continuing."
+  fi
 else
   aws cloudformation create-stack \
     --stack-name "${STACK_NAME}" \
@@ -110,10 +113,14 @@ CURRENT_PG="$(aws rds describe-db-instances \
 
 if [[ "${CURRENT_PG}" != "${PG_NAME}" ]]; then
   echo "→ Attaching parameter group (ApplyImmediately=${APPLY_IMMEDIATELY})..."
+  APPLY_ARGS=(--no-apply-immediately)
+  if [[ "${APPLY_IMMEDIATELY}" == "true" ]]; then
+    APPLY_ARGS=(--apply-immediately)
+  fi
   aws rds modify-db-instance \
     --db-instance-identifier "${RDS_INSTANCE_ID}" \
     --db-parameter-group-name "${PG_NAME}" \
-    --apply-immediately "${APPLY_IMMEDIATELY}" \
+    "${APPLY_ARGS[@]}" \
     --region "${REGION}" >/dev/null
   echo "Attached. If status shows pending-reboot, wait for the next maintenance window."
 else

@@ -7,4 +7,4 @@ export {
     syncAllCustomerPolicyGapAmounts,
     syncCustomerPolicyGapAmountsForCustomer,
     freezeCustomerPolicyGapOnDeactivation,
-} from "./syncCustomerPolicyGapAmounts";
+} from "@archaser/credit-insurance-domain";

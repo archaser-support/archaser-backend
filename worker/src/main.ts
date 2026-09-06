@@ -13,15 +13,51 @@ import {
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { Queue, Worker, type Job } from "bullmq";
 import IORedis from "ioredis";
-import { collectDefaultMetrics, Registry } from "prom-client";
+import { collectDefaultMetrics, Counter, Gauge, Registry } from "prom-client";
 import {
     createPrismaClient,
     PrismaClient,
 } from "@archaser/database";
+import { QuietNestLogger } from "@archaser/auth";
 import type { Response } from "express";
-import { executeNamedCronJob } from "@archaser/cron-jobs";
+import { bindCreditInsurancePrisma } from "@archaser/credit-insurance-domain";
+import {
+    createBillingConnectorMetricsSinkFromProm,
+    finalizeAwaitingPostIngestDrainExecutions,
+    registerArPostIngestOrchestrator,
+    setDefaultBillingConnectorMetricsSink,
+    touchAwaitingPostIngestDrainProgress,
+} from "@archaser/billing-connector";
+import {
+    computeNextRunAt,
+    countPendingArPostIngestCustomers,
+    drainArPostIngestRetryQueue,
+    executeNamedCronJob,
+    recordCronJobRun,
+    registerCronFrozenAccountMetrics,
+    runArPostIngestForCustomers,
+    setDefaultCronFrozenAccountMetrics,
+    type CronJobResult,
+} from "@archaser/cron-jobs";
+import { registerBillingConnectorSyncCounters } from "./billing-connector-sync-counters";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
+
+/** Same names as API business metrics so Grafana `{instance="Staging"}` scrapes worker runs. */
+const cronJobExecutionsTotal = new Counter({
+    name: "archaser_cron_job_executions_total",
+    help: "Total cron job executions",
+    labelNames: ["job_name", "status"],
+    registers: [],
+});
+
+const cronJobDurationSeconds = new Gauge({
+    name: "archaser_cron_job_duration_seconds",
+    help: "Last execution duration of cron jobs in seconds",
+    labelNames: ["job_name"],
+    registers: [],
+});
+
 
 type RunNowData = {
     cronJobId: number;
@@ -41,6 +77,32 @@ class WorkerRuntimeService implements OnModuleDestroy {
     constructor(private readonly config: ConfigService) {}
 
     async start(): Promise<void> {
+        this.register.setDefaultLabels({ service: "archaser-worker" });
+        this.register.registerMetric(cronJobExecutionsTotal);
+        this.register.registerMetric(cronJobDurationSeconds);
+        const frozenAccountMetrics = registerCronFrozenAccountMetrics(
+            this.register
+        );
+        setDefaultCronFrozenAccountMetrics(frozenAccountMetrics);
+        const billingCounters = registerBillingConnectorSyncCounters(
+            this.register
+        );
+        setDefaultBillingConnectorMetricsSink(
+            createBillingConnectorMetricsSinkFromProm({
+                syncTotal: billingCounters.billingConnectorSyncTotal,
+                syncDuration: billingCounters.billingConnectorSyncDuration,
+                errorsTotal: billingCounters.billingConnectorErrorsTotal,
+                recordsProcessed:
+                    billingCounters.billingConnectorRecordsProcessed,
+            })
+        );
+        // `syncDueBillingConnectors` (billing sync dispatch cron) reaches
+        // billing-connector's no-callback fallback, which calls the registered
+        // orchestrator. Without this it would log "orchestrator is not
+        // registered" and post-ingest AR refresh would stop in this process.
+        registerArPostIngestOrchestrator((options) =>
+            runArPostIngestForCustomers(options)
+        );
         collectDefaultMetrics({
             register: this.register,
             prefix: "archaser_worker_",
@@ -61,6 +123,7 @@ class WorkerRuntimeService implements OnModuleDestroy {
                     process.env.CONNECTION_LIMIT_WORKER || 5
                 ),
             });
+            bindCreditInsurancePrisma(this.prisma);
         } catch (error) {
             this.logger.warn(
                 `Prisma not available yet: ${
@@ -80,17 +143,9 @@ class WorkerRuntimeService implements OnModuleDestroy {
         });
 
         await this.syncRepeatables("startup");
-
-        this.logger.log(
-            `Worker listening on queue=${QUEUE_NAME} redis=${redisUrl}`
-        );
     }
 
     private async handleJob(job: Job): Promise<unknown> {
-        this.logger.log(
-            `Processing ${job.name} id=${job.id} data=${JSON.stringify(job.data)}`
-        );
-
         if (job.name === "sync-schedules") {
             await this.syncRepeatables("config-change");
             return { ok: true, synced: true };
@@ -99,6 +154,59 @@ class WorkerRuntimeService implements OnModuleDestroy {
         if (job.name === "run-now") {
             const data = job.data as RunNowData;
             return this.executeCronJob(data.cronJobId, "run-now");
+        }
+
+        if (job.name === "ar-post-ingest-drain") {
+            if (!this.prisma) {
+                throw new Error("database unavailable");
+            }
+            bindCreditInsurancePrisma(this.prisma);
+            const data = job.data as {
+                accountId?: number;
+                maxItems?: number;
+            };
+            const result = await drainArPostIngestRetryQueue({
+                maxItems: data.maxItems ?? 100,
+                onItemProcessed: async (accountId) => {
+                    await touchAwaitingPostIngestDrainProgress(accountId, {
+                        countPendingForAccount:
+                            countPendingArPostIngestCustomers,
+                    });
+                    await finalizeAwaitingPostIngestDrainExecutions({
+                        accountId,
+                        countPendingForAccount:
+                            countPendingArPostIngestCustomers,
+                    });
+                },
+            });
+            await finalizeAwaitingPostIngestDrainExecutions({
+                countPendingForAccount: countPendingArPostIngestCustomers,
+            });
+            if (data.accountId != null) {
+                const remaining = await countPendingArPostIngestCustomers(
+                    data.accountId
+                );
+                if (remaining > 0 && this.queue) {
+                    await this.queue.add(
+                        "ar-post-ingest-drain",
+                        {
+                            accountId: data.accountId,
+                            maxItems: data.maxItems ?? 500,
+                        },
+                        {
+                            removeOnComplete: 100,
+                            removeOnFail: 200,
+                        }
+                    );
+                    this.logger.log(
+                        `AR post-ingest drain re-queued for account ${data.accountId} (${remaining} customer(s) remaining)`
+                    );
+                }
+            }
+            this.logger.log(
+                `AR post-ingest drain: ${result.itemsProcessed} processed, ${result.failures} failures, ${result.givenUp} given up`
+            );
+            return result;
         }
 
         if (job.name.startsWith("cron:")) {
@@ -124,19 +232,85 @@ class WorkerRuntimeService implements OnModuleDestroy {
                 cron_expression: true,
                 active: true,
                 last_run_at: true,
+                timeout_period_seconds: true,
+                last_execution_duration_seconds: true,
+                average_execution_duration_seconds: true,
+                min_execution_duration_seconds: true,
+                max_execution_duration_seconds: true,
+                success_count_30d: true,
+                failure_count_30d: true,
+                timeout_count_30d: true,
             },
         });
         if (!job) {
             return { ok: false, reason: "CronJob not found", cronJobId };
         }
 
-        this.logger.log(
-            `Executing CronJob ${job.id} (${job.name}) via ${source}`
-        );
+        const started = Date.now();
+        let result: CronJobResult;
+        try {
+            result = await executeNamedCronJob(this.prisma, job.name, {
+                lastRunAt: job.last_run_at,
+            });
+        } catch (error: unknown) {
+            const durationMs =
+                typeof error === "object" &&
+                error !== null &&
+                "durationMs" in error &&
+                typeof (error as { durationMs: unknown }).durationMs ===
+                    "number"
+                    ? (error as { durationMs: number }).durationMs
+                    : Date.now() - started;
+            result = {
+                success: false,
+                message:
+                    error instanceof Error
+                        ? error.message
+                        : `CronJob ${job.name} failed`,
+                durationMs,
+            };
+            this.logger.error(
+                `CronJob ${job.id} (${job.name}) failed: ${result.message}`
+            );
+        }
 
-        const result = await executeNamedCronJob(this.prisma, job.name, {
-            lastRunAt: job.last_run_at,
-        });
+        try {
+            await recordCronJobRun(this.prisma, job, {
+                success: result.success,
+                durationMs: result.durationMs,
+            });
+        } catch (error: unknown) {
+            this.logger.warn(
+                `Failed to persist CronJob ${job.id} run stats: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+        }
+
+        const timedOut =
+            !result.success &&
+            Math.round((result.durationMs || 0) / 1000) >=
+                (job.timeout_period_seconds || 1800);
+        const status = timedOut
+            ? "TIMEOUT"
+            : result.success
+              ? "SUCCESS"
+              : "FAILED";
+        const durationSeconds = Math.max(
+            0,
+            Math.round((result.durationMs || 0) / 1000)
+        );
+        try {
+            cronJobExecutionsTotal.inc({ job_name: job.name, status });
+            cronJobDurationSeconds.set({ job_name: job.name }, durationSeconds);
+        } catch (error: unknown) {
+            this.logger.warn(
+                `Failed to record Prometheus metrics for CronJob ${job.id}: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+        }
+
         return {
             ok: result.success,
             cronJobId: job.id,
@@ -182,6 +356,13 @@ class WorkerRuntimeService implements OnModuleDestroy {
                         removeOnFail: 50,
                     }
                 );
+                const nextRunAt = computeNextRunAt(pattern);
+                if (nextRunAt) {
+                    await this.prisma.cronJob.update({
+                        where: { id: job.id },
+                        data: { next_run_at: nextRunAt },
+                    });
+                }
                 synced += 1;
             } catch (error) {
                 this.logger.warn(
@@ -191,7 +372,9 @@ class WorkerRuntimeService implements OnModuleDestroy {
                 );
             }
         }
-        this.logger.log(`Synced ${synced} repeatables (${reason})`);
+        if (reason !== "startup") {
+            this.logger.log(`Synced ${synced} repeatables (${reason})`);
+        }
         return { synced, reason };
     }
 
@@ -227,7 +410,12 @@ class WorkerController {
     imports: [
         ConfigModule.forRoot({
             isGlobal: true,
-            envFilePath: [".env", "../.env"],
+            envFilePath: (() => {
+                const env = process.env.APP_ENV || process.env.NODE_ENV;
+                return env
+                    ? [`.env.${env}.local`, `.env.${env}`, ".env.local", ".env", `../.env.${env}.local`, `../.env.${env}`, "../.env.local", "../.env"]
+                    : [".env.local", ".env", "../.env.local", "../.env"];
+            })(),
         }),
     ],
     controllers: [WorkerController],
@@ -236,7 +424,9 @@ class WorkerController {
 class WorkerModule {}
 
 async function bootstrap() {
-    const app = await NestFactory.create(WorkerModule);
+    const app = await NestFactory.create(WorkerModule, {
+        logger: new QuietNestLogger(),
+    });
     const runtime = app.get(WorkerRuntimeService);
     await runtime.start();
     const port = Number(process.env.WORKER_PORT || 3003);

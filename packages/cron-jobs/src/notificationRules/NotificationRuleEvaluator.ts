@@ -1,4 +1,4 @@
-import type { PrismaClient, user_role } from "@prisma/client";
+import type { Prisma, PrismaClient, user_role } from "@prisma/client";
 import type { ActiveQualificationKey } from "./NotificationDeliveryLogService";
 import { NotificationRuleSetService } from "./NotificationRuleSetService";
 
@@ -35,6 +35,19 @@ type InvoiceSignal = {
     reportingBreach?: boolean;
     hasZeroLimitWarning?: boolean;
 };
+
+/** Candidate where for reporting action-window notifications (excludes credit notes). */
+export function actionWindowInvoiceWhere(
+    accountId: number
+): Prisma.InvoiceWhereInput {
+    return {
+        account_id: accountId,
+        status: { in: ["Due", "Overdue"] },
+        target_reporting_date: { not: null },
+        actual_reporting_date: null,
+        amount: { gte: 0 },
+    };
+}
 
 export type NotificationDeliveryIntent = {
     ruleSetId: number;
@@ -255,6 +268,7 @@ export class PrismaNotificationRuleEvaluatorProvider
                 where: {
                     account_id: accountId,
                     status: { in: ["Due", "Overdue"] },
+                    amount: { gte: 0 },
                     OR: [
                         { ctv_payment_term: true },
                         { ctv_customer_overdue_mep: true },
@@ -288,12 +302,7 @@ export class PrismaNotificationRuleEvaluatorProvider
     async getActionWindowInvoices(accountId: number): Promise<InvoiceSignal[]> {
         return this.prisma.invoice
             .findMany({
-                where: {
-                    account_id: accountId,
-                    status: { in: ["Due", "Overdue"] },
-                    target_reporting_date: { not: null },
-                    actual_reporting_date: null,
-                },
+                where: actionWindowInvoiceWhere(accountId),
                 select: {
                     id: true,
                     customer_id: true,

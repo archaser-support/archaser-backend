@@ -12,19 +12,31 @@ import {
     CreditDashboardAccessService,
     CreditDashboardAccessContext,
 } from "./credit-dashboard-access.service";
-import { bindCreditInsurancePrisma } from "./domain-db";
-import { getCreditDashboardSummaryHistory } from "./domain/creditDashboardSnapshotService";
-import { getCreditPortfolioHealth } from "./domain/creditPortfolioHealthService";
 import {
+    bindCreditInsurancePrisma,
+    getCapacityGapReport,
+    getCreditDashboardSummaryHistory,
     getCustomerPolicyTrendForCustomer,
     getCustomerPolicyUsageTrend,
-} from "./domain/customerPolicyTrendService";
-import {
     getInsurancePolicyConfigChanges,
     getInsurancePolicyCountryTrend,
     getInsurancePolicyTrend,
+    getLimitWarningReport,
     getNamedPolicyTrend,
-} from "./domain/insurancePolicyTrendService";
+    getNoPolicyExposureReport,
+    getOverdueBlockReport,
+    getPolicyRiskExposureReport,
+    getReportedInvoicesReport,
+    getReportingCountdownOpenReport,
+    getTermsBreachReport,
+    getTopUpCoverReport,
+    getTopUpExpiringReport,
+    getZeroLimitWarningReport,
+    hasTopUpPolicies,
+    isTermsBreachReasonFilter,
+    type CreditReportListOptions,
+} from "@archaser/credit-insurance-domain";
+import { getCreditPortfolioHealth } from "./domain/creditPortfolioHealthService";
 import {
     CreditAsOfBackfillConflictError,
     getCreditAsOfBackfillJobStatus,
@@ -32,24 +44,6 @@ import {
     retryCreditAsOfBackfillJob,
     startCreditAsOfBackfillJob,
 } from "./domain/creditAsOfBackfillJob";
-import {
-    getCapacityGapReport,
-    getLimitWarningReport,
-    getNoPolicyExposureReport,
-    getOverdueBlockReport,
-    getPolicyRiskExposureReport,
-    getReportedInvoicesReport,
-    getReportingCountdownOpenReport,
-    getTermsBreachReport,
-    getZeroLimitWarningReport,
-    isTermsBreachReasonFilter,
-    type CreditReportListOptions,
-} from "./domain/creditInsuranceDashboardService";
-import {
-    getTopUpCoverReport,
-    getTopUpExpiringReport,
-} from "./domain/creditInsuranceTopUpDashboardService";
-import { hasTopUpPolicies } from "./domain/hasTopUpPolicies";
 
 const REPORT_TYPES = [
     "overdue",

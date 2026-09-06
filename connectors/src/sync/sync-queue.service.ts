@@ -31,9 +31,6 @@ export class SyncQueueService implements OnModuleInit, OnModuleDestroy {
 
     async onModuleInit() {
         if (!this.enabled()) {
-            this.logger.log(
-                "Connectors sync workers disabled (D72). Set ENABLE_CONNECTORS_SYNC_WORKERS=true after path flip."
-            );
             return;
         }
         const redisUrl =

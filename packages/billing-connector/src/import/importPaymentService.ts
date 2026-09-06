@@ -1,13 +1,19 @@
 import type { PrismaClient } from "@prisma/client";
 import { collectPaymentReferenceAliases } from "../payment/connectorPaymentSynthetics";
 import { recalculateInvoicesFromLinkedPayments } from "../invoice/linkDeferredPaymentAndRecalc";
+import { parseErpDateOnly } from "../utils/connectorFieldUtils";
 import { commitOps, lastWinsByKey } from "./bulkWrite";
 import {
     resolveAccountBillingExtension,
     type BillingAccountExtension,
+    type ExtensionPaymentLinkedCandidate,
 } from "../extensions";
 import type { InvoicePaymentInput } from "./normalizePaymentInput";
 import { resolvePaymentImportAmounts } from "./resolvePaymentImportAmounts";
+import {
+    isTracedPaymentRow,
+    tracePaymentImport,
+} from "./paymentImportTrace";
 
 export interface ImportPaymentResult {
     index: number;
@@ -127,7 +133,10 @@ export async function importPayments(
     paymentRecords: InvoicePaymentInput[],
     accountId: number,
     userId?: string,
-    options?: { extension?: BillingAccountExtension }
+    options?: {
+        extension?: BillingAccountExtension;
+        shouldCancel?: () => boolean;
+    }
 ): Promise<ImportPaymentResult[]> {
     const results: ImportPaymentResult[] = paymentRecords.map((_, index) => ({
         index,
@@ -138,7 +147,11 @@ export async function importPayments(
         (await resolveAccountBillingExtension(prisma, accountId));
 
     const customerNumbers = [
-        ...new Set(paymentRecords.map((p) => p.customer_number)),
+        ...new Set(
+            paymentRecords
+                .map((record) => record.customer_number.trim())
+                .filter((value) => value.length > 0)
+        ),
     ];
     const customers = await prisma.customer.findMany({
         where: {
@@ -169,17 +182,48 @@ export async function importPayments(
     const prepared: PreparedPayment[] = [];
 
     for (let i = 0; i < paymentRecords.length; i++) {
+        if (i > 0 && i % 25 === 0 && options?.shouldCancel?.()) {
+            break;
+        }
         const record = { ...paymentRecords[i], account_id: accountId };
-        const customerId = customerByNumber.get(record.customer_number);
-        if (customerId === undefined) {
+        const traced = isTracedPaymentRow(record);
+        const customerNumber = record.customer_number.trim();
+        if (!customerNumber) {
+            if (traced) {
+                tracePaymentImport("import_prepare_fail", record, {
+                    reason: "missing customer_number",
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
-                message: `Customer ${record.customer_number} not found`,
+                skipped: true,
+                message: "missing customer_number",
+            };
+            continue;
+        }
+        const customerId = customerByNumber.get(customerNumber);
+        if (customerId === undefined) {
+            if (traced) {
+                tracePaymentImport("import_prepare_fail", record, {
+                    reason: "customer_not_found",
+                    customerNumber,
+                });
+            }
+            results[i] = {
+                index: i,
+                success: false,
+                skipped: true,
+                message: `Customer ${customerNumber} not found`,
             };
             continue;
         }
         if (!record.reference) {
+            if (traced) {
+                tracePaymentImport("import_prepare_fail", record, {
+                    reason: "missing reference",
+                });
+            }
             results[i] = {
                 index: i,
                 success: false,
@@ -208,6 +252,23 @@ export async function importPayments(
             effectiveReference,
             targetInvoiceNumber
         );
+        const paymentDate =
+            parseErpDateOnly(record.payment_date) ??
+            parseErpDateOnly(String(record.payment_date ?? "").slice(0, 10));
+        if (!paymentDate) {
+            if (traced) {
+                tracePaymentImport("import_prepare_fail", record, {
+                    reason: "import.validation.paymentDateRequired",
+                    payment_date_raw: record.payment_date,
+                });
+            }
+            results[i] = {
+                index: i,
+                success: false,
+                message: "import.validation.paymentDateRequired",
+            };
+            continue;
+        }
         prepared.push({
             index: i,
             record,
@@ -216,9 +277,32 @@ export async function importPayments(
             effectiveReference,
             uniqueAliases: aliases.length > 0 ? aliases : [effectiveReference],
             targetInvoiceNumber,
-            paymentDate: new Date(record.payment_date),
+            paymentDate,
             paymentMethod: record.payment_method ?? "",
         });
+        if (traced) {
+            tracePaymentImport("import_prepare_ok", record, {
+                customerId,
+                effectiveReference,
+                targetInvoiceNumber,
+                uniqueAliases: aliases,
+            });
+        }
+    }
+
+    const winnerKeys = new Set(
+        lastWinsByKey(prepared, (row) => `${row.customerId}::${row.effectiveReference}`).map(
+            (row) => `${row.customerId}::${row.effectiveReference}`
+        )
+    );
+    for (const row of prepared) {
+        const key = `${row.customerId}::${row.effectiveReference}`;
+        if (!winnerKeys.has(key) && isTracedPaymentRow(row.record)) {
+            tracePaymentImport("import_dedupe_loser", row.record, {
+                reason: "lastWinsByKey",
+                effectiveReference: row.effectiveReference,
+            });
+        }
     }
 
     const winners = lastWinsByKey(
@@ -315,7 +399,6 @@ export async function importPayments(
         data: Record<string, unknown>;
         previousInvoiceId: number | null;
         newInvoiceId: number | null;
-        normalizeNegative?: boolean;
         winner: PreparedPayment;
         deferred: boolean;
     }> = [];
@@ -323,29 +406,41 @@ export async function importPayments(
         winner: PreparedPayment;
         deferred: boolean;
         invoiceId: number | null;
-        normalizeNegative?: boolean;
     }> = [];
     const skippedIds = new Map<string, ImportPaymentResult>();
     const failedIds = new Map<string, ImportPaymentResult>();
     const invoiceIdsToRecalc = new Map<
         number,
         {
-            normalizeNegativePaymentsForCreditClose?: boolean;
             isForcePaidClose?: BillingAccountExtension["isForcePaidClose"];
         }
     >();
 
-    const markRecalc = (
-        invoiceId: number | null,
-        normalizeNegative?: boolean
-    ) => {
+    const markRecalc = (invoiceId: number | null) => {
         if (invoiceId == null) return;
-        const prev = invoiceIdsToRecalc.get(invoiceId) ?? {};
         invoiceIdsToRecalc.set(invoiceId, {
-            normalizeNegativePaymentsForCreditClose:
-                prev.normalizeNegativePaymentsForCreditClose === true ||
-                normalizeNegative === true,
             isForcePaidClose: extension?.isForcePaidClose,
+        });
+    };
+
+    const afterLinkCandidates: ExtensionPaymentLinkedCandidate[] = [];
+    const queueAfterPaymentLinked = (
+        winner: PreparedPayment,
+        invoiceId: number | null
+    ) => {
+        if (
+            invoiceId == null ||
+            !winner.targetInvoiceNumber ||
+            !extension?.afterPaymentLinked
+        ) {
+            return;
+        }
+        afterLinkCandidates.push({
+            invoiceId,
+            customerId: winner.customerId,
+            invoiceNumber: winner.targetInvoiceNumber,
+            paymentDate: winner.paymentDate,
+            rawErpRow: erpRowFromRecord(winner.record),
         });
     };
 
@@ -363,6 +458,11 @@ export async function importPayments(
         );
 
         if (!invoice) {
+            tracePaymentImport("import_resolve", winner.record, {
+                action: "invoice_not_found",
+                targetInvoiceNumber: winner.targetInvoiceNumber,
+                existingPaymentId: existingPayment?.id ?? null,
+            });
             const deferredAmounts = resolveDeferredPaymentAmounts(winner.record);
             const nextSnapshot = {
                 amount: deferredAmounts.amount,
@@ -376,6 +476,10 @@ export async function importPayments(
             };
             if (existingPayment) {
                 if (isUnchangedPayment(existingPayment, nextSnapshot)) {
+                    tracePaymentImport("import_write", winner.record, {
+                        action: "skip_unchanged_deferred",
+                        invoicePaymentId: existingPayment.id,
+                    });
                     skippedIds.set(key, {
                         index: winner.index,
                         success: true,
@@ -405,6 +509,10 @@ export async function importPayments(
                         modified_at: new Date(),
                     },
                 });
+                tracePaymentImport("import_write", winner.record, {
+                    action: "update_deferred",
+                    invoicePaymentId: existingPayment.id,
+                });
                 continue;
             }
             inserts.push({
@@ -426,25 +534,85 @@ export async function importPayments(
                 deferred: true,
                 invoiceId: null,
             });
+            tracePaymentImport("import_write", winner.record, {
+                action: "insert_deferred",
+                targetInvoiceNumber: winner.targetInvoiceNumber,
+            });
             continue;
         }
 
+        tracePaymentImport("import_resolve", winner.record, {
+            action: "invoice_found",
+            invoiceId: invoice.id,
+            targetInvoiceNumber: winner.targetInvoiceNumber,
+        });
+
+        const currencyOptions = extension?.normalizePaymentCurrency
+            ? { normalizeCurrency: extension.normalizePaymentCurrency }
+            : undefined;
+        const invoiceAmountContext = {
+            amount: invoice.amount,
+            customer_amount: invoice.customer_amount,
+            customer_currency: invoice.customer_currency,
+        };
+        const rawErpRow = erpRowFromRecord(winner.record);
+        const paymentAmountRow = {
+            amount: winner.record.amount,
+            customer_amount: winner.record.customer_amount,
+            customer_currency: winner.record.customer_currency,
+        };
+        const alignedRow =
+            extension?.alignPaymentAmountsForInvoice?.({
+                ...paymentAmountRow,
+                invoiceCustomerCurrency: invoice.customer_currency,
+                invoiceAmount: invoice.amount,
+                invoiceCustomerAmount: invoice.customer_amount,
+                rawErpRow,
+            }) ?? paymentAmountRow;
         const amountResolution = resolvePaymentImportAmounts(
-            {
-                amount: winner.record.amount,
-                customer_amount: winner.record.customer_amount,
-                customer_currency: winner.record.customer_currency,
-            },
-            {
-                amount: invoice.amount,
-                customer_amount: invoice.customer_amount,
-                customer_currency: invoice.customer_currency,
-            },
-            extension?.normalizePaymentCurrency
-                ? { normalizeCurrency: extension.normalizePaymentCurrency }
-                : undefined
+            alignedRow,
+            invoiceAmountContext,
+            currencyOptions
         );
         if (!amountResolution.ok) {
+            tracePaymentImport("import_write_fail", winner.record, {
+                reason: amountResolution.errorKey,
+                invoiceId: invoice.id,
+                targetInvoiceNumber: winner.targetInvoiceNumber,
+            });
+            console.warn("[importPayments] payment amount resolution failed", {
+                errorKey: amountResolution.errorKey,
+                accountId,
+                extensionKey: extension?.key ?? null,
+                paymentIndex: winner.index,
+                customerNumber: winner.record.customer_number,
+                customerId: winner.customerId,
+                invoiceNumber: winner.targetInvoiceNumber,
+                invoiceId: invoice.id,
+                paymentReference: winner.effectiveReference,
+                invoiceCustomerCurrency: invoice.customer_currency,
+                invoiceAmount: invoice.amount,
+                invoiceCustomerAmount: invoice.customer_amount,
+                mappedAmount: paymentAmountRow.amount,
+                mappedCustomerAmount: paymentAmountRow.customer_amount,
+                mappedCustomerCurrency: paymentAmountRow.customer_currency,
+                alignedAmount: alignedRow.amount,
+                alignedCustomerAmount: alignedRow.customer_amount,
+                alignedCustomerCurrency: alignedRow.customer_currency,
+                alignmentChanged:
+                    alignedRow.amount !== paymentAmountRow.amount ||
+                    alignedRow.customer_amount !==
+                        paymentAmountRow.customer_amount ||
+                    alignedRow.customer_currency !==
+                        paymentAmountRow.customer_currency,
+                rawCODE: rawErpRow.CODE ?? null,
+                rawCODE5: rawErpRow.CODE5 ?? null,
+                rawCREDIT1: rawErpRow.CREDIT1 ?? null,
+                rawCREDIT5: rawErpRow.CREDIT5 ?? null,
+                rawDEBIT1: rawErpRow.DEBIT1 ?? null,
+                rawDEBIT5: rawErpRow.DEBIT5 ?? null,
+                rawCURDATE: rawErpRow.CURDATE ?? null,
+            });
             failedIds.set(key, {
                 index: winner.index,
                 success: false,
@@ -453,13 +621,6 @@ export async function importPayments(
             continue;
         }
 
-        const rawErpRow = erpRowFromRecord(winner.record);
-        const normalizeNegative =
-            extension?.shouldNormalizeNegativeCreditPayments?.({
-                rawErpRow,
-                invoiceCustomCode1: invoice.custom_code1,
-                customerAmount: amountResolution.customer_amount,
-            }) === true;
         const nextSnapshot = {
             amount: amountResolution.amount,
             customer_amount: amountResolution.customer_amount,
@@ -473,6 +634,11 @@ export async function importPayments(
 
         if (existingPayment) {
             if (isUnchangedPayment(existingPayment, nextSnapshot)) {
+                tracePaymentImport("import_write", winner.record, {
+                    action: "skip_unchanged_linked",
+                    invoicePaymentId: existingPayment.id,
+                    invoiceId: invoice.id,
+                });
                 skippedIds.set(key, {
                     index: winner.index,
                     success: true,
@@ -481,6 +647,9 @@ export async function importPayments(
                     customerId: winner.customerId,
                     message: "import.results.paymentSkipped",
                 });
+                queueAfterPaymentLinked(winner, invoice.id);
+                // Recon force-paid / virtual close still need a recalc pass.
+                markRecalc(invoice.id);
                 continue;
             }
             updates.push({
@@ -489,7 +658,6 @@ export async function importPayments(
                 newInvoiceId: invoice.id,
                 winner,
                 deferred: false,
-                normalizeNegative,
                 data: {
                     invoice_id: invoice.id,
                     invoice_number: winner.targetInvoiceNumber || null,
@@ -502,6 +670,12 @@ export async function importPayments(
                     modified_by: userId ?? null,
                     modified_at: new Date(),
                 },
+            });
+            queueAfterPaymentLinked(winner, invoice.id);
+            tracePaymentImport("import_write", winner.record, {
+                action: "update_linked",
+                invoicePaymentId: existingPayment.id,
+                invoiceId: invoice.id,
             });
             continue;
         }
@@ -524,7 +698,11 @@ export async function importPayments(
             winner,
             deferred: false,
             invoiceId: invoice.id,
-            normalizeNegative,
+        });
+        queueAfterPaymentLinked(winner, invoice.id);
+        tracePaymentImport("import_write", winner.record, {
+            action: "insert_linked",
+            invoiceId: invoice.id,
         });
     }
 
@@ -582,7 +760,7 @@ export async function importPayments(
             customerId: row.winner.customerId,
             message: row.deferred ? "import.results.paymentDeferred" : undefined,
         });
-        markRecalc(row.invoiceId, row.normalizeNegative);
+        markRecalc(row.invoiceId);
     }
     for (const row of updates) {
         const key = `${row.winner.customerId}::${row.winner.effectiveReference}`;
@@ -594,8 +772,29 @@ export async function importPayments(
             customerId: row.winner.customerId,
             message: row.deferred ? "import.results.paymentDeferred" : undefined,
         });
-        markRecalc(row.previousInvoiceId, row.normalizeNegative);
-        markRecalc(row.newInvoiceId, row.normalizeNegative);
+        markRecalc(row.previousInvoiceId);
+        markRecalc(row.newInvoiceId);
+    }
+
+    if (
+        extension?.afterPaymentLinked &&
+        afterLinkCandidates.length > 0
+    ) {
+        const {
+            invoiceIdsToRecalc: extensionRecalcIds,
+            invoiceIdsSkipRecalc: extensionSkipIds,
+        } = await extension.afterPaymentLinked({
+            prisma,
+            accountId,
+            userId,
+            candidates: afterLinkCandidates,
+        });
+        for (const invoiceId of extensionRecalcIds) {
+            markRecalc(invoiceId);
+        }
+        for (const invoiceId of extensionSkipIds ?? []) {
+            invoiceIdsToRecalc.delete(invoiceId);
+        }
     }
 
     await recalculateInvoicesFromLinkedPayments(prisma, invoiceIdsToRecalc);

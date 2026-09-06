@@ -4,6 +4,7 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/jwt-payload";
 import { serializeBigInt } from "../common/serialize-bigint";
@@ -110,6 +111,9 @@ export class ReportsService {
         if (context) {
             (where.AND as unknown[]).push({ context });
         }
+        if (query.isSystem === "true" || query.isSystem === "1") {
+            (where.AND as unknown[]).push({ is_system: true });
+        }
         if (search) {
             (where.AND as unknown[]).push({
                 OR: [
@@ -181,6 +185,36 @@ export class ReportsService {
         });
     }
 
+    /**
+     * Reports are unique per (account_id, unique_name); append a numeric
+     * suffix so two reports with the same name can coexist in an account.
+     */
+    private async resolveAvailableUniqueName(
+        accountId: number,
+        base: string
+    ): Promise<string> {
+        const taken = await this.db.report.findMany({
+            where: {
+                account_id: accountId,
+                OR: [
+                    { unique_name: base },
+                    { unique_name: { startsWith: `${base}_` } },
+                ],
+            },
+            select: { unique_name: true },
+        });
+        const used = new Set(taken.map((r) => r.unique_name));
+        if (!used.has(base)) {
+            return base;
+        }
+        for (let suffix = 2; ; suffix += 1) {
+            const candidate = `${base.slice(0, 200 - `_${suffix}`.length)}_${suffix}`;
+            if (!used.has(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
     async create(user: JwtPayload, body: Record<string, unknown>) {
         const userInfo = await this.access.resolveUserInfo(user);
         const accountId = this.access.getEffectiveAccountId(userInfo);
@@ -200,32 +234,57 @@ export class ReportsService {
         if (!name) {
             throw new BadRequestException("name is required");
         }
-        const unique_name =
+        const baseUniqueName =
             String(body.unique_name || name)
                 .toLowerCase()
                 .replace(/[^a-z0-9_]+/g, "_")
                 .slice(0, 200) || `report_${Date.now()}`;
+        let unique_name = await this.resolveAvailableUniqueName(
+            accountId,
+            baseUniqueName
+        );
         const canManageSystem = this.access.isAdminAccount(userInfo.accountId);
-        const created = await this.db.report.create({
-            data: {
-                account_id: accountId,
-                name,
-                unique_name,
-                description: (body.description as string) || null,
-                report_config: (body.report_config as never) || {
-                    tables: [],
-                    fields: [],
-                    filters: [],
-                },
-                is_public: Boolean(body.is_public),
-                is_system: canManageSystem ? Boolean(body.is_system) : false,
-                is_default: Boolean(body.is_default),
-                context: (body.context as string) || null,
-                created_by: userId,
-                modified_by: userId,
+        const createData = {
+            account_id: accountId,
+            name,
+            unique_name,
+            description: (body.description as string) || null,
+            report_config: (body.report_config as never) || {
+                tables: [],
+                fields: [],
+                filters: [],
             },
-            include: REPORT_AUDIT_USERS_INCLUDE,
-        });
+            is_public: Boolean(body.is_public),
+            is_system: canManageSystem ? Boolean(body.is_system) : false,
+            is_default: Boolean(body.is_default),
+            context: (body.context as string) || null,
+            created_by: userId,
+            modified_by: userId,
+        };
+        let created;
+        try {
+            created = await this.db.report.create({
+                data: createData,
+                include: REPORT_AUDIT_USERS_INCLUDE,
+            });
+        } catch (error) {
+            if (this.isDuplicateReportUniqueNameError(error)) {
+                unique_name = await this.resolveAvailableUniqueName(
+                    accountId,
+                    baseUniqueName
+                );
+                try {
+                    created = await this.db.report.create({
+                        data: { ...createData, unique_name },
+                        include: REPORT_AUDIT_USERS_INCLUDE,
+                    });
+                } catch (retryError) {
+                    this.rethrowReportWriteError(retryError);
+                }
+            } else {
+                this.rethrowReportWriteError(error);
+            }
+        }
         return serializeBigInt({
             report: this.formatReportDates(created),
         });
@@ -265,11 +324,16 @@ export class ReportsService {
                 data[key] = body[key];
             }
         }
-        const updated = await this.db.report.update({
-            where: { id },
-            data: data as never,
-            include: REPORT_AUDIT_USERS_INCLUDE,
-        });
+        let updated;
+        try {
+            updated = await this.db.report.update({
+                where: { id },
+                data: data as never,
+                include: REPORT_AUDIT_USERS_INCLUDE,
+            });
+        } catch (error) {
+            this.rethrowReportWriteError(error);
+        }
         return serializeBigInt({
             report: this.formatReportDates(updated),
         });
@@ -452,7 +516,19 @@ export class ReportsService {
         return serializeBigInt(created);
     }
 
-    async syncSystem(user: JwtPayload) {
+    /**
+     * Copy selected system reports from master account 10013 onto every other
+     * active account (match by unique_name). Used by "Sync to all accounts".
+     */
+    async syncSystem(
+        user: JwtPayload,
+        body: { reportIds?: number[] } = {}
+    ): Promise<{
+        syncedReports: number;
+        targetAccounts: number;
+        created: number;
+        updated: number;
+    }> {
         const userInfo = await this.access.resolveUserInfo(user);
         const role = userInfo.viewAsUserRole || userInfo.role;
         if (
@@ -461,11 +537,96 @@ export class ReportsService {
         ) {
             throw new ForbiddenException("Admin only");
         }
-        // Nest-native: no seed sync from pages; acknowledge for UI tools
+
+        const MASTER_ACCOUNT_ID = 10013;
+        const reportIds = Array.isArray(body.reportIds)
+            ? [
+                  ...new Set(
+                      body.reportIds
+                          .map((id) => Number(id))
+                          .filter((id) => Number.isFinite(id) && id > 0)
+                  ),
+              ]
+            : [];
+        if (reportIds.length === 0) {
+            throw new BadRequestException("reportIds is required");
+        }
+
+        const sources = await this.db.report.findMany({
+            where: {
+                id: { in: reportIds },
+                account_id: MASTER_ACCOUNT_ID,
+                is_system: true,
+            },
+        });
+        if (sources.length === 0) {
+            throw new BadRequestException(
+                "No matching system reports found on the master account"
+            );
+        }
+
+        const targets = await this.db.account.findMany({
+            where: {
+                id: { not: MASTER_ACCOUNT_ID },
+                deleted_at: null,
+            },
+            select: { id: true },
+        });
+
+        const userId = this.access.getEffectiveUserId(userInfo);
+        const now = new Date();
+        let created = 0;
+        let updated = 0;
+
+        for (const account of targets) {
+            for (const source of sources) {
+                const existing = await this.db.report.findUnique({
+                    where: {
+                        account_id_unique_name: {
+                            account_id: account.id,
+                            unique_name: source.unique_name,
+                        },
+                    },
+                    select: { id: true },
+                });
+
+                const shared = {
+                    name: source.name,
+                    description: source.description,
+                    report_config: source.report_config as never,
+                    is_public: source.is_public,
+                    is_system: true,
+                    is_default: source.is_default,
+                    context: source.context,
+                    modified_by: userId,
+                    modified_at: now,
+                };
+
+                if (existing) {
+                    await this.db.report.update({
+                        where: { id: existing.id },
+                        data: shared,
+                    });
+                    updated += 1;
+                } else {
+                    await this.db.report.create({
+                        data: {
+                            account_id: account.id,
+                            unique_name: source.unique_name,
+                            created_by: userId,
+                            ...shared,
+                        },
+                    });
+                    created += 1;
+                }
+            }
+        }
+
         return {
-            success: true,
-            synced: 0,
-            message: "System report sync is managed via Nest seed jobs",
+            syncedReports: sources.length,
+            targetAccounts: targets.length,
+            created,
+            updated,
         };
     }
 
@@ -584,5 +745,34 @@ export class ReportsService {
                 ? new Date(report.modified_at as string | Date).toISOString()
                 : null,
         };
+    }
+
+    private isDuplicateReportUniqueNameError(error: unknown): boolean {
+        if (
+            !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+            error.code !== "P2002"
+        ) {
+            return false;
+        }
+        const target = error.meta?.target;
+        if (!Array.isArray(target)) {
+            return false;
+        }
+        return (
+            target.includes("unique_name") ||
+            target.includes("account_id") ||
+            target.includes("idx_report_account_unique_name")
+        );
+    }
+
+    private rethrowReportWriteError(error: unknown): never {
+        if (this.isDuplicateReportUniqueNameError(error)) {
+            throw new BadRequestException({
+                message:
+                    "A report with this name already exists. Please choose a different name.",
+                errorCode: "DUPLICATE_REPORT_NAME",
+            });
+        }
+        throw error;
     }
 }
