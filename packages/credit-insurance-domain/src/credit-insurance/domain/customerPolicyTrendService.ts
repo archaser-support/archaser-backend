@@ -24,8 +24,20 @@ import {
 } from "./policyExclusion";
 import {
     aggregateTermsBreachByReasonFromInvoices,
-    termsBreachByReasonSnapshotToJson,
 } from "./customerPolicyTrendTermsBreachByReason";
+import {
+    loadActiveCustomerPoliciesForTrendSync,
+    scopedTopUpsFromReplayPreload,
+    topUpsByCustomerForSnapshotDate,
+    type ActiveCustomerPolicyForTrendSync,
+    type CreditAsOfBackfillRunContext,
+    type TopUpRowForTrendReplay,
+    type TrendCostPredecessorRow,
+} from "./creditAsOfBackfillRunContext";
+import {
+    batchUpsertCustomerPolicyTrendRows,
+    type CustomerPolicyTrendUpsertRow,
+} from "./customerPolicyTrendBatchUpsert";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
 import {
     computeCustomerDailyCostSnapshot,
@@ -37,9 +49,17 @@ import {
     resolveGapFillDates,
 } from "./customerPolicyDailyCostDelta";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
-import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
+import { resolveEffectiveApprovedLimitFromTopUpRows } from "./resolveEffectiveApprovedLimit";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import { computeTopUpUsageMetrics } from "./invoiceCapacityGapAmounts";
+import { mapWithConcurrency, readEnvInt } from "./runWithConcurrency";
+
+const CPT_COMPUTE_CONCURRENCY = readEnvInt(
+    "CREDIT_ASOF_CPT_COMPUTE_CONCURRENCY",
+    25,
+    1,
+    50
+);
 
 export type RiskExposurePolicySeries = {
     policyId: number;
@@ -47,7 +67,6 @@ export type RiskExposurePolicySeries = {
     series: Array<{ snapshotDate: string; amount: number }>;
 };
 
-const COLLECTION_LIVE = ["Active", "Inactive"] as const;
 
 export type CustomerPolicyTrendTopRow = {
     customerId: number;
@@ -266,6 +285,45 @@ async function fetchScopedTopUpsForCustomer(
         }));
 }
 
+async function activeTopUpRowsFromDb(
+    customerIds: number[],
+    snapshotDate: Date
+): Promise<TopUpRowForTrendReplay[]> {
+    if (customerIds.length === 0) {
+        return [];
+    }
+    return (await prisma.customerTopUp.findMany({
+        where: {
+            customer_id: { in: customerIds },
+            cancelled_at: null,
+            start_date: { lte: snapshotDate },
+            end_date: { gte: snapshotDate },
+            InsurancePolicy: {
+                policy_kind: "TopUp",
+            },
+        },
+        select: {
+            id: true,
+            customer_id: true,
+            top_up_type: true,
+            top_up_value: true,
+            currency: true,
+            premium: true,
+            premium_currency: true,
+            start_date: true,
+            end_date: true,
+            cancelled_at: true,
+            InsurancePolicy: {
+                select: {
+                    id: true,
+                    allow_concurrent_top_ups: true,
+                    parent_insurance_policy_id: true,
+                },
+            },
+        },
+    })) as TopUpRowForTrendReplay[];
+}
+
 async function loadPredecessorTrendRowsByKey(
     accountId: number,
     snapshotDate: Date
@@ -297,6 +355,108 @@ async function loadPredecessorTrendRowsByKey(
         );
     }
     return map;
+}
+
+/** Load prior-day CPT cost rows when resuming a multi-day Generate run. */
+export async function seedPriorDayTrendCostCacheForReplay(
+    accountId: number,
+    replayFromDate: Date
+): Promise<Map<string, TrendCostPredecessorRow>> {
+    const priorDayRows = await loadPredecessorTrendRowsByKey(
+        accountId,
+        replayFromDate
+    );
+    const cache = new Map<string, TrendCostPredecessorRow>();
+    for (const [key, row] of priorDayRows) {
+        cache.set(key, {
+            snapshot_date: row.snapshot_date,
+            usage_amount: row.usage_amount,
+            approved_limit: row.approved_limit,
+            approved_limit_currency: row.approved_limit_currency,
+            excluded_from_policy: row.excluded_from_policy,
+            outdated_dcl: row.outdated_dcl,
+            cost_calculation_method: row.cost_calculation_method,
+            cost_percent: row.cost_percent,
+        });
+    }
+    return cache;
+}
+
+async function bulkLoadFallbackPredecessorTrendRows(args: {
+    accountId: number;
+    snapshotDate: Date;
+    missingKeys: Array<{
+        customerId: number;
+        insurancePolicyId: number | null;
+    }>;
+}): Promise<Map<string, PredecessorTrendCostContext>> {
+    const result = new Map<string, PredecessorTrendCostContext>();
+    if (args.missingKeys.length === 0) {
+        return result;
+    }
+
+    const customerIds = Array.from(
+        new Set(args.missingKeys.map((entry) => entry.customerId))
+    );
+
+    const rows = await prisma.$queryRaw<PredecessorTrendRowKeyed[]>`
+        SELECT
+            t.snapshot_date,
+            t.usage_amount,
+            t.approved_limit,
+            t.approved_limit_currency,
+            t.excluded_from_policy,
+            t.outdated_dcl,
+            t.cost_calculation_method,
+            t.cost_percent,
+            t.customer_id,
+            t.insurance_policy_id
+        FROM "CustomerPolicyTrend" t
+        WHERE t.account_id = ${args.accountId}
+          AND t.snapshot_date < ${args.snapshotDate}::date
+          AND t.customer_id IN (${Prisma.join(customerIds)})
+        ORDER BY t.customer_id ASC, t.insurance_policy_id ASC NULLS LAST, t.snapshot_date DESC
+    `;
+
+    const latestAnyPolicyByCustomer = new Map<number, PredecessorTrendCostContext>();
+    const latestByCustomerPolicy = new Map<string, PredecessorTrendCostContext>();
+
+    for (const row of rows) {
+        const policyKey = predecessorTrendKey(
+            row.customer_id,
+            row.insurance_policy_id
+        );
+        const existingPolicy = latestByCustomerPolicy.get(policyKey);
+        if (
+            !existingPolicy ||
+            row.snapshot_date.getTime() > existingPolicy.snapshot_date.getTime()
+        ) {
+            latestByCustomerPolicy.set(policyKey, row);
+        }
+        const existingAny = latestAnyPolicyByCustomer.get(row.customer_id);
+        if (
+            !existingAny ||
+            row.snapshot_date.getTime() > existingAny.snapshot_date.getTime()
+        ) {
+            latestAnyPolicyByCustomer.set(row.customer_id, row);
+        }
+    }
+
+    for (const entry of args.missingKeys) {
+        const key = predecessorTrendKey(
+            entry.customerId,
+            entry.insurancePolicyId
+        );
+        const predecessorRow =
+            entry.insurancePolicyId == null
+                ? latestAnyPolicyByCustomer.get(entry.customerId) ?? null
+                : latestByCustomerPolicy.get(key) ?? null;
+        if (predecessorRow) {
+            result.set(key, predecessorRow);
+        }
+    }
+
+    return result;
 }
 
 async function findFallbackPredecessorTrendRow(
@@ -337,10 +497,17 @@ async function resolvePredecessorLevels(args: {
     snapshotDate: Date;
     limitCurrency: string;
     priorDayRowsByKey: Map<string, PredecessorTrendCostContext>;
+    fallbackRowsByKey?: Map<string, PredecessorTrendCostContext>;
+    accountHasTopUp?: boolean;
+    replayTopUpsByCustomerId?: Map<number, TopUpRowForTrendReplay[]>;
+    useInMemoryPredecessorOnly?: boolean;
 }): Promise<CustomerDailyCostSnapshot | null> {
     const key = predecessorTrendKey(args.customerId, args.insurancePolicyId);
     let predecessorRow = args.priorDayRowsByKey.get(key) ?? null;
     if (!predecessorRow) {
+        predecessorRow = args.fallbackRowsByKey?.get(key) ?? null;
+    }
+    if (!predecessorRow && !args.useInMemoryPredecessorOnly) {
         predecessorRow = await findFallbackPredecessorTrendRow(
             args.accountId,
             args.customerId,
@@ -352,11 +519,29 @@ async function resolvePredecessorLevels(args: {
         return null;
     }
 
-    const activeTopUps = await fetchScopedTopUpsForCustomer(
-        args.customerId,
-        args.insurancePolicyId,
-        predecessorRow.snapshot_date
-    );
+    let activeTopUps: TopUpForDailyCost[];
+    if (args.accountHasTopUp === false) {
+        activeTopUps = [];
+    } else if (args.replayTopUpsByCustomerId) {
+        activeTopUps = scopedTopUpsFromReplayPreload(
+            args.replayTopUpsByCustomerId,
+            args.customerId,
+            args.insurancePolicyId,
+            predecessorRow.snapshot_date
+        ).map((row) => ({
+            premium: decimalToNumber(row.premium),
+            premiumCurrency: row.premium_currency,
+            startDate: row.start_date,
+            endDate: row.end_date,
+            cancelledAt: row.cancelled_at,
+        }));
+    } else {
+        activeTopUps = await fetchScopedTopUpsForCustomer(
+            args.customerId,
+            args.insurancePolicyId,
+            predecessorRow.snapshot_date
+        );
+    }
 
     return computeLevelsFromTrendContext({
         policyInput: {
@@ -374,6 +559,301 @@ async function resolvePredecessorLevels(args: {
         activeTopUps,
         asOfDate: predecessorRow.snapshot_date,
     });
+}
+
+function trendCostRowFromUpsert(args: {
+    snapshotDate: Date;
+    usageAmount: number;
+    customerPolicy: ActiveCustomerPolicyForTrendSync;
+    costPercent: Prisma.Decimal | null;
+}): TrendCostPredecessorRow {
+    return {
+        snapshot_date: args.snapshotDate,
+        usage_amount: args.usageAmount,
+        approved_limit: args.customerPolicy.approved_limit,
+        approved_limit_currency: args.customerPolicy.approved_limit_currency,
+        excluded_from_policy: args.customerPolicy.excluded_from_policy,
+        outdated_dcl: args.customerPolicy.outdated_dcl,
+        cost_calculation_method:
+            args.customerPolicy.InsurancePolicy?.cost_calculation_method ??
+            null,
+        cost_percent: args.costPercent,
+    };
+}
+
+type ComputeCptTrendRowArgs = {
+    cp: ActiveCustomerPolicyForTrendSync;
+    snapshotDate: Date;
+    accountId: number;
+    accountCurrency: string | null;
+    accountHasTopUp: boolean;
+    ledgerLines: AsOfOpenInvoiceLine[];
+    openArByCustomer: Map<number, number>;
+    topUpsByCustomerId: Map<number, TopUpRowForTrendReplay[]>;
+    priorDayRowsByKey: Map<string, PredecessorTrendCostContext>;
+    fallbackPredecessorRowsByKey: Map<string, PredecessorTrendCostContext>;
+    replayTopUpsByCustomerId?: Map<number, TopUpRowForTrendReplay[]>;
+    useInMemoryPredecessorOnly: boolean;
+    trackPriorDay: boolean;
+};
+
+type ComputeCptTrendRowResult = {
+    row: CustomerPolicyTrendUpsertRow;
+    priorDayEntry: { key: string; value: TrendCostPredecessorRow } | null;
+};
+
+async function computeCustomerPolicyTrendUpsertRow(
+    args: ComputeCptTrendRowArgs
+): Promise<ComputeCptTrendRowResult> {
+    const { cp, snapshotDate, accountId, accountCurrency, accountHasTopUp } =
+        args;
+    const limitCurrency =
+        cp.approved_limit_currency?.trim().toUpperCase() ||
+        accountCurrency ||
+        "USD";
+
+    let usageAmount = 0;
+    if (cp.insurance_policy_id != null) {
+        usageAmount = Math.max(
+            0,
+            resolveAsOfOpenArOnPolicyInLimitCurrencyFromLines(
+                args.ledgerLines,
+                cp.customer_id,
+                cp.insurance_policy_id,
+                limitCurrency,
+                accountCurrency,
+                snapshotDate
+            )
+        );
+    } else {
+        usageAmount = Math.max(
+            0,
+            args.openArByCustomer.get(cp.customer_id) ?? 0
+        );
+    }
+
+    const approvedLimit = decimalToNumber(cp.approved_limit);
+    let topUpTotal: Prisma.Decimal | null = null;
+    let activeTopUpCount: number | null = null;
+    let effectiveApprovedLimit: Prisma.Decimal | null =
+        cp.approved_limit != null
+            ? new Prisma.Decimal(cp.approved_limit)
+            : null;
+    if (accountHasTopUp) {
+        const resolved = await resolveEffectiveApprovedLimitFromTopUpRows(
+            args.topUpsByCustomerId.get(cp.customer_id) ?? [],
+            {
+                baseApprovedLimit: cp.approved_limit,
+                baseApprovedLimitCurrency:
+                    cp.approved_limit_currency?.trim().toUpperCase() ?? null,
+                asOfDate: snapshotDate,
+                parentPrimaryPolicyId: cp.insurance_policy_id ?? undefined,
+                outdatedDcl: cp.outdated_dcl,
+                excludedFromPolicy: cp.excluded_from_policy,
+            }
+        );
+        effectiveApprovedLimit = new Prisma.Decimal(
+            resolved.effectiveApprovedLimit ?? approvedLimit ?? 0
+        );
+        topUpTotal = new Prisma.Decimal(resolved.topUpTotalInLimitCurrency);
+        activeTopUpCount = resolved.topUpByPolicy.reduce(
+            (s, p) => s + p.rows.length,
+            0
+        );
+    }
+
+    const policyScope = cp.insurance_policy_id ?? undefined;
+    const uncovered = isUncoveredExposureCustomer({
+        hasLinkedPolicy: hasActiveLinkedPolicy(cp.insurance_policy_id),
+        exclusionReason: cp.policy_exclusion_reason,
+    });
+    const totalReceivables =
+        policyScope != null
+            ? sumAsOfOpenAmountFromLines(args.ledgerLines, snapshotDate, {
+                  customerId: cp.customer_id,
+                  policyId: policyScope,
+              })
+            : Math.max(0, args.openArByCustomer.get(cp.customer_id) ?? 0);
+    const flagBasedTermsBreach = sumAsOfTermsBreachFromLines(
+        args.ledgerLines,
+        snapshotDate,
+        {
+            customerId: cp.customer_id,
+            ...(policyScope != null ? { policyId: policyScope } : {}),
+        }
+    );
+    const flagBasedTermsBreachForAtRisk = flagBasedTermsBreach;
+    const termsBreachInvoices = uncovered
+        ? []
+        : asOfTermsBreachInvoicesFromLines(
+              args.ledgerLines,
+              snapshotDate,
+              cp.customer_id,
+              cp.insurance_policy_id
+          );
+    const termsBreachByReason = uncovered
+        ? { snapshot: {}, invoiceCount: 0 }
+        : {
+              snapshot: aggregateTermsBreachByReasonFromInvoices(
+                  termsBreachInvoices,
+                  cp.insurance_policy_id
+              ),
+              invoiceCount: termsBreachInvoices.length,
+          };
+    const termsBreachOutstanding = uncovered
+        ? totalReceivables
+        : flagBasedTermsBreach;
+    const termsBreachForAtRisk = uncovered
+        ? totalReceivables
+        : flagBasedTermsBreachForAtRisk;
+
+    const financialPayload = buildCustomerPolicyTrendSnapshotPayload({
+        accountCurrency,
+        totalReceivables,
+        capacityGapAmount: asOfCapacityGapAmount(
+            totalReceivables,
+            decimalToNumber(effectiveApprovedLimit),
+            Boolean(cp.outdated_dcl)
+        ),
+        termsBreachOutstanding,
+        termsBreachOutstandingForAtRisk: termsBreachForAtRisk,
+        arInLimitCurrency: usageAmount,
+        approvedLimit,
+        topUpTotal:
+            topUpTotal != null
+                ? new Prisma.Decimal(topUpTotal).toNumber()
+                : null,
+    });
+
+    if (!accountHasTopUp) {
+        topUpTotal = null;
+        activeTopUpCount = null;
+    }
+
+    const scopedTopUps = (args.topUpsByCustomerId.get(cp.customer_id) ?? []).filter(
+        (row) =>
+            cp.insurance_policy_id == null ||
+            row.InsurancePolicy.parent_insurance_policy_id ===
+                cp.insurance_policy_id
+    );
+    const todayLevels = computeCustomerDailyCostSnapshot({
+        policyInput: {
+            costCalculationMethod:
+                cp.InsurancePolicy?.cost_calculation_method ?? null,
+            costPercent: decimalToNumber(cp.InsurancePolicy?.cost_percent),
+            approvedLimit,
+            usageAmount,
+            limitCurrency,
+            excludedFromPolicy: cp.excluded_from_policy,
+            outdatedDcl: cp.outdated_dcl,
+        },
+        activeTopUps: scopedTopUps.map((row) => ({
+            premium: decimalToNumber(row.premium),
+            premiumCurrency: row.premium_currency,
+            startDate: row.start_date,
+            endDate: row.end_date,
+            cancelledAt: row.cancelled_at,
+        })),
+        asOfDate: snapshotDate,
+    });
+    const predecessorLevels = await resolvePredecessorLevels({
+        accountId,
+        customerId: cp.customer_id,
+        insurancePolicyId: cp.insurance_policy_id,
+        snapshotDate,
+        limitCurrency,
+        priorDayRowsByKey: args.priorDayRowsByKey,
+        fallbackRowsByKey: args.fallbackPredecessorRowsByKey,
+        accountHasTopUp,
+        replayTopUpsByCustomerId: args.replayTopUpsByCustomerId,
+        useInMemoryPredecessorOnly: args.useInMemoryPredecessorOnly,
+    });
+    const costSnapshot = deriveDailyCostDeltaSnapshot({
+        todayLevels,
+        predecessorLevels,
+    });
+    const policyDailyCost =
+        costSnapshot.policyDailyCost != null
+            ? new Prisma.Decimal(costSnapshot.policyDailyCost)
+            : null;
+    const topUpDailyCost =
+        costSnapshot.topUpDailyCost != null
+            ? new Prisma.Decimal(costSnapshot.topUpDailyCost)
+            : null;
+    const totalDailyCost =
+        costSnapshot.totalDailyCost != null
+            ? new Prisma.Decimal(costSnapshot.totalDailyCost)
+            : null;
+    const snapshottedCostPercent =
+        costSnapshot.costPercent != null
+            ? new Prisma.Decimal(costSnapshot.costPercent)
+            : null;
+
+    const row: CustomerPolicyTrendUpsertRow = {
+        accountId: cp.Customer.account_id,
+        customerId: cp.customer_id,
+        insurancePolicyId: cp.insurance_policy_id,
+        customerPolicyId: cp.id,
+        snapshotDate,
+        approvedLimit: cp.approved_limit,
+        usageAmount,
+        topUpTotal,
+        activeTopUpCount,
+        effectiveApprovedLimit,
+        customerNumberPolicy: cp.customer_number_policy,
+        approvedLimitCurrency: cp.approved_limit_currency,
+        approvedLimitExpirationDate: cp.approved_limit_expiration_date,
+        limitType: cp.limit_type,
+        maxPaymentTerm: cp.max_payment_term,
+        maxAllowedMep: cp.max_allowed_mep,
+        reportingDays: cp.reporting_days,
+        mepCutoffDayOfMonth: cp.mep_cutoff_day_of_month,
+        mepSubstituteDayOfMonth: cp.mep_substitute_day_of_month,
+        reportingCutoffDayOfMonth: cp.reporting_cutoff_day_of_month,
+        reportingSubstituteDayOfMonth: cp.reporting_substitute_day_of_month,
+        paymentTermCutoffDayOfMonth: cp.payment_term_cutoff_day_of_month,
+        paymentTermSubstituteDayOfMonth: cp.payment_term_substitute_day_of_month,
+        excludedFromPolicy: cp.excluded_from_policy,
+        policyExclusionReason: cp.policy_exclusion_reason,
+        creditScore: cp.credit_score,
+        creditScoreInputDate: cp.credit_score_input_date,
+        activeCustomerSince: cp.active_customer_since,
+        outdatedDcl: cp.outdated_dcl,
+        policyDailyCost,
+        policyCostCurrency: costSnapshot.policyCostCurrency,
+        topUpDailyCost,
+        topUpCostCurrency: costSnapshot.topUpCostCurrency,
+        totalDailyCost,
+        costCalculationMethod: costSnapshot.costCalculationMethod,
+        costPercent: snapshottedCostPercent,
+        registrationFeePercent: cp.registration_fee_percent,
+        financialCurrency: financialPayload.financialCurrency,
+        totalReceivables: financialPayload.totalReceivables,
+        healthIndex: financialPayload.healthIndex,
+        atRiskExposure: financialPayload.atRiskExposure,
+        compliantExposure: financialPayload.compliantExposure,
+        termsBreachAmount: financialPayload.termsBreachAmount,
+        capacityGapAmount: financialPayload.capacityGapAmount,
+        termsBreachCount: termsBreachByReason.invoiceCount,
+        termsBreachByReason: termsBreachByReason.snapshot,
+        policyUsagePct: financialPayload.policyUsagePct,
+        topUpUsagePct: financialPayload.topUpUsagePct,
+        effectiveUsagePct: financialPayload.effectiveUsagePct,
+    };
+
+    const priorDayEntry = args.trackPriorDay
+        ? {
+              key: predecessorTrendKey(cp.customer_id, cp.insurance_policy_id),
+              value: trendCostRowFromUpsert({
+                  snapshotDate,
+                  usageAmount,
+                  customerPolicy: cp,
+                  costPercent: snapshottedCostPercent,
+              }),
+          }
+        : null;
+
+    return { row, priorDayEntry };
 }
 
 async function getAccountLatestSnapshotDate(
@@ -825,13 +1305,18 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
          * for the whole run and passes it in; omitting it resolves per call.
          */
         mepBreachStartDate?: Date | null;
+        /** Preloaded static inputs for multi-day Generate / drain replay. */
+        runContext?: CreditAsOfBackfillRunContext;
     }
 ): Promise<number> {
     const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
+    const runContext = options?.runContext;
     const mepBreachStartDate =
-        options?.mepBreachStartDate !== undefined
-            ? options.mepBreachStartDate
-            : await resolveMepBreachStartDate(accountId);
+        runContext?.mepBreachStartDate !== undefined
+            ? runContext.mepBreachStartDate
+            : options?.mepBreachStartDate !== undefined
+              ? options.mepBreachStartDate
+              : await resolveMepBreachStartDate(accountId);
     let ledgerLines =
         options?.asOfLines ??
         (await loadAsOfOpenInvoiceCandidates(accountId, snapshotDate, {
@@ -843,122 +1328,89 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         snapshotDate
     );
 
-    const account = await prisma.account.findUnique({
-        where: { id: accountId },
-        select: { currency: true },
-    });
-    const accountCurrency = account?.currency?.trim() || null;
+    const accountCurrency =
+        runContext?.accountCurrency ??
+        ((
+            await prisma.account.findUnique({
+                where: { id: accountId },
+                select: { currency: true },
+            })
+        )?.currency?.trim() ||
+            null);
 
-    const activePolicies = await prisma.customerPolicy.findMany({
-        where: {
-            is_active: true,
-            Customer: {
-                account_id: accountId,
-                collection_status: { in: [...COLLECTION_LIVE] },
-                ...(options?.customerIds != null && options.customerIds.length > 0
-                    ? { id: { in: options.customerIds } }
-                    : {}),
-            },
-            ...(options?.policyId != null
-                ? { insurance_policy_id: options.policyId }
-                : {}),
-        },
-        select: {
-            id: true,
-            customer_id: true,
-            insurance_policy_id: true,
-            customer_number_policy: true,
-            approved_limit: true,
-            approved_limit_currency: true,
-            approved_limit_expiration_date: true,
-            limit_type: true,
-            max_payment_term: true,
-            max_allowed_mep: true,
-            reporting_days: true,
-            mep_cutoff_day_of_month: true,
-            mep_substitute_day_of_month: true,
-            reporting_cutoff_day_of_month: true,
-            reporting_substitute_day_of_month: true,
-            payment_term_cutoff_day_of_month: true,
-            payment_term_substitute_day_of_month: true,
-            excluded_from_policy: true,
-            policy_exclusion_reason: true,
-            credit_score: true,
-            credit_score_input_date: true,
-            active_customer_since: true,
-            outdated_dcl: true,
-            cost_percent: true,
-            registration_fee_percent: true,
-            capacity_gap_amount: true,
-            capacity_gap_amount1: true,
-            capacity_gap_currency1: true,
-            capacity_gap_amount2: true,
-            capacity_gap_currency2: true,
-            Customer: {
-                select: {
-                    account_id: true,
-                },
-            },
-            InsurancePolicy: {
-                select: {
-                    cost_calculation_method: true,
-                    cost_percent: true,
-                    end_date: true,
-                },
-            },
-        },
-    });
+    const activePolicies =
+        runContext?.activeCustomerPolicies ??
+        (await loadActiveCustomerPoliciesForTrendSync(accountId, {
+            policyId: options?.policyId,
+            customerIds: options?.customerIds,
+        }));
 
     const customerIds = Array.from(new Set(activePolicies.map((cp) => cp.customer_id)));
-    const activeTopUpRows =
-        customerIds.length > 0
-            ? await prisma.customerTopUp.findMany({
-                  where: {
-                      customer_id: { in: customerIds },
-                      cancelled_at: null,
-                      start_date: { lte: snapshotDate },
-                      end_date: { gte: snapshotDate },
-                      InsurancePolicy: {
-                          policy_kind: "TopUp",
-                      },
-                  },
-                  select: {
-                      customer_id: true,
-                      premium: true,
-                      premium_currency: true,
-                      start_date: true,
-                      end_date: true,
-                      cancelled_at: true,
-                      InsurancePolicy: {
-                          select: {
-                              parent_insurance_policy_id: true,
-                          },
-                      },
-                  },
-              })
-            : [];
+    const accountHasTopUp =
+        runContext?.hasTopUpPolicies ?? (await hasTopUpPolicies(accountId));
 
-    const topUpsByCustomerId = new Map<
-        number,
-        Array<(typeof activeTopUpRows)[number]>
-    >();
-    for (const row of activeTopUpRows) {
-        const bucket = topUpsByCustomerId.get(row.customer_id) ?? [];
-        bucket.push(row);
-        topUpsByCustomerId.set(row.customer_id, bucket);
+    type ActiveTopUpRow = TopUpRowForTrendReplay;
+    let topUpsByCustomerId: Map<number, ActiveTopUpRow[]>;
+    if (accountHasTopUp && runContext?.topUpsByCustomerId) {
+        topUpsByCustomerId = topUpsByCustomerForSnapshotDate(
+            runContext.topUpsByCustomerId,
+            customerIds,
+            snapshotDate
+        );
+    } else if (accountHasTopUp && customerIds.length > 0) {
+        topUpsByCustomerId = new Map();
+        const rows = await activeTopUpRowsFromDb(customerIds, snapshotDate);
+        for (const row of rows) {
+            const bucket = topUpsByCustomerId.get(row.customer_id) ?? [];
+            bucket.push(row);
+            topUpsByCustomerId.set(row.customer_id, bucket);
+        }
+    } else {
+        topUpsByCustomerId = new Map();
     }
 
-    const accountHasTopUp = await hasTopUpPolicies(accountId);
-    const priorDayRowsByKey = await loadPredecessorTrendRowsByKey(
-        accountId,
-        snapshotDate
-    );
-    const CAPACITY_GAP_CONCURRENCY = 25;
-    for (let i = 0; i < customerIds.length; i += CAPACITY_GAP_CONCURRENCY) {
-        const batch = customerIds.slice(i, i + CAPACITY_GAP_CONCURRENCY);
-        await Promise.all(
-            batch.map((customerId) => ensureCustomerCapacityGapStored(customerId))
+    const useInMemoryPredecessor = runContext?.priorDayTrendCostByKey != null;
+    let priorDayRowsByKey: Map<string, PredecessorTrendCostContext>;
+    let fallbackPredecessorRowsByKey: Map<string, PredecessorTrendCostContext>;
+    if (useInMemoryPredecessor) {
+        priorDayRowsByKey = runContext!.priorDayTrendCostByKey!;
+        fallbackPredecessorRowsByKey = new Map();
+    } else {
+        priorDayRowsByKey = await loadPredecessorTrendRowsByKey(
+            accountId,
+            snapshotDate
         );
+        const missingPredecessorKeys = activePolicies
+            .map((cp) => ({
+                customerId: cp.customer_id,
+                insurancePolicyId: cp.insurance_policy_id,
+            }))
+            .filter(
+                (entry) =>
+                    !priorDayRowsByKey.has(
+                        predecessorTrendKey(
+                            entry.customerId,
+                            entry.insurancePolicyId
+                        )
+                    )
+            );
+        fallbackPredecessorRowsByKey =
+            await bulkLoadFallbackPredecessorTrendRows({
+                accountId,
+                snapshotDate,
+                missingKeys: missingPredecessorKeys,
+            });
+    }
+    if (!runContext?.capacityGapEnsured) {
+        const CAPACITY_GAP_CONCURRENCY = 25;
+        for (let i = 0; i < customerIds.length; i += CAPACITY_GAP_CONCURRENCY) {
+            const batch = customerIds.slice(i, i + CAPACITY_GAP_CONCURRENCY);
+            await Promise.all(
+                batch.map((customerId) =>
+                    ensureCustomerCapacityGapStored(customerId)
+                )
+            );
+        }
     }
 
     const termsByCustomerAndPolicy = new Map<string, AsOfPolicyTermsForBreach>();
@@ -995,343 +1447,54 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         }
     );
 
-    let rowsUpserted = 0;
+    const nextPriorDayCache = runContext
+        ? new Map<string, TrendCostPredecessorRow>()
+        : null;
+    const replayTopUpsByCustomerId = runContext?.topUpsByCustomerId;
+    const useInMemoryPredecessorOnly = useInMemoryPredecessor;
 
-    for (const cp of activePolicies) {
-        const limitCurrency =
-            cp.approved_limit_currency?.trim().toUpperCase() ||
-            accountCurrency ||
-            "USD";
+    const sharedComputeArgs = {
+        snapshotDate,
+        accountId,
+        accountCurrency,
+        accountHasTopUp,
+        ledgerLines,
+        openArByCustomer,
+        topUpsByCustomerId,
+        priorDayRowsByKey,
+        fallbackPredecessorRowsByKey,
+        replayTopUpsByCustomerId,
+        useInMemoryPredecessorOnly,
+        trackPriorDay: nextPriorDayCache != null,
+    };
 
-        let usageAmount = 0;
-        if (cp.insurance_policy_id != null) {
-            usageAmount = Math.max(
-                0,
-                resolveAsOfOpenArOnPolicyInLimitCurrencyFromLines(
-                    ledgerLines,
-                    cp.customer_id,
-                    cp.insurance_policy_id,
-                    limitCurrency,
-                    accountCurrency,
-                    snapshotDate
-                )
-            );
-        } else {
-            usageAmount = Math.max(
-                0,
-                openArByCustomer.get(cp.customer_id) ?? 0
-            );
-        }
+    const computedRows = await mapWithConcurrency(
+        activePolicies,
+        CPT_COMPUTE_CONCURRENCY,
+        (cp) =>
+            computeCustomerPolicyTrendUpsertRow({
+                cp,
+                ...sharedComputeArgs,
+            })
+    );
 
-        const approvedLimit = decimalToNumber(cp.approved_limit);
-        let topUpTotal: Prisma.Decimal | null = null;
-        let activeTopUpCount: number | null = null;
-        // Without top-ups (or when resolve fails), effective limit = base approved.
-        // Portfolio Health utilization uses this field as the denominator.
-        let effectiveApprovedLimit: Prisma.Decimal | null =
-            cp.approved_limit != null
-                ? new Prisma.Decimal(cp.approved_limit)
-                : null;
-        if (accountHasTopUp) {
-            const resolved = await resolveEffectiveApprovedLimit(cp.customer_id, {
-                baseApprovedLimit: cp.approved_limit,
-                baseApprovedLimitCurrency:
-                    cp.approved_limit_currency?.trim().toUpperCase() ?? null,
-                dbClient: prisma,
-                asOfDate: snapshotDate,
-                parentPrimaryPolicyId: cp.insurance_policy_id ?? undefined,
-            });
-            if (resolved) {
-                effectiveApprovedLimit = new Prisma.Decimal(
-                    resolved.effectiveApprovedLimit ?? approvedLimit ?? 0
-                );
-                topUpTotal = new Prisma.Decimal(resolved.topUpTotalInLimitCurrency);
-                activeTopUpCount = resolved.topUpByPolicy.reduce(
-                    (s, p) => s + p.rows.length,
-                    0
+    const upsertRows = computedRows.map((computed) => computed.row);
+    if (nextPriorDayCache) {
+        for (const computed of computedRows) {
+            if (computed.priorDayEntry) {
+                nextPriorDayCache.set(
+                    computed.priorDayEntry.key,
+                    computed.priorDayEntry.value
                 );
             }
         }
-
-        const policyScope = cp.insurance_policy_id ?? undefined;
-        const uncovered = isUncoveredExposureCustomer({
-            hasLinkedPolicy: hasActiveLinkedPolicy(cp.insurance_policy_id),
-            exclusionReason: cp.policy_exclusion_reason,
-        });
-        const totalReceivables =
-            policyScope != null
-                ? sumAsOfOpenAmountFromLines(ledgerLines, snapshotDate, {
-                      customerId: cp.customer_id,
-                      policyId: policyScope,
-                  })
-                : Math.max(0, openArByCustomer.get(cp.customer_id) ?? 0);
-        const flagBasedTermsBreach = sumAsOfTermsBreachFromLines(
-            ledgerLines,
-            snapshotDate,
-            {
-                customerId: cp.customer_id,
-                ...(policyScope != null ? { policyId: policyScope } : {}),
-            }
-        );
-        const flagBasedTermsBreachForAtRisk = flagBasedTermsBreach;
-        const termsBreachInvoices = uncovered
-            ? []
-            : asOfTermsBreachInvoicesFromLines(
-                  ledgerLines,
-                  snapshotDate,
-                  cp.customer_id,
-                  cp.insurance_policy_id
-              );
-        const termsBreachByReason = uncovered
-            ? { snapshot: {}, invoiceCount: 0 }
-            : {
-                  snapshot: aggregateTermsBreachByReasonFromInvoices(
-                      termsBreachInvoices,
-                      cp.insurance_policy_id
-                  ),
-                  invoiceCount: termsBreachInvoices.length,
-              };
-        const termsBreachOutstanding = uncovered
-            ? totalReceivables
-            : flagBasedTermsBreach;
-        const termsBreachForAtRisk = uncovered
-            ? totalReceivables
-            : flagBasedTermsBreachForAtRisk;
-
-        const financialPayload = buildCustomerPolicyTrendSnapshotPayload({
-            accountCurrency,
-            totalReceivables,
-            capacityGapAmount: asOfCapacityGapAmount(
-                totalReceivables,
-                decimalToNumber(effectiveApprovedLimit),
-                Boolean(cp.outdated_dcl)
-            ),
-            termsBreachOutstanding,
-            termsBreachOutstandingForAtRisk: termsBreachForAtRisk,
-            arInLimitCurrency: usageAmount,
-            approvedLimit,
-            topUpTotal:
-                topUpTotal != null
-                    ? new Prisma.Decimal(topUpTotal).toNumber()
-                    : null,
-        });
-
-        if (!accountHasTopUp) {
-            topUpTotal = null;
-            activeTopUpCount = null;
-        }
-
-        const scopedTopUps = (topUpsByCustomerId.get(cp.customer_id) ?? []).filter(
-            (row) =>
-                cp.insurance_policy_id == null ||
-                row.InsurancePolicy.parent_insurance_policy_id ===
-                    cp.insurance_policy_id
-        );
-        const todayLevels = computeCustomerDailyCostSnapshot({
-            policyInput: {
-                costCalculationMethod:
-                    cp.InsurancePolicy?.cost_calculation_method ?? null,
-                costPercent: decimalToNumber(cp.InsurancePolicy?.cost_percent),
-                approvedLimit,
-                usageAmount,
-                limitCurrency,
-                excludedFromPolicy: cp.excluded_from_policy,
-                outdatedDcl: cp.outdated_dcl,
-            },
-            activeTopUps: scopedTopUps.map((row) => ({
-                premium: decimalToNumber(row.premium),
-                premiumCurrency: row.premium_currency,
-                startDate: row.start_date,
-                endDate: row.end_date,
-                cancelledAt: row.cancelled_at,
-            })),
-            asOfDate: snapshotDate,
-        });
-        const predecessorLevels = await resolvePredecessorLevels({
-            accountId,
-            customerId: cp.customer_id,
-            insurancePolicyId: cp.insurance_policy_id,
-            snapshotDate,
-            limitCurrency,
-            priorDayRowsByKey,
-        });
-        const costSnapshot = deriveDailyCostDeltaSnapshot({
-            todayLevels,
-            predecessorLevels,
-        });
-        const policyDailyCost =
-            costSnapshot.policyDailyCost != null
-                ? new Prisma.Decimal(costSnapshot.policyDailyCost)
-                : null;
-        const topUpDailyCost =
-            costSnapshot.topUpDailyCost != null
-                ? new Prisma.Decimal(costSnapshot.topUpDailyCost)
-                : null;
-        const totalDailyCost =
-            costSnapshot.totalDailyCost != null
-                ? new Prisma.Decimal(costSnapshot.totalDailyCost)
-                : null;
-        const snapshottedCostPercent =
-            costSnapshot.costPercent != null
-                ? new Prisma.Decimal(costSnapshot.costPercent)
-                : null;
-
-        await prisma.$executeRaw`
-                INSERT INTO "CustomerPolicyTrend" (
-                    account_id,
-                    customer_id,
-                    insurance_policy_id,
-                    customer_policy_id,
-                    snapshot_date,
-                    approved_limit,
-                    usage_amount,
-                    top_up_total,
-                    active_top_up_count,
-                    effective_approved_limit,
-                    customer_number_policy,
-                    approved_limit_currency,
-                    approved_limit_expiration_date,
-                    limit_type,
-                    max_payment_term,
-                    max_allowed_mep,
-                    reporting_days,
-                    mep_cutoff_day_of_month,
-                    mep_substitute_day_of_month,
-                    reporting_cutoff_day_of_month,
-                    reporting_substitute_day_of_month,
-                    payment_term_cutoff_day_of_month,
-                    payment_term_substitute_day_of_month,
-                    excluded_from_policy,
-                    policy_exclusion_reason,
-                    credit_score,
-                    credit_score_input_date,
-                    active_customer_since,
-                    outdated_dcl,
-                    policy_daily_cost,
-                    policy_cost_currency,
-                    top_up_daily_cost,
-                    top_up_cost_currency,
-                    total_daily_cost,
-                    cost_calculation_method,
-                    cost_percent,
-                    registration_fee_percent,
-                    financial_currency,
-                    total_receivables,
-                    health_index,
-                    at_risk_exposure,
-                    compliant_exposure,
-                    terms_breach_amount,
-                    capacity_gap_amount,
-                    terms_breach_count,
-                    terms_breach_by_reason,
-                    policy_usage_pct,
-                    top_up_usage_pct,
-                    effective_usage_pct
-                ) VALUES (
-                    ${cp.Customer.account_id},
-                    ${cp.customer_id},
-                    ${cp.insurance_policy_id},
-                    ${cp.id},
-                    ${snapshotDate}::date,
-                    ${cp.approved_limit},
-                    ${usageAmount},
-                    ${topUpTotal},
-                    ${activeTopUpCount},
-                    ${effectiveApprovedLimit},
-                    ${cp.customer_number_policy},
-                    ${cp.approved_limit_currency},
-                    ${cp.approved_limit_expiration_date},
-                    ${cp.limit_type}::"customer_limit_type",
-                    ${cp.max_payment_term},
-                    ${cp.max_allowed_mep},
-                    ${cp.reporting_days},
-                    ${cp.mep_cutoff_day_of_month},
-                    ${cp.mep_substitute_day_of_month},
-                    ${cp.reporting_cutoff_day_of_month},
-                    ${cp.reporting_substitute_day_of_month},
-                    ${cp.payment_term_cutoff_day_of_month},
-                    ${cp.payment_term_substitute_day_of_month},
-                    ${cp.excluded_from_policy},
-                    ${cp.policy_exclusion_reason},
-                    ${cp.credit_score},
-                    ${cp.credit_score_input_date},
-                    ${cp.active_customer_since},
-                    ${cp.outdated_dcl},
-                    ${policyDailyCost},
-                    ${costSnapshot.policyCostCurrency},
-                    ${topUpDailyCost},
-                    ${costSnapshot.topUpCostCurrency},
-                    ${totalDailyCost},
-                    ${costSnapshot.costCalculationMethod}::"cost_calculation_method",
-                    ${snapshottedCostPercent},
-                    ${cp.registration_fee_percent},
-                    ${financialPayload.financialCurrency},
-                    ${financialPayload.totalReceivables},
-                    ${financialPayload.healthIndex},
-                    ${financialPayload.atRiskExposure},
-                    ${financialPayload.compliantExposure},
-                    ${financialPayload.termsBreachAmount},
-                    ${financialPayload.capacityGapAmount},
-                    ${termsBreachByReason.invoiceCount},
-                    ${termsBreachByReasonSnapshotToJson(termsBreachByReason.snapshot)}::jsonb,
-                    ${financialPayload.policyUsagePct},
-                    ${financialPayload.topUpUsagePct},
-                    ${financialPayload.effectiveUsagePct}
-                )
-                ON CONFLICT (customer_id, customer_policy_id, snapshot_date)
-                DO UPDATE SET
-                    account_id = EXCLUDED.account_id,
-                    insurance_policy_id = EXCLUDED.insurance_policy_id,
-                    approved_limit = EXCLUDED.approved_limit,
-                    usage_amount = EXCLUDED.usage_amount,
-                    top_up_total = EXCLUDED.top_up_total,
-                    active_top_up_count = EXCLUDED.active_top_up_count,
-                    effective_approved_limit = EXCLUDED.effective_approved_limit,
-                    customer_number_policy = EXCLUDED.customer_number_policy,
-                    approved_limit_currency = EXCLUDED.approved_limit_currency,
-                    approved_limit_expiration_date = EXCLUDED.approved_limit_expiration_date,
-                    limit_type = EXCLUDED.limit_type,
-                    max_payment_term = EXCLUDED.max_payment_term,
-                    max_allowed_mep = EXCLUDED.max_allowed_mep,
-                    reporting_days = EXCLUDED.reporting_days,
-                    mep_cutoff_day_of_month = EXCLUDED.mep_cutoff_day_of_month,
-                    mep_substitute_day_of_month = EXCLUDED.mep_substitute_day_of_month,
-                    reporting_cutoff_day_of_month = EXCLUDED.reporting_cutoff_day_of_month,
-                    reporting_substitute_day_of_month = EXCLUDED.reporting_substitute_day_of_month,
-                    payment_term_cutoff_day_of_month = EXCLUDED.payment_term_cutoff_day_of_month,
-                    payment_term_substitute_day_of_month = EXCLUDED.payment_term_substitute_day_of_month,
-                    excluded_from_policy = EXCLUDED.excluded_from_policy,
-                    policy_exclusion_reason = EXCLUDED.policy_exclusion_reason,
-                    credit_score = EXCLUDED.credit_score,
-                    credit_score_input_date = EXCLUDED.credit_score_input_date,
-                    active_customer_since = EXCLUDED.active_customer_since,
-                    outdated_dcl = EXCLUDED.outdated_dcl,
-                    policy_daily_cost = EXCLUDED.policy_daily_cost,
-                    policy_cost_currency = EXCLUDED.policy_cost_currency,
-                    top_up_daily_cost = EXCLUDED.top_up_daily_cost,
-                    top_up_cost_currency = EXCLUDED.top_up_cost_currency,
-                    total_daily_cost = EXCLUDED.total_daily_cost,
-                    cost_calculation_method = EXCLUDED.cost_calculation_method,
-                    cost_percent = EXCLUDED.cost_percent,
-                    registration_fee_percent = EXCLUDED.registration_fee_percent,
-                    financial_currency = EXCLUDED.financial_currency,
-                    total_receivables = EXCLUDED.total_receivables,
-                    health_index = EXCLUDED.health_index,
-                    at_risk_exposure = EXCLUDED.at_risk_exposure,
-                    compliant_exposure = EXCLUDED.compliant_exposure,
-                    terms_breach_amount = EXCLUDED.terms_breach_amount,
-                    capacity_gap_amount = EXCLUDED.capacity_gap_amount,
-                    terms_breach_count = EXCLUDED.terms_breach_count,
-                    terms_breach_by_reason = EXCLUDED.terms_breach_by_reason,
-                    policy_usage_pct = EXCLUDED.policy_usage_pct,
-                    top_up_usage_pct = EXCLUDED.top_up_usage_pct,
-                    effective_usage_pct = EXCLUDED.effective_usage_pct,
-                    modified_at = NOW()
-            `;
-        rowsUpserted += 1;
     }
 
-    return rowsUpserted;
+    if (runContext && nextPriorDayCache) {
+        runContext.priorDayTrendCostByKey = nextPriorDayCache;
+    }
+
+    return batchUpsertCustomerPolicyTrendRows(upsertRows);
 }
 
 /**
