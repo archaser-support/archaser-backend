@@ -145,7 +145,7 @@ HTTP_CONF
         sudo ln -sf /etc/nginx/sites-available/archaser-single-ec2-api /etc/nginx/sites-enabled/archaser-single-ec2-api
         sudo rm -f /etc/nginx/sites-enabled/default
         sudo nginx -t
-        sudo systemctl reload nginx
+        sudo systemctl restart nginx || sudo systemctl start nginx
     fi
 
     issue_cert() {
@@ -230,8 +230,8 @@ sudo rm -f /etc/nginx/sites-enabled/default
 log "Testing Nginx SSL configuration syntax..."
 sudo nginx -t
 
-log "Reloading Nginx with official SSL certs..."
-sudo systemctl reload nginx
+log "Starting Nginx with official SSL certs..."
+sudo systemctl restart nginx || sudo systemctl start nginx
 
 log "Active certificates on this server:"
 sudo certbot certificates || true
