@@ -6,17 +6,18 @@ import {
     asOfCapacityGapAmount,
     asOfTermsBreachInvoicesFromLines,
     asOfTermsScopeKey,
+    buildAsOfAtRiskInvoiceInputsFromLines,
     buildAsOfOpenReceivableByCustomerMapFromLines,
     loadAsOfOpenInvoiceCandidates,
+    overlayAsOfLiveCapacityGapWaterfallOnLines,
     overlayAsOfTermsFlagsOnLines,
     resolveAsOfOpenArOnPolicyInLimitCurrencyFromLines,
     sumAsOfOpenAmountFromLines,
     sumAsOfTermsBreachFromLines,
+    type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
     type AsOfPolicyTermsForBreach,
 } from "./asOfOpenAr";
-import { storedCapacityGapAmount } from "./policyGapAmounts";
-import { computeCustomerRiskExposure } from "./invoiceInsuranceFields";
 import { buildCustomerPolicyTrendSnapshotPayload } from "./customerPolicyTrendSnapshotPayload";
 import {
     hasActiveLinkedPolicy,
@@ -632,6 +633,12 @@ async function computeCustomerPolicyTrendUpsertRow(
         );
     }
 
+    const policyScope = cp.insurance_policy_id ?? undefined;
+    const uncovered = isUncoveredExposureCustomer({
+        hasLinkedPolicy: hasActiveLinkedPolicy(cp.insurance_policy_id),
+        exclusionReason: cp.policy_exclusion_reason,
+    });
+
     const approvedLimit = decimalToNumber(cp.approved_limit);
     let topUpTotal: Prisma.Decimal | null = null;
     let activeTopUpCount: number | null = null;
@@ -639,7 +646,7 @@ async function computeCustomerPolicyTrendUpsertRow(
         cp.approved_limit != null
             ? new Prisma.Decimal(cp.approved_limit)
             : null;
-    if (accountHasTopUp) {
+    if (accountHasTopUp && !uncovered) {
         const resolved = await resolveEffectiveApprovedLimitFromTopUpRows(
             args.topUpsByCustomerId.get(cp.customer_id) ?? [],
             {
@@ -662,11 +669,6 @@ async function computeCustomerPolicyTrendUpsertRow(
         );
     }
 
-    const policyScope = cp.insurance_policy_id ?? undefined;
-    const uncovered = isUncoveredExposureCustomer({
-        hasLinkedPolicy: hasActiveLinkedPolicy(cp.insurance_policy_id),
-        exclusionReason: cp.policy_exclusion_reason,
-    });
     const totalReceivables =
         policyScope != null
             ? sumAsOfOpenAmountFromLines(args.ledgerLines, snapshotDate, {
@@ -682,7 +684,6 @@ async function computeCustomerPolicyTrendUpsertRow(
             ...(policyScope != null ? { policyId: policyScope } : {}),
         }
     );
-    const flagBasedTermsBreachForAtRisk = flagBasedTermsBreach;
     const termsBreachInvoices = uncovered
         ? []
         : asOfTermsBreachInvoicesFromLines(
@@ -703,9 +704,16 @@ async function computeCustomerPolicyTrendUpsertRow(
     const termsBreachOutstanding = uncovered
         ? totalReceivables
         : flagBasedTermsBreach;
-    const termsBreachForAtRisk = uncovered
-        ? totalReceivables
-        : flagBasedTermsBreachForAtRisk;
+    const atRiskInvoices = uncovered
+        ? []
+        : buildAsOfAtRiskInvoiceInputsFromLines(
+              args.ledgerLines,
+              snapshotDate,
+              {
+                  customerId: cp.customer_id,
+                  ...(policyScope != null ? { policyId: policyScope } : {}),
+              }
+          );
 
     const financialPayload = buildCustomerPolicyTrendSnapshotPayload({
         accountCurrency,
@@ -716,7 +724,8 @@ async function computeCustomerPolicyTrendUpsertRow(
             Boolean(cp.outdated_dcl)
         ),
         termsBreachOutstanding,
-        termsBreachOutstandingForAtRisk: termsBreachForAtRisk,
+        uncovered,
+        atRiskInvoices,
         arInLimitCurrency: usageAmount,
         approvedLimit,
         topUpTotal:
@@ -1447,6 +1456,63 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         }
     );
 
+    const waterfallScopeByCustomerPolicy = new Map<
+        string,
+        AsOfCapacityGapWaterfallScope
+    >();
+    for (const cp of activePolicies) {
+        const scopeKey = asOfTermsScopeKey(
+            cp.customer_id,
+            cp.insurance_policy_id
+        );
+        const uncovered = isUncoveredExposureCustomer({
+            hasLinkedPolicy: hasActiveLinkedPolicy(cp.insurance_policy_id),
+            exclusionReason: cp.policy_exclusion_reason,
+        });
+        const approvedLimit = decimalToNumber(cp.approved_limit);
+        let effectiveApprovedLimit: Prisma.Decimal | null =
+            cp.approved_limit != null
+                ? new Prisma.Decimal(cp.approved_limit)
+                : null;
+        if (accountHasTopUp && !uncovered) {
+            const resolved = await resolveEffectiveApprovedLimitFromTopUpRows(
+                topUpsByCustomerId.get(cp.customer_id) ?? [],
+                {
+                    baseApprovedLimit: cp.approved_limit,
+                    baseApprovedLimitCurrency:
+                        cp.approved_limit_currency?.trim().toUpperCase() ?? null,
+                    asOfDate: snapshotDate,
+                    parentPrimaryPolicyId: cp.insurance_policy_id ?? undefined,
+                    outdatedDcl: cp.outdated_dcl,
+                    excludedFromPolicy: cp.excluded_from_policy,
+                }
+            );
+            effectiveApprovedLimit = new Prisma.Decimal(
+                resolved.effectiveApprovedLimit ?? approvedLimit ?? 0
+            );
+        }
+        waterfallScopeByCustomerPolicy.set(scopeKey, {
+            effectiveLimit: Math.max(
+                0,
+                decimalToNumber(effectiveApprovedLimit) ?? 0
+            ),
+            limitCurrency:
+                cp.approved_limit_currency?.trim().toUpperCase() ||
+                accountCurrency ||
+                "USD",
+            zeroGaps: uncovered || Boolean(cp.outdated_dcl),
+        });
+    }
+
+    ledgerLines = overlayAsOfLiveCapacityGapWaterfallOnLines(
+        ledgerLines,
+        snapshotDate,
+        {
+            scopeByCustomerPolicy: waterfallScopeByCustomerPolicy,
+            accountCurrency,
+        }
+    );
+
     const nextPriorDayCache = runContext
         ? new Map<string, TrendCostPredecessorRow>()
         : null;
@@ -1876,7 +1942,7 @@ export async function getCustomerPolicyPortfolioTrend(
 
 /**
  * Per-policy risk exposure amount over time from {@link CustomerPolicyTrend} snapshots.
- * Amount at each point = min(usage AR, capacity gap from limit + terms breach outstanding).
+ * Amount at each point is the stored as-of `at_risk_exposure` for that day (Σ max(gap, breach)).
  */
 export async function getCustomerRiskExposureAmountTrendByPolicy(
     accountId: number,
@@ -1884,51 +1950,16 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
     options?: {
         policyId?: number;
         days?: number;
-        termsBreachOutstanding?: number;
     }
 ): Promise<RiskExposurePolicySeries[]> {
     const safeDays = Math.max(7, Math.min(options?.days ?? 90, 365));
     const toDateUtc = startOfTodayUtc();
     const fromDateUtc = addUtcCalendarDays(toDateUtc, -(safeDays - 1));
-    const termsBreach = Math.max(0, options?.termsBreachOutstanding ?? 0);
-
-    const policyGapRows = await prisma.customerPolicy.findMany({
-        where: {
-            customer_id: customerId,
-            Customer: { account_id: accountId },
-            ...(options?.policyId != null
-                ? { insurance_policy_id: options.policyId }
-                : {}),
-        },
-        select: {
-            insurance_policy_id: true,
-            capacity_gap_amount: true,
-            approved_limit: true,
-            outdated_dcl: true,
-            is_active: true,
-            modified_at: true,
-            id: true,
-        },
-        orderBy: [
-            { is_active: "desc" },
-            { modified_at: "desc" },
-            { id: "desc" },
-        ],
-    });
-    const gapByPolicyId = new Map<number, number>();
-    for (const row of policyGapRows) {
-        const pid = row.insurance_policy_id;
-        if (pid == null || gapByPolicyId.has(pid)) {
-            continue;
-        }
-        gapByPolicyId.set(pid, storedCapacityGapAmount(row));
-    }
 
     type TrendRow = {
         snapshot_date: Date;
         insurance_policy_id: number | null;
-        usage_amount: number;
-        approved_limit: Prisma.Decimal | null;
+        at_risk_exposure: number;
         policy_number: string | null;
     };
 
@@ -1936,8 +1967,7 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
         SELECT
             t.snapshot_date,
             t.insurance_policy_id,
-            t.usage_amount,
-            t.approved_limit,
+            t.at_risk_exposure,
             ip.policy_number
         FROM "CustomerPolicyTrend" t
         LEFT JOIN "InsurancePolicy" ip ON ip.id = t.insurance_policy_id
@@ -1968,13 +1998,7 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
         if (policyId == null) {
             continue;
         }
-        const usageAmount = Math.max(0, Number(row.usage_amount ?? 0));
-        const capacityGapAmount = gapByPolicyId.get(policyId) ?? 0;
-        const amount = computeCustomerRiskExposure({
-            totalAr: usageAmount,
-            capacityGapAmount,
-            termsBreachOutstanding: termsBreach,
-        });
+        const amount = Math.max(0, Number(row.at_risk_exposure ?? 0));
         const dateStr = normalizeDateString(row.snapshot_date);
         const label =
             row.policy_number?.trim() || `Policy #${policyId}`;

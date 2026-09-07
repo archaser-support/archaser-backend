@@ -5,11 +5,11 @@ import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
 
 import {
     type TermsBreachCountByReason,
+    fetchCustomerAtRiskInvoiceInputs,
+    fetchCustomerAtRiskInvoiceInputsByCurrency,
     fetchOpenReceivableForCustomer,
     fetchOpenReceivableForCustomerByCurrency,
-    getCustomerTermsBreachOutstandingForAtRisk,
     getCustomerTermsBreachOutstandingSum,
-    getCustomerTermsBreachOutstandingByCurrencyForAtRisk,
     getCustomerTermsBreachOutstandingSumByCurrency,
     resolveOpenArOnPolicyInLimitCurrency,
 } from "./creditInsuranceDashboardService";
@@ -83,13 +83,12 @@ export type CustomerDashboardKpisResponse = {
  * Customer dashboard KPI formulas (v1) — aligned with credit dashboard / customer GET.
  *
  * - **Health index:** `(compliantExposure / totalAr) × 100`, clamped 0–100; 100 when totalAr ≤ 0.
- *   compliantExposure = totalAr − atRiskExposure (at-risk capped at totalAr).
- * - **At risk exposure:** No policy → totalAr; with policy → `min(totalAr, max(limit driver, terms breach))`.
- *   When the account has top-up policies, limit driver = AR above **effective** limit (approved + top-up);
- *   otherwise stored capacity gap (invoice-summed).
- * - **Capacity gap:** Per insurance policy, sum of open invoice `capacity_gap_amount` synced to
- *   `CustomerPolicy.capacity_gap_amount`. Sticky per-invoice gaps are authoritative — no policy-level
- *   or AR cap on the customer KPI.
+ *   compliantExposure = totalAr − atRiskExposure (at-risk capped at totalAr for the %).
+ * - **At risk exposure:** Uncovered / excluded → totalAr; else Σ per open Due/Overdue invoice
+ *   `max(capacity_gap_i, terms_breach_i)` where terms_breach_i is full outstanding when any
+ *   terms-breach flag is set, else 0.
+ * - **Capacity gap:** Per insurance policy, `CustomerPolicy.capacity_gap_amount` =
+ *   max(0, open AR − effective limit). Per-invoice gaps are a live waterfall cache.
  * - **Terms breach:** Sum of outstanding on Due/Overdue breach invoices (same flags as terms report).
  * - **Policy usage %:** `min(999.99, (100 × Σ policy AR) / Σ approved limits)` for active policies in scope.
  * - **Active policies:** Count of active `CustomerPolicy` rows in scope.
@@ -520,19 +519,10 @@ export async function getCustomerDashboardKpis(
         customerId,
         policyId != null ? { policyId } : undefined
     );
-    const flagBasedTermsBreachForAtRisk =
-        await getCustomerTermsBreachOutstandingForAtRisk(
-            accountId,
-            customerId,
-            policyId != null ? { policyId } : undefined
-        );
 
     const termsBreachOutstanding = uncovered
         ? totalAr
         : flagBasedTermsBreach;
-    const termsBreachForAtRisk = uncovered
-        ? totalAr
-        : flagBasedTermsBreachForAtRisk;
 
     const scopedPolicyRow =
         policyId != null
@@ -541,13 +531,18 @@ export async function getCustomerDashboardKpis(
             : policyRows.find((row) => row.is_active) ?? policyRows[0];
     const isExcludedFromPolicy = scopedPolicyRow?.excluded_from_policy === true;
 
-    const atRiskExposure = uncovered
-        ? totalAr
-        : computeCustomerRiskExposure({
-                totalAr,
-                capacityGapAmount,
-                termsBreachOutstanding: termsBreachForAtRisk,
-            });
+    const atRiskInvoices = uncovered
+        ? []
+        : await fetchCustomerAtRiskInvoiceInputs(
+              accountId,
+              customerId,
+              policyId != null ? { policyId } : undefined
+          );
+    const atRiskExposure = computeCustomerRiskExposure({
+        uncovered,
+        totalAr,
+        invoices: atRiskInvoices,
+    });
 
     const uninsuredAmount = uncovered
         ? totalAr
@@ -636,7 +631,6 @@ export async function getCustomerDashboardKpis(
         getCustomerRiskExposureAmountTrendByPolicy(accountId, customerId, {
             policyId,
             days: options?.days ?? 90,
-            termsBreachOutstanding: termsBreachForAtRisk,
         }),
         uncovered
             ? Promise.resolve(emptyTermsBreachCounts)
@@ -761,24 +755,20 @@ export async function getCustomerDashboardKpis(
                   secondaryCurrency,
                   { policyId: policyId ?? undefined }
               );
-        const termsBreachForAtRiskSecondary = uncovered
-            ? openArSecondary
-            : await getCustomerTermsBreachOutstandingByCurrencyForAtRisk(
+
+        const atRiskInvoicesSecondary = uncovered
+            ? []
+            : await fetchCustomerAtRiskInvoiceInputsByCurrency(
                   accountId,
                   customerId,
                   secondaryCurrency,
                   { policyId: policyId ?? undefined }
               );
-
-        const gapSecondaryForAtRisk = capacityGapAmountSecondary ?? 0;
-
-        atRiskExposureSecondary = uncovered
-            ? openArSecondary
-            : computeCustomerRiskExposure({
-                  totalAr: openArSecondary,
-                  capacityGapAmount: gapSecondaryForAtRisk,
-                  termsBreachOutstanding: termsBreachForAtRiskSecondary,
-              });
+        atRiskExposureSecondary = computeCustomerRiskExposure({
+            uncovered,
+            totalAr: openArSecondary,
+            invoices: atRiskInvoicesSecondary,
+        });
 
         uninsuredAmountSecondary = uncovered ? openArSecondary : null;
     }
