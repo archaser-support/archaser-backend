@@ -33,6 +33,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 30m
           script: |
             set -e
             echo "==> Deploying backend (${{ steps.env-name.outputs.ENV }}) on EC2 in ${{ steps.env-name.outputs.APP_DIR }}..."
