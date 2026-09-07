@@ -19,10 +19,13 @@ import {
     type ImportEntityType,
 } from "../import/entityImporter";
 import {
+    loadSameDayImportCachesForReplay,
     normalizeImportCacheCustomerScope,
+    parseUseCachedImport,
     resolveImportCacheDay,
     rowsEnteringImport,
     trySaveEntityImportCache,
+    type ImportCacheEntityType,
     type ImportCacheSyncMode,
 } from "../importCache";
 import { parseMappingRules, mapErpRecord, type MappingRule } from "../utils/connectorFieldUtils";
@@ -90,6 +93,11 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
      * Ignored for incremental, preview/dryRun, and Resume (host must omit).
      */
     customerId?: number | null;
+    /**
+     * Manual Start only: entity types to load from same-day Mongo import cache
+     * (skip ERP pull). Cron / scheduled sync must omit this.
+     */
+    useCachedImport?: ImportCacheEntityType[];
     /** Override window plan (multi-window backfills / tests). */
     windows?: ExtensionSyncWindow[];
     /** Injected provider (skips live Priority client construction). */
@@ -697,6 +705,48 @@ async function runInProcessSyncBody(
             emit();
         }
 
+        const useCachedImport = !dryRun
+            ? parseUseCachedImport(options.useCachedImport)
+            : [];
+        let cachedRowsByEntity:
+            | Map<ImportCacheEntityType, Record<string, unknown>[]>
+            | undefined;
+        if (useCachedImport.length > 0) {
+            const cacheSyncMode: ImportCacheSyncMode =
+                options.mode === "incremental" ? "INCREMENTAL" : "BACKFILL";
+            const loaded = await loadSameDayImportCachesForReplay({
+                accountId,
+                syncMode: cacheSyncMode,
+                importTypes: useCachedImport,
+                customerScope: normalizeImportCacheCustomerScope(
+                    runtimeCustomerNumber
+                ),
+                timeZone: connector.time_zone,
+            });
+            if (!loaded.ok) {
+                const missing = loaded.missing.join(", ");
+                log(`Import cache missing for: ${missing}`);
+                return {
+                    ok: false,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    message: `No same-day import cache for: ${missing}`,
+                    error: "IMPORT_CACHE_NOT_FOUND",
+                };
+            }
+            cachedRowsByEntity = loaded.rowsByEntity;
+            log(
+                `Loaded import cache for ${useCachedImport.join(", ")} (day=${loaded.cacheDay} scope=${loaded.customerScope})`
+            );
+        }
+        const enabledNeedErp = enabled.filter(
+            (entity) =>
+                !useCachedImport.includes(entity as ImportCacheEntityType)
+        );
+        const allEntitiesFromCache =
+            useCachedImport.length > 0 && enabledNeedErp.length === 0;
+
         // Fail fast at sync start — never silently fall back to legacy path.
         let extension: BillingAccountExtension | undefined;
         if (extensionKey) {
@@ -730,7 +780,7 @@ async function runInProcessSyncBody(
             };
         }
 
-        if (!options.provider) {
+        if (!options.provider && !allEntitiesFromCache) {
             if (!connector.credentials_encrypted || !connector.base_url) {
                 return {
                     ok: false,
@@ -744,7 +794,7 @@ async function runInProcessSyncBody(
         }
 
         let credentials: Record<string, unknown> = {};
-        if (!options.provider) {
+        if (!options.provider && !allEntitiesFromCache) {
             try {
                 credentials = decryptCredentials(
                     connector.credentials_encrypted as string
@@ -764,7 +814,11 @@ async function runInProcessSyncBody(
             }
         }
 
-        if (!options.skipConnectionTest && !options.provider) {
+        if (
+            !options.skipConnectionTest &&
+            !options.provider &&
+            !allEntitiesFromCache
+        ) {
             log("Testing ERP connection…");
             const connectionResult = await testPriorityConnection({
                 baseUrl: connector.base_url as string,
@@ -795,16 +849,30 @@ async function runInProcessSyncBody(
                 };
             }
             log("Connection test passed");
+        } else if (allEntitiesFromCache) {
+            log("Skipping ERP connection test (all enabled entities from import cache)");
         }
 
+        const cacheOnlyProvider: BillingProviderClient = {
+            testConnection: async () => undefined,
+            discoverFields: async () => [],
+            pull: async () => {
+                throw new Error(
+                    "ERP pull disabled — entity should use import cache"
+                );
+            },
+            supportsFeature: () => false,
+        };
         const client: BillingProviderClient =
             options.provider ??
-            new PriorityProviderClient({
-                baseUrl: connector.base_url as string,
-                authType: connector.auth_type,
-                credentials,
-                onLog,
-            });
+            (allEntitiesFromCache
+                ? cacheOnlyProvider
+                : new PriorityProviderClient({
+                      baseUrl: connector.base_url as string,
+                      authType: connector.auth_type,
+                      credentials,
+                      onLog,
+                  }));
 
         const mappings = await prisma.connectorFieldMapping.findMany({
             where: { connector_id: connector.id },
@@ -935,6 +1003,9 @@ async function runInProcessSyncBody(
                 executionId: options.executionId ?? null,
                 providerLabel: connector.provider,
                 timeZone: connector.time_zone,
+                ...(cachedRowsByEntity
+                    ? { cachedRowsByEntity }
+                    : {}),
             });
 
             const imported =
@@ -1087,12 +1158,137 @@ async function runInProcessSyncBody(
             }
             if (!enabled.includes(entityType)) continue;
             const mapping = mappingByType.get(entityType);
-            if (!mapping) continue;
+            if (!mapping && !cachedRowsByEntity?.has(entityType)) continue;
 
             activeStep = entityType;
             activeStepDetail = "pulling";
 
             try {
+                const cachedRows = cachedRowsByEntity?.get(entityType);
+                if (cachedRows !== undefined) {
+                    log(
+                        `Using same-day import cache for ${entityType} (${cachedRows.length} row(s)); skipping ERP pull`
+                    );
+                    activeStepDetail = "importing";
+                    const processedKey =
+                        `${entityType.toLowerCase()}sProcessed` as keyof typeof stats;
+                    const importedKey =
+                        `${entityType.toLowerCase()}sImported` as keyof typeof stats;
+                    (stats as unknown as Record<string, number>)[processedKey] =
+                        cachedRows.length;
+                    emit();
+                    const importResult: EntityImportBatchResult =
+                        await importBatch(
+                            prisma,
+                            entityType,
+                            cachedRows,
+                            accountId,
+                            null,
+                            userId,
+                            {
+                                skipReportingBreach,
+                                onLog,
+                                shouldCancel: () => isCancelRequested(options),
+                            }
+                        );
+                    (stats as unknown as Record<string, number>)[importedKey] =
+                        importResult.success;
+                    stats.importErrors += importResult.failed;
+                    if (entityType === "Payment" || entityType === "Invoice") {
+                        for (const id of importResult.affectedCustomerIds) {
+                            arAffectedCustomerIds.add(id);
+                            if (entityType === "Payment") {
+                                paymentAffectedCustomerIds.add(id);
+                            }
+                        }
+                        for (const id of importResult.entityIds ?? []) {
+                            if (entityType === "Invoice") {
+                                arAffectedInvoiceIds.add(id);
+                            } else {
+                                arAffectedPaymentIds.add(id);
+                            }
+                        }
+                    }
+                    emit();
+
+                    if (entityType === "Invoice") {
+                        invoicePostIngestRan = true;
+                        await runArTailWithProgress({
+                            customerIds: Array.from(arAffectedCustomerIds),
+                            invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                            paymentEntityIds: Array.from(arAffectedPaymentIds),
+                            runMaturity: false,
+                            mepBreachStartDate:
+                                options.mepBreachStartDate ??
+                                connector.mep_breach_start_date,
+                        });
+                    }
+
+                    const maxUpdated =
+                        extractMaxUpdatedAt(cachedRows) ?? new Date();
+                    await prisma.connectorSyncState.upsert({
+                        where: {
+                            connector_id_entity_type: {
+                                connector_id: connector.id,
+                                entity_type: entityType,
+                            },
+                        },
+                        create: {
+                            connector_id: connector.id,
+                            entity_type: entityType,
+                            last_successful_run_at: new Date(),
+                            last_attempt_at: new Date(),
+                            last_max_updated_at: maxUpdated,
+                            backfill_records_pulled: cachedRows.length,
+                            last_error:
+                                importResult.failed > 0
+                                    ? importResult.errors
+                                          .slice(0, 3)
+                                          .join("; ")
+                                    : null,
+                        },
+                        update: {
+                            last_successful_run_at: new Date(),
+                            last_attempt_at: new Date(),
+                            last_max_updated_at: maxUpdated,
+                            backfill_records_pulled: cachedRows.length,
+                            last_error:
+                                importResult.failed > 0
+                                    ? importResult.errors
+                                          .slice(0, 3)
+                                          .join("; ")
+                                    : null,
+                        },
+                    });
+
+                    const cacheSyncMode: ImportCacheSyncMode =
+                        options.mode === "incremental"
+                            ? "INCREMENTAL"
+                            : "BACKFILL";
+                    await trySaveEntityImportCache(
+                        {
+                            accountId,
+                            connectorId: connector.id,
+                            provider: connector.provider,
+                            importType: entityType,
+                            syncMode: cacheSyncMode,
+                            cacheDay: resolveImportCacheDay(
+                                new Date(),
+                                connector.time_zone
+                            ),
+                            customerScope: normalizeImportCacheCustomerScope(
+                                runtimeCustomerNumber
+                            ),
+                            executionId: options.executionId ?? null,
+                            rows: rowsEnteringImport(cachedRows, importResult),
+                        },
+                        log
+                    );
+                    continue;
+                }
+
+                if (!mapping) continue;
+
                 const syncState = await prisma.connectorSyncState.findFirst({
                     where: {
                         connector_id: connector.id,

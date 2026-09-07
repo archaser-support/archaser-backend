@@ -162,7 +162,7 @@ export interface BillingAccountExtension {
     /**
      * Extra ERP customer-number values for Start customer-scoped pulls
      * (OR'd with the Archaser customer_number). Account-specific — e.g.
-     * IDG_ARFNCITEMS IDG_CUSTNAME = customer + company suffix.
+     * IDG_ARFNCITEMS ACCNAME = customer + company suffix.
      */
     expandRuntimeCustomerScopeNumbers?(params: {
         customerNumber: string;
@@ -175,7 +175,7 @@ export interface BillingAccountExtension {
      * When a non-empty string is returned, it replaces the generic
      * `CUSTNAME` clause from `resolveRuntimeCustomerScopeOData`.
      * Return null to keep the generic clause.
-     * Account 10149 uses this for IDG_CUSTNAME (fast path).
+     * Account 10149 uses this for ACCNAME (fast path).
      */
     buildRuntimeCustomerScopeOData?(params: {
         customerNumber: string;
@@ -185,9 +185,9 @@ export interface BillingAccountExtension {
         extension_config: Record<string, unknown> | null;
     }): string | null;
     /**
-     * Optional second customer-scope clause run after the primary Payment pull
-     * (e.g. IDC_CUSTNAMEIV when IDG_CUSTNAME is null). Must not be OR'd into
-     * the primary filter — Priority full-scans and hangs.
+     * Optional second customer-scope clause run after the primary Payment pull.
+     * Must not be OR'd into the primary filter — Priority full-scans and hangs.
+     * Account 10149 currently returns null (IDC_CUSTNAMEIV removed from OData).
      */
     buildRuntimeCustomerScopeFallbackOData?(params: {
         customerNumber: string;

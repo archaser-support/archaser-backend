@@ -82,6 +82,29 @@ export function isImportCacheEntityType(
 }
 
 /**
+ * Normalize Start `use_cached_import` body values.
+ * Unknown strings are dropped; duplicates collapse.
+ */
+export function parseUseCachedImport(raw: unknown): ImportCacheEntityType[] {
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+    const seen = new Set<ImportCacheEntityType>();
+    const out: ImportCacheEntityType[] = [];
+    for (const item of raw) {
+        if (typeof item !== "string" || !isImportCacheEntityType(item)) {
+            continue;
+        }
+        if (seen.has(item)) {
+            continue;
+        }
+        seen.add(item);
+        out.push(item);
+    }
+    return out;
+}
+
+/**
  * Split rows into chunks that stay under `maxBytes` when BSON-serialized.
  * Empty input yields one empty chunk so same-day replace still records a run.
  */

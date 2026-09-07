@@ -15,6 +15,7 @@ export {
     chunkImportCacheRows,
     isImportCacheEntityType,
     normalizeImportCacheCustomerScope,
+    parseUseCachedImport,
     resolveImportCacheDay,
     rowsEnteringImport,
 } from "./cacheDay";
@@ -22,10 +23,12 @@ export {
     findSameDayCaches,
     loadEntityImportCache,
     loadEntityImportCacheDocuments,
+    loadSameDayImportCachesForReplay,
     resetImportCacheStoreForTests,
     saveEntityImportCache,
     trySaveEntityImportCache,
     useMemoryImportCacheStoreForTests,
+    type LoadSameDayImportCachesResult,
 } from "./importCacheService";
 export { createMemoryImportCacheStore } from "./memoryStore";
 export type { ImportCacheStore } from "./store";
