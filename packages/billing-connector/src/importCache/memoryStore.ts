@@ -1,28 +1,27 @@
 import { chunkImportCacheRows } from "./cacheDay";
 import type { ImportCacheStore } from "./store";
 import {
+    IMPORT_CACHE_ENTITY_TYPES,
     IMPORT_CACHE_MAX_CHUNK_BYTES,
     type ImportCacheDocument,
     type ImportCacheKey,
-    type SameDayCacheSummary,
+    type SameDayCacheRun,
     type SaveEntityImportCacheInput,
 } from "./types";
 
-function keyString(key: ImportCacheKey): string {
-    return [
-        key.accountId,
-        key.importType,
-        key.syncMode,
-        key.cacheDay,
-        key.customerScope,
-    ].join("|");
+function executionEntityKey(input: {
+    accountId: number;
+    executionId: string;
+    importType: ImportCacheKey["importType"];
+}): string {
+    return `${input.accountId}|${input.executionId}|${input.importType}`;
 }
 
 export function createMemoryImportCacheStore(): ImportCacheStore {
-    const byKey = new Map<string, ImportCacheDocument[]>();
+    const byExecutionEntity = new Map<string, ImportCacheDocument[]>();
 
     return {
-        async replace(input: SaveEntityImportCacheInput) {
+        async save(input: SaveEntityImportCacheInput) {
             const chunks = chunkImportCacheRows(
                 input.rows,
                 IMPORT_CACHE_MAX_CHUNK_BYTES
@@ -43,17 +42,33 @@ export function createMemoryImportCacheStore(): ImportCacheStore {
                 rows,
                 created_at: createdAt,
             }));
-            byKey.set(keyString(input), docs);
+            byExecutionEntity.set(executionEntityKey(input), docs);
             return { rowCount: input.rows.length, chunkCount: chunks.length };
         },
 
         async load(key: ImportCacheKey): Promise<ImportCacheDocument[]> {
-            return [...(byKey.get(keyString(key)) ?? [])];
+            const docs = byExecutionEntity.get(executionEntityKey(key)) ?? [];
+            return docs.filter(
+                (doc) =>
+                    doc.sync_mode === key.syncMode &&
+                    doc.cache_day === key.cacheDay &&
+                    doc.customer_scope === key.customerScope
+            );
         },
 
-        async listSameDay(input): Promise<SameDayCacheSummary[]> {
-            const out: SameDayCacheSummary[] = [];
-            for (const docs of byKey.values()) {
+        async listSameDayRuns(input): Promise<SameDayCacheRun[]> {
+            const byExecution = new Map<
+                string,
+                {
+                    created_at: Date;
+                    entities: Map<
+                        ImportCacheKey["importType"],
+                        { row_count: number }
+                    >;
+                }
+            >();
+
+            for (const docs of byExecutionEntity.values()) {
                 const first = docs[0];
                 if (!first) continue;
                 if (
@@ -64,20 +79,50 @@ export function createMemoryImportCacheStore(): ImportCacheStore {
                 ) {
                     continue;
                 }
-                out.push({
-                    import_type: first.import_type,
-                    sync_mode: first.sync_mode,
-                    cache_day: first.cache_day,
-                    customer_scope: first.customer_scope,
+                let run = byExecution.get(first.execution_id);
+                if (!run) {
+                    run = {
+                        created_at: first.created_at,
+                        entities: new Map(),
+                    };
+                    byExecution.set(first.execution_id, run);
+                } else if (first.created_at > run.created_at) {
+                    run.created_at = first.created_at;
+                }
+                run.entities.set(first.import_type, {
                     row_count: first.row_count,
-                    execution_id: first.execution_id,
-                    created_at: first.created_at,
-                    available: true,
                 });
             }
-            return out.sort((a, b) =>
-                a.import_type.localeCompare(b.import_type)
+
+            const runs: SameDayCacheRun[] = [];
+            for (const [execution_id, run] of byExecution) {
+                runs.push({
+                    execution_id,
+                    created_at: run.created_at,
+                    sync_mode: input.syncMode,
+                    cache_day: input.cacheDay,
+                    customer_scope: input.customerScope,
+                    entities: IMPORT_CACHE_ENTITY_TYPES.map((import_type) => {
+                        const hit = run.entities.get(import_type);
+                        if (!hit) {
+                            return {
+                                import_type,
+                                row_count: 0,
+                                available: false,
+                            };
+                        }
+                        return {
+                            import_type,
+                            row_count: hit.row_count,
+                            available: true,
+                        };
+                    }),
+                });
+            }
+            runs.sort(
+                (a, b) => b.created_at.getTime() - a.created_at.getTime()
             );
+            return runs;
         },
     };
 }

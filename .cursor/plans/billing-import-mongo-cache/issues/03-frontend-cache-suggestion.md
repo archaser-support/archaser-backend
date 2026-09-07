@@ -6,6 +6,8 @@
 **User stories:** 6, 7, 29, 30
 **PRD:** `.cursor/plans/billing-import-mongo-cache.prd.md`
 
+> **Historical (v1).** Entity-only checkboxes are extended by `04-multi-run-cache-picker.md` (run list + per-run entity checks).
+
 ## What to build
 
 Wire Billing Integration Settings (and `billingConnectorService`) so manual Start calls cache-check, surfaces which entities have a same-day backup, and lets the user opt in per entity. Selected entities are sent as `use_cached_import` on Start. Reuse existing dialog/confirmation patterns — no new global styles without approval.

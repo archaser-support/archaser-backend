@@ -6,6 +6,8 @@
 **User stories:** 1, 2, 3, 4, 5, 10, 11, 13, 14, 15, 16, 17, 20, 21, 23, 25, 27, 28
 **PRD:** `.cursor/plans/billing-import-mongo-cache.prd.md`
 
+> **Historical (v1).** Same-day **replace** is superseded by multi-run append + run picker — see `04-multi-run-cache-picker.md` and the PRD Decision log (S1–S4 / D2–D14). Do not re-implement replace semantics.
+
 ## What to build
 
 Add a new Mongo import-cache collection and helpers so every successful backfill or incremental entity (manual or scheduled, extension or legacy) saves the mapped rows that entered import. Same account + entity + sync mode + account-timezone calendar day + customer scope replaces the prior backup. Preview never writes. TTL expires documents after 6 months. If a single document would exceed Mongo’s size limit, use chunked documents under the same logical key.

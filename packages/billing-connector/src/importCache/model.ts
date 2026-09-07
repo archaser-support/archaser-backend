@@ -14,7 +14,7 @@ export interface IConnectorImportEntityCacheDoc extends Document {
     sync_mode: ImportCacheSyncMode;
     cache_day: string;
     customer_scope: string;
-    execution_id: string | null;
+    execution_id: string;
     row_count: number;
     chunk_index: number;
     chunk_count: number;
@@ -22,6 +22,10 @@ export interface IConnectorImportEntityCacheDoc extends Document {
     created_at: Date;
     modified_at: Date;
 }
+
+/** v1 unique index — must be dropped so same-day multi-run can append. */
+export const IMPORT_CACHE_V1_UNIQUE_INDEX_NAME =
+    "account_id_1_import_type_1_sync_mode_1_cache_day_1_customer_scope_1_chunk_index_1";
 
 const ConnectorImportEntityCacheSchema = new Schema(
     {
@@ -40,7 +44,7 @@ const ConnectorImportEntityCacheSchema = new Schema(
         },
         cache_day: { type: String, required: true },
         customer_scope: { type: String, required: true, default: "all" },
-        execution_id: { type: String, default: null },
+        execution_id: { type: String, required: true },
         row_count: { type: Number, required: true, default: 0 },
         chunk_index: { type: Number, required: true, default: 0 },
         chunk_count: { type: Number, required: true, default: 1 },
@@ -55,17 +59,17 @@ const ConnectorImportEntityCacheSchema = new Schema(
     }
 );
 
+/** Multi-run uniqueness: one backup (chunked) per execution + entity. */
 ConnectorImportEntityCacheSchema.index(
     {
         account_id: 1,
+        execution_id: 1,
         import_type: 1,
-        sync_mode: 1,
-        cache_day: 1,
-        customer_scope: 1,
         chunk_index: 1,
     },
     { unique: true }
 );
+/** Listing today’s runs by mode + customer scope. */
 ConnectorImportEntityCacheSchema.index({
     account_id: 1,
     sync_mode: 1,
