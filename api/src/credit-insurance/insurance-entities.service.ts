@@ -4,12 +4,106 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
+import type { CustomerPolicy, InsurancePolicy } from "@prisma/client";
+import {
+    enqueueAsOfRewrite,
+    ensureCustomerCapacityGapStored,
+    freezeCustomerPolicyGapOnDeactivation,
+    syncCustomerInsuranceFields,
+} from "@archaser/credit-insurance-domain";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
-import { enqueueAsOfRewrite } from "@archaser/credit-insurance-domain";
+import {
+    hasPolicyPushFieldChange,
+    pickPolicyPushSnapshot,
+    POLICY_PUSH_CUSTOMER_FIELDS,
+} from "./domain/hasMeaningfulCustomerPolicyFieldChange";
 import { parseRegistrationFeePercent } from "./domain/registrationFeePercent";
+
+/** Match customers.parseDateOnly — YYYY-MM-DD → UTC midnight Date. */
+function parseDateOnly(value: unknown): Date | null {
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value;
+    }
+    if (value == null) {
+        return null;
+    }
+    const raw = String(value).trim();
+    if (!raw) {
+        return null;
+    }
+    const ymd = raw.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+        return null;
+    }
+    const parsed = new Date(`${ymd}T00:00:00.000Z`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function coercePolicyDateFields(data: Record<string, unknown>): void {
+    for (const field of ["start_date", "end_date"] as const) {
+        if (!(field in data)) {
+            continue;
+        }
+        const value = data[field];
+        if (value == null || value === "") {
+            continue;
+        }
+        if (value instanceof Date && !Number.isNaN(value.getTime())) {
+            data[field] = new Date(
+                Date.UTC(
+                    value.getUTCFullYear(),
+                    value.getUTCMonth(),
+                    value.getUTCDate()
+                )
+            );
+            continue;
+        }
+        const parsed = parseDateOnly(value);
+        if (!parsed) {
+            throw new BadRequestException({
+                error: `${field} must be YYYY-MM-DD`,
+            });
+        }
+        data[field] = parsed;
+    }
+}
+
+const POLICY_PUSH_TRANSACTION_TIMEOUT_MS = 120_000;
+
+function buildCustomerPolicyVersionFromPolicyPush(args: {
+    oldRow: CustomerPolicy;
+    policy: InsurancePolicy;
+    userId: string;
+}): Record<string, unknown> {
+    const { oldRow, policy, userId } = args;
+    const pushed: Record<string, unknown> = {};
+    for (const field of POLICY_PUSH_CUSTOMER_FIELDS) {
+        pushed[field] = policy[field];
+    }
+    return {
+        customer_id: oldRow.customer_id,
+        is_active: true,
+        created_by: userId,
+        modified_by: userId,
+        insurance_policy_id: oldRow.insurance_policy_id,
+        customer_number_policy: oldRow.customer_number_policy,
+        approved_limit: oldRow.approved_limit,
+        approved_limit_currency: oldRow.approved_limit_currency,
+        approved_limit_expiration_date: oldRow.approved_limit_expiration_date,
+        zero_limit_date: oldRow.zero_limit_date,
+        limit_type: oldRow.limit_type,
+        excluded_from_policy: oldRow.excluded_from_policy,
+        policy_exclusion_reason: oldRow.policy_exclusion_reason,
+        credit_score: oldRow.credit_score,
+        credit_score_input_date: oldRow.credit_score_input_date,
+        active_customer_since: oldRow.active_customer_since,
+        outdated_dcl: oldRow.outdated_dcl,
+        ...pushed,
+    };
+}
 
 export const INSURANCE_ENTITY_TYPES = [
     "insurance-policies",
@@ -247,43 +341,113 @@ export class InsuranceEntitiesService {
             if (!policy) {
                 throw new NotFoundException({ error: "insurance-policies not found" });
             }
-            data.registration_fee_percent = parseRegistrationFeePercent(
-                data.registration_fee_percent,
-                policy.policy_kind
-            );
+            coercePolicyDateFields(data);
+            if ("registration_fee_percent" in data) {
+                data.registration_fee_percent = parseRegistrationFeePercent(
+                    data.registration_fee_percent,
+                    policy.policy_kind
+                );
+            }
             const userInfo = await this.accessScope.resolveUserInfo(user);
-            const updated = await this.db.$transaction(async (tx) => {
-                const policyUpdate = await tx.insurancePolicy.update({
-                    where: { id: Number(id) },
-                    data: {
-                        ...data,
-                        modified_by: userInfo.userId,
-                    } as never,
-                });
-                await tx.customerPolicy.updateMany({
-                    where: {
-                        insurance_policy_id: Number(id),
-                        is_active: true,
-                        Customer: { account_id: accountId },
+            const policyId = Number(id);
+            try {
+                const updated = await this.db.$transaction(
+                    async (tx) => {
+                        const policyUpdate = await tx.insurancePolicy.update({
+                            where: { id: policyId },
+                            data: {
+                                ...data,
+                                modified_by: userInfo.userId,
+                            } as never,
+                        });
+
+                        const activeRows = await tx.customerPolicy.findMany({
+                            where: {
+                                insurance_policy_id: policyId,
+                                is_active: true,
+                                Customer: { account_id: accountId },
+                            },
+                        });
+
+                        const policyPushAfter = pickPolicyPushSnapshot(
+                            policyUpdate
+                        );
+
+                        for (const oldRow of activeRows) {
+                            const before = pickPolicyPushSnapshot(oldRow);
+                            if (
+                                !hasPolicyPushFieldChange(
+                                    before,
+                                    policyPushAfter
+                                )
+                            ) {
+                                continue;
+                            }
+
+                            await freezeCustomerPolicyGapOnDeactivation(
+                                oldRow.customer_id,
+                                oldRow.id,
+                                tx as never
+                            );
+                            await tx.customerPolicy.update({
+                                where: { id: oldRow.id },
+                                data: {
+                                    is_active: false,
+                                    modified_by: userInfo.userId,
+                                },
+                            });
+                            await tx.customerPolicy.create({
+                                data: buildCustomerPolicyVersionFromPolicyPush({
+                                    oldRow,
+                                    policy: policyUpdate,
+                                    userId: userInfo.userId,
+                                }) as never,
+                            });
+
+                            // Same post-save sync as customer Policies tab
+                            // (core + capacity gap). Does not recompute invoice
+                            // target_mep_date / target_reporting_date.
+                            await syncCustomerInsuranceFields(
+                                oldRow.customer_id,
+                                {
+                                    dbClient: tx as never,
+                                    validateZeroLimitDate: false,
+                                }
+                            );
+                            await ensureCustomerCapacityGapStored(
+                                oldRow.customer_id,
+                                { dbClient: tx as never }
+                            );
+                        }
+
+                        return policyUpdate;
                     },
-                    data: {
-                        cost_percent: policyUpdate.cost_percent,
-                        registration_fee_percent:
-                            policyUpdate.registration_fee_percent,
-                        modified_by: userInfo.userId,
-                    },
+                    { timeout: POLICY_PUSH_TRANSACTION_TIMEOUT_MS }
+                );
+                await enqueueAsOfRewrite({
+                    accountId,
+                    fromDate:
+                        updated.start_date < policy.start_date
+                            ? updated.start_date
+                            : policy.start_date,
+                    toDate: new Date(),
                 });
-                return policyUpdate;
-            });
-            await enqueueAsOfRewrite({
-                accountId,
-                fromDate:
-                    updated.start_date < policy.start_date
-                        ? updated.start_date
-                        : policy.start_date,
-                toDate: new Date(),
-            });
-            return serializeBigInt(updated);
+                return serializeBigInt(updated);
+            } catch (error) {
+                if (
+                    error instanceof BadRequestException ||
+                    error instanceof NotFoundException
+                ) {
+                    throw error;
+                }
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                throw new BadRequestException({
+                    error:
+                        message ||
+                        "Failed to push insurance policy terms to customers",
+                });
+            }
         }
 
         const delegate = this.delegate(entityType);
@@ -301,13 +465,15 @@ export class InsuranceEntitiesService {
             const userInfo = await this.accessScope.resolveUserInfo(user);
             const policyKind =
                 body.policy_kind === "TopUp" ? "TopUp" : "Primary";
+            const createData: Record<string, unknown> = { ...body };
+            coercePolicyDateFields(createData);
             const created = await this.db.insurancePolicy.create({
                 data: {
-                    ...body,
+                    ...createData,
                     account_id: accountId,
                     policy_kind: policyKind,
                     registration_fee_percent: parseRegistrationFeePercent(
-                        body.registration_fee_percent,
+                        createData.registration_fee_percent,
                         policyKind
                     ),
                     created_by: userInfo.userId,
