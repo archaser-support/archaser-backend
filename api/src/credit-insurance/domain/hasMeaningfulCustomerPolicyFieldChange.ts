@@ -156,3 +156,75 @@ export function pickCustomerPolicyVersioningSnapshot(
     }
     return snapshot;
 }
+
+/**
+ * Fields the Insurance Policy update path pushes onto active Customer Policies
+ * (version-if-changed). Includes cost/fee so they share the same path.
+ */
+export const POLICY_PUSH_CUSTOMER_FIELDS = [
+    "mep_cutoff_day",
+    "mep_substitute_extra_days",
+    "reporting_cutoff_day",
+    "reporting_substitute_extra_days",
+    "payment_term_cutoff_day",
+    "payment_term_substitute_day",
+    "max_allowed_mep",
+    "reporting_days",
+    "max_payment_term",
+    "cost_percent",
+    "registration_fee_percent",
+] as const;
+
+export type PolicyPushCustomerField =
+    (typeof POLICY_PUSH_CUSTOMER_FIELDS)[number];
+
+export type PolicyPushSnapshot = Partial<
+    Record<PolicyPushCustomerField, unknown>
+>;
+
+function policyPushFieldValuesEqual(
+    before: unknown,
+    after: unknown,
+    field: PolicyPushCustomerField
+): boolean {
+    switch (field) {
+        case "cost_percent":
+        case "registration_fee_percent":
+            return decimalsEqual(before, after);
+        case "mep_cutoff_day":
+        case "mep_substitute_extra_days":
+        case "reporting_cutoff_day":
+        case "reporting_substitute_extra_days":
+        case "payment_term_cutoff_day":
+        case "payment_term_substitute_day":
+        case "max_allowed_mep":
+        case "reporting_days":
+        case "max_payment_term":
+            return numbersEqual(before, after);
+        default: {
+            const _exhaustive: never = field;
+            return _exhaustive;
+        }
+    }
+}
+
+/** True when any policy→customer push field differs between snapshots. */
+export function hasPolicyPushFieldChange(
+    before: PolicyPushSnapshot,
+    after: PolicyPushSnapshot
+): boolean {
+    return POLICY_PUSH_CUSTOMER_FIELDS.some(
+        (field) =>
+            !policyPushFieldValuesEqual(before[field], after[field], field)
+    );
+}
+
+export function pickPolicyPushSnapshot(
+    source: PolicyPushSnapshot
+): PolicyPushSnapshot {
+    const snapshot: PolicyPushSnapshot = {};
+    for (const field of POLICY_PUSH_CUSTOMER_FIELDS) {
+        snapshot[field] = source[field];
+    }
+    return snapshot;
+}
