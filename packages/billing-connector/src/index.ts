@@ -360,7 +360,9 @@ export {
     chunkImportCacheRows,
     findSameDayCaches,
     loadEntityImportCache,
+    loadSameDayImportCachesForReplay,
     normalizeImportCacheCustomerScope,
+    parseUseCachedImport,
     resolveImportCacheDay,
     rowsEnteringImport,
     saveEntityImportCache,
@@ -370,6 +372,7 @@ export {
     type ImportCacheEntityType,
     type ImportCacheKey,
     type ImportCacheSyncMode,
+    type LoadSameDayImportCachesResult,
     type SameDayCacheSummary,
     type SaveEntityImportCacheInput,
 } from "./importCache";

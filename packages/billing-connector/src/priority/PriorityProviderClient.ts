@@ -226,11 +226,8 @@ export class PriorityProviderClient implements BillingProviderClient {
             options.pageSize ?? PRIORITY_RATE_LIMITS.recommendedPageSize;
         const isIdgPayment =
             entity === "Payment" && isIdgPaymentEntitySet(options.entitySet);
-        // IDG_ARFNCITEMS* 502s around ~2 min on large pages ($top=200); $top=50
-        // has completed successfully for account 10149.
-        const pageSize = isIdgPayment
-            ? Math.min(pageSizeRequested, 50)
-            : pageSizeRequested;
+        // Use the shared recommended page size (500) for IDG_ARFNCITEMS* too.
+        const pageSize = pageSizeRequested;
         const skip = options.cursor ? Number.parseInt(options.cursor, 10) : 0;
         const safeSkip = Number.isFinite(skip) && skip >= 0 ? skip : 0;
 

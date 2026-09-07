@@ -1,6 +1,6 @@
 # 02 — Cache-check + Start replay from Mongo
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** [01-mongo-cache-write](01-mongo-cache-write.md)
 **User stories:** 6, 7, 8, 9, 12, 18, 19, 22, 24, 26
@@ -12,12 +12,12 @@ Expose GET cache-check for manual Start and extend Start sync so `use_cached_imp
 
 ## Acceptance criteria
 
-- [ ] GET cache-check for `mode=backfill|incremental` returns per-entity availability for the account’s same-day keys (respecting optional customer scope).
-- [ ] Start with `use_cached_import: ["Invoice"]` skips ERP for Invoice and imports cached mapped rows into Postgres.
-- [ ] Other enabled entities in the same run still pull from the ERP.
-- [ ] Scheduled sync never uses `use_cached_import` / never auto-loads cache for pull.
-- [ ] `clear_before_import` still purges Postgres when provided, whether or not cache is used.
-- [ ] Requesting cache for an entity with no same-day backup returns a clear client error (no silent ERP fallback).
+- [x] GET cache-check for `mode=backfill|incremental` returns per-entity availability for the account’s same-day keys (respecting optional customer scope).
+- [x] Start with `use_cached_import: ["Invoice"]` skips ERP for Invoice and imports cached mapped rows into Postgres.
+- [x] Other enabled entities in the same run still pull from the ERP.
+- [x] Scheduled sync never uses `use_cached_import` / never auto-loads cache for pull.
+- [x] `clear_before_import` still purges Postgres when provided, whether or not cache is used.
+- [x] Requesting cache for an entity with no same-day backup returns a clear client error (no silent ERP fallback).
 
 ## How to test
 

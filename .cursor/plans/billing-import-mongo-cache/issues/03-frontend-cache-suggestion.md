@@ -1,6 +1,6 @@
 # 03 — Billing UI cache suggestion on Start
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [02-cache-check-and-replay](02-cache-check-and-replay.md)
 **User stories:** 6, 7, 29, 30
@@ -12,11 +12,11 @@ Wire Billing Integration Settings (and `billingConnectorService`) so manual Star
 
 ## Acceptance criteria
 
-- [ ] Before or as part of Start, the UI calls cache-check for the chosen mode (and customer scope when applicable).
-- [ ] When backups exist, the user can choose which entities to load from cache.
-- [ ] Start payload includes `use_cached_import` only for the chosen entities.
-- [ ] User can still Start with a full ERP fetch (empty / omitted flag).
-- [ ] No translation file changes unless explicitly permitted; no new global theme/styles without approval.
+- [x] Before or as part of Start, the UI calls cache-check for the chosen mode (and customer scope when applicable).
+- [x] When backups exist, the user can choose which entities to load from cache.
+- [x] Start payload includes `use_cached_import` only for the chosen entities.
+- [x] User can still Start with a full ERP fetch (empty / omitted flag).
+- [x] No translation file changes unless explicitly permitted; no new global theme/styles without approval.
 
 ## How to test
 

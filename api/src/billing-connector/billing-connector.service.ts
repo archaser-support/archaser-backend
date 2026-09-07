@@ -70,9 +70,16 @@ import {
     resolveSyncErrorType,
     parseClearBeforeImport,
     parseCustomerIdForClearBeforeImport,
+    parseUseCachedImport,
     resolveAccountCustomerById,
     searchAccountCustomers,
+    findSameDayCaches,
+    loadSameDayImportCachesForReplay,
+    normalizeImportCacheCustomerScope,
+    resolveImportCacheDay,
+    DEFAULT_IMPORT_CACHE_TIME_ZONE,
     type ClearBeforeImportEntity,
+    type ImportCacheEntityType,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
     type PullFiltersMap,
@@ -1110,6 +1117,7 @@ export class BillingConnectorApiService {
             mode === "backfill" && !isResumeBackfill
                 ? parseCustomerIdForClearBeforeImport(body?.customer_id)
                 : null;
+        let customerScopeForCache = "all";
         if (customerId != null) {
             const customer = await resolveAccountCustomerById({
                 prisma: this.db,
@@ -1120,6 +1128,31 @@ export class BillingConnectorApiService {
                 throw new BadRequestException({
                     error: `Customer not found on this account: id ${customerId}`,
                     code: "CUSTOMER_NOT_FOUND",
+                });
+            }
+            customerScopeForCache = normalizeImportCacheCustomerScope(
+                customer.customer_number
+            );
+        }
+
+        const useCachedImport = parseUseCachedImport(body?.use_cached_import);
+        if (useCachedImport.length > 0) {
+            const syncMode =
+                mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
+            const loaded = await loadSameDayImportCachesForReplay({
+                accountId,
+                syncMode,
+                importTypes: useCachedImport,
+                customerScope: customerScopeForCache,
+                timeZone: connector.time_zone,
+            });
+            if (!loaded.ok) {
+                throw new BadRequestException({
+                    error: `No same-day import cache for: ${loaded.missing.join(", ")} (day=${loaded.cacheDay}, scope=${loaded.customerScope})`,
+                    code: "IMPORT_CACHE_NOT_FOUND",
+                    missing: loaded.missing,
+                    cache_day: loaded.cacheDay,
+                    customer_scope: loaded.customerScope,
                 });
             }
         }
@@ -1204,6 +1237,7 @@ export class BillingConnectorApiService {
             onLog,
             clearBeforeImport,
             customerId,
+            useCachedImport,
         });
 
         return {
@@ -1351,6 +1385,7 @@ export class BillingConnectorApiService {
         onLog: (message: string) => void;
         clearBeforeImport?: ClearBeforeImportEntity[];
         customerId?: number | null;
+        useCachedImport?: ImportCacheEntityType[];
     }) {
         const {
             accountId,
@@ -1362,6 +1397,7 @@ export class BillingConnectorApiService {
             onLog,
             clearBeforeImport,
             customerId,
+            useCachedImport,
         } = params;
         try {
             const heartbeat = createSyncProgressHeartbeat(executionId);
@@ -1376,6 +1412,9 @@ export class BillingConnectorApiService {
                     ? { clearBeforeImport }
                     : {}),
                 ...(customerId != null ? { customerId } : {}),
+                ...(useCachedImport?.length
+                    ? { useCachedImport }
+                    : {}),
                 onLog,
                 ...this.buildPostIngestDeferOptions(accountId, mode),
                 observability: {
@@ -1706,6 +1745,103 @@ export class BillingConnectorApiService {
             );
             throw error;
         }
+    }
+
+    async checkImportCache(
+        user: JwtPayload,
+        accountId: number,
+        modeRaw?: string,
+        customerIdRaw?: string
+    ) {
+        await this.assertAccess(user, accountId, "view_billing_connector");
+        const mode = String(modeRaw ?? "").toLowerCase();
+        if (mode !== "backfill" && mode !== "incremental") {
+            throw new BadRequestException({
+                error: "mode must be backfill or incremental",
+                code: "INVALID_SYNC_MODE",
+            });
+        }
+        const connector = await this.db.billingConnector.findUnique({
+            where: { account_id: accountId },
+        });
+        if (!connector) {
+            throw new NotFoundException({
+                error: "Billing connector not configured",
+            });
+        }
+
+        const customerId = parseCustomerIdForClearBeforeImport(customerIdRaw);
+        let customerScope = "all";
+        if (customerId != null) {
+            const customer = await resolveAccountCustomerById({
+                prisma: this.db,
+                accountId,
+                customerId,
+            });
+            if (!customer) {
+                throw new BadRequestException({
+                    error: `Customer not found on this account: id ${customerId}`,
+                    code: "CUSTOMER_NOT_FOUND",
+                });
+            }
+            customerScope = normalizeImportCacheCustomerScope(
+                customer.customer_number
+            );
+        }
+
+        const syncMode = mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
+        const timeZone =
+            typeof connector.time_zone === "string" &&
+            connector.time_zone.trim().length > 0
+                ? connector.time_zone.trim()
+                : null;
+        const cacheDay = resolveImportCacheDay(new Date(), timeZone);
+        const available = await findSameDayCaches({
+            accountId,
+            syncMode,
+            customerScope,
+            timeZone,
+        });
+        const byType = new Map(
+            available.map((entry) => [entry.import_type, entry])
+        );
+        const entityTypes: ImportCacheEntityType[] = [
+            "Customer",
+            "Contact",
+            "Invoice",
+            "Payment",
+        ];
+        return {
+            sync_mode: syncMode,
+            cache_day: cacheDay,
+            customer_scope: customerScope,
+            time_zone: timeZone ?? DEFAULT_IMPORT_CACHE_TIME_ZONE,
+            entities: entityTypes.map((importType) => {
+                const hit = byType.get(importType);
+                if (!hit) {
+                    return {
+                        import_type: importType,
+                        available: false as const,
+                        sync_mode: syncMode,
+                        cache_day: cacheDay,
+                        customer_scope: customerScope,
+                        row_count: 0,
+                        execution_id: null,
+                        created_at: null,
+                    };
+                }
+                return {
+                    import_type: hit.import_type,
+                    available: true as const,
+                    sync_mode: hit.sync_mode,
+                    cache_day: hit.cache_day,
+                    customer_scope: hit.customer_scope,
+                    row_count: hit.row_count,
+                    execution_id: hit.execution_id,
+                    created_at: hit.created_at.toISOString(),
+                };
+            }),
+        };
     }
 
     async resetBackfill(

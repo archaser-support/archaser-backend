@@ -267,7 +267,7 @@ export function resolveRelatedCustomerPullFilterOData(
  * Optional Start-backfill `runtimeCustomerNumber` is AND-ed as `CUSTNAME eq …`
  * so customer-scoped pulls do not page the full table. Account extensions may
  * replace that clause via `buildRuntimeCustomerScopeOData` (account 10149 owns
- * IDG_CUSTNAME / IDC_CUSTNAMEIV on IDG_ARFNCITEMS*).
+ * ACCNAME on IDG_ARFNCITEMS*).
  */
 export function resolveImportPullFilterOData(
     raw: unknown,

@@ -66,6 +66,70 @@ export async function findSameDayCaches(input: {
     });
 }
 
+export type LoadSameDayImportCachesResult =
+    | {
+          ok: true;
+          cacheDay: string;
+          customerScope: string;
+          rowsByEntity: Map<
+              ImportCacheKey["importType"],
+              Record<string, unknown>[]
+          >;
+      }
+    | {
+          ok: false;
+          cacheDay: string;
+          customerScope: string;
+          missing: ImportCacheKey["importType"][];
+      };
+
+/**
+ * Load same-day backups for the requested entities. Missing keys fail clearly
+ * (no silent ERP fallback). Empty row arrays are valid when a backup exists.
+ */
+export async function loadSameDayImportCachesForReplay(input: {
+    accountId: number;
+    syncMode: ImportCacheKey["syncMode"];
+    importTypes: ImportCacheKey["importType"][];
+    customerScope?: string | null;
+    timeZone?: string | null;
+    at?: Date;
+}): Promise<LoadSameDayImportCachesResult> {
+    const cacheDay = resolveImportCacheDay(input.at, input.timeZone);
+    const customerScope =
+        typeof input.customerScope === "string" &&
+        input.customerScope.trim().length > 0
+            ? input.customerScope.trim()
+            : "all";
+    const rowsByEntity = new Map<
+        ImportCacheKey["importType"],
+        Record<string, unknown>[]
+    >();
+    const missing: ImportCacheKey["importType"][] = [];
+    for (const importType of input.importTypes) {
+        const docs = await store.load({
+            accountId: input.accountId,
+            importType,
+            syncMode: input.syncMode,
+            cacheDay,
+            customerScope,
+        });
+        if (docs.length === 0) {
+            missing.push(importType);
+            continue;
+        }
+        const rows: Record<string, unknown>[] = [];
+        for (const doc of docs) {
+            rows.push(...doc.rows);
+        }
+        rowsByEntity.set(importType, rows);
+    }
+    if (missing.length > 0) {
+        return { ok: false, cacheDay, customerScope, missing };
+    }
+    return { ok: true, cacheDay, customerScope, rowsByEntity };
+}
+
 /**
  * Best-effort write used by sync runners — never fail the import because Mongo
  * cache persistence failed.
