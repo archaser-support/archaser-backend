@@ -308,6 +308,7 @@ fi
 # npm ci uses --ignore-scripts, so generate before any workspace tsc that imports PrismaClient.
 if [[ "$SKIP_PRISMA" != "true" ]]; then
     log "Generating Prisma client"
+    mkdir -p node_modules/.prisma/client
     npx prisma generate --schema="$PRISMA_SCHEMA"
     node "$SYNC_SCRIPT"
 else
