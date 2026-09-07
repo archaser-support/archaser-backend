@@ -14,12 +14,12 @@ export type CustomerPolicyRowSelected = {
     max_payment_term: number | null;
     max_allowed_mep: number | null;
     reporting_days: number | null;
-    mep_cutoff_day_of_month: number | null;
-    mep_substitute_day_of_month: number | null;
-    reporting_cutoff_day_of_month: number | null;
-    reporting_substitute_day_of_month: number | null;
-    payment_term_cutoff_day_of_month: number | null;
-    payment_term_substitute_day_of_month: number | null;
+    mep_cutoff_day: number | null;
+    mep_substitute_extra_days: number | null;
+    reporting_cutoff_day: number | null;
+    reporting_substitute_extra_days: number | null;
+    payment_term_cutoff_day: number | null;
+    payment_term_substitute_day: number | null;
     excluded_from_policy: boolean;
     policy_exclusion_reason: string | null;
     credit_score: Prisma.Decimal | null;
@@ -52,12 +52,12 @@ export type EffectiveCustomerPolicyFields = {
     max_payment_term: number | null;
     max_allowed_mep: number | null;
     reporting_days: number | null;
-    mep_cutoff_day_of_month: number | null;
-    mep_substitute_day_of_month: number | null;
-    reporting_cutoff_day_of_month: number | null;
-    reporting_substitute_day_of_month: number | null;
-    payment_term_cutoff_day_of_month: number | null;
-    payment_term_substitute_day_of_month: number | null;
+    mep_cutoff_day: number | null;
+    mep_substitute_extra_days: number | null;
+    reporting_cutoff_day: number | null;
+    reporting_substitute_extra_days: number | null;
+    payment_term_cutoff_day: number | null;
+    payment_term_substitute_day: number | null;
     excluded_from_policy: boolean;
     policy_exclusion_reason: string | null;
     credit_score: Prisma.Decimal | null;
@@ -88,12 +88,12 @@ export type CustomerPolicyWriteInput = {
     max_payment_term?: number | null;
     max_allowed_mep?: number | null;
     reporting_days?: number | null;
-    mep_cutoff_day_of_month?: number | null;
-    mep_substitute_day_of_month?: number | null;
-    reporting_cutoff_day_of_month?: number | null;
-    reporting_substitute_day_of_month?: number | null;
-    payment_term_cutoff_day_of_month?: number | null;
-    payment_term_substitute_day_of_month?: number | null;
+    mep_cutoff_day?: number | null;
+    mep_substitute_extra_days?: number | null;
+    reporting_cutoff_day?: number | null;
+    reporting_substitute_extra_days?: number | null;
+    payment_term_cutoff_day?: number | null;
+    payment_term_substitute_day?: number | null;
     excluded_from_policy?: boolean;
     policy_exclusion_reason?: string | null;
     credit_score?: Prisma.Decimal | string | number | null;
@@ -115,12 +115,12 @@ export function emptyEffectiveCustomerPolicyFields(): EffectiveCustomerPolicyFie
         max_payment_term: null,
         max_allowed_mep: null,
         reporting_days: null,
-        mep_cutoff_day_of_month: null,
-        mep_substitute_day_of_month: null,
-        reporting_cutoff_day_of_month: null,
-        reporting_substitute_day_of_month: null,
-        payment_term_cutoff_day_of_month: null,
-        payment_term_substitute_day_of_month: null,
+        mep_cutoff_day: null,
+        mep_substitute_extra_days: null,
+        reporting_cutoff_day: null,
+        reporting_substitute_extra_days: null,
+        payment_term_cutoff_day: null,
+        payment_term_substitute_day: null,
         excluded_from_policy: false,
         policy_exclusion_reason: null,
         credit_score: null,
@@ -156,13 +156,13 @@ export function mapCustomerPolicyRow(
         max_payment_term: row.max_payment_term,
         max_allowed_mep: row.max_allowed_mep,
         reporting_days: row.reporting_days,
-        mep_cutoff_day_of_month: row.mep_cutoff_day_of_month,
-        mep_substitute_day_of_month: row.mep_substitute_day_of_month,
-        reporting_cutoff_day_of_month: row.reporting_cutoff_day_of_month,
-        reporting_substitute_day_of_month: row.reporting_substitute_day_of_month,
-        payment_term_cutoff_day_of_month: row.payment_term_cutoff_day_of_month,
-        payment_term_substitute_day_of_month:
-            row.payment_term_substitute_day_of_month,
+        mep_cutoff_day: row.mep_cutoff_day,
+        mep_substitute_extra_days: row.mep_substitute_extra_days,
+        reporting_cutoff_day: row.reporting_cutoff_day,
+        reporting_substitute_extra_days: row.reporting_substitute_extra_days,
+        payment_term_cutoff_day: row.payment_term_cutoff_day,
+        payment_term_substitute_day:
+            row.payment_term_substitute_day,
         excluded_from_policy: row.excluded_from_policy,
         policy_exclusion_reason: row.policy_exclusion_reason,
         credit_score: row.credit_score,
@@ -198,13 +198,13 @@ export function effectivePolicyFieldsToCustomerDisplay(
         max_payment_term: fields.max_payment_term,
         max_allowed_mep: fields.max_allowed_mep,
         reporting_days: fields.reporting_days,
-        mep_cutoff_day_of_month: fields.mep_cutoff_day_of_month,
-        mep_substitute_day_of_month: fields.mep_substitute_day_of_month,
-        reporting_cutoff_day_of_month: fields.reporting_cutoff_day_of_month,
-        reporting_substitute_day_of_month: fields.reporting_substitute_day_of_month,
-        payment_term_cutoff_day_of_month: fields.payment_term_cutoff_day_of_month,
-        payment_term_substitute_day_of_month:
-            fields.payment_term_substitute_day_of_month,
+        mep_cutoff_day: fields.mep_cutoff_day,
+        mep_substitute_extra_days: fields.mep_substitute_extra_days,
+        reporting_cutoff_day: fields.reporting_cutoff_day,
+        reporting_substitute_extra_days: fields.reporting_substitute_extra_days,
+        payment_term_cutoff_day: fields.payment_term_cutoff_day,
+        payment_term_substitute_day:
+            fields.payment_term_substitute_day,
         excluded_from_policy: fields.excluded_from_policy,
         policy_exclusion_reason: fields.policy_exclusion_reason,
         credit_score: fields.credit_score,

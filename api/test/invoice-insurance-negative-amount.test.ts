@@ -62,16 +62,16 @@ describe("negative invoice amount — insurance targets and reporting breach", (
                 reporting_days: 40,
                 max_allowed_mep: 30,
                 max_payment_term: 60,
-                mep_cutoff_day_of_month: 24,
-                mep_substitute_day_of_month: 2,
-                reporting_cutoff_day_of_month: null,
-                reporting_substitute_day_of_month: null,
+                mep_cutoff_day: 24,
+                mep_substitute_extra_days: 2,
+                reporting_cutoff_day: null,
+                reporting_substitute_extra_days: null,
             },
         });
-        // substitute 2 Jul; diff = 8; due 26 Jun + 30 + 8 → 3 Aug; reporting = due + 40
+        // substitute 2 extra days; due 26 Jun + 30 + 2 → 28 Jul; reporting = due + 40
         expect(targets.target_mep_date!.getFullYear()).toBe(2026);
-        expect(targets.target_mep_date!.getMonth()).toBe(7);
-        expect(targets.target_mep_date!.getDate()).toBe(3);
+        expect(targets.target_mep_date!.getMonth()).toBe(6);
+        expect(targets.target_mep_date!.getDate()).toBe(28);
         expect(targets.target_reporting_date!.getFullYear()).toBe(2026);
         expect(targets.target_reporting_date!.getMonth()).toBe(7);
         expect(targets.target_reporting_date!.getDate()).toBe(5);

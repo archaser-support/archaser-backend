@@ -41,7 +41,7 @@ export function isPolicyCapacityGapSuppressed(c: PolicyGapReadable): boolean {
     return isUncoveredExposureCustomer({ hasLinkedPolicy, exclusionReason });
 }
 
-/** Stored KPI capacity gap on CustomerPolicy (rollup via {@link computePolicyCapacityGapKpi}). */
+/** Stored KPI capacity gap on CustomerPolicy (`max(0, AR − effective limit)`). */
 export function storedCapacityGapAmount(c: PolicyGapReadable): number {
     if (isPolicyCapacityGapSuppressed(c)) {
         return 0;
