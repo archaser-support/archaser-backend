@@ -20,12 +20,11 @@ jobs:
       - name: Determine Environment & Directory
         id: env-name
         run: |
+          echo "APP_DIR=/home/ubuntu/api" >> $GITHUB_OUTPUT
           if [ "${{ github.ref_name }}" = "master" ] || [ "${{ github.ref_name }}" = "main" ]; then
             echo "ENV=production" >> $GITHUB_OUTPUT
-            echo "APP_DIR=/home/ubuntu/production" >> $GITHUB_OUTPUT
           else
             echo "ENV=staging" >> $GITHUB_OUTPUT
-            echo "APP_DIR=/home/ubuntu/api" >> $GITHUB_OUTPUT
           fi
 
       - name: Deploy to EC2 via SSH
