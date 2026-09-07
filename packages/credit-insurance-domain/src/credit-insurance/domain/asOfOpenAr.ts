@@ -3,11 +3,14 @@ import { Prisma, type invoice_status } from "@prisma/client";
 import { type DbClient, prisma as defaultPrisma } from "../domain-db";
 import { convertAmountToCurrencyLatestRate } from "./customerCreditInsuranceHeaderAmounts";
 import {
+    allocateLiveCapacityGapWaterfall,
+    compareInvoicesForLiveCapacityGapWaterfall,
     computeCreatedTermsViolationInvoiceAfterPolicyEnd,
     computeCustomerOverdueBlock,
     computeInvoiceInsuranceRowData,
     computeLimitExcessOverEffective,
     isNegativeInvoiceAmount,
+    type CustomerAtRiskInvoiceInput,
 } from "./invoiceInsuranceFields";
 import { computeInvoiceLineOpenArInAccountCurrency } from "./openReceivableByCustomerCurrency";
 import { resolveInvoicePaidTolerance } from "./resolveInvoicePaidTolerance";
@@ -130,12 +133,12 @@ export type AsOfPolicyTermsForBreach = {
     maxPaymentTerm: number | null;
     maxAllowedMep: number | null;
     reportingDays: number | null;
-    mepCutoffDayOfMonth?: number | null;
-    mepSubstituteDayOfMonth?: number | null;
-    reportingCutoffDayOfMonth?: number | null;
-    reportingSubstituteDayOfMonth?: number | null;
-    paymentTermCutoffDayOfMonth?: number | null;
-    paymentTermSubstituteDayOfMonth?: number | null;
+    mepCutoffDay?: number | null;
+    mepSubstituteExtraDays?: number | null;
+    reportingCutoffDay?: number | null;
+    reportingSubstituteExtraDays?: number | null;
+    paymentTermCutoffDay?: number | null;
+    paymentTermSubstituteDay?: number | null;
     policyEndDate?: Date | null;
 };
 
@@ -155,6 +158,181 @@ export function asOfCapacityGapAmount(
         totalReceivables,
         effectiveApprovedLimit
     );
+}
+
+/** Effective limit + currency for one customer+policy as-of waterfall scope. */
+export type AsOfCapacityGapWaterfallScope = {
+    effectiveLimit: number;
+    limitCurrency: string | null;
+    /** Uncovered / outdated DCL — force invoice gaps to 0. */
+    zeroGaps?: boolean;
+};
+
+function asOfOutstandingInLimitCurrency(
+    computed: AsOfOpenInvoiceComputed,
+    limitCurrency: string | null,
+    accountCurrency: string | null
+): number {
+    const limitCcy = limitCurrency?.trim().toUpperCase() ?? null;
+    const acct = accountCurrency?.trim().toUpperCase() ?? null;
+    if (limitCcy && acct && limitCcy === acct) {
+        return Math.max(0, computed.openAmount);
+    }
+    const cust = computed.customerCurrency?.trim().toUpperCase() ?? null;
+    if (limitCcy && cust && limitCcy === cust) {
+        return Math.max(
+            0,
+            computed.openCustomerAmount > 0
+                ? computed.openCustomerAmount
+                : computed.openAmount
+        );
+    }
+    return Math.max(0, computed.openAmount);
+}
+
+function asOfGapLimitToAccountCurrency(
+    gapLimit: number,
+    outstandingLimit: number,
+    openAmountAccount: number,
+    limitCurrency: string | null,
+    accountCurrency: string | null
+): number {
+    const limitCcy = limitCurrency?.trim().toUpperCase() ?? null;
+    const acct = accountCurrency?.trim().toUpperCase() ?? null;
+    if (gapLimit <= 0) {
+        return 0;
+    }
+    if (!limitCcy || !acct || limitCcy === acct) {
+        return gapLimit;
+    }
+    if (outstandingLimit > 0 && openAmountAccount > 0) {
+        return gapLimit * (openAmountAccount / outstandingLimit);
+    }
+    return gapLimit;
+}
+
+/**
+ * Rewrite `capacityGapAmount` / `inCapacityGap` on as-of open lines using the
+ * live waterfall as of `asOfDate` (oldest invoice_date first). Does not persist.
+ * Scopes missing from the map keep sticky stored gaps.
+ */
+export function overlayAsOfLiveCapacityGapWaterfallOnLines(
+    lines: AsOfOpenInvoiceLine[],
+    asOfDate: Date,
+    options: {
+        scopeByCustomerPolicy: Map<string, AsOfCapacityGapWaterfallScope>;
+        accountCurrency: string | null;
+    }
+): AsOfOpenInvoiceLine[] {
+    if (options.scopeByCustomerPolicy.size === 0) {
+        return lines;
+    }
+
+    type OpenRow = {
+        line: AsOfOpenInvoiceLine;
+        computed: AsOfOpenInvoiceComputed;
+        outstandingLimit: number;
+    };
+    const openByScope = new Map<string, OpenRow[]>();
+
+    for (const line of lines) {
+        if (isNegativeInvoiceAmount(line.amount)) {
+            continue;
+        }
+        const scopeKey = asOfTermsScopeKey(line.customerId, line.policyId);
+        if (!options.scopeByCustomerPolicy.has(scopeKey)) {
+            continue;
+        }
+        const computed = computeAsOfOpenInvoiceLine(line, asOfDate);
+        if (!computed) {
+            continue;
+        }
+        const scope = options.scopeByCustomerPolicy.get(scopeKey)!;
+        const outstandingLimit = asOfOutstandingInLimitCurrency(
+            computed,
+            scope.limitCurrency,
+            options.accountCurrency
+        );
+        const bucket = openByScope.get(scopeKey) ?? [];
+        bucket.push({ line, computed, outstandingLimit });
+        openByScope.set(scopeKey, bucket);
+    }
+
+    const gapByInvoiceId = new Map<
+        number,
+        { capacityGapAmount: number; inCapacityGap: boolean }
+    >();
+
+    for (const [scopeKey, rows] of openByScope) {
+        const scope = options.scopeByCustomerPolicy.get(scopeKey)!;
+        if (scope.zeroGaps === true) {
+            for (const row of rows) {
+                gapByInvoiceId.set(row.line.invoiceId, {
+                    capacityGapAmount: 0,
+                    inCapacityGap: false,
+                });
+            }
+            continue;
+        }
+
+        const sorted = rows
+            .slice()
+            .sort((a, b) =>
+                compareInvoicesForLiveCapacityGapWaterfall(
+                    {
+                        invoice_date: a.line.invoiceDate,
+                        id: a.line.invoiceId,
+                    },
+                    {
+                        invoice_date: b.line.invoiceDate,
+                        id: b.line.invoiceId,
+                    }
+                )
+            );
+
+        const allocations = allocateLiveCapacityGapWaterfall({
+            effectiveLimit: scope.effectiveLimit,
+            openInvoices: sorted.map((row) => ({
+                id: row.line.invoiceId,
+                outstandingInLimitCurrency: row.outstandingLimit,
+            })),
+        });
+        const allocationById = new Map(
+            allocations.map((row) => [row.id, row] as const)
+        );
+
+        for (const row of sorted) {
+            const allocation = allocationById.get(row.line.invoiceId);
+            const gapLimit = allocation?.capacityGapAmountLimit ?? 0;
+            const gapAccount = asOfGapLimitToAccountCurrency(
+                gapLimit,
+                row.outstandingLimit,
+                row.computed.openAmount,
+                scope.limitCurrency,
+                options.accountCurrency
+            );
+            gapByInvoiceId.set(row.line.invoiceId, {
+                capacityGapAmount: Math.max(0, gapAccount),
+                inCapacityGap: gapLimit > 0,
+            });
+        }
+    }
+
+    if (gapByInvoiceId.size === 0) {
+        return lines;
+    }
+
+    return lines.map((line) => {
+        const next = gapByInvoiceId.get(line.invoiceId);
+        if (!next) {
+            return line;
+        }
+        return {
+            ...line,
+            capacityGapAmount: next.capacityGapAmount,
+            inCapacityGap: next.inCapacityGap,
+        };
+    });
 }
 
 /**
@@ -274,14 +452,14 @@ export function overlayAsOfTermsFlagsOnLine(
             reporting_days: terms.reportingDays,
             max_allowed_mep: terms.maxAllowedMep,
             max_payment_term: terms.maxPaymentTerm,
-            mep_cutoff_day_of_month: terms.mepCutoffDayOfMonth,
-            mep_substitute_day_of_month: terms.mepSubstituteDayOfMonth,
-            reporting_cutoff_day_of_month: terms.reportingCutoffDayOfMonth,
-            reporting_substitute_day_of_month:
-                terms.reportingSubstituteDayOfMonth,
-            payment_term_cutoff_day_of_month: terms.paymentTermCutoffDayOfMonth,
-            payment_term_substitute_day_of_month:
-                terms.paymentTermSubstituteDayOfMonth,
+            mep_cutoff_day: terms.mepCutoffDay,
+            mep_substitute_extra_days: terms.mepSubstituteExtraDays,
+            reporting_cutoff_day: terms.reportingCutoffDay,
+            reporting_substitute_extra_days:
+                terms.reportingSubstituteExtraDays,
+            payment_term_cutoff_day: terms.paymentTermCutoffDay,
+            payment_term_substitute_day:
+                terms.paymentTermSubstituteDay,
         },
         today: asOfDate,
     });
@@ -743,6 +921,118 @@ export function asOfTermsBreachInvoicesFromLines(
         });
     }
     return invoices;
+}
+
+/**
+ * As-of open invoices for per-invoice at-risk (account-side open amount + gap).
+ * Prefer lines already passed through {@link overlayAsOfLiveCapacityGapWaterfallOnLines}.
+ * Membership matches live Due/Overdue non-negative lines still open on `asOfDate`.
+ */
+export function buildAsOfAtRiskInvoiceInputsFromLines(
+    lines: AsOfOpenInvoiceLine[],
+    asOfDate: Date,
+    options?: { customerId?: number; policyId?: number | null }
+): CustomerAtRiskInvoiceInput[] {
+    const invoices: CustomerAtRiskInvoiceInput[] = [];
+    for (const line of lines) {
+        if (!lineMatchesScope(line, options)) {
+            continue;
+        }
+        if (isNegativeInvoiceAmount(line.amount)) {
+            continue;
+        }
+        const computed = computeAsOfOpenInvoiceLine(line, asOfDate);
+        if (!computed) {
+            continue;
+        }
+        invoices.push({
+            outstanding: Math.max(0, computed.openAmount),
+            capacityGapAmount: Math.max(0, line.capacityGapAmount ?? 0),
+            hasTermsBreach: isTermsBreachLine(line),
+        });
+    }
+    return invoices;
+}
+
+/**
+ * As-of open at-risk invoice inputs grouped by customer in account currency
+ * (same FX path as as-of open AR / terms-breach maps).
+ */
+export async function buildAsOfAtRiskInvoiceInputsByCustomerInAccountCurrencyFromLines(
+    lines: AsOfOpenInvoiceLine[],
+    accountCurrency: string,
+    asOfDate: Date,
+    options?: {
+        policyId?: number;
+        customerIds?: number[];
+    }
+): Promise<Map<number, CustomerAtRiskInvoiceInput[]>> {
+    const accountCur = accountCurrency.trim().toUpperCase();
+    const customerIdSet =
+        options?.customerIds != null && options.customerIds.length > 0
+            ? new Set(options.customerIds)
+            : null;
+    const map = new Map<number, CustomerAtRiskInvoiceInput[]>();
+    for (const line of lines) {
+        if (customerIdSet && !customerIdSet.has(line.customerId)) {
+            continue;
+        }
+        if (
+            options?.policyId != null &&
+            line.policyId !== options.policyId
+        ) {
+            continue;
+        }
+        if (isNegativeInvoiceAmount(line.amount)) {
+            continue;
+        }
+        const computed = computeAsOfOpenInvoiceLine(line, asOfDate);
+        if (!computed) {
+            continue;
+        }
+        const synthetic = {
+            outstanding_debt: computed.openAmount,
+            customer_outstanding_debt: computed.openCustomerAmount,
+            amount: computed.openAmount,
+            customer_currency: computed.customerCurrency,
+        };
+        const custCurrency = computed.customerCurrency?.trim().toUpperCase();
+        let converted: number | null | undefined;
+        const hasAccountOutstanding =
+            synthetic.outstanding_debt != null &&
+            synthetic.outstanding_debt !== 0;
+        if (
+            !hasAccountOutstanding &&
+            custCurrency &&
+            custCurrency !== accountCur
+        ) {
+            const val =
+                synthetic.customer_outstanding_debt !== 0
+                    ? synthetic.customer_outstanding_debt
+                    : synthetic.amount;
+            converted = await convertAmountToCurrencyLatestRate(
+                custCurrency,
+                accountCur,
+                val
+            );
+        }
+        const outstanding = Math.max(
+            0,
+            computeInvoiceLineOpenArInAccountCurrency(
+                synthetic,
+                accountCur,
+                converted
+            )
+        );
+        const bucket = map.get(computed.customerId) ?? [];
+        bucket.push({
+            outstanding,
+            capacityGapAmount: Math.max(0, line.capacityGapAmount ?? 0),
+            hasTermsBreach: isTermsBreachLine(line),
+        });
+        map.set(computed.customerId, bucket);
+    }
+    return map;
 }
 
 export async function fetchAsOfOpenReceivableByCustomerMap(

@@ -270,13 +270,13 @@ export async function refreshInsuranceTargetDatesForInvoiceIds(
                 customer: {
                     reporting_days: c?.reporting_days ?? null,
                     max_allowed_mep: c?.max_allowed_mep ?? null,
-                    mep_cutoff_day_of_month: c?.mep_cutoff_day_of_month ?? null,
-                    mep_substitute_day_of_month:
-                        c?.mep_substitute_day_of_month ?? null,
-                    reporting_cutoff_day_of_month:
-                        c?.reporting_cutoff_day_of_month ?? null,
-                    reporting_substitute_day_of_month:
-                        c?.reporting_substitute_day_of_month ?? null,
+                    mep_cutoff_day: c?.mep_cutoff_day ?? null,
+                    mep_substitute_extra_days:
+                        c?.mep_substitute_extra_days ?? null,
+                    reporting_cutoff_day:
+                        c?.reporting_cutoff_day ?? null,
+                    reporting_substitute_extra_days:
+                        c?.reporting_substitute_extra_days ?? null,
                 },
             });
             const reportingChanged = !datesEqualCalendarUtc(
@@ -367,9 +367,9 @@ export async function refreshPaymentTermBreachForInvoiceIds(
             {
                 invoiceDate: inv.invoice_date,
                 cutoffDayOfMonth:
-                    customerCtx?.payment_term_cutoff_day_of_month ?? null,
+                    customerCtx?.payment_term_cutoff_day ?? null,
                 substituteDayOfMonth:
-                    customerCtx?.payment_term_substitute_day_of_month ?? null,
+                    customerCtx?.payment_term_substitute_day ?? null,
             }
         );
         if (next !== inv.ctv_payment_term) {

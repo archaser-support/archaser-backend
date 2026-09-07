@@ -12,12 +12,12 @@ export const CUSTOMER_POLICY_VERSIONING_ALLOWLIST = [
     "max_payment_term",
     "max_allowed_mep",
     "reporting_days",
-    "mep_cutoff_day_of_month",
-    "mep_substitute_day_of_month",
-    "reporting_cutoff_day_of_month",
-    "reporting_substitute_day_of_month",
-    "payment_term_cutoff_day_of_month",
-    "payment_term_substitute_day_of_month",
+    "mep_cutoff_day",
+    "mep_substitute_extra_days",
+    "reporting_cutoff_day",
+    "reporting_substitute_extra_days",
+    "payment_term_cutoff_day",
+    "payment_term_substitute_day",
     "excluded_from_policy",
     "policy_exclusion_reason",
     "credit_score",
@@ -115,12 +115,12 @@ function customerPolicyFieldValuesEqual(
         case "max_payment_term":
         case "max_allowed_mep":
         case "reporting_days":
-        case "mep_cutoff_day_of_month":
-        case "mep_substitute_day_of_month":
-        case "reporting_cutoff_day_of_month":
-        case "reporting_substitute_day_of_month":
-        case "payment_term_cutoff_day_of_month":
-        case "payment_term_substitute_day_of_month":
+        case "mep_cutoff_day":
+        case "mep_substitute_extra_days":
+        case "reporting_cutoff_day":
+        case "reporting_substitute_extra_days":
+        case "payment_term_cutoff_day":
+        case "payment_term_substitute_day":
             return numbersEqual(before, after);
         case "excluded_from_policy":
             return Boolean(before) === Boolean(after);
