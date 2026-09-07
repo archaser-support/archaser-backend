@@ -169,11 +169,11 @@ npm_ci_low_memory() {
     elif (( mem_mb >= 4096 )); then
         heap_mb=2048
     fi
-    log "npm ci (heap ${heap_mb}MB, maxsockets 1, ignore-scripts)"
+    log "npm ci (heap ${heap_mb}MB, maxsockets 2, prefer-offline, ignore-scripts)"
     # Ignore scripts so prisma/husky do not spawn extra Node during peak install.
     # Prisma generate still runs later in this script.
     NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm ci --include=dev --no-audit --no-fund --maxsockets 1 --ignore-scripts
+        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 2 --ignore-scripts
 }
 
 ENVIRONMENT=""
