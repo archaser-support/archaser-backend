@@ -1,7 +1,6 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "../domain-db";
 import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
-import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 
 type PrismaClientLike = PrismaClient;
 type RawCapableClient = {
@@ -274,12 +273,20 @@ type DrainWriters = {
         options: {
             snapshotDate: Date;
             customerIds?: number[];
+            asOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[];
+            ignoreReportingBreach?: boolean;
             mepBreachStartDate?: Date | null;
+            runContext?: import("./creditAsOfBackfillRunContext").CreditAsOfBackfillRunContext;
         }
     ) => Promise<unknown>;
     takeCreditDashboardDailySnapshotsForAccount: (
         accountId: number,
-        options: { snapshotDate: Date }
+        options: {
+            snapshotDate: Date;
+            asOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[];
+            ignoreReportingBreach?: boolean;
+            runContext?: import("./creditAsOfBackfillRunContext").CreditAsOfBackfillRunContext;
+        }
     ) => Promise<unknown>;
 };
 
@@ -366,18 +373,50 @@ export async function drainAsOfRewriteQueue(options?: {
                 item.from_date,
                 item.checkpoint_date
             );
-            // One resolve per queue item — the whole replay run for this account.
-            const mepBreachStartDate = await resolveMepBreachStartDate(
-                item.account_id
+            const {
+                buildCreditAsOfBackfillRunContext,
+                ensureCapacityGapsForBackfillRun,
+            } = await import("./creditAsOfBackfillRunContext");
+            let runContext = await buildCreditAsOfBackfillRunContext(
+                item.account_id,
+                {
+                    dbClient: db,
+                    customerIds:
+                        customerIds.length > 0 ? customerIds : undefined,
+                    replayFromDate: item.from_date,
+                    replayToDate: item.to_date,
+                }
+            );
+            runContext = await ensureCapacityGapsForBackfillRun(runContext, {
+                dbClient: db,
+            });
+            const {
+                loadAsOfOpenInvoiceLedgerRange,
+                deriveAsOfOpenInvoiceCandidatesFromLedger,
+            } = await import("./asOfOpenArLedgerPreload");
+            const ledger = await loadAsOfOpenInvoiceLedgerRange(
+                item.account_id,
+                item.to_date,
+                { dbClient: db }
             );
             for (const day of enumerateUtcDays(resumeFrom, item.to_date)) {
+                const asOfLines = deriveAsOfOpenInvoiceCandidatesFromLedger(
+                    ledger,
+                    day
+                );
                 await syncCpt(item.account_id, {
                     snapshotDate: day,
                     customerIds:
                         customerIds.length > 0 ? customerIds : undefined,
-                    mepBreachStartDate,
+                    asOfLines,
+                    mepBreachStartDate: runContext.mepBreachStartDate,
+                    runContext,
                 });
-                await takeDashboard(item.account_id, { snapshotDate: day });
+                await takeDashboard(item.account_id, {
+                    snapshotDate: day,
+                    asOfLines,
+                    runContext,
+                });
                 await db.$executeRaw`
                     UPDATE "CreditAsOfRewriteQueue"
                     SET checkpoint_date = ${day}, updated_at = ${now}

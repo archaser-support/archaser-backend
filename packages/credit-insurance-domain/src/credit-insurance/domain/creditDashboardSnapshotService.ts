@@ -8,11 +8,30 @@ import {
 
 import {
     getCreditDashboardSummary,
-    type CreditDashboardSummary,
 } from "./creditInsuranceDashboardService";
+import {
+    deriveDashboardSnapshotScopes,
+    type CreditAsOfBackfillRunContext,
+    type CreditDashboardAccountSettings,
+} from "./creditAsOfBackfillRunContext";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
 import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron";
 import { withReportingBreachIgnored } from "./asOfOpenAr";
+import {
+    batchUpsertCreditDashboardDailySnapshotRows,
+    type CreditDashboardDailySnapshotUpsertRow,
+} from "./creditDashboardSnapshotBatchUpsert";
+import {
+    mapWithConcurrency,
+    readEnvInt,
+} from "./runWithConcurrency";
+
+const DASHBOARD_SCOPE_CONCURRENCY = readEnvInt(
+    "CREDIT_ASOF_DASHBOARD_SCOPE_CONCURRENCY",
+    6,
+    1,
+    32
+);
 
 type SnapshotScope = {
     accountId: number;
@@ -130,15 +149,41 @@ async function listSnapshotScopes(asOfDate: Date): Promise<SnapshotScope[]> {
     return scopes;
 }
 
+type DashboardScopeWorkItem = {
+    scope: SnapshotScope;
+    businessUnitFilter?: { business_unit_id: number };
+};
+
+function buildDashboardScopeWorkItems(
+    accountScopes: SnapshotScope[],
+    businessUnitIds: number[]
+): DashboardScopeWorkItem[] {
+    const items: DashboardScopeWorkItem[] = accountScopes.map((scope) => ({
+        scope,
+    }));
+    for (const businessUnitId of businessUnitIds) {
+        for (const scope of accountScopes) {
+            items.push({
+                scope: { ...scope, businessUnitId },
+                businessUnitFilter: { business_unit_id: businessUnitId },
+            });
+        }
+    }
+    return items;
+}
+
 async function processDashboardSnapshotsForAccount(
     accountId: number,
     accountScopes: SnapshotScope[],
     snapshotDate: Date,
     preloadedAsOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[],
-    ignoreReportingBreach?: boolean
+    ignoreReportingBreach?: boolean,
+    options?: {
+        businessUnitIds?: number[];
+        hasTopUpPolicies?: boolean;
+        dashboardAccountSettings?: CreditDashboardAccountSettings;
+    }
 ): Promise<number> {
-    let scopesProcessed = 0;
-
     const loadedLines =
         preloadedAsOfLines ??
         (await (
@@ -149,39 +194,56 @@ async function processDashboardSnapshotsForAccount(
         ignoreReportingBreach === true
     );
 
-    for (const scope of accountScopes) {
-        const summary = await getCreditDashboardSummary(
-            scope.accountId,
-            scope.policyId ?? undefined,
-            undefined,
-            true,
-            { asOfDate: snapshotDate, asOfLines }
-        );
-        await upsertDailySnapshot(scope, summary, snapshotDate);
-        scopesProcessed++;
-    }
+    const businessUnitIds =
+        options?.businessUnitIds ??
+        (await listActiveBusinessUnitIds(accountId));
+    const workItems = buildDashboardScopeWorkItems(
+        accountScopes,
+        businessUnitIds
+    );
 
-    const businessUnitIds = await listActiveBusinessUnitIds(accountId);
-    for (const businessUnitId of businessUnitIds) {
-        const businessUnitFilter = { business_unit_id: businessUnitId };
-        for (const scope of accountScopes) {
+    const summaryOptions = {
+        asOfDate: snapshotDate,
+        asOfLines,
+        hasTopUpPolicies: options?.hasTopUpPolicies,
+        accountSettings: options?.dashboardAccountSettings,
+        skipPolicyExpirationLoad: options?.dashboardAccountSettings != null,
+    };
+
+    const computed = await mapWithConcurrency(
+        workItems,
+        DASHBOARD_SCOPE_CONCURRENCY,
+        async (item) => {
             const summary = await getCreditDashboardSummary(
-                scope.accountId,
-                scope.policyId ?? undefined,
-                businessUnitFilter,
+                item.scope.accountId,
+                item.scope.policyId ?? undefined,
+                item.businessUnitFilter,
                 true,
-                { asOfDate: snapshotDate, asOfLines }
+                summaryOptions
             );
-            await upsertDailySnapshot(
-                { ...scope, businessUnitId },
+            const topUpAgg = await fetchTopUpSnapshotAgg(
+                item.scope.accountId,
+                snapshotDate,
+                item.scope.businessUnitId,
+                options?.hasTopUpPolicies
+            );
+            return {
+                accountId: item.scope.accountId,
+                policyId: item.scope.policyId,
+                businessUnitId: item.scope.businessUnitId,
+                snapshotDate,
                 summary,
-                snapshotDate
-            );
-            scopesProcessed++;
+                topUpCoverTotalAmount: topUpAgg.topUpCoverTotalAmount,
+                customersWithActiveTopUpCount:
+                    topUpAgg.customersWithActiveTopUpCount,
+                topUpExpiringCustomerCount: topUpAgg.topUpExpiringCustomerCount,
+            } satisfies CreditDashboardDailySnapshotUpsertRow;
         }
-    }
+    );
 
-    return scopesProcessed;
+    await batchUpsertCreditDashboardDailySnapshotRows(computed);
+
+    return workItems.length;
 }
 
 type TopUpSnapshotAgg = {
@@ -205,10 +267,12 @@ async function listActiveBusinessUnitIds(accountId: number): Promise<number[]> {
 async function fetchTopUpSnapshotAgg(
     accountId: number,
     snapshotDate: Date,
-    businessUnitId?: number | null
+    businessUnitId?: number | null,
+    accountHasTopUp?: boolean
 ): Promise<TopUpSnapshotAgg> {
-    const accountHasTopUp = await hasTopUpPolicies(accountId);
-    if (!accountHasTopUp) {
+    const hasTopUp =
+        accountHasTopUp ?? (await hasTopUpPolicies(accountId));
+    if (!hasTopUp) {
         return {
             topUpCoverTotalAmount: 0,
             customersWithActiveTopUpCount: 0,
@@ -263,122 +327,6 @@ async function fetchTopUpSnapshotAgg(
     };
 }
 
-async function upsertDailySnapshot(
-    scope: SnapshotScope,
-    summary: CreditDashboardSummary,
-    snapshotDate: Date
-) {
-    const topUpAgg = await fetchTopUpSnapshotAgg(
-        scope.accountId,
-        snapshotDate,
-        scope.businessUnitId
-    );
-
-    await prisma.$executeRaw`
-        INSERT INTO "CreditDashboardDailySnapshot" (
-            account_id,
-            policy_id,
-            business_unit_id,
-            snapshot_date,
-            health_index,
-            total_receivables,
-            compliant_exposure,
-            at_risk_exposure,
-            policy_risk_exposure,
-            policy_risk_exposure_customer_count,
-            gross_risk_exposure,
-            overdue_block_customer_count,
-            overdue_block_total_outstanding,
-            capacity_gap_total_amount,
-            capacity_gap_customer_over_limit_count,
-            terms_breach_invoice_count,
-            terms_breach_total_amount,
-            terms_breach_count_by_reason,
-            without_policy_customer_count,
-            without_policy_total_amount,
-            reporting_countdown_invoice_count,
-            reporting_countdown_total_amount,
-            reporting_countdown_window_days,
-            limit_warnings_customer_count,
-            limit_warnings_total_amount,
-            limit_warnings_threshold_pct,
-            limit_warnings_score_warn_days,
-            account_currency,
-            top_up_cover_total_amount,
-            customers_with_active_top_up_count,
-            top_up_expiring_customer_count
-        )
-        VALUES (
-            ${scope.accountId},
-            ${scope.policyId},
-            ${scope.businessUnitId},
-            ${snapshotDate},
-            ${summary.healthIndex},
-            ${summary.totalReceivables},
-            ${summary.compliantExposure},
-            ${summary.atRiskExposure},
-            ${summary.policyRiskExposure},
-            ${summary.policyRiskExposureCustomerCount},
-            ${summary.grossRiskExposure},
-            ${summary.overdueBlockCustomerCount},
-            ${summary.overdueBlockTotalOutstanding},
-            ${summary.capacityGap.totalAmount},
-            ${summary.capacityGap.customerOverLimitCount},
-            ${summary.termsBreach.invoiceCount},
-            ${summary.termsBreach.totalAmount},
-            ${JSON.stringify(summary.termsBreach.countByReason)}::jsonb,
-            ${summary.withoutPolicy.customerCount},
-            ${summary.withoutPolicy.totalAmount},
-            ${summary.reportingCountdown.invoiceCount},
-            ${summary.reportingCountdown.totalAmount},
-            ${summary.reportingCountdown.windowDays},
-            ${summary.limitWarnings.customerCount},
-            ${summary.limitWarnings.totalAmount},
-            ${summary.limitWarnings.thresholdPct},
-            ${summary.limitWarnings.scoreWarnDays},
-            ${summary.accountCurrency},
-            ${topUpAgg.topUpCoverTotalAmount},
-            ${topUpAgg.customersWithActiveTopUpCount},
-            ${topUpAgg.topUpExpiringCustomerCount}
-        )
-        ON CONFLICT (
-            account_id,
-            (COALESCE(policy_id, 0)),
-            (COALESCE(business_unit_id, 0)),
-            snapshot_date
-        )
-        DO UPDATE SET
-            health_index = EXCLUDED.health_index,
-            total_receivables = EXCLUDED.total_receivables,
-            compliant_exposure = EXCLUDED.compliant_exposure,
-            at_risk_exposure = EXCLUDED.at_risk_exposure,
-            policy_risk_exposure = EXCLUDED.policy_risk_exposure,
-            policy_risk_exposure_customer_count = EXCLUDED.policy_risk_exposure_customer_count,
-            gross_risk_exposure = EXCLUDED.gross_risk_exposure,
-            overdue_block_customer_count = EXCLUDED.overdue_block_customer_count,
-            overdue_block_total_outstanding = EXCLUDED.overdue_block_total_outstanding,
-            capacity_gap_total_amount = EXCLUDED.capacity_gap_total_amount,
-            capacity_gap_customer_over_limit_count = EXCLUDED.capacity_gap_customer_over_limit_count,
-            terms_breach_invoice_count = EXCLUDED.terms_breach_invoice_count,
-            terms_breach_total_amount = EXCLUDED.terms_breach_total_amount,
-            terms_breach_count_by_reason = EXCLUDED.terms_breach_count_by_reason,
-            without_policy_customer_count = EXCLUDED.without_policy_customer_count,
-            without_policy_total_amount = EXCLUDED.without_policy_total_amount,
-            reporting_countdown_invoice_count = EXCLUDED.reporting_countdown_invoice_count,
-            reporting_countdown_total_amount = EXCLUDED.reporting_countdown_total_amount,
-            reporting_countdown_window_days = EXCLUDED.reporting_countdown_window_days,
-            limit_warnings_customer_count = EXCLUDED.limit_warnings_customer_count,
-            limit_warnings_total_amount = EXCLUDED.limit_warnings_total_amount,
-            limit_warnings_threshold_pct = EXCLUDED.limit_warnings_threshold_pct,
-            limit_warnings_score_warn_days = EXCLUDED.limit_warnings_score_warn_days,
-            account_currency = EXCLUDED.account_currency,
-            top_up_cover_total_amount = EXCLUDED.top_up_cover_total_amount,
-            customers_with_active_top_up_count = EXCLUDED.customers_with_active_top_up_count,
-            top_up_expiring_customer_count = EXCLUDED.top_up_expiring_customer_count,
-            modified_at = NOW()
-    `;
-}
-
 /**
  * Full cron mirror for one credit-insurance account: account-wide and per-policy
  * scopes, each repeated for null BU and every active business unit.
@@ -391,19 +339,28 @@ export async function takeCreditDashboardDailySnapshotsForAccount(
         asOfLines?: import("./asOfOpenAr").AsOfOpenInvoiceLine[];
         /** Generate-job only: treat reporting-late as off in this snapshot. */
         ignoreReportingBreach?: boolean;
+        /** Preloaded static inputs for multi-day Generate / drain replay. */
+        runContext?: CreditAsOfBackfillRunContext;
     }
 ): Promise<{ scopesProcessed: number }> {
     const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
-    const accountScopes = await listSnapshotScopesForAccount(
-        accountId,
-        snapshotDate
-    );
+    const runContext = options?.runContext;
+    const accountScopes = runContext
+        ? deriveDashboardSnapshotScopes(runContext, snapshotDate)
+        : await listSnapshotScopesForAccount(accountId, snapshotDate);
     const scopesProcessed = await processDashboardSnapshotsForAccount(
         accountId,
         accountScopes,
         snapshotDate,
         options?.asOfLines,
-        options?.ignoreReportingBreach
+        options?.ignoreReportingBreach,
+        runContext
+            ? {
+                  businessUnitIds: runContext.businessUnitIds,
+                  hasTopUpPolicies: runContext.hasTopUpPolicies,
+                  dashboardAccountSettings: runContext.dashboardAccountSettings,
+              }
+            : undefined
     );
     return { scopesProcessed };
 }

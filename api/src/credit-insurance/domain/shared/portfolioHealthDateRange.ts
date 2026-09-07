@@ -14,10 +14,6 @@ function startOfUtcDayFromYmd(ymd: string): Date {
     return new Date(Date.UTC(year, month - 1, day));
 }
 
-function normalizeDateString(value: Date): string {
-    return value.toISOString().slice(0, 10);
-}
-
 /** Inclusive calendar-day count between YYYY-MM-DD bounds (UTC). */
 export function countInclusiveCalendarDays(fromYmd: string, toYmd: string): number {
     const from = startOfUtcDayFromYmd(fromYmd);
@@ -26,7 +22,7 @@ export function countInclusiveCalendarDays(fromYmd: string, toYmd: string): numb
     return Math.floor(ms / 86_400_000) + 1;
 }
 
-/** Default range: last 30 inclusive UTC calendar days ending today. */
+/** Default range: calendar This Year (Jan 1–Dec 31, UTC year of `todayUtc`). */
 export function defaultPortfolioHealthDateRange(
     todayUtc: Date = new Date(
         Date.UTC(
@@ -36,10 +32,11 @@ export function defaultPortfolioHealthDateRange(
         )
     )
 ): { from: string; to: string } {
-    const to = normalizeDateString(todayUtc);
-    const fromDate = new Date(todayUtc.getTime());
-    fromDate.setUTCDate(fromDate.getUTCDate() - 29);
-    return { from: normalizeDateString(fromDate), to };
+    const year = todayUtc.getUTCFullYear();
+    return {
+        from: `${year}-01-01`,
+        to: `${year}-12-31`,
+    };
 }
 
 export function parsePortfolioHealthDateRange(

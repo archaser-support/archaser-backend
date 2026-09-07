@@ -173,7 +173,7 @@ npm_ci_low_memory() {
     # Ignore scripts so prisma/husky do not spawn extra Node during peak install.
     # Prisma generate still runs later in this script.
     NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm ci --no-audit --no-fund --maxsockets 1 --ignore-scripts
+        npm ci --include=dev --no-audit --no-fund --maxsockets 1 --ignore-scripts
 }
 
 ENVIRONMENT=""
@@ -238,7 +238,9 @@ if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
 fi
 
 if [[ -z "$APP_DIR" ]]; then
-    if [[ "$ENVIRONMENT" == "staging" ]]; then
+    if [[ -f "$(pwd)/docker-compose.backend.$ENVIRONMENT.yml" || -f "$(pwd)/backend/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
+        APP_DIR="$(pwd)"
+    elif [[ "$ENVIRONMENT" == "staging" ]]; then
         APP_DIR="/home/ubuntu/api"
     else
         APP_DIR="/home/ubuntu/production"
