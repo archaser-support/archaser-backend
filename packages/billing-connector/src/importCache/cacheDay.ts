@@ -105,6 +105,17 @@ export function parseUseCachedImport(raw: unknown): ImportCacheEntityType[] {
 }
 
 /**
+ * Normalize Start `use_cached_execution_id`. Empty / non-string → null.
+ */
+export function parseUseCachedExecutionId(raw: unknown): string | null {
+    if (typeof raw !== "string") {
+        return null;
+    }
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
  * Split rows into chunks that stay under `maxBytes` when BSON-serialized.
  * Empty input yields one empty chunk so same-day replace still records a run.
  */

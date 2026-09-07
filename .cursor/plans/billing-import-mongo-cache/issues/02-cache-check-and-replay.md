@@ -6,6 +6,8 @@
 **User stories:** 6, 7, 8, 9, 12, 18, 19, 22, 24, 26
 **PRD:** `.cursor/plans/billing-import-mongo-cache.prd.md`
 
+> **Historical (v1).** Per-entity same-day cache-check / `use_cached_import` only is extended by `04-multi-run-cache-picker.md` (`runs[]` + `use_cached_execution_id`).
+
 ## What to build
 
 Expose GET cache-check for manual Start and extend Start sync so `use_cached_import: ImportType[]` loads those entities from Mongo (skip ERP pull) and still imports into Postgres. Entities not listed fetch from the ERP as today. Cron never reads cache. `clear_before_import` remains independent of cache. Missing cache for a requested entity fails clearly.

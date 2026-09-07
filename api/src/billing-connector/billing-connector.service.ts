@@ -70,11 +70,12 @@ import {
     resolveSyncErrorType,
     parseClearBeforeImport,
     parseCustomerIdForClearBeforeImport,
+    parseUseCachedExecutionId,
     parseUseCachedImport,
     resolveAccountCustomerById,
     searchAccountCustomers,
-    findSameDayCaches,
-    loadSameDayImportCachesForReplay,
+    findSameDayCacheRuns,
+    loadImportCachesForReplay,
     normalizeImportCacheCustomerScope,
     resolveImportCacheDay,
     DEFAULT_IMPORT_CACHE_TIME_ZONE,
@@ -1136,11 +1137,21 @@ export class BillingConnectorApiService {
         }
 
         const useCachedImport = parseUseCachedImport(body?.use_cached_import);
+        const useCachedExecutionId = parseUseCachedExecutionId(
+            body?.use_cached_execution_id
+        );
         if (useCachedImport.length > 0) {
+            if (!useCachedExecutionId) {
+                throw new BadRequestException({
+                    error: "use_cached_execution_id is required when use_cached_import is set",
+                    code: "IMPORT_CACHE_EXECUTION_ID_REQUIRED",
+                });
+            }
             const syncMode =
                 mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
-            const loaded = await loadSameDayImportCachesForReplay({
+            const loaded = await loadImportCachesForReplay({
                 accountId,
+                executionId: useCachedExecutionId,
                 syncMode,
                 importTypes: useCachedImport,
                 customerScope: customerScopeForCache,
@@ -1148,11 +1159,12 @@ export class BillingConnectorApiService {
             });
             if (!loaded.ok) {
                 throw new BadRequestException({
-                    error: `No same-day import cache for: ${loaded.missing.join(", ")} (day=${loaded.cacheDay}, scope=${loaded.customerScope})`,
+                    error: `No import cache for execution ${useCachedExecutionId}: ${loaded.missing.join(", ")} (day=${loaded.cacheDay}, scope=${loaded.customerScope})`,
                     code: "IMPORT_CACHE_NOT_FOUND",
                     missing: loaded.missing,
                     cache_day: loaded.cacheDay,
                     customer_scope: loaded.customerScope,
+                    execution_id: useCachedExecutionId,
                 });
             }
         }
@@ -1238,6 +1250,8 @@ export class BillingConnectorApiService {
             clearBeforeImport,
             customerId,
             useCachedImport,
+            useCachedExecutionId:
+                useCachedImport.length > 0 ? useCachedExecutionId : null,
         });
 
         return {
@@ -1386,6 +1400,7 @@ export class BillingConnectorApiService {
         clearBeforeImport?: ClearBeforeImportEntity[];
         customerId?: number | null;
         useCachedImport?: ImportCacheEntityType[];
+        useCachedExecutionId?: string | null;
     }) {
         const {
             accountId,
@@ -1398,6 +1413,7 @@ export class BillingConnectorApiService {
             clearBeforeImport,
             customerId,
             useCachedImport,
+            useCachedExecutionId,
         } = params;
         try {
             const heartbeat = createSyncProgressHeartbeat(executionId);
@@ -1413,7 +1429,12 @@ export class BillingConnectorApiService {
                     : {}),
                 ...(customerId != null ? { customerId } : {}),
                 ...(useCachedImport?.length
-                    ? { useCachedImport }
+                    ? {
+                          useCachedImport,
+                          ...(useCachedExecutionId
+                              ? { useCachedExecutionId }
+                              : {}),
+                      }
                     : {}),
                 onLog,
                 ...this.buildPostIngestDeferOptions(accountId, mode),
@@ -1796,51 +1817,29 @@ export class BillingConnectorApiService {
                 ? connector.time_zone.trim()
                 : null;
         const cacheDay = resolveImportCacheDay(new Date(), timeZone);
-        const available = await findSameDayCaches({
+        const runs = await findSameDayCacheRuns({
             accountId,
             syncMode,
             customerScope,
             timeZone,
         });
-        const byType = new Map(
-            available.map((entry) => [entry.import_type, entry])
-        );
-        const entityTypes: ImportCacheEntityType[] = [
-            "Customer",
-            "Contact",
-            "Invoice",
-            "Payment",
-        ];
         return {
             sync_mode: syncMode,
             cache_day: cacheDay,
             customer_scope: customerScope,
             time_zone: timeZone ?? DEFAULT_IMPORT_CACHE_TIME_ZONE,
-            entities: entityTypes.map((importType) => {
-                const hit = byType.get(importType);
-                if (!hit) {
-                    return {
-                        import_type: importType,
-                        available: false as const,
-                        sync_mode: syncMode,
-                        cache_day: cacheDay,
-                        customer_scope: customerScope,
-                        row_count: 0,
-                        execution_id: null,
-                        created_at: null,
-                    };
-                }
-                return {
-                    import_type: hit.import_type,
-                    available: true as const,
-                    sync_mode: hit.sync_mode,
-                    cache_day: hit.cache_day,
-                    customer_scope: hit.customer_scope,
-                    row_count: hit.row_count,
-                    execution_id: hit.execution_id,
-                    created_at: hit.created_at.toISOString(),
-                };
-            }),
+            runs: runs.map((run) => ({
+                execution_id: run.execution_id,
+                created_at: run.created_at.toISOString(),
+                sync_mode: run.sync_mode,
+                cache_day: run.cache_day,
+                customer_scope: run.customer_scope,
+                entities: run.entities.map((entity) => ({
+                    import_type: entity.import_type,
+                    row_count: entity.row_count,
+                    available: entity.available,
+                })),
+            })),
         };
     }
 

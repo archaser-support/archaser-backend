@@ -17,8 +17,16 @@ export const IMPORT_CACHE_MAX_CHUNK_BYTES = 10 * 1024 * 1024;
 
 export const IMPORT_CACHE_TTL_SECONDS = 180 * 24 * 60 * 60;
 
+export const IMPORT_CACHE_ENTITY_TYPES: ImportCacheEntityType[] = [
+    "Customer",
+    "Contact",
+    "Invoice",
+    "Payment",
+];
+
 export interface ImportCacheKey {
     accountId: number;
+    executionId: string;
     importType: ImportCacheEntityType;
     syncMode: ImportCacheSyncMode;
     cacheDay: string;
@@ -28,7 +36,6 @@ export interface ImportCacheKey {
 export interface SaveEntityImportCacheInput extends ImportCacheKey {
     connectorId: number;
     provider: string;
-    executionId: string | null;
     rows: Record<string, unknown>[];
 }
 
@@ -40,7 +47,7 @@ export interface ImportCacheChunkMeta {
     sync_mode: ImportCacheSyncMode;
     cache_day: string;
     customer_scope: string;
-    execution_id: string | null;
+    execution_id: string;
     row_count: number;
     chunk_index: number;
     chunk_count: number;
@@ -51,6 +58,7 @@ export interface ImportCacheDocument extends ImportCacheChunkMeta {
     rows: Record<string, unknown>[];
 }
 
+/** @deprecated Prefer SameDayCacheRun — v1 per-entity summary. */
 export interface SameDayCacheSummary {
     import_type: ImportCacheEntityType;
     sync_mode: ImportCacheSyncMode;
@@ -60,4 +68,20 @@ export interface SameDayCacheSummary {
     execution_id: string | null;
     created_at: Date;
     available: true;
+}
+
+export interface SameDayCacheRunEntity {
+    import_type: ImportCacheEntityType;
+    row_count: number;
+    available: boolean;
+}
+
+/** One successful sync run’s backups for today (may be incomplete). */
+export interface SameDayCacheRun {
+    execution_id: string;
+    created_at: Date;
+    sync_mode: ImportCacheSyncMode;
+    cache_day: string;
+    customer_scope: string;
+    entities: SameDayCacheRunEntity[];
 }

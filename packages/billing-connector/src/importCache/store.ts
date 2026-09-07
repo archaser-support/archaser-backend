@@ -1,22 +1,26 @@
 import type {
     ImportCacheDocument,
     ImportCacheKey,
-    SameDayCacheSummary,
+    SameDayCacheRun,
     SaveEntityImportCacheInput,
 } from "./types";
 
 export interface ImportCacheStore {
-    replace(input: SaveEntityImportCacheInput): Promise<{
+    /**
+     * Persist (or re-persist) one entity backup for an execution.
+     * Does not delete other executions’ same-day documents.
+     */
+    save(input: SaveEntityImportCacheInput): Promise<{
         rowCount: number;
         chunkCount: number;
     }>;
     load(key: ImportCacheKey): Promise<ImportCacheDocument[]>;
-    listSameDay(input: {
+    listSameDayRuns(input: {
         accountId: number;
         syncMode: ImportCacheKey["syncMode"];
         cacheDay: string;
         customerScope: string;
-    }): Promise<SameDayCacheSummary[]>;
+    }): Promise<SameDayCacheRun[]>;
 }
 
-export type { ImportCacheDocument, ImportCacheKey, SameDayCacheSummary };
+export type { ImportCacheDocument, ImportCacheKey, SameDayCacheRun };

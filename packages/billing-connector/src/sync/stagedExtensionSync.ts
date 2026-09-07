@@ -20,7 +20,7 @@ import {
     normalizeImportCacheCustomerScope,
     resolveImportCacheDay,
     rowsEnteringImport,
-    trySaveEntityImportCache,
+    saveEntityImportCacheOrThrow,
     type ImportCacheSyncMode,
 } from "../importCache";
 import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
@@ -495,7 +495,11 @@ export async function runStagedExtensionSync(
             return;
         }
         const rows = importCacheByEntity.get(entityType) ?? [];
-        await trySaveEntityImportCache(
+        // Track that we attempted a flush so zero-row successes still write.
+        if (!importCacheByEntity.has(entityType)) {
+            importCacheByEntity.set(entityType, rows);
+        }
+        await saveEntityImportCacheOrThrow(
             {
                 accountId: options.accountId,
                 connectorId: options.connectorId,
@@ -721,7 +725,30 @@ export async function runStagedExtensionSync(
         }
     };
 
-    for (const window of options.windows) {
+    const flushEntityImportCacheOrAbort = async (
+        entityType: ExtensionEntityType
+    ): Promise<RunStagedExtensionSyncResult | null> => {
+        try {
+            await flushEntityImportCache(entityType);
+            return null;
+        } catch (err) {
+            const message =
+                err instanceof Error ? err.message : String(err);
+            log(`Import cache save failed for ${entityType}: ${message}`);
+            stats.importErrors += 1;
+            return finishWithBalances({
+                ok: false,
+                windows,
+                previewBatch,
+                stats: resultStats(),
+                error: `Import cache save failed for ${entityType}: ${message}`,
+            });
+        }
+    };
+
+    for (let windowIndex = 0; windowIndex < options.windows.length; windowIndex += 1) {
+        const window = options.windows[windowIndex]!;
+        const isLastWindow = windowIndex === options.windows.length - 1;
         log(
             window.start || window.end
                 ? `Window ${window.start?.toISOString() ?? "start"} → ${window.end?.toISOString() ?? "now"}`
@@ -923,7 +950,12 @@ export async function runStagedExtensionSync(
                     });
                 }
 
-                await flushEntityImportCache(entityType);
+                const cacheAbort = await flushEntityImportCacheOrAbort(
+                    entityType
+                );
+                if (cacheAbort) {
+                    return cacheAbort;
+                }
                 continue;
             }
 
@@ -1616,9 +1648,15 @@ export async function runStagedExtensionSync(
                 });
             }
 
-            // Entity finished this window without cancel — persist/replace Mongo
-            // import cache (accumulates across windows for multi-window runs).
-            await flushEntityImportCache(entityType);
+            // Write once after the entity finishes all windows for this run.
+            if (isLastWindow) {
+                const cacheAbort = await flushEntityImportCacheOrAbort(
+                    entityType
+                );
+                if (cacheAbort) {
+                    return cacheAbort;
+                }
+            }
         }
 
         windows.push({

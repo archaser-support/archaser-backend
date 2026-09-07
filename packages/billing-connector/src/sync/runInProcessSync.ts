@@ -19,12 +19,12 @@ import {
     type ImportEntityType,
 } from "../import/entityImporter";
 import {
-    loadSameDayImportCachesForReplay,
+    loadImportCachesForReplay,
     normalizeImportCacheCustomerScope,
     parseUseCachedImport,
     resolveImportCacheDay,
     rowsEnteringImport,
-    trySaveEntityImportCache,
+    saveEntityImportCacheOrThrow,
     type ImportCacheEntityType,
     type ImportCacheSyncMode,
 } from "../importCache";
@@ -94,10 +94,16 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
      */
     customerId?: number | null;
     /**
-     * Manual Start only: entity types to load from same-day Mongo import cache
+     * Manual Start only: entity types to load from Mongo import cache
      * (skip ERP pull). Cron / scheduled sync must omit this.
+     * Requires `useCachedExecutionId` when non-empty.
      */
     useCachedImport?: ImportCacheEntityType[];
+    /**
+     * Manual Start only: execution_id of the chosen same-day backup run.
+     * Required when `useCachedImport` is non-empty.
+     */
+    useCachedExecutionId?: string | null;
     /** Override window plan (multi-window backfills / tests). */
     windows?: ExtensionSyncWindow[];
     /** Injected provider (skips live Priority client construction). */
@@ -708,14 +714,34 @@ async function runInProcessSyncBody(
         const useCachedImport = !dryRun
             ? parseUseCachedImport(options.useCachedImport)
             : [];
+        const useCachedExecutionId =
+            typeof options.useCachedExecutionId === "string" &&
+            options.useCachedExecutionId.trim().length > 0
+                ? options.useCachedExecutionId.trim()
+                : null;
         let cachedRowsByEntity:
             | Map<ImportCacheEntityType, Record<string, unknown>[]>
             | undefined;
         if (useCachedImport.length > 0) {
+            if (!useCachedExecutionId) {
+                log(
+                    "Import cache requested without use_cached_execution_id"
+                );
+                return {
+                    ok: false,
+                    accountId,
+                    provider: connector.provider,
+                    stats,
+                    message:
+                        "use_cached_execution_id is required when use_cached_import is set",
+                    error: "IMPORT_CACHE_EXECUTION_ID_REQUIRED",
+                };
+            }
             const cacheSyncMode: ImportCacheSyncMode =
                 options.mode === "incremental" ? "INCREMENTAL" : "BACKFILL";
-            const loaded = await loadSameDayImportCachesForReplay({
+            const loaded = await loadImportCachesForReplay({
                 accountId,
+                executionId: useCachedExecutionId,
                 syncMode: cacheSyncMode,
                 importTypes: useCachedImport,
                 customerScope: normalizeImportCacheCustomerScope(
@@ -731,13 +757,13 @@ async function runInProcessSyncBody(
                     accountId,
                     provider: connector.provider,
                     stats,
-                    message: `No same-day import cache for: ${missing}`,
+                    message: `No import cache for execution ${useCachedExecutionId}: ${missing}`,
                     error: "IMPORT_CACHE_NOT_FOUND",
                 };
             }
             cachedRowsByEntity = loaded.rowsByEntity;
             log(
-                `Loaded import cache for ${useCachedImport.join(", ")} (day=${loaded.cacheDay} scope=${loaded.customerScope})`
+                `Loaded import cache for ${useCachedImport.join(", ")} (execution=${loaded.executionId} day=${loaded.cacheDay} scope=${loaded.customerScope})`
             );
         }
         const enabledNeedErp = enabled.filter(
@@ -1265,25 +1291,48 @@ async function runInProcessSyncBody(
                         options.mode === "incremental"
                             ? "INCREMENTAL"
                             : "BACKFILL";
-                    await trySaveEntityImportCache(
-                        {
+                    try {
+                        await saveEntityImportCacheOrThrow(
+                            {
+                                accountId,
+                                connectorId: connector.id,
+                                provider: connector.provider,
+                                importType: entityType,
+                                syncMode: cacheSyncMode,
+                                cacheDay: resolveImportCacheDay(
+                                    new Date(),
+                                    connector.time_zone
+                                ),
+                                customerScope:
+                                    normalizeImportCacheCustomerScope(
+                                        runtimeCustomerNumber
+                                    ),
+                                executionId: options.executionId ?? null,
+                                rows: rowsEnteringImport(
+                                    cachedRows,
+                                    importResult
+                                ),
+                            },
+                            log
+                        );
+                    } catch (cacheErr) {
+                        const message =
+                            cacheErr instanceof Error
+                                ? cacheErr.message
+                                : String(cacheErr);
+                        log(
+                            `Import cache save failed for ${entityType}: ${message}`
+                        );
+                        stats.importErrors += 1;
+                        return {
+                            ok: false,
                             accountId,
-                            connectorId: connector.id,
                             provider: connector.provider,
-                            importType: entityType,
-                            syncMode: cacheSyncMode,
-                            cacheDay: resolveImportCacheDay(
-                                new Date(),
-                                connector.time_zone
-                            ),
-                            customerScope: normalizeImportCacheCustomerScope(
-                                runtimeCustomerNumber
-                            ),
-                            executionId: options.executionId ?? null,
-                            rows: rowsEnteringImport(cachedRows, importResult),
-                        },
-                        log
-                    );
+                            stats,
+                            message: `Import cache save failed for ${entityType}: ${message}`,
+                            error: "IMPORT_CACHE_SAVE_FAILED",
+                        };
+                    }
                     continue;
                 }
 
@@ -1421,25 +1470,44 @@ async function runInProcessSyncBody(
                     options.mode === "incremental"
                         ? "INCREMENTAL"
                         : "BACKFILL";
-                await trySaveEntityImportCache(
-                    {
+                try {
+                    await saveEntityImportCacheOrThrow(
+                        {
+                            accountId,
+                            connectorId: connector.id,
+                            provider: connector.provider,
+                            importType: entityType,
+                            syncMode: cacheSyncMode,
+                            cacheDay: resolveImportCacheDay(
+                                new Date(),
+                                connector.time_zone
+                            ),
+                            customerScope: normalizeImportCacheCustomerScope(
+                                runtimeCustomerNumber
+                            ),
+                            executionId: options.executionId ?? null,
+                            rows: rowsEnteringImport(forCache, importResult),
+                        },
+                        log
+                    );
+                } catch (cacheErr) {
+                    const message =
+                        cacheErr instanceof Error
+                            ? cacheErr.message
+                            : String(cacheErr);
+                    log(
+                        `Import cache save failed for ${entityType}: ${message}`
+                    );
+                    stats.importErrors += 1;
+                    return {
+                        ok: false,
                         accountId,
-                        connectorId: connector.id,
                         provider: connector.provider,
-                        importType: entityType,
-                        syncMode: cacheSyncMode,
-                        cacheDay: resolveImportCacheDay(
-                            new Date(),
-                            connector.time_zone
-                        ),
-                        customerScope: normalizeImportCacheCustomerScope(
-                            runtimeCustomerNumber
-                        ),
-                        executionId: options.executionId ?? null,
-                        rows: rowsEnteringImport(forCache, importResult),
-                    },
-                    log
-                );
+                        stats,
+                        message: `Import cache save failed for ${entityType}: ${message}`,
+                        error: "IMPORT_CACHE_SAVE_FAILED",
+                    };
+                }
             } catch (err) {
                 const message =
                     err instanceof Error ? err.message : "Unknown error";
