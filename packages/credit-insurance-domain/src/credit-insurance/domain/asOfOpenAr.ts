@@ -48,8 +48,10 @@ export function preferAmountPair(pair: AsOfAmountPair): number {
 export const ASOF_OPEN_AMOUNT_TOLERANCE = 0.2;
 
 /**
- * Payment-ledger open amount as of day D: max(0, original − payments on/before D),
- * with sub-tolerance residue treated as fully paid.
+ * Payment-ledger open amount as of day D: original − payments on/before D.
+ * Near-zero residue (both sides of tolerance) is treated as fully paid — same
+ * two-sided rule as live credit-note paid detection — so open credit notes
+ * (negative outstanding) stay negative and reduce customer / dashboard AR.
  */
 export function computeAsOfOpenAmount(
     original: number,
@@ -57,7 +59,10 @@ export function computeAsOfOpenAmount(
     tolerance: number = ASOF_OPEN_AMOUNT_TOLERANCE
 ): number {
     const open = Number(original) - Number(paymentsOnOrBeforeAsOf);
-    if (!Number.isFinite(open) || open <= tolerance) {
+    if (!Number.isFinite(open)) {
+        return 0;
+    }
+    if (open >= -tolerance && open <= tolerance) {
         return 0;
     }
     return open;
@@ -365,15 +370,17 @@ export function wasAsOfInvoiceOpenAt(
         amount: line.paymentsOnOrBeforeAsOf,
         customerAmount: line.paymentsCustomerOnOrBeforeAsOf,
     });
-    if (computeAsOfOpenAmount(
+    const openAsOfLoad = computeAsOfOpenAmount(
         original,
         paidAsOfLoad,
         line.openAmountTolerance
-    ) > 0) {
+    );
+    if (openAsOfLoad !== 0) {
         return true;
     }
     if (paidAsOfLoad <= 0) {
-        return original > 0;
+        const tolerance = line.openAmountTolerance ?? ASOF_OPEN_AMOUNT_TOLERANCE;
+        return Math.abs(original) > tolerance;
     }
     if (!line.lastPaymentDate) {
         return false;
@@ -573,7 +580,9 @@ export function computeAsOfOpenInvoiceLine(
         }),
         tolerance
     );
-    if (openAmount <= 0) {
+    // Zero after tolerance = closed. Non-zero includes open credit notes
+    // (negative), matching live Due/Overdue outstanding_debt.
+    if (openAmount === 0) {
         return null;
     }
     const openCustomerAmount = computeAsOfOpenAmount(
@@ -658,7 +667,8 @@ function mapSqlRow(
 
 /**
  * Load invoice + payment-ledger rows that could be open as of `asOfDate`.
- * Callers filter to open &gt; 0 via {@link computeAsOfOpenInvoiceLine}.
+ * Callers filter to non-zero open via {@link computeAsOfOpenInvoiceLine}
+ * (positive AR and open credit notes).
  */
 export async function loadAsOfOpenInvoiceCandidates(
     accountId: number,
