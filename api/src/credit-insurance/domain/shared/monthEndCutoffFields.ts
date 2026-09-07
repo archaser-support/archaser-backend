@@ -1,22 +1,24 @@
 export const DAY_OF_MONTH_MIN = 1;
 export const DAY_OF_MONTH_MAX = 31;
+export const SUBSTITUTE_EXTRA_DAYS_MIN = 1;
+export const SUBSTITUTE_EXTRA_DAYS_MAX = 365;
 
 export type MonthEndCutoffFields = {
-    mep_cutoff_day_of_month: number | null;
-    mep_substitute_day_of_month: number | null;
-    reporting_cutoff_day_of_month: number | null;
-    reporting_substitute_day_of_month: number | null;
-    payment_term_cutoff_day_of_month: number | null;
-    payment_term_substitute_day_of_month: number | null;
+    mep_cutoff_day: number | null;
+    mep_substitute_extra_days: number | null;
+    reporting_cutoff_day: number | null;
+    reporting_substitute_extra_days: number | null;
+    payment_term_cutoff_day: number | null;
+    payment_term_substitute_day: number | null;
 };
 
 export const NULL_MONTH_END_CUTOFF_FIELDS: MonthEndCutoffFields = {
-    mep_cutoff_day_of_month: null,
-    mep_substitute_day_of_month: null,
-    reporting_cutoff_day_of_month: null,
-    reporting_substitute_day_of_month: null,
-    payment_term_cutoff_day_of_month: null,
-    payment_term_substitute_day_of_month: null,
+    mep_cutoff_day: null,
+    mep_substitute_extra_days: null,
+    reporting_cutoff_day: null,
+    reporting_substitute_extra_days: null,
+    payment_term_cutoff_day: null,
+    payment_term_substitute_day: null,
 };
 
 export type MonthEndCutoffValidationErrorCode =
@@ -33,9 +35,11 @@ function isBlankValue(value: unknown): boolean {
     return value === null || value === undefined || value === "";
 }
 
-export function parseOptionalDayOfMonth(
+function parseOptionalBoundedInteger(
     value: unknown,
-    fieldName: string
+    fieldName: string,
+    min: number,
+    max: number
 ): number | null {
     if (isBlankValue(value)) {
         return null;
@@ -44,12 +48,34 @@ export function parseOptionalDayOfMonth(
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
         throw new Error(`${fieldName} must be a valid integer`);
     }
-    if (parsed < DAY_OF_MONTH_MIN || parsed > DAY_OF_MONTH_MAX) {
-        throw new Error(
-            `${fieldName} must be between ${DAY_OF_MONTH_MIN} and ${DAY_OF_MONTH_MAX}`
-        );
+    if (parsed < min || parsed > max) {
+        throw new Error(`${fieldName} must be between ${min} and ${max}`);
     }
     return parsed;
+}
+
+export function parseOptionalDayOfMonth(
+    value: unknown,
+    fieldName: string
+): number | null {
+    return parseOptionalBoundedInteger(
+        value,
+        fieldName,
+        DAY_OF_MONTH_MIN,
+        DAY_OF_MONTH_MAX
+    );
+}
+
+export function parseOptionalSubstituteExtraDays(
+    value: unknown,
+    fieldName: string
+): number | null {
+    return parseOptionalBoundedInteger(
+        value,
+        fieldName,
+        SUBSTITUTE_EXTRA_DAYS_MIN,
+        SUBSTITUTE_EXTRA_DAYS_MAX
+    );
 }
 
 export function validateMonthEndCutoffPair(
@@ -72,59 +98,61 @@ export function validateMonthEndCutoffPair(
 export function parseMonthEndCutoffFields(
     body: Record<string, unknown>
 ): MonthEndCutoffFields {
-    const mep_cutoff_day_of_month = parseOptionalDayOfMonth(
-        body.mep_cutoff_day_of_month,
-        "mep_cutoff_day_of_month"
+    const mep_cutoff_day = parseOptionalDayOfMonth(
+        body.mep_cutoff_day,
+        "mep_cutoff_day"
     );
-    const mep_substitute_day_of_month = parseOptionalDayOfMonth(
-        body.mep_substitute_day_of_month,
-        "mep_substitute_day_of_month"
+    const mep_substitute_extra_days = parseOptionalSubstituteExtraDays(
+        body.mep_substitute_extra_days,
+        "mep_substitute_extra_days"
     );
-    const reporting_cutoff_day_of_month = parseOptionalDayOfMonth(
-        body.reporting_cutoff_day_of_month,
-        "reporting_cutoff_day_of_month"
+    const reporting_cutoff_day = parseOptionalDayOfMonth(
+        body.reporting_cutoff_day,
+        "reporting_cutoff_day"
     );
-    const reporting_substitute_day_of_month = parseOptionalDayOfMonth(
-        body.reporting_substitute_day_of_month,
-        "reporting_substitute_day_of_month"
+    const reporting_substitute_extra_days = parseOptionalSubstituteExtraDays(
+        body.reporting_substitute_extra_days,
+        "reporting_substitute_extra_days"
     );
-    const payment_term_cutoff_day_of_month = parseOptionalDayOfMonth(
-        body.payment_term_cutoff_day_of_month,
-        "payment_term_cutoff_day_of_month"
+    const payment_term_cutoff_day = parseOptionalDayOfMonth(
+        body.payment_term_cutoff_day,
+        "payment_term_cutoff_day"
     );
-    const payment_term_substitute_day_of_month = parseOptionalDayOfMonth(
-        body.payment_term_substitute_day_of_month,
-        "payment_term_substitute_day_of_month"
+    const payment_term_substitute_day = parseOptionalDayOfMonth(
+        body.payment_term_substitute_day,
+        "payment_term_substitute_day"
     );
 
     validateMonthEndCutoffPair(
-        mep_cutoff_day_of_month,
-        mep_substitute_day_of_month,
+        mep_cutoff_day,
+        mep_substitute_extra_days,
         "MEP"
     );
     validateMonthEndCutoffPair(
-        reporting_cutoff_day_of_month,
-        reporting_substitute_day_of_month,
+        reporting_cutoff_day,
+        reporting_substitute_extra_days,
         "Reporting"
     );
     validateMonthEndCutoffPair(
-        payment_term_cutoff_day_of_month,
-        payment_term_substitute_day_of_month,
+        payment_term_cutoff_day,
+        payment_term_substitute_day,
         "Payment term"
     );
 
     return {
-        mep_cutoff_day_of_month,
-        mep_substitute_day_of_month,
-        reporting_cutoff_day_of_month,
-        reporting_substitute_day_of_month,
-        payment_term_cutoff_day_of_month,
-        payment_term_substitute_day_of_month,
+        mep_cutoff_day,
+        mep_substitute_extra_days,
+        reporting_cutoff_day,
+        reporting_substitute_extra_days,
+        payment_term_cutoff_day,
+        payment_term_substitute_day,
     };
 }
 
-function parseOptionalDayOfMonthFromString(
-    raw: string
+function parseOptionalBoundedIntegerFromString(
+    raw: string,
+    min: number,
+    max: number
 ): { value: number | null; error?: MonthEndCutoffValidationErrorCode } {
     const trimmed = raw.trim();
     if (!trimmed) {
@@ -134,10 +162,30 @@ function parseOptionalDayOfMonthFromString(
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
         return { value: null, error: "invalid_integer" };
     }
-    if (parsed < DAY_OF_MONTH_MIN || parsed > DAY_OF_MONTH_MAX) {
+    if (parsed < min || parsed > max) {
         return { value: null, error: "out_of_range" };
     }
     return { value: parsed };
+}
+
+function parseOptionalDayOfMonthFromString(
+    raw: string
+): { value: number | null; error?: MonthEndCutoffValidationErrorCode } {
+    return parseOptionalBoundedIntegerFromString(
+        raw,
+        DAY_OF_MONTH_MIN,
+        DAY_OF_MONTH_MAX
+    );
+}
+
+function parseOptionalSubstituteExtraDaysFromString(
+    raw: string
+): { value: number | null; error?: MonthEndCutoffValidationErrorCode } {
+    return parseOptionalBoundedIntegerFromString(
+        raw,
+        SUBSTITUTE_EXTRA_DAYS_MIN,
+        SUBSTITUTE_EXTRA_DAYS_MAX
+    );
 }
 
 export function validateMonthEndCutoffFormFields(args: {
@@ -151,13 +199,13 @@ export function validateMonthEndCutoffFormFields(args: {
     const errors: MonthEndCutoffFieldErrors = {};
 
     const mepCutoff = parseOptionalDayOfMonthFromString(args.mepCutoffRaw);
-    const mepSubstitute = parseOptionalDayOfMonthFromString(
+    const mepSubstitute = parseOptionalSubstituteExtraDaysFromString(
         args.mepSubstituteRaw
     );
     const reportingCutoff = parseOptionalDayOfMonthFromString(
         args.reportingCutoffRaw
     );
-    const reportingSubstitute = parseOptionalDayOfMonthFromString(
+    const reportingSubstitute = parseOptionalSubstituteExtraDaysFromString(
         args.reportingSubstituteRaw
     );
     const paymentTermCutoff = parseOptionalDayOfMonthFromString(
@@ -168,79 +216,79 @@ export function validateMonthEndCutoffFormFields(args: {
     );
 
     if (mepCutoff.error) {
-        errors.mep_cutoff_day_of_month = mepCutoff.error;
+        errors.mep_cutoff_day = mepCutoff.error;
     }
     if (mepSubstitute.error) {
-        errors.mep_substitute_day_of_month = mepSubstitute.error;
+        errors.mep_substitute_extra_days = mepSubstitute.error;
     }
     if (reportingCutoff.error) {
-        errors.reporting_cutoff_day_of_month = reportingCutoff.error;
+        errors.reporting_cutoff_day = reportingCutoff.error;
     }
     if (reportingSubstitute.error) {
-        errors.reporting_substitute_day_of_month = reportingSubstitute.error;
+        errors.reporting_substitute_extra_days = reportingSubstitute.error;
     }
     if (paymentTermCutoff.error) {
-        errors.payment_term_cutoff_day_of_month = paymentTermCutoff.error;
+        errors.payment_term_cutoff_day = paymentTermCutoff.error;
     }
     if (paymentTermSubstitute.error) {
-        errors.payment_term_substitute_day_of_month = paymentTermSubstitute.error;
+        errors.payment_term_substitute_day = paymentTermSubstitute.error;
     }
 
     if (
-        !errors.mep_cutoff_day_of_month &&
-        !errors.mep_substitute_day_of_month
+        !errors.mep_cutoff_day &&
+        !errors.mep_substitute_extra_days
     ) {
         if (mepCutoff.value !== null && mepSubstitute.value === null) {
-            errors.mep_substitute_day_of_month = "cutoff_requires_substitute";
+            errors.mep_substitute_extra_days = "cutoff_requires_substitute";
         } else if (mepSubstitute.value !== null && mepCutoff.value === null) {
-            errors.mep_cutoff_day_of_month = "substitute_requires_cutoff";
+            errors.mep_cutoff_day = "substitute_requires_cutoff";
         }
     }
 
     if (
-        !errors.reporting_cutoff_day_of_month &&
-        !errors.reporting_substitute_day_of_month
+        !errors.reporting_cutoff_day &&
+        !errors.reporting_substitute_extra_days
     ) {
         if (
             reportingCutoff.value !== null &&
             reportingSubstitute.value === null
         ) {
-            errors.reporting_substitute_day_of_month =
+            errors.reporting_substitute_extra_days =
                 "cutoff_requires_substitute";
         } else if (
             reportingSubstitute.value !== null &&
             reportingCutoff.value === null
         ) {
-            errors.reporting_cutoff_day_of_month = "substitute_requires_cutoff";
+            errors.reporting_cutoff_day = "substitute_requires_cutoff";
         }
     }
 
     if (
-        !errors.payment_term_cutoff_day_of_month &&
-        !errors.payment_term_substitute_day_of_month
+        !errors.payment_term_cutoff_day &&
+        !errors.payment_term_substitute_day
     ) {
         if (
             paymentTermCutoff.value !== null &&
             paymentTermSubstitute.value === null
         ) {
-            errors.payment_term_substitute_day_of_month =
+            errors.payment_term_substitute_day =
                 "cutoff_requires_substitute";
         } else if (
             paymentTermSubstitute.value !== null &&
             paymentTermCutoff.value === null
         ) {
-            errors.payment_term_cutoff_day_of_month = "substitute_requires_cutoff";
+            errors.payment_term_cutoff_day = "substitute_requires_cutoff";
         }
     }
 
     return {
         fields: {
-            mep_cutoff_day_of_month: mepCutoff.value,
-            mep_substitute_day_of_month: mepSubstitute.value,
-            reporting_cutoff_day_of_month: reportingCutoff.value,
-            reporting_substitute_day_of_month: reportingSubstitute.value,
-            payment_term_cutoff_day_of_month: paymentTermCutoff.value,
-            payment_term_substitute_day_of_month: paymentTermSubstitute.value,
+            mep_cutoff_day: mepCutoff.value,
+            mep_substitute_extra_days: mepSubstitute.value,
+            reporting_cutoff_day: reportingCutoff.value,
+            reporting_substitute_extra_days: reportingSubstitute.value,
+            payment_term_cutoff_day: paymentTermCutoff.value,
+            payment_term_substitute_day: paymentTermSubstitute.value,
         },
         errors,
     };

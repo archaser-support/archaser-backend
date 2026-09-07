@@ -12,6 +12,7 @@
   "dependencies": {
     "@archaser/auth": "*",
     "@archaser/billing-connector": "*",
+    "@archaser/credit-insurance-domain": "*",
     "@archaser/cron-jobs": "*",
     "@archaser/database": "*",
     "@nestjs/common": "^11.1.3",

@@ -1,7 +1,8 @@
 import { invoice_status, Prisma } from "@prisma/client";
 
 import {
-    computeLimitAssessedAmountForNewOpenInvoice,
+    allocateLiveCapacityGapWaterfall,
+    compareInvoicesForLiveCapacityGapWaterfall,
     creditInsurancePrisma as prisma,
     invoiceOutstandingInLimitCurrency,
     loadEffectiveInsuranceForCustomers,
@@ -21,13 +22,10 @@ type OpenInvoiceForRestamp = {
     limit_assessed_amount: Prisma.Decimal | number | null;
 };
 
-function customerPolicyScopeKey(customerId: number, policyId: number): string {
-    return `${customerId}:${policyId}`;
-}
-
 /**
- * Re-stamp `limit_assessed_amount` on open invoices in stable id order so
- * approved limit + top-up waterfall matches import / restamp scripts.
+ * Re-stamp `limit_assessed_amount` on open invoices with the live capacity-gap
+ * waterfall (oldest invoice_date first, current effective limit).
+ * Prefer {@link syncCreditInsuranceGapPipelineForCustomer} in production paths.
  */
 export async function restampCustomerOpenInvoiceLimitAssessment(
     customerId: number,
@@ -55,7 +53,6 @@ export async function restampCustomerOpenInvoiceLimitAssessment(
             amount: true,
             limit_assessed_amount: true,
         },
-        orderBy: [{ policy_id: "asc" }, { id: "asc" }],
     })) as OpenInvoiceForRestamp[];
 
     if (openInvoices.length === 0) {
@@ -75,49 +72,50 @@ export async function restampCustomerOpenInvoiceLimitAssessment(
     }
 
     const limitCurrency = insurance.approved_limit_currency ?? null;
-    const runningOpenAr = new Map<string, number>();
-    let updated = 0;
+    const resolved = await resolveEffectiveApprovedLimit(customerId, {
+        baseApprovedLimit: insurance.approved_limit,
+        baseApprovedLimitCurrency: insurance.approved_limit_currency,
+        parentPrimaryPolicyId: insurance.policy_id,
+        asOfDate: new Date(),
+        dbClient: options?.dbClient,
+    });
+    const effectiveLimit =
+        resolved.effectiveApprovedLimit ?? approvedLimit;
 
-    for (const inv of openInvoices) {
-        if (inv.policy_id == null || inv.customer_id == null) {
+    const sorted = openInvoices
+        .slice()
+        .sort(compareInvoicesForLiveCapacityGapWaterfall);
+
+    const allocations = allocateLiveCapacityGapWaterfall({
+        effectiveLimit,
+        openInvoices: sorted.map((inv) => ({
+            id: inv.id,
+            outstandingInLimitCurrency: Math.max(
+                0,
+                invoiceOutstandingInLimitCurrency({
+                    outstanding_debt: inv.outstanding_debt,
+                    customer_outstanding_debt: inv.customer_outstanding_debt,
+                    amount: inv.amount,
+                    customer_currency: inv.customer_currency,
+                    limit_assessed_currency: limitCurrency,
+                    accountCurrency: options?.accountCurrency ?? null,
+                })
+            ),
+        })),
+    });
+
+    let updated = 0;
+    const assessedAt = new Date();
+    for (const allocation of allocations) {
+        const inv = sorted.find((row) => row.id === allocation.id);
+        if (!inv) {
             continue;
         }
-        const scopeKey = customerPolicyScopeKey(inv.customer_id, inv.policy_id);
-        const openBefore = runningOpenAr.get(scopeKey) ?? 0;
-        const outstanding = Math.max(
-            0,
-            invoiceOutstandingInLimitCurrency({
-                outstanding_debt: inv.outstanding_debt,
-                customer_outstanding_debt: inv.customer_outstanding_debt,
-                amount: inv.amount,
-                customer_currency: inv.customer_currency,
-                limit_assessed_currency: limitCurrency,
-                accountCurrency: options?.accountCurrency ?? null,
-            })
-        );
-
-        const resolved = await resolveEffectiveApprovedLimit(inv.customer_id, {
-            baseApprovedLimit: insurance.approved_limit,
-            baseApprovedLimitCurrency: insurance.approved_limit_currency,
-            parentPrimaryPolicyId: inv.policy_id,
-            asOfDate: inv.invoice_date ?? new Date(),
-            dbClient: options?.dbClient,
-        });
-
-        const limitAssessedAmount = computeLimitAssessedAmountForNewOpenInvoice({
-            approvedLimit,
-            topUpTotal: resolved.topUpTotalInLimitCurrency,
-            openArOnPolicyBeforeInvoice: openBefore,
-            newInvoiceOutstanding: outstanding,
-        });
-
-        runningOpenAr.set(scopeKey, openBefore + outstanding);
-
         const prev =
             inv.limit_assessed_amount != null
                 ? Number(inv.limit_assessed_amount)
                 : null;
-        if (prev === limitAssessedAmount) {
+        if (prev === allocation.limitAssessedAmount) {
             continue;
         }
 
@@ -129,8 +127,10 @@ export async function restampCustomerOpenInvoiceLimitAssessment(
         await dbClient.invoice.update({
             where: { id: inv.id },
             data: {
-                limit_assessed_amount: new Prisma.Decimal(limitAssessedAmount),
-                limit_assessed_at: new Date(),
+                limit_assessed_amount: new Prisma.Decimal(
+                    allocation.limitAssessedAmount
+                ),
+                limit_assessed_at: assessedAt,
                 limit_assessed_currency: limitCurrency,
             },
         });
@@ -138,6 +138,10 @@ export async function restampCustomerOpenInvoiceLimitAssessment(
     }
 
     return updated;
+}
+
+function customerPolicyScopeKey(customerId: number, policyId: number): string {
+    return `${customerId}:${policyId}`;
 }
 
 /**
