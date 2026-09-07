@@ -1,7 +1,7 @@
 import { computeCustomerHealthIndex } from "./customerDashboardKpisService";
 import { computeCustomerRiskExposure } from "./invoiceInsuranceFields";
-import { sumStoredInvoiceCapacityGapRows } from "./invoiceCapacityGapAmounts";
 import {
+    invoiceHasTermsBreachForKpi,
     resolveCustomerTermsBreachOutstanding,
     sumFlagBasedTermsBreachOutstanding,
     type TermBreachInvoiceRow,
@@ -23,6 +23,7 @@ export type CustomerKpiInvoiceRow = {
 
 export type CustomerKpiSnapshotInput = {
     openInvoices: CustomerKpiInvoiceRow[];
+    /** Effective limit (approved + top-up) in the same currency as invoice outstanding. */
     approvedLimit: number;
     asOf: Date;
     retainedCapacityGap?: number;
@@ -42,37 +43,48 @@ export type CustomerKpiSnapshotResult = {
 
 /**
  * Customer-level capacity gap for KPI / at-risk (golden harness + policy sync).
- * Per-invoice gaps stay sticky, but the customer figure is capped at uninsured
- * exposure (AR − approved limit): credit notes and limit released by paid
- * invoices reduce exposure without restamping open invoice snapshots.
+ * Card = max(0, open AR − effective limit). Per-invoice gaps are a live waterfall
+ * cache and are not used to derive the customer figure.
  */
 export function resolveCustomerCapacityGapForKpi(args: {
     totalAr: number;
-    sumInvoiceGaps: number;
-    approvedLimit: number;
-    retainedCapacityGap: number;
+    /**
+     * Effective limit (approved + top-up). `approvedLimit` is accepted as an
+     * alias for callers that still use that name.
+     */
+    effectiveLimit?: number;
+    approvedLimit?: number;
+    /** Unused — kept for call-site compatibility. */
+    sumInvoiceGaps?: number;
+    retainedCapacityGap?: number;
 }): { capacity: number; retainedCapacityGap: number } {
+    void args.sumInvoiceGaps;
     void args.retainedCapacityGap;
-    const sumInvoiceGaps = Math.max(0, args.sumInvoiceGaps);
-    const uninsuredExposure = Math.max(
+    const limit = Math.max(
         0,
-        args.totalAr - Math.max(0, args.approvedLimit)
+        Number(
+            args.effectiveLimit ??
+                args.approvedLimit ??
+                0
+        )
     );
-    const capacity = Math.min(sumInvoiceGaps, uninsuredExposure);
+    const capacity = Math.max(0, args.totalAr - (Number.isFinite(limit) ? limit : 0));
     return { capacity, retainedCapacityGap: capacity };
 }
 
-/** Policy sync / dashboard: KPI capacity from invoice gap sum + retained state. */
+/** Policy sync / dashboard: KPI capacity = AR − effective limit. */
 export function computePolicyCapacityGapKpi(args: {
     totalAr: number;
-    sumInvoiceGaps: number;
-    approvedLimit: number;
+    effectiveLimit?: number;
+    approvedLimit?: number;
+    sumInvoiceGaps?: number;
     retainedCapacityGap?: number | null;
 }): { capacityGapAmount: number; retainedCapacityGap: number } {
     const result = resolveCustomerCapacityGapForKpi({
         totalAr: args.totalAr,
-        sumInvoiceGaps: args.sumInvoiceGaps,
+        effectiveLimit: args.effectiveLimit,
         approvedLimit: args.approvedLimit,
+        sumInvoiceGaps: args.sumInvoiceGaps,
         retainedCapacityGap: args.retainedCapacityGap ?? 0,
     });
     return {
@@ -107,19 +119,9 @@ export function computeCustomerKpiSnapshotFromInvoices(
         0
     );
 
-    const { gapBase: sumInvoiceGaps } = sumStoredInvoiceCapacityGapRows(
-        openInvoices.map((invoice) => ({
-            capacity_gap_amount: invoice.capacityGapAmount,
-            capacity_gap_amount_limit: invoice.capacityGapAmountLimit,
-            limit_assessed_amount: invoice.limitAssessedAmount,
-        }))
-    );
-
     const capacityResolution = resolveCustomerCapacityGapForKpi({
         totalAr,
-        sumInvoiceGaps,
         approvedLimit: input.approvedLimit,
-        retainedCapacityGap: input.retainedCapacityGap ?? 0,
     });
     const capacity = capacityResolution.capacity;
 
@@ -130,21 +132,16 @@ export function computeCustomerKpiSnapshotFromInvoices(
         invoices: openInvoices,
         asOf: input.asOf,
     });
-    const termsBreachForAtRisk = resolveCustomerTermsBreachOutstanding({
-        uncovered,
-        totalOpenAr: totalAr,
-        invoices: openInvoices,
-        asOf: input.asOf,
-        excludeCapacityGapInvoices: true,
-    });
 
-    const notInsured = uncovered
-        ? totalAr
-        : computeCustomerRiskExposure({
-              totalAr,
-              capacityGapAmount: capacity,
-              termsBreachOutstanding: termsBreachForAtRisk,
-          });
+    const notInsured = computeCustomerRiskExposure({
+        uncovered,
+        totalAr,
+        invoices: openInvoices.map((invoice) => ({
+            outstanding: Math.max(0, invoice.outstanding),
+            capacityGapAmount: Math.max(0, invoice.capacityGapAmount),
+            hasTermsBreach: invoiceHasTermsBreachForKpi(invoice, input.asOf),
+        })),
+    });
 
     const healthIndexPct = computeCustomerHealthIndex(totalAr, notInsured);
 

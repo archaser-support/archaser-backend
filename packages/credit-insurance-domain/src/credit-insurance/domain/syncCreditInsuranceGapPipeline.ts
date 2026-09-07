@@ -6,10 +6,7 @@ import { syncInvoiceCapacityGapFlagsForCustomer } from "./syncInvoiceCapacityGap
 
 /**
  * Single orchestration entry for credit-insurance capacity gap sync.
- * Order: invoice gaps → policy aggregate → in_capacity_gap flags.
- *
- * Does not re-stamp `limit_assessed_amount` — snapshots are sticky at invoice open.
- * Top-up added later does not retroactively change existing invoice gaps.
+ * Order: live invoice waterfall (assessed + gaps) → policy AR−effective card → in_capacity_gap flags.
  */
 export async function syncCreditInsuranceGapPipelineForCustomer(
     customerId: number,
