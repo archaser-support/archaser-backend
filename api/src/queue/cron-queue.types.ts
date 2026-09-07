@@ -1,5 +1,8 @@
 export const CRON_QUEUE_NAME = "archaser-cron";
 
+/** Isolated from cron so Generate is not blocked behind scheduled cron jobs. */
+export const CREDIT_ASOF_BACKFILL_QUEUE_NAME = "archaser-credit-asof-backfill";
+
 export type CronRunNowJobData = {
     cronJobId: number;
     triggeredBy?: string;
@@ -13,4 +16,8 @@ export type CronSyncSchedulesJobData = {
 export type ArPostIngestDrainJobData = {
     accountId?: number;
     maxItems?: number;
+};
+
+export type CreditAsOfBackfillJobData = {
+    accountId: number;
 };

@@ -681,15 +681,58 @@ export function computeCustomerCapacityGapAmountForAccountDisplay(
     return storedCapacityGapAmount(customer);
 }
 
+/** Open invoice inputs for per-invoice at-risk: max(capacity gap, terms breach). */
+export type CustomerAtRiskInvoiceInput = {
+    outstanding: number;
+    capacityGapAmount: number;
+    /** True when any terms-breach flag is set on the invoice. */
+    hasTermsBreach: boolean;
+};
+
 /**
- * Allocated at-risk for a customer **with** a linked policy:
- * min(open AR, capacity gap + terms-breach outstanding).
- *
- * Terms-breach outstanding must be **net of invoice capacity gap** so the same
- * money is not added twice. `min(AR, …)` still caps when the remaining sum
- * exceeds open AR.
+ * Per open Due/Overdue invoice: `atRisk_i = max(capacity_gap_i, terms_breach_i)`.
+ * `terms_breach_i` = full outstanding when breached, else 0.
+ */
+export function computeInvoiceAtRiskAmount(
+    invoice: CustomerAtRiskInvoiceInput
+): number {
+    const gap = Math.max(0, invoice.capacityGapAmount);
+    const termsBreach = invoice.hasTermsBreach
+        ? Math.max(0, invoice.outstanding)
+        : 0;
+    return Math.max(gap, termsBreach);
+}
+
+/**
+ * Customer at-risk from open invoices:
+ * - uncovered / excluded → full open AR
+ * - else Σ max(capacity_gap_i, terms_breach_i) (no post-sum AR min-cap)
  */
 export function computeCustomerRiskExposure(args: {
+    uncovered?: boolean;
+    totalAr: number;
+    invoices: CustomerAtRiskInvoiceInput[];
+}): number {
+    const ar = Math.max(0, args.totalAr);
+    if (args.uncovered === true) {
+        return ar;
+    }
+    if (ar <= 0) {
+        return 0;
+    }
+    let sum = 0;
+    for (const invoice of args.invoices) {
+        sum += computeInvoiceAtRiskAmount(invoice);
+    }
+    return sum;
+}
+
+/**
+ * Legacy customer at-risk from pre-aggregated gap + netted terms-breach.
+ * Prefer {@link computeCustomerRiskExposure} (per-invoice max). Kept only for
+ * callers that still lack invoice-level inputs.
+ */
+export function computeCustomerRiskExposureFromAggregates(args: {
     totalAr: number;
     capacityGapAmount: number;
     termsBreachOutstanding: number;
@@ -764,7 +807,7 @@ export function isNearLimitUtilizationWarning(
  * Invoice-level capacity gap contribution.
  *
  * Rules:
- * - Snapshot basis (`limit_assessed_amount`) is captured once when invoice becomes open.
+ * - `limit_assessed_amount` is the covered slice from the live waterfall (or legacy sticky stamp).
  * - Contribution is `max(0, outstanding_left - limit_assessed_amount)`.
  * - "New exposure" invoices are represented by zero assessed basis, so contribution equals outstanding.
  */
@@ -865,10 +908,76 @@ export function invoiceOutstandingInAccountCurrency(row: {
     return Number(row.amount ?? 0);
 }
 
+export type LiveCapacityGapWaterfallInvoice = {
+    id: number;
+    /** Open outstanding in limit/policy currency. */
+    outstandingInLimitCurrency: number;
+};
+
+export type LiveCapacityGapWaterfallAllocation = {
+    id: number;
+    limitAssessedAmount: number;
+    capacityGapAmountLimit: number;
+};
+
+/**
+ * Sort key for live capacity-gap waterfall: oldest `invoice_date` first, then id asc.
+ * Null invoice dates sort last.
+ */
+export function compareInvoicesForLiveCapacityGapWaterfall(
+    a: { invoice_date: Date | null | undefined; id: number },
+    b: { invoice_date: Date | null | undefined; id: number }
+): number {
+    const ta =
+        a.invoice_date != null && !Number.isNaN(a.invoice_date.getTime())
+            ? a.invoice_date.getTime()
+            : Number.POSITIVE_INFINITY;
+    const tb =
+        b.invoice_date != null && !Number.isNaN(b.invoice_date.getTime())
+            ? b.invoice_date.getTime()
+            : Number.POSITIVE_INFINITY;
+    if (ta !== tb) {
+        return ta - tb;
+    }
+    return a.id - b.id;
+}
+
+/**
+ * Live waterfall over current open invoices: fill effective limit (oldest first),
+ * then gap = outstanding − assessed. Invoices must already be sorted by
+ * {@link compareInvoicesForLiveCapacityGapWaterfall}.
+ */
+export function allocateLiveCapacityGapWaterfall(args: {
+    openInvoices: LiveCapacityGapWaterfallInvoice[];
+    effectiveLimit: number | null | undefined;
+}): LiveCapacityGapWaterfallAllocation[] {
+    let remaining = Math.max(0, Number(args.effectiveLimit ?? 0));
+    if (!Number.isFinite(remaining)) {
+        remaining = 0;
+    }
+
+    return args.openInvoices.map((inv) => {
+        const outstanding = Math.max(
+            0,
+            Number(inv.outstandingInLimitCurrency ?? 0)
+        );
+        const assessed = Math.min(outstanding, remaining);
+        const gap = Math.max(0, outstanding - assessed);
+        remaining = Math.max(0, remaining - assessed);
+        return {
+            id: inv.id,
+            limitAssessedAmount: assessed,
+            capacityGapAmountLimit: gap,
+        };
+    });
+}
+
 /**
  * Snapshot basis stamped when an invoice becomes open: consumes approved headroom
  * first, then top-up pool (waterfall). When {@link newInvoiceOutstanding} is set,
  * returns the limit actually allocated to this invoice (not merely pool headroom).
+ *
+ * Prefer {@link allocateLiveCapacityGapWaterfall} for live open-set reallocation.
  */
 export function computeLimitAssessedAmountForNewOpenInvoice(args: {
     approvedLimit: number | null | undefined;

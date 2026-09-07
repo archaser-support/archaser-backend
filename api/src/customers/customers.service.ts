@@ -13,6 +13,7 @@ import { serializeBigInt } from "../common/serialize-bigint";
 import {
     bindCreditInsurancePrisma,
     enqueueAsOfRewrite,
+    ensureCustomerCapacityGapStored,
     resolveCustomerHeaderOpenArAmounts,
 } from "@archaser/credit-insurance-domain";
 import { DatabaseService } from "../database/database.service";
@@ -977,6 +978,7 @@ export class CustomersService {
             fromDate: startDate,
             toDate: new Date(),
         });
+        await ensureCustomerCapacityGapStored(id);
 
         return serializeBigInt(topUp);
     }
@@ -1016,6 +1018,7 @@ export class CustomersService {
             fromDate: cancelled.start_date,
             toDate: new Date(),
         });
+        await ensureCustomerCapacityGapStored(id);
 
         return serializeBigInt(cancelled);
     }

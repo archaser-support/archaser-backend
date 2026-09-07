@@ -1,10 +1,15 @@
 import { Module, type OnModuleInit } from "@nestjs/common";
 import { registerArPostIngestOrchestrator } from "@archaser/billing-connector";
-import { bindCreditInsurancePrisma } from "@archaser/credit-insurance-domain";
+import {
+    bindCreditInsurancePrisma,
+    registerCreditAsOfBackfillDispatch,
+} from "@archaser/credit-insurance-domain";
 import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
 import { AuthModule } from "../auth/auth.module";
 import { DatabaseModule } from "../database/database.module";
 import { DatabaseService } from "../database/database.service";
+import { QueueModule } from "../queue/queue.module";
+import { CronQueueService } from "../queue/cron-queue.service";
 import { AsOfBackfillController } from "./as-of-backfill.controller";
 import { createInsuranceEntityController } from "./create-insurance-entity.controller";
 import { CreditDashboardAccessService } from "./credit-dashboard-access.service";
@@ -22,7 +27,7 @@ const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
 );
 
 @Module({
-    imports: [AuthModule, DatabaseModule],
+    imports: [AuthModule, DatabaseModule, QueueModule],
     controllers: [
         CreditInsuranceDomainController,
         AsOfBackfillController,
@@ -38,7 +43,10 @@ const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
     exports: [CreditInsuranceService, InsuranceEntitiesService],
 })
 export class CreditInsuranceModule implements OnModuleInit {
-    constructor(private readonly db: DatabaseService) {}
+    constructor(
+        private readonly db: DatabaseService,
+        private readonly cronQueue: CronQueueService
+    ) {}
 
     /**
      * The orchestrator lives in `@archaser/cron-jobs`, which depends on
@@ -51,6 +59,9 @@ export class CreditInsuranceModule implements OnModuleInit {
         bindCreditInsurancePrisma(this.db);
         registerArPostIngestOrchestrator((options) =>
             runArPostIngestForCustomers(options)
+        );
+        registerCreditAsOfBackfillDispatch((accountId: number) =>
+            this.cronQueue.enqueueCreditAsOfBackfill({ accountId })
         );
     }
 }
