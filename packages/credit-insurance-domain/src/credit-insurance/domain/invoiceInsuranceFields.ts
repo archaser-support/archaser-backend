@@ -57,10 +57,18 @@ export function addCalendarDaysToDate(
     return addDays(base, days);
 }
 
+/** Payment-term month-end options (next-month day-of-month diff). */
 export type MonthEndCutoffOptions = {
     invoiceDate?: Date | null | undefined;
     cutoffDayOfMonth?: number | null | undefined;
     substituteDayOfMonth?: number | null | undefined;
+};
+
+/** MEP / Reporting month-end options (extra calendar days on original target). */
+export type MonthEndExtraDaysOptions = {
+    invoiceDate?: Date | null | undefined;
+    cutoffDayOfMonth?: number | null | undefined;
+    substituteExtraDays?: number | null | undefined;
 };
 
 function calendarDayOfMonthForCutoff(d: Date): number {
@@ -131,31 +139,31 @@ export function computeMonthEndCutoffDiffIfApplicable(args: {
 }
 
 /**
- * Month-end target date: when invoice issue day-of-month is on or after cutoff,
- * return `due_date + offset_days + diff` where diff is calendar days from
- * `invoice_date` to the substitute day in the month after the invoice month;
- * otherwise `due_date + offset_days`.
+ * MEP / Reporting target date: when invoice issue day-of-month is on or after
+ * cutoff and substitute extra days are set, return
+ * `due_date + offset_days + substitute_extra_days`; otherwise
+ * `due_date + offset_days`.
  */
 export function applyMonthEndCutoffAdjustment(args: {
     dueDate: Date | null | undefined;
     offsetDays: number | null | undefined;
     invoiceDate: Date | null | undefined;
     cutoffDayOfMonth: number | null | undefined;
-    substituteDayOfMonth: number | null | undefined;
+    substituteExtraDays: number | null | undefined;
 }): Date | null {
     const {
         dueDate,
         offsetDays,
         invoiceDate,
         cutoffDayOfMonth,
-        substituteDayOfMonth,
+        substituteExtraDays,
     } = args;
     if (!dueDate || offsetDays === null || offsetDays === undefined) {
         return null;
     }
     if (
         cutoffDayOfMonth == null ||
-        substituteDayOfMonth == null ||
+        substituteExtraDays == null ||
         invoiceDate == null
     ) {
         return addCalendarDaysToDate(dueDate, offsetDays);
@@ -163,18 +171,13 @@ export function applyMonthEndCutoffAdjustment(args: {
     if (calendarDayOfMonthForCutoff(invoiceDate) < cutoffDayOfMonth) {
         return addCalendarDaysToDate(dueDate, offsetDays);
     }
-    const substituteDate = substituteAnchorInMonthAfter(
-        invoiceDate,
-        substituteDayOfMonth
-    );
-    const diff = differenceInCalendarDays(substituteDate, invoiceDate);
-    return addCalendarDaysToDate(dueDate, offsetDays + diff);
+    return addCalendarDaysToDate(dueDate, offsetDays + substituteExtraDays);
 }
 
 export function computeTargetReportingDate(
     dueDate: Date | null | undefined,
     reportingDays: number | null | undefined,
-    monthEnd?: MonthEndCutoffOptions
+    monthEnd?: MonthEndExtraDaysOptions
 ): Date | null {
     if (!monthEnd) {
         return addCalendarDaysToDate(dueDate, reportingDays ?? null);
@@ -184,18 +187,18 @@ export function computeTargetReportingDate(
         offsetDays: reportingDays ?? null,
         invoiceDate: monthEnd.invoiceDate,
         cutoffDayOfMonth: monthEnd.cutoffDayOfMonth,
-        substituteDayOfMonth: monthEnd.substituteDayOfMonth,
+        substituteExtraDays: monthEnd.substituteExtraDays,
     });
 }
 
 /**
  * Target MEP date: `due_date + max_allowed_mep` (calendar days), or when
- * month-end cutoff applies, `due_date + max_allowed_mep + diff`.
+ * month-end cutoff applies, `due_date + max_allowed_mep + substitute_extra_days`.
  */
 export function computeTargetMepDate(
     dueDate: Date | null | undefined,
     maxAllowedMep: number | null | undefined,
-    monthEnd?: MonthEndCutoffOptions
+    monthEnd?: MonthEndExtraDaysOptions
 ): Date | null {
     if (!monthEnd) {
         return addCalendarDaysToDate(dueDate, maxAllowedMep ?? null);
@@ -205,7 +208,7 @@ export function computeTargetMepDate(
         offsetDays: maxAllowedMep ?? null,
         invoiceDate: monthEnd.invoiceDate,
         cutoffDayOfMonth: monthEnd.cutoffDayOfMonth,
-        substituteDayOfMonth: monthEnd.substituteDayOfMonth,
+        substituteExtraDays: monthEnd.substituteExtraDays,
     });
 }
 
@@ -504,10 +507,10 @@ export function computeCreatedTermsViolationSnapshot(args: {
 export type InsuranceTargetDateCustomerInput = {
     reporting_days: number | null;
     max_allowed_mep: number | null;
-    mep_cutoff_day_of_month?: number | null;
-    mep_substitute_day_of_month?: number | null;
-    reporting_cutoff_day_of_month?: number | null;
-    reporting_substitute_day_of_month?: number | null;
+    mep_cutoff_day?: number | null;
+    mep_substitute_extra_days?: number | null;
+    reporting_cutoff_day?: number | null;
+    reporting_substitute_extra_days?: number | null;
 };
 
 /**
@@ -535,9 +538,9 @@ export function computeInsuranceTargetDates(args: {
             args.customer.reporting_days,
             {
                 invoiceDate: args.invoice_date,
-                cutoffDayOfMonth: args.customer.reporting_cutoff_day_of_month,
-                substituteDayOfMonth:
-                    args.customer.reporting_substitute_day_of_month,
+                cutoffDayOfMonth: args.customer.reporting_cutoff_day,
+                substituteExtraDays:
+                    args.customer.reporting_substitute_extra_days,
             }
         ),
         target_mep_date: computeTargetMepDate(
@@ -545,8 +548,8 @@ export function computeInsuranceTargetDates(args: {
             args.customer.max_allowed_mep,
             {
                 invoiceDate: args.invoice_date,
-                cutoffDayOfMonth: args.customer.mep_cutoff_day_of_month,
-                substituteDayOfMonth: args.customer.mep_substitute_day_of_month,
+                cutoffDayOfMonth: args.customer.mep_cutoff_day,
+                substituteExtraDays: args.customer.mep_substitute_extra_days,
             }
         ),
     };
@@ -556,9 +559,9 @@ export function computeInsuranceTargetDates(args: {
  * Compute persisted insurance-related invoice fields from customer + dates + status.
  *
  * - `target_reporting_date` = due_date + `customer.reporting_days` (calendar days),
- *   or due_date + reporting_days + diff when invoice month-end cutoff applies
+ *   or due_date + reporting_days + substitute_extra_days when invoice month-end cutoff applies
  * - `target_mep_date` = due_date + `customer.max_allowed_mep` (calendar days),
- *   or due_date + max_allowed_mep + diff when invoice month-end cutoff applies
+ *   or due_date + max_allowed_mep + substitute_extra_days when invoice month-end cutoff applies
  * - When `amount` &lt; 0, both target dates are null and reporting_breach is false
  * - `ctv_payment_term` = credit days (due − issue) > `customer.max_payment_term`
  *   (or > max_payment_term + diff when payment-term month-end cutoff applies)
@@ -574,12 +577,12 @@ export function computeInvoiceInsuranceRowData(args: {
         reporting_days: number | null;
         max_allowed_mep: number | null;
         max_payment_term: number | null;
-        mep_cutoff_day_of_month?: number | null;
-        mep_substitute_day_of_month?: number | null;
-        reporting_cutoff_day_of_month?: number | null;
-        reporting_substitute_day_of_month?: number | null;
-        payment_term_cutoff_day_of_month?: number | null;
-        payment_term_substitute_day_of_month?: number | null;
+        mep_cutoff_day?: number | null;
+        mep_substitute_extra_days?: number | null;
+        reporting_cutoff_day?: number | null;
+        reporting_substitute_extra_days?: number | null;
+        payment_term_cutoff_day?: number | null;
+        payment_term_substitute_day?: number | null;
     };
     /** When true, use explicit payment_term from input instead of calendar diff */
     explicitPaymentTerm?: number | null;
@@ -619,9 +622,9 @@ export function computeInvoiceInsuranceRowData(args: {
         args.customer.max_payment_term,
         {
             invoiceDate: args.invoice_date,
-            cutoffDayOfMonth: args.customer.payment_term_cutoff_day_of_month,
+            cutoffDayOfMonth: args.customer.payment_term_cutoff_day,
             substituteDayOfMonth:
-                args.customer.payment_term_substitute_day_of_month,
+                args.customer.payment_term_substitute_day,
         }
     );
 
@@ -678,15 +681,58 @@ export function computeCustomerCapacityGapAmountForAccountDisplay(
     return storedCapacityGapAmount(customer);
 }
 
+/** Open invoice inputs for per-invoice at-risk: max(capacity gap, terms breach). */
+export type CustomerAtRiskInvoiceInput = {
+    outstanding: number;
+    capacityGapAmount: number;
+    /** True when any terms-breach flag is set on the invoice. */
+    hasTermsBreach: boolean;
+};
+
 /**
- * Allocated at-risk for a customer **with** a linked policy:
- * min(open AR, capacity gap + terms-breach outstanding).
- *
- * Terms-breach outstanding must be **net of invoice capacity gap** so the same
- * money is not added twice. `min(AR, …)` still caps when the remaining sum
- * exceeds open AR.
+ * Per open Due/Overdue invoice: `atRisk_i = max(capacity_gap_i, terms_breach_i)`.
+ * `terms_breach_i` = full outstanding when breached, else 0.
+ */
+export function computeInvoiceAtRiskAmount(
+    invoice: CustomerAtRiskInvoiceInput
+): number {
+    const gap = Math.max(0, invoice.capacityGapAmount);
+    const termsBreach = invoice.hasTermsBreach
+        ? Math.max(0, invoice.outstanding)
+        : 0;
+    return Math.max(gap, termsBreach);
+}
+
+/**
+ * Customer at-risk from open invoices:
+ * - uncovered / excluded → full open AR
+ * - else Σ max(capacity_gap_i, terms_breach_i) (no post-sum AR min-cap)
  */
 export function computeCustomerRiskExposure(args: {
+    uncovered?: boolean;
+    totalAr: number;
+    invoices: CustomerAtRiskInvoiceInput[];
+}): number {
+    const ar = Math.max(0, args.totalAr);
+    if (args.uncovered === true) {
+        return ar;
+    }
+    if (ar <= 0) {
+        return 0;
+    }
+    let sum = 0;
+    for (const invoice of args.invoices) {
+        sum += computeInvoiceAtRiskAmount(invoice);
+    }
+    return sum;
+}
+
+/**
+ * Legacy customer at-risk from pre-aggregated gap + netted terms-breach.
+ * Prefer {@link computeCustomerRiskExposure} (per-invoice max). Kept only for
+ * callers that still lack invoice-level inputs.
+ */
+export function computeCustomerRiskExposureFromAggregates(args: {
     totalAr: number;
     capacityGapAmount: number;
     termsBreachOutstanding: number;
@@ -761,7 +807,7 @@ export function isNearLimitUtilizationWarning(
  * Invoice-level capacity gap contribution.
  *
  * Rules:
- * - Snapshot basis (`limit_assessed_amount`) is captured once when invoice becomes open.
+ * - `limit_assessed_amount` is the covered slice from the live waterfall (or legacy sticky stamp).
  * - Contribution is `max(0, outstanding_left - limit_assessed_amount)`.
  * - "New exposure" invoices are represented by zero assessed basis, so contribution equals outstanding.
  */
@@ -862,10 +908,76 @@ export function invoiceOutstandingInAccountCurrency(row: {
     return Number(row.amount ?? 0);
 }
 
+export type LiveCapacityGapWaterfallInvoice = {
+    id: number;
+    /** Open outstanding in limit/policy currency. */
+    outstandingInLimitCurrency: number;
+};
+
+export type LiveCapacityGapWaterfallAllocation = {
+    id: number;
+    limitAssessedAmount: number;
+    capacityGapAmountLimit: number;
+};
+
+/**
+ * Sort key for live capacity-gap waterfall: oldest `invoice_date` first, then id asc.
+ * Null invoice dates sort last.
+ */
+export function compareInvoicesForLiveCapacityGapWaterfall(
+    a: { invoice_date: Date | null | undefined; id: number },
+    b: { invoice_date: Date | null | undefined; id: number }
+): number {
+    const ta =
+        a.invoice_date != null && !Number.isNaN(a.invoice_date.getTime())
+            ? a.invoice_date.getTime()
+            : Number.POSITIVE_INFINITY;
+    const tb =
+        b.invoice_date != null && !Number.isNaN(b.invoice_date.getTime())
+            ? b.invoice_date.getTime()
+            : Number.POSITIVE_INFINITY;
+    if (ta !== tb) {
+        return ta - tb;
+    }
+    return a.id - b.id;
+}
+
+/**
+ * Live waterfall over current open invoices: fill effective limit (oldest first),
+ * then gap = outstanding − assessed. Invoices must already be sorted by
+ * {@link compareInvoicesForLiveCapacityGapWaterfall}.
+ */
+export function allocateLiveCapacityGapWaterfall(args: {
+    openInvoices: LiveCapacityGapWaterfallInvoice[];
+    effectiveLimit: number | null | undefined;
+}): LiveCapacityGapWaterfallAllocation[] {
+    let remaining = Math.max(0, Number(args.effectiveLimit ?? 0));
+    if (!Number.isFinite(remaining)) {
+        remaining = 0;
+    }
+
+    return args.openInvoices.map((inv) => {
+        const outstanding = Math.max(
+            0,
+            Number(inv.outstandingInLimitCurrency ?? 0)
+        );
+        const assessed = Math.min(outstanding, remaining);
+        const gap = Math.max(0, outstanding - assessed);
+        remaining = Math.max(0, remaining - assessed);
+        return {
+            id: inv.id,
+            limitAssessedAmount: assessed,
+            capacityGapAmountLimit: gap,
+        };
+    });
+}
+
 /**
  * Snapshot basis stamped when an invoice becomes open: consumes approved headroom
  * first, then top-up pool (waterfall). When {@link newInvoiceOutstanding} is set,
  * returns the limit actually allocated to this invoice (not merely pool headroom).
+ *
+ * Prefer {@link allocateLiveCapacityGapWaterfall} for live open-set reallocation.
  */
 export function computeLimitAssessedAmountForNewOpenInvoice(args: {
     approvedLimit: number | null | undefined;

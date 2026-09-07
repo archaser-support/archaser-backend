@@ -2,18 +2,23 @@ import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
+import { creditAsOfBackfillBullJobId } from "@archaser/credit-insurance-domain";
 import {
     CRON_QUEUE_NAME,
+    CREDIT_ASOF_BACKFILL_QUEUE_NAME,
     CronRunNowJobData,
     CronSyncSchedulesJobData,
     ArPostIngestDrainJobData,
+    CreditAsOfBackfillJobData,
 } from "./cron-queue.types";
+import { requeueCreditAsOfBackfillBullJob } from "./backfill-bull-job.util";
 
 @Injectable()
 export class CronQueueService implements OnModuleDestroy {
     private readonly logger = new Logger(CronQueueService.name);
     private connection: IORedis | null = null;
     private queue: Queue | null = null;
+    private backfillQueue: Queue | null = null;
 
     constructor(private readonly config: ConfigService) {}
 
@@ -45,6 +50,26 @@ export class CronQueueService implements OnModuleDestroy {
         });
         this.logger.log(`Cron queue ready (${CRON_QUEUE_NAME} @ ${redisUrl})`);
         return this.queue;
+    }
+
+    private ensureBackfillQueue(): Queue | null {
+        if (!this.enabled()) {
+            return null;
+        }
+        const cronQueue = this.ensureQueue();
+        if (!cronQueue || !this.connection) {
+            return null;
+        }
+        if (this.backfillQueue) {
+            return this.backfillQueue;
+        }
+        this.backfillQueue = new Queue(CREDIT_ASOF_BACKFILL_QUEUE_NAME, {
+            connection: this.connection,
+        });
+        this.logger.log(
+            `Credit as-of backfill queue ready (${CREDIT_ASOF_BACKFILL_QUEUE_NAME})`
+        );
+        return this.backfillQueue;
     }
 
     async enqueueRunNow(data: CronRunNowJobData): Promise<{
@@ -210,7 +235,52 @@ export class CronQueueService implements OnModuleDestroy {
         }
     }
 
+    async enqueueCreditAsOfBackfill(
+        data: CreditAsOfBackfillJobData
+    ): Promise<{ queued: boolean; jobId?: string; reason?: string }> {
+        const queue = this.ensureBackfillQueue();
+        if (!queue) {
+            return {
+                queued: false,
+                reason: "BULLMQ_ENABLED=false or Redis unavailable",
+            };
+        }
+        const ready = await this.ensureRedisReady();
+        if (!ready.ok) {
+            this.logger.error(
+                `enqueueCreditAsOfBackfill failed: ${ready.reason ?? "Redis not ready"}`
+            );
+            return {
+                queued: false,
+                reason: ready.reason ?? "Redis not ready",
+            };
+        }
+        try {
+            const jobId = creditAsOfBackfillBullJobId(data.accountId);
+            const job = await requeueCreditAsOfBackfillBullJob(
+                queue,
+                jobId,
+                data.accountId
+            );
+            this.logger.log(
+                `enqueueCreditAsOfBackfill ok accountId=${data.accountId} jobId=${job.id} queue=${CREDIT_ASOF_BACKFILL_QUEUE_NAME}`
+            );
+            return { queued: true, jobId: String(job.id) };
+        } catch (error) {
+            this.logger.error(
+                `enqueueCreditAsOfBackfill failed: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+            return {
+                queued: false,
+                reason: error instanceof Error ? error.message : "enqueue failed",
+            };
+        }
+    }
+
     async onModuleDestroy() {
+        await this.backfillQueue?.close();
         await this.queue?.close();
         await this.connection?.quit();
     }
