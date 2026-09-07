@@ -2,7 +2,10 @@ import {
     aggregatePolicyUsageFromRows,
     computeCustomerHealthIndex,
 } from "./customerDashboardKpisService";
-import { computeCustomerRiskExposure } from "./invoiceInsuranceFields";
+import {
+    computeCustomerRiskExposure,
+    type CustomerAtRiskInvoiceInput,
+} from "./invoiceInsuranceFields";
 
 export type CustomerPolicyTrendSnapshotPayloadInput = {
     /** Account base currency for financial KPI amounts. */
@@ -12,8 +15,10 @@ export type CustomerPolicyTrendSnapshotPayloadInput = {
     capacityGapAmount: number;
     /** Full terms-breach outstanding (dashboard terms breach card). */
     termsBreachOutstanding: number;
-    /** Terms-breach outstanding excluding capacity-gap invoices (at-risk driver). */
-    termsBreachOutstandingForAtRisk: number;
+    /** Uncovered / excluded → at-risk = full open AR. */
+    uncovered?: boolean;
+    /** As-of (or live-equivalent) open invoices for per-invoice at-risk. */
+    atRiskInvoices: CustomerAtRiskInvoiceInput[];
     /** Open AR in policy limit currency (usage % formulas). */
     arInLimitCurrency: number;
     approvedLimit: number | null;
@@ -46,8 +51,9 @@ function resolveCompliantExposure(
 }
 
 /**
- * Pure mapper from live policy inputs → {@link CustomerPolicyTrend} financial KPI columns.
- * Formulas match {@link getCustomerDashboardKpis} for a single `insurance_policy_id` scope.
+ * Pure mapper from live/as-of policy inputs → {@link CustomerPolicyTrend} financial KPI columns.
+ * At-risk uses {@link computeCustomerRiskExposure} (Σ max(gap, breach)); formulas otherwise
+ * match {@link getCustomerDashboardKpis} for a single `insurance_policy_id` scope.
  */
 export function buildCustomerPolicyTrendSnapshotPayload(
     input: CustomerPolicyTrendSnapshotPayloadInput
@@ -57,14 +63,12 @@ export function buildCustomerPolicyTrendSnapshotPayload(
     const totalReceivables = Math.max(0, input.totalReceivables);
     const capacityGapAmount = Math.max(0, input.capacityGapAmount);
     const termsBreachAmount = Math.max(0, input.termsBreachOutstanding);
+    const uncovered = input.uncovered === true;
 
     const atRiskExposure = computeCustomerRiskExposure({
+        uncovered,
         totalAr: totalReceivables,
-        capacityGapAmount,
-        termsBreachOutstanding: Math.max(
-            0,
-            input.termsBreachOutstandingForAtRisk
-        ),
+        invoices: uncovered ? [] : input.atRiskInvoices,
     });
     const healthIndex = computeCustomerHealthIndex(
         totalReceivables,
