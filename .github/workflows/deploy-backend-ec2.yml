@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - staging
+      - master
       - main
 
 concurrency:
@@ -16,13 +17,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Determine Environment
+      - name: Determine Environment & Directory
         id: env-name
         run: |
-          if [ "${{ github.ref_name }}" = "main" ]; then
+          if [ "${{ github.ref_name }}" = "master" ] || [ "${{ github.ref_name }}" = "main" ]; then
             echo "ENV=production" >> $GITHUB_OUTPUT
+            echo "APP_DIR=/home/ubuntu/production" >> $GITHUB_OUTPUT
           else
             echo "ENV=staging" >> $GITHUB_OUTPUT
+            echo "APP_DIR=/home/ubuntu/api" >> $GITHUB_OUTPUT
           fi
 
       - name: Deploy to EC2 via SSH
@@ -33,9 +36,10 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
-            echo "==> Deploying backend (${{ steps.env-name.outputs.ENV }}) on EC2..."
-            cd /home/ubuntu/api
+            echo "==> Deploying backend (${{ steps.env-name.outputs.ENV }}) on EC2 in ${{ steps.env-name.outputs.APP_DIR }}..."
+            cd ${{ steps.env-name.outputs.APP_DIR }}
             git fetch origin
             git checkout ${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
-            bash scripts/deployment/deploy-backend-docker.sh --env ${{ steps.env-name.outputs.ENV }}
+            bash scripts/deployment/deploy-backend-docker.sh --env ${{ steps.env-name.outputs.ENV }} --app-dir ${{ steps.env-name.outputs.APP_DIR }}
+
