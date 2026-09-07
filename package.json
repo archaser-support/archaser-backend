@@ -32,10 +32,10 @@
   },
   "scripts": {
     "postinstall": "prisma generate --schema=./prisma/schema.prisma && node ./scripts/sync-prisma-client.js",
-    "dev:all": "bash ./scripts/startup/dev-microservices.sh",
-    "dev:api": "npm run start:dev -w @archaser/api",
-    "start:api": "npm run start:prod -w @archaser/api",
-    "build:api": "npm run build -w @archaser/database && npm run build -w @archaser/api",
+    "dev:all": "node ./scripts/run-with-env.cjs bash ./scripts/startup/dev-microservices.sh",
+    "dev:api": "node ./scripts/run-with-env.cjs npm run start:dev -w @archaser/api",
+    "start:api": "node ./scripts/run-with-env.cjs npm run start:prod -w @archaser/api",
+    "build:api": "node ./scripts/run-with-env.cjs npm run build -w @archaser/database && npm run build -w @archaser/api",
     "build:database": "npm run build -w @archaser/database",
     "build:sms-send": "npm run build -w @archaser/sms-send",
     "build:auth": "npm run build -w @archaser/auth",
@@ -43,10 +43,10 @@
     "check:credit-insurance-domain-leaf": "npm run check:leaf -w @archaser/credit-insurance-domain",
     "test:sms-send": "npm run test -w @archaser/sms-send",
     "test:api": "npm run test -w @archaser/api",
-    "dev:worker": "npm run start:dev -w @archaser/worker",
-    "dev:sms": "npm run start:dev -w @archaser/sms",
-    "dev:connectors": "npm run start:dev -w @archaser/connectors",
-    "dev:reports": "npm run start:dev -w @archaser/reports",
+    "dev:worker": "node ./scripts/run-with-env.cjs npm run start:dev -w @archaser/worker",
+    "dev:sms": "node ./scripts/run-with-env.cjs npm run start:dev -w @archaser/sms",
+    "dev:connectors": "node ./scripts/run-with-env.cjs npm run start:dev -w @archaser/connectors",
+    "dev:reports": "node ./scripts/run-with-env.cjs npm run start:dev -w @archaser/reports",
     "soak:check": "npx tsx ./scripts/soak/check-soak-readiness.ts",
     "soak:check:worker": "npx tsx ./scripts/soak/check-soak-readiness.ts --worker-url http://127.0.0.1:3003",
     "soak:sms-contract": "npm run test -w @archaser/sms",
@@ -61,6 +61,7 @@
     "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js"
   },
   "devDependencies": {
+    "@types/express": "^5.0.3",
     "dotenv": "^16.4.5",
     "husky": "^8.0.0",
     "prettier": "^3.0.0",
@@ -69,6 +70,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@prisma/client": "^6.4.1"
+    "@prisma/client": "^6.4.1",
+    "@types/express": "^5.0.3"
   }
 }

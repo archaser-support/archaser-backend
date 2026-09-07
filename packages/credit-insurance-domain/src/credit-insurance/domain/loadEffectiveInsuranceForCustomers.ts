@@ -8,12 +8,12 @@ export type InvoiceInsuranceCustomerContext = {
     id: number;
     reporting_days: number | null;
     max_allowed_mep: number | null;
-    mep_cutoff_day_of_month: number | null;
-    mep_substitute_day_of_month: number | null;
-    reporting_cutoff_day_of_month: number | null;
-    reporting_substitute_day_of_month: number | null;
-    payment_term_cutoff_day_of_month: number | null;
-    payment_term_substitute_day_of_month: number | null;
+    mep_cutoff_day: number | null;
+    mep_substitute_extra_days: number | null;
+    reporting_cutoff_day: number | null;
+    reporting_substitute_extra_days: number | null;
+    payment_term_cutoff_day: number | null;
+    payment_term_substitute_day: number | null;
     max_payment_term: number | null;
     overdue_block: boolean;
     excluded_from_policy: boolean;
@@ -66,14 +66,14 @@ export async function loadEffectiveInsuranceForCustomers(
             id: customerId,
             reporting_days: fields.reporting_days,
             max_allowed_mep: fields.max_allowed_mep,
-            mep_cutoff_day_of_month: fields.mep_cutoff_day_of_month,
-            mep_substitute_day_of_month: fields.mep_substitute_day_of_month,
-            reporting_cutoff_day_of_month: fields.reporting_cutoff_day_of_month,
-            reporting_substitute_day_of_month: fields.reporting_substitute_day_of_month,
-            payment_term_cutoff_day_of_month:
-                fields.payment_term_cutoff_day_of_month,
-            payment_term_substitute_day_of_month:
-                fields.payment_term_substitute_day_of_month,
+            mep_cutoff_day: fields.mep_cutoff_day,
+            mep_substitute_extra_days: fields.mep_substitute_extra_days,
+            reporting_cutoff_day: fields.reporting_cutoff_day,
+            reporting_substitute_extra_days: fields.reporting_substitute_extra_days,
+            payment_term_cutoff_day:
+                fields.payment_term_cutoff_day,
+            payment_term_substitute_day:
+                fields.payment_term_substitute_day,
             max_payment_term: fields.max_payment_term,
             overdue_block: overdueById.get(customerId) ?? false,
             excluded_from_policy: fields.excluded_from_policy,
