@@ -27,9 +27,10 @@ services:
       NEST_PORT: 4010
       PORT: 4010
       SERVICE_NAME: archaser-api-production
-      NEST_PUBLIC_URL: "https://api.production.archaser.com"
-      NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
-      NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
+      NEST_PUBLIC_URL: "https://api.portal.archaser.com"
+      NEXT_PUBLIC_BASE_URL: "https://portal.archaser.com"
+      NEST_AUTH_SUCCESS_REDIRECT: "https://portal.archaser.com/login"
+      NEST_CORS_ORIGINS: "https://portal.archaser.com,https://www.portal.archaser.com,https://api.portal.archaser.com,https://api.production.archaser.com,https://production.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com"
       REDIS_URL: redis://redis:6379
       BULLMQ_ENABLED: "true"
       BULLMQ_QUEUE: archaser-cron-prod
