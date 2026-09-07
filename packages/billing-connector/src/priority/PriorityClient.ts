@@ -188,6 +188,16 @@ async function fetchPriorityJson(
             clearTimeout(timeout);
         }
     } catch (error) {
+        const aborted =
+            (error instanceof Error && error.name === "AbortError") ||
+            (error instanceof Error &&
+                /aborted|AbortError/i.test(error.message));
+        if (aborted) {
+            return {
+                ok: false,
+                error: `Priority request timed out after ${timeoutSeconds}s`,
+            };
+        }
         const message =
             error instanceof Error ? error.message : "Priority request failed";
         return { ok: false, error: message };
@@ -201,6 +211,8 @@ export async function fetchPriorityEntitySamples(
     options?: {
         entitySet?: string | null;
         filter?: string | null;
+        /** OData $orderby (e.g. `FNCDATE desc`) so Priority can return recent matches first. */
+        orderBy?: string | null;
         /** Override default request timeout (preview Payment should stay short). */
         timeoutSeconds?: number;
     }
@@ -216,12 +228,26 @@ export async function fetchPriorityEntitySamples(
     if (filter) {
         params.set("$filter", filter);
     }
+    const orderBy = options?.orderBy?.trim();
+    if (orderBy) {
+        params.set("$orderby", orderBy);
+    }
     const url = `${collectionUrl}?${params.toString()}`;
+    const timeoutSeconds =
+        options?.timeoutSeconds ?? PRIORITY_RATE_LIMITS.requestTimeoutSeconds;
+    config.onLog?.(
+        `[priority-sample] GET entity=${importType} top=${top} timeoutSec=${timeoutSeconds} orderBy=${orderBy ?? "(none)"} filterLen=${(filter ?? "").length} url=${url}`
+    );
+    const startedAt = Date.now();
     const result = await fetchPriorityJson(config, url, {
         timeoutSeconds: options?.timeoutSeconds,
     });
+    const elapsedMs = Date.now() - startedAt;
 
     if (!result.ok) {
+        config.onLog?.(
+            `[priority-sample] fail entity=${importType} elapsedMs=${elapsedMs} error=${result.error ?? "unknown"}`
+        );
         return {
             ok: false,
             statusCode: result.statusCode,
@@ -229,6 +255,9 @@ export async function fetchPriorityEntitySamples(
             records: [],
         };
     }
+    config.onLog?.(
+        `[priority-sample] ok entity=${importType} elapsedMs=${elapsedMs}`
+    )
 
     const payload = result.payload as { value?: unknown[] };
     if (!Array.isArray(payload?.value)) {
@@ -279,17 +308,32 @@ export async function fetchPriorityTableColumns(
     if (filter) {
         params.set("$filter", filter);
     }
+    // Recent rows first — un-ordered IDG samples can hang until Priority scans.
+    if (importType === "Payment") {
+        params.set("$orderby", "FNCDATE desc");
+    }
     const url = `${collectionUrl}?${params.toString()}`;
     const timeoutSeconds =
         options?.timeoutSeconds ?? COLUMN_SAMPLE_TIMEOUT_SECONDS;
+    config.onLog?.(
+        `[column-sample] GET entity=${importType} top=5 timeoutSec=${timeoutSeconds} filterLen=${(filter ?? "").length} url=${url}`
+    );
+    const startedAt = Date.now();
     const result = await fetchPriorityJson(config, url, { timeoutSeconds });
+    const elapsedMs = Date.now() - startedAt;
     if (!result.ok) {
+        config.onLog?.(
+            `[column-sample] fail entity=${importType} elapsedMs=${elapsedMs} error=${result.error ?? "unknown"}`
+        );
         return {
             ok: false,
             statusCode: result.statusCode,
             error: result.error ?? "Failed to sample Priority table",
         };
     }
+    config.onLog?.(
+        `[column-sample] ok entity=${importType} elapsedMs=${elapsedMs}`
+    );
     const payload = result.payload as { value?: unknown[] };
     if (!Array.isArray(payload?.value)) {
         return {

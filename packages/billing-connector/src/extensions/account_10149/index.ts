@@ -11,7 +11,10 @@ import type {
 import { countUniquePendingCloseInvoiceNumbers } from "../pendingCloseProgress";
 import { parseErpDateOnly } from "../../utils/connectorFieldUtils";
 import { deriveInvoiceFxRatio } from "../../payment/alignPaymentToInvoiceCurrency";
-import { escapeODataStringLiteral } from "../../services/billingConnectorPullFilterCompile";
+import {
+    escapeODataStringLiteral,
+    expandPaymentFncPatNameOrFilters,
+} from "../../services/billingConnectorPullFilterCompile";
 import { tracePaymentImport } from "../../import/paymentImportTrace";
 import {
     applyReconciledVirtualCloses,
@@ -915,6 +918,25 @@ export const account10149Extension: BillingAccountExtension = {
             entityType: params.entityType,
             entitySet: params.entitySet,
         });
+    },
+    /**
+     * Priority 502s on IDG Payment pulls that OR several FNCPATNAME receipt
+     * codes. Split into one pull per code so each query stays selective.
+     */
+    expandEntityPullFilters(params) {
+        if (params.entityType !== "Payment") {
+            return null;
+        }
+        if (
+            !isAccount10149IdgPaymentEntitySet(
+                params.entityType,
+                params.entitySet
+            )
+        ) {
+            return null;
+        }
+        const expanded = expandPaymentFncPatNameOrFilters(params.filter);
+        return expanded.length > 1 ? expanded : null;
     },
     async transform(
         ctx: ExtensionTransformContext

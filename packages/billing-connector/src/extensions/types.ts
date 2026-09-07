@@ -195,6 +195,18 @@ export interface BillingAccountExtension {
         entitySet?: string | null;
         extension_config: Record<string, unknown> | null;
     }): string | null;
+    /**
+     * Expand one entity $filter into multiple pulls (same semantics, safer
+     * queries). Account 10149 splits Payment FNCPATNAME OR groups into one
+     * pull per receipt code so Priority does not 502.
+     * Return null/empty to keep a single pull with `filter`.
+     */
+    expandEntityPullFilters?(params: {
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        filter: string;
+        extension_config: Record<string, unknown> | null;
+    }): string[] | null;
 }
 
 export type ExtensionAttachmentUpsertInput = {
