@@ -48,12 +48,12 @@ export type ActiveCustomerPolicyForTrendSync = {
     max_payment_term: number | null;
     max_allowed_mep: number | null;
     reporting_days: number | null;
-    mep_cutoff_day_of_month: number | null;
-    mep_substitute_day_of_month: number | null;
-    reporting_cutoff_day_of_month: number | null;
-    reporting_substitute_day_of_month: number | null;
-    payment_term_cutoff_day_of_month: number | null;
-    payment_term_substitute_day_of_month: number | null;
+    mep_cutoff_day: number | null;
+    mep_substitute_extra_days: number | null;
+    reporting_cutoff_day: number | null;
+    reporting_substitute_extra_days: number | null;
+    payment_term_cutoff_day: number | null;
+    payment_term_substitute_day: number | null;
     excluded_from_policy: boolean;
     policy_exclusion_reason: string | null;
     credit_score: Prisma.Decimal | null;
@@ -231,12 +231,12 @@ export async function loadActiveCustomerPoliciesForTrendSync(
             max_payment_term: true,
             max_allowed_mep: true,
             reporting_days: true,
-            mep_cutoff_day_of_month: true,
-            mep_substitute_day_of_month: true,
-            reporting_cutoff_day_of_month: true,
-            reporting_substitute_day_of_month: true,
-            payment_term_cutoff_day_of_month: true,
-            payment_term_substitute_day_of_month: true,
+            mep_cutoff_day: true,
+            mep_substitute_extra_days: true,
+            reporting_cutoff_day: true,
+            reporting_substitute_extra_days: true,
+            payment_term_cutoff_day: true,
+            payment_term_substitute_day: true,
             excluded_from_policy: true,
             policy_exclusion_reason: true,
             credit_score: true,

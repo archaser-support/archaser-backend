@@ -57,10 +57,18 @@ export function addCalendarDaysToDate(
     return addDays(base, days);
 }
 
+/** Payment-term month-end options (next-month day-of-month diff). */
 export type MonthEndCutoffOptions = {
     invoiceDate?: Date | null | undefined;
     cutoffDayOfMonth?: number | null | undefined;
     substituteDayOfMonth?: number | null | undefined;
+};
+
+/** MEP / Reporting month-end options (extra calendar days on original target). */
+export type MonthEndExtraDaysOptions = {
+    invoiceDate?: Date | null | undefined;
+    cutoffDayOfMonth?: number | null | undefined;
+    substituteExtraDays?: number | null | undefined;
 };
 
 function calendarDayOfMonthForCutoff(d: Date): number {
@@ -131,31 +139,31 @@ export function computeMonthEndCutoffDiffIfApplicable(args: {
 }
 
 /**
- * Month-end target date: when invoice issue day-of-month is on or after cutoff,
- * return `due_date + offset_days + diff` where diff is calendar days from
- * `invoice_date` to the substitute day in the month after the invoice month;
- * otherwise `due_date + offset_days`.
+ * MEP / Reporting target date: when invoice issue day-of-month is on or after
+ * cutoff and substitute extra days are set, return
+ * `due_date + offset_days + substitute_extra_days`; otherwise
+ * `due_date + offset_days`.
  */
 export function applyMonthEndCutoffAdjustment(args: {
     dueDate: Date | null | undefined;
     offsetDays: number | null | undefined;
     invoiceDate: Date | null | undefined;
     cutoffDayOfMonth: number | null | undefined;
-    substituteDayOfMonth: number | null | undefined;
+    substituteExtraDays: number | null | undefined;
 }): Date | null {
     const {
         dueDate,
         offsetDays,
         invoiceDate,
         cutoffDayOfMonth,
-        substituteDayOfMonth,
+        substituteExtraDays,
     } = args;
     if (!dueDate || offsetDays === null || offsetDays === undefined) {
         return null;
     }
     if (
         cutoffDayOfMonth == null ||
-        substituteDayOfMonth == null ||
+        substituteExtraDays == null ||
         invoiceDate == null
     ) {
         return addCalendarDaysToDate(dueDate, offsetDays);
@@ -163,18 +171,13 @@ export function applyMonthEndCutoffAdjustment(args: {
     if (calendarDayOfMonthForCutoff(invoiceDate) < cutoffDayOfMonth) {
         return addCalendarDaysToDate(dueDate, offsetDays);
     }
-    const substituteDate = substituteAnchorInMonthAfter(
-        invoiceDate,
-        substituteDayOfMonth
-    );
-    const diff = differenceInCalendarDays(substituteDate, invoiceDate);
-    return addCalendarDaysToDate(dueDate, offsetDays + diff);
+    return addCalendarDaysToDate(dueDate, offsetDays + substituteExtraDays);
 }
 
 export function computeTargetReportingDate(
     dueDate: Date | null | undefined,
     reportingDays: number | null | undefined,
-    monthEnd?: MonthEndCutoffOptions
+    monthEnd?: MonthEndExtraDaysOptions
 ): Date | null {
     if (!monthEnd) {
         return addCalendarDaysToDate(dueDate, reportingDays ?? null);
@@ -184,18 +187,18 @@ export function computeTargetReportingDate(
         offsetDays: reportingDays ?? null,
         invoiceDate: monthEnd.invoiceDate,
         cutoffDayOfMonth: monthEnd.cutoffDayOfMonth,
-        substituteDayOfMonth: monthEnd.substituteDayOfMonth,
+        substituteExtraDays: monthEnd.substituteExtraDays,
     });
 }
 
 /**
  * Target MEP date: `due_date + max_allowed_mep` (calendar days), or when
- * month-end cutoff applies, `due_date + max_allowed_mep + diff`.
+ * month-end cutoff applies, `due_date + max_allowed_mep + substitute_extra_days`.
  */
 export function computeTargetMepDate(
     dueDate: Date | null | undefined,
     maxAllowedMep: number | null | undefined,
-    monthEnd?: MonthEndCutoffOptions
+    monthEnd?: MonthEndExtraDaysOptions
 ): Date | null {
     if (!monthEnd) {
         return addCalendarDaysToDate(dueDate, maxAllowedMep ?? null);
@@ -205,7 +208,7 @@ export function computeTargetMepDate(
         offsetDays: maxAllowedMep ?? null,
         invoiceDate: monthEnd.invoiceDate,
         cutoffDayOfMonth: monthEnd.cutoffDayOfMonth,
-        substituteDayOfMonth: monthEnd.substituteDayOfMonth,
+        substituteExtraDays: monthEnd.substituteExtraDays,
     });
 }
 
@@ -504,10 +507,10 @@ export function computeCreatedTermsViolationSnapshot(args: {
 export type InsuranceTargetDateCustomerInput = {
     reporting_days: number | null;
     max_allowed_mep: number | null;
-    mep_cutoff_day_of_month?: number | null;
-    mep_substitute_day_of_month?: number | null;
-    reporting_cutoff_day_of_month?: number | null;
-    reporting_substitute_day_of_month?: number | null;
+    mep_cutoff_day?: number | null;
+    mep_substitute_extra_days?: number | null;
+    reporting_cutoff_day?: number | null;
+    reporting_substitute_extra_days?: number | null;
 };
 
 /**
@@ -535,9 +538,9 @@ export function computeInsuranceTargetDates(args: {
             args.customer.reporting_days,
             {
                 invoiceDate: args.invoice_date,
-                cutoffDayOfMonth: args.customer.reporting_cutoff_day_of_month,
-                substituteDayOfMonth:
-                    args.customer.reporting_substitute_day_of_month,
+                cutoffDayOfMonth: args.customer.reporting_cutoff_day,
+                substituteExtraDays:
+                    args.customer.reporting_substitute_extra_days,
             }
         ),
         target_mep_date: computeTargetMepDate(
@@ -545,8 +548,8 @@ export function computeInsuranceTargetDates(args: {
             args.customer.max_allowed_mep,
             {
                 invoiceDate: args.invoice_date,
-                cutoffDayOfMonth: args.customer.mep_cutoff_day_of_month,
-                substituteDayOfMonth: args.customer.mep_substitute_day_of_month,
+                cutoffDayOfMonth: args.customer.mep_cutoff_day,
+                substituteExtraDays: args.customer.mep_substitute_extra_days,
             }
         ),
     };
@@ -556,9 +559,9 @@ export function computeInsuranceTargetDates(args: {
  * Compute persisted insurance-related invoice fields from customer + dates + status.
  *
  * - `target_reporting_date` = due_date + `customer.reporting_days` (calendar days),
- *   or due_date + reporting_days + diff when invoice month-end cutoff applies
+ *   or due_date + reporting_days + substitute_extra_days when invoice month-end cutoff applies
  * - `target_mep_date` = due_date + `customer.max_allowed_mep` (calendar days),
- *   or due_date + max_allowed_mep + diff when invoice month-end cutoff applies
+ *   or due_date + max_allowed_mep + substitute_extra_days when invoice month-end cutoff applies
  * - When `amount` &lt; 0, both target dates are null and reporting_breach is false
  * - `ctv_payment_term` = credit days (due − issue) > `customer.max_payment_term`
  *   (or > max_payment_term + diff when payment-term month-end cutoff applies)
@@ -574,12 +577,12 @@ export function computeInvoiceInsuranceRowData(args: {
         reporting_days: number | null;
         max_allowed_mep: number | null;
         max_payment_term: number | null;
-        mep_cutoff_day_of_month?: number | null;
-        mep_substitute_day_of_month?: number | null;
-        reporting_cutoff_day_of_month?: number | null;
-        reporting_substitute_day_of_month?: number | null;
-        payment_term_cutoff_day_of_month?: number | null;
-        payment_term_substitute_day_of_month?: number | null;
+        mep_cutoff_day?: number | null;
+        mep_substitute_extra_days?: number | null;
+        reporting_cutoff_day?: number | null;
+        reporting_substitute_extra_days?: number | null;
+        payment_term_cutoff_day?: number | null;
+        payment_term_substitute_day?: number | null;
     };
     /** When true, use explicit payment_term from input instead of calendar diff */
     explicitPaymentTerm?: number | null;
@@ -619,9 +622,9 @@ export function computeInvoiceInsuranceRowData(args: {
         args.customer.max_payment_term,
         {
             invoiceDate: args.invoice_date,
-            cutoffDayOfMonth: args.customer.payment_term_cutoff_day_of_month,
+            cutoffDayOfMonth: args.customer.payment_term_cutoff_day,
             substituteDayOfMonth:
-                args.customer.payment_term_substitute_day_of_month,
+                args.customer.payment_term_substitute_day,
         }
     );
 
