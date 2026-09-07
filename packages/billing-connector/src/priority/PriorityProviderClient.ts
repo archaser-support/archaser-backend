@@ -32,11 +32,25 @@ import {
 } from "./resolveTablePullShape";
 import { PAYMENT_ALWAYS_SELECT_SOURCES } from "./prioritySelectFields";
 import {
+    expandPaymentFncPatNameOrFilters,
+} from "../services/billingConnectorPullFilterCompile";
+import {
     discoverPriorityFields,
     fetchPriorityTableColumns,
     testPriorityConnection,
     type PriorityConnectionConfig,
 } from "./PriorityClient";
+
+/** Classic FNCPAY / CINVOICES payment fields that are not on IDG_ARFNCITEMS*. */
+const IDG_PAYMENT_OMIT_FALLBACK_COLUMNS = [
+    "PAYNUM",
+    "CREDIT",
+    "DEBIT",
+    "PAYMENT",
+    "CUSTNAME",
+    "DOCNUM",
+    "TRANSNUM",
+] as const;
 
 function normalizeServiceRoot(baseUrl: string): string {
     return baseUrl.replace(/\/+$/, "");
@@ -208,8 +222,15 @@ export class PriorityProviderClient implements BillingProviderClient {
             throw new Error(`Unsupported entity: ${entity}`);
         }
 
-        const pageSize =
+        const pageSizeRequested =
             options.pageSize ?? PRIORITY_RATE_LIMITS.recommendedPageSize;
+        const isIdgPayment =
+            entity === "Payment" && isIdgPaymentEntitySet(options.entitySet);
+        // IDG_ARFNCITEMS* 502s around ~2 min on large pages ($top=200); $top=50
+        // has completed successfully for account 10149.
+        const pageSize = isIdgPayment
+            ? Math.min(pageSizeRequested, 50)
+            : pageSizeRequested;
         const skip = options.cursor ? Number.parseInt(options.cursor, 10) : 0;
         const safeSkip = Number.isFinite(skip) && skip >= 0 ? skip : 0;
 
@@ -238,8 +259,11 @@ export class PriorityProviderClient implements BillingProviderClient {
         }
         const columns = columnNameSet(columnList);
         const endpoint = getPriorityEntityEndpoint(entity);
-        const preferredOrderBy = isIdgPaymentEntitySet(options.entitySet)
-            ? "FNCNUM"
+        // Prefer FNCDATE for IDG payments — matches the date window and matches
+        // the sample query that Priority can answer. FNCNUM keyset + date filter
+        // often 502s after ~2 minutes on idigital.
+        const preferredOrderBy = isIdgPayment
+            ? "FNCDATE"
             : endpoint.defaultOrderBy;
         const orderBy = pickOrderByField(preferredOrderBy, columns);
         const tieBreaker = pickKeysetTieBreaker(columns, orderBy);
@@ -276,7 +300,13 @@ export class PriorityProviderClient implements BillingProviderClient {
         }
 
         params.$orderby = formatOrderByClause(orderBy, tieBreaker);
-        if (options.select != null && selectFields.length > 0) {
+        // IDG payment forms: $select of many columns often 502s while the same
+        // filter with no $select ($top=5 sample) succeeds. Pull full rows.
+        if (
+            !isIdgPayment &&
+            options.select != null &&
+            selectFields.length > 0
+        ) {
             params.$select = selectFields.join(",");
         }
 
@@ -290,8 +320,12 @@ export class PriorityProviderClient implements BillingProviderClient {
             options.createdOnOrAfter == null && options.since
                 ? (options.overlapMinutes ?? 0)
                 : 0;
+        const filterAlreadyHasDate =
+            Boolean(dateField) &&
+            Boolean(options.filter) &&
+            new RegExp(`\\b${dateField}\\b`, "i").test(options.filter ?? "");
         const dateFilter =
-            dateField && dateBound
+            dateField && dateBound && !filterAlreadyHasDate
                 ? `${dateField} ge ${dateGeIso(dateBound, overlapMinutes)}`
                 : null;
         assertFilterFieldsExist(options.filter, columns);
@@ -305,7 +339,18 @@ export class PriorityProviderClient implements BillingProviderClient {
         }
 
         const url = `${collectionUrl}?${buildQueryString(params)}`;
+        if (entity === "Payment") {
+            this.config.onLog?.(
+                `[payment-pull] GET pageSize=${pageSize} orderBy=${orderBy}${tieBreaker ? `,${tieBreaker}` : ""} selectFields=${selectFields.length} filterLen=${(combinedFilter ?? "").length} url=${url.slice(0, 500)}`
+            );
+        }
+        const pullStartedAt = Date.now();
         const payload = await this.fetchJson(url);
+        if (entity === "Payment") {
+            this.config.onLog?.(
+                `[payment-pull] ok elapsedMs=${Date.now() - pullStartedAt} rows=${Array.isArray((payload as { value?: unknown[] }).value) ? (payload as { value: unknown[] }).value.length : "?"}`
+            );
+        }
         const value = (payload as { value?: unknown[] }).value;
 
         if (!Array.isArray(value)) {
@@ -371,7 +416,12 @@ export class PriorityProviderClient implements BillingProviderClient {
         if (!isPriorityEntityImportType(entity)) {
             throw new Error(`Unsupported entity: ${entity}`);
         }
-        const filterKey = options?.filter?.trim() ?? "";
+        const filterKey =
+            entity === "Payment" && isIdgPaymentEntitySet(entitySet)
+                ? // IDG payment columns are table-shaped; do not re-sample per
+                  // FNCPATNAME phase (account_10149 splits receipt-code ORs).
+                  ""
+                : (options?.filter?.trim() ?? "");
         const key = columnSampleCacheKey(entity, entitySet, filterKey);
         const cached = this.tableColumnsByKey.get(key);
         if (cached) {
@@ -380,9 +430,22 @@ export class PriorityProviderClient implements BillingProviderClient {
         this.config.onLog?.(
             `Sampling ${entity} columns (${entitySet?.trim() || "default table"})…`
         );
+        // Payment: keep a single FNCPATNAME eq for the sample (never drop the
+        // field — lightening the OR to "no FNCPATNAME" hangs Priority). When the
+        // live filter still has a multi-value OR, sample with the first code.
+        let sampleFilter = options?.filter;
+        if (entity === "Payment" && options?.filter) {
+            const expanded = expandPaymentFncPatNameOrFilters(options.filter);
+            if (expanded.length > 1) {
+                sampleFilter = expanded[0] ?? options.filter;
+                this.config.onLog?.(
+                    `[column-sample] entity=Payment using first FNCPATNAME for sample (${expanded.length} codes in live filter)`
+                );
+            }
+        }
         const sampled = await fetchPriorityTableColumns(this.config, entity, {
             entitySet,
-            filter: options?.filter,
+            filter: sampleFilter,
         });
         if (!sampled.ok) {
             const filterPreview = (options?.filter ?? "").slice(0, 280);
@@ -447,12 +510,10 @@ export class PriorityProviderClient implements BillingProviderClient {
         if (isPriorityEntityImportType(entity)) {
             const endpoint = getPriorityEntityEndpoint(entity);
             if (isIdgPaymentEntitySet(entitySet)) {
-                // IDG_ARFNCITEMS* has FNCNUM/KLINE, not PAYNUM; no CREDIT/DEBIT.
-                names.delete("PAYNUM");
-                names.delete("CREDIT");
-                names.delete("DEBIT");
-                names.delete("PAYMENT");
-                names.delete("CUSTNAME");
+                // IDG_ARFNCITEMS* has FNCNUM/KLINE, not classic payment DOCNUM/PAYNUM.
+                for (const name of IDG_PAYMENT_OMIT_FALLBACK_COLUMNS) {
+                    names.delete(name);
+                }
                 names.add("FNCNUM");
                 names.add("KLINE");
             } else if (endpoint.defaultOrderBy) {

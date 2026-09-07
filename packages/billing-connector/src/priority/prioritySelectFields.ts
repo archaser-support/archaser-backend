@@ -14,6 +14,8 @@ const SYNTHETIC_SOURCE_FIELDS: Record<string, readonly string[]> = {
         "IVNUM",
         "PAYNUM",
         "TRANSNUM",
+        // DOCNUM is on classic FNCPAY forms — not IDG_ARFNCITEMS*. Including it
+        // in $select after a failed column-sample fallback returns HTTP 400.
         "DOCNUM",
         "FNCIREF1",
     ],

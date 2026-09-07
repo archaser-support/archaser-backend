@@ -52,10 +52,12 @@ import { PRIORITY_RATE_LIMITS } from "../priority/priorityApiContract";
 import { odataSelectFieldsFromMapping } from "../priority/prioritySelectFields";
 import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
 import {
+    andODataFilters,
+} from "../services/billingConnectorPullFilterCompile";
+import {
     resolveImportPullFilterOData,
     resolveRuntimeCustomerScopeOData,
 } from "../services/billingConnectorPullFilters";
-import { andODataFilters } from "../services/billingConnectorPullFilterCompile";
 import {
     getPaymentImportTraceKeys,
     isTracedPaymentRow,
@@ -851,24 +853,60 @@ export async function runStagedExtensionSync(
                           fallbackScopeClause.trim()
                       )
                     : null;
+            const expandPullPhases = (
+                labelPrefix: string,
+                filter: string | null,
+                startAfterKey: string | null
+            ): Array<{
+                label: string;
+                filter: string | null;
+                startAfterKey: string | null;
+            }> => {
+                if (!filter) {
+                    return [{ label: labelPrefix, filter, startAfterKey }];
+                }
+                const expanded =
+                    typeof options.extension.expandEntityPullFilters ===
+                    "function"
+                        ? options.extension.expandEntityPullFilters({
+                              entityType,
+                              entitySet,
+                              filter,
+                              extension_config: options.extensionConfig,
+                          })
+                        : null;
+                if (!expanded || expanded.length <= 1) {
+                    return [
+                        {
+                            label: labelPrefix,
+                            filter: expanded?.[0] ?? filter,
+                            startAfterKey,
+                        },
+                    ];
+                }
+                log(
+                    `[payment-watch] ${entityType} ${labelPrefix} split into ${expanded.length} extension pulls`
+                );
+                return expanded.map((phaseFilter, index) => ({
+                    label: `${labelPrefix}_part_${index + 1}`,
+                    filter: phaseFilter,
+                    startAfterKey: index === 0 ? startAfterKey : null,
+                }));
+            };
             const pullPhases: Array<{
                 label: string;
                 filter: string | null;
                 /** Resume cursor only for the primary phase. */
                 startAfterKey: string | null;
-            }> = [
-                {
-                    label: "primary",
-                    filter: primaryPullFilter,
-                    startAfterKey: afterKey,
-                },
-            ];
+            }> = [...expandPullPhases("primary", primaryPullFilter, afterKey)];
             if (fallbackPullFilter) {
-                pullPhases.push({
-                    label: "idc_fallback",
-                    filter: fallbackPullFilter,
-                    startAfterKey: null,
-                });
+                pullPhases.push(
+                    ...expandPullPhases(
+                        "idc_fallback",
+                        fallbackPullFilter,
+                        null
+                    )
+                );
             }
 
             let watchedPaymentSeen = false;
@@ -968,7 +1006,7 @@ export async function runStagedExtensionSync(
                     // Priority rejects IDG null in $filter, so partition here.
                     if (
                         entityType === "Payment" &&
-                        phase.label === "idc_fallback"
+                        phase.label.startsWith("idc_fallback")
                     ) {
                         const idg = String(raw.IDG_CUSTNAME ?? "").trim();
                         if (idg.length > 0) {
@@ -1045,7 +1083,7 @@ export async function runStagedExtensionSync(
                 }
                 if (
                     entityType === "Payment" &&
-                    phase.label === "idc_fallback" &&
+                    phase.label.startsWith("idc_fallback") &&
                     idcFallbackDroppedIdg > 0
                 ) {
                     log(
