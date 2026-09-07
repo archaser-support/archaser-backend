@@ -144,8 +144,8 @@ export class DualAuthGuard implements CanActivate {
         const existing = req.headers.cookie || "";
         const without = existing
             .split(";")
-            .map((c) => c.trim())
-            .filter((c) => c && !c.startsWith(`${cookieName}=`))
+            .map((c: string) => c.trim())
+            .filter((c: string) => c && !c.startsWith(`${cookieName}=`))
             .join("; ");
         req.headers.cookie = without
             ? `${without}; ${cookieName}=${encoded}`

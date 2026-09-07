@@ -61,6 +61,7 @@
     "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js"
   },
   "devDependencies": {
+    "@types/express": "^5.0.3",
     "dotenv": "^16.4.5",
     "husky": "^8.0.0",
     "prettier": "^3.0.0",
@@ -69,6 +70,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@prisma/client": "^6.4.1"
+    "@prisma/client": "^6.4.1",
+    "@types/express": "^5.0.3"
   }
 }
