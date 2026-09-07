@@ -26,12 +26,12 @@ export type CustomerPolicyTrendUpsertRow = {
     maxPaymentTerm: number | null;
     maxAllowedMep: number | null;
     reportingDays: number | null;
-    mepCutoffDayOfMonth: number | null;
-    mepSubstituteDayOfMonth: number | null;
-    reportingCutoffDayOfMonth: number | null;
-    reportingSubstituteDayOfMonth: number | null;
-    paymentTermCutoffDayOfMonth: number | null;
-    paymentTermSubstituteDayOfMonth: number | null;
+    mepCutoffDay: number | null;
+    mepSubstituteExtraDays: number | null;
+    reportingCutoffDay: number | null;
+    reportingSubstituteExtraDays: number | null;
+    paymentTermCutoffDay: number | null;
+    paymentTermSubstituteDay: number | null;
     excludedFromPolicy: boolean;
     policyExclusionReason: string | null;
     creditScore: Prisma.Decimal | null;
@@ -76,12 +76,12 @@ const ON_CONFLICT_UPDATE = Prisma.sql`
         max_payment_term = EXCLUDED.max_payment_term,
         max_allowed_mep = EXCLUDED.max_allowed_mep,
         reporting_days = EXCLUDED.reporting_days,
-        mep_cutoff_day_of_month = EXCLUDED.mep_cutoff_day_of_month,
-        mep_substitute_day_of_month = EXCLUDED.mep_substitute_day_of_month,
-        reporting_cutoff_day_of_month = EXCLUDED.reporting_cutoff_day_of_month,
-        reporting_substitute_day_of_month = EXCLUDED.reporting_substitute_day_of_month,
-        payment_term_cutoff_day_of_month = EXCLUDED.payment_term_cutoff_day_of_month,
-        payment_term_substitute_day_of_month = EXCLUDED.payment_term_substitute_day_of_month,
+        mep_cutoff_day = EXCLUDED.mep_cutoff_day,
+        mep_substitute_extra_days = EXCLUDED.mep_substitute_extra_days,
+        reporting_cutoff_day = EXCLUDED.reporting_cutoff_day,
+        reporting_substitute_extra_days = EXCLUDED.reporting_substitute_extra_days,
+        payment_term_cutoff_day = EXCLUDED.payment_term_cutoff_day,
+        payment_term_substitute_day = EXCLUDED.payment_term_substitute_day,
         excluded_from_policy = EXCLUDED.excluded_from_policy,
         policy_exclusion_reason = EXCLUDED.policy_exclusion_reason,
         credit_score = EXCLUDED.credit_score,
@@ -130,12 +130,12 @@ function rowToValuesSql(row: CustomerPolicyTrendUpsertRow): Prisma.Sql {
         ${row.maxPaymentTerm},
         ${row.maxAllowedMep},
         ${row.reportingDays},
-        ${row.mepCutoffDayOfMonth},
-        ${row.mepSubstituteDayOfMonth},
-        ${row.reportingCutoffDayOfMonth},
-        ${row.reportingSubstituteDayOfMonth},
-        ${row.paymentTermCutoffDayOfMonth},
-        ${row.paymentTermSubstituteDayOfMonth},
+        ${row.mepCutoffDay},
+        ${row.mepSubstituteExtraDays},
+        ${row.reportingCutoffDay},
+        ${row.reportingSubstituteExtraDays},
+        ${row.paymentTermCutoffDay},
+        ${row.paymentTermSubstituteDay},
         ${row.excludedFromPolicy},
         ${row.policyExclusionReason},
         ${row.creditScore},
@@ -202,12 +202,12 @@ export async function batchUpsertCustomerPolicyTrendRows(
                 max_payment_term,
                 max_allowed_mep,
                 reporting_days,
-                mep_cutoff_day_of_month,
-                mep_substitute_day_of_month,
-                reporting_cutoff_day_of_month,
-                reporting_substitute_day_of_month,
-                payment_term_cutoff_day_of_month,
-                payment_term_substitute_day_of_month,
+                mep_cutoff_day,
+                mep_substitute_extra_days,
+                reporting_cutoff_day,
+                reporting_substitute_extra_days,
+                payment_term_cutoff_day,
+                payment_term_substitute_day,
                 excluded_from_policy,
                 policy_exclusion_reason,
                 credit_score,
