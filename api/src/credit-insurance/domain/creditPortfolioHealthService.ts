@@ -217,9 +217,15 @@ export type PortfolioCostDailyPoint = {
 
 export type PortfolioCostMonthlyPoint = {
     month: string;
+    /** Insurance premium for the month (Actual Sales + Limit day-slices). */
+    insuranceCost: number;
+    /** Registration markup on insurance premiums (not top-ups). */
+    registrationFeeCost: number;
+    /** Amortized top-up premiums for the month. */
+    topUpCost: number;
     /**
-     * Calendar-month range cost (Actual Sales + Limit day-slices + top-up
-     * amortization), clipped to the selected from/to window.
+     * Calendar-month range cost (insurance + registration + top-ups),
+     * clipped to the selected from/to window.
      */
     totalCost: number;
 };
@@ -227,7 +233,8 @@ export type PortfolioCostMonthlyPoint = {
 export type PortfolioCostsSection = {
     /**
      * Range Policy cost = Actual Sales (issued × cost %) + Limit
-     * ((limit × cost %) / 100 / 365 per day) + amortized top-ups.
+     * ((limit × cost %) / 100 / 365 per day) + registration markup on those
+     * insurance premiums + amortized top-ups.
      */
     periodCost: number;
     /**
@@ -1802,6 +1809,7 @@ type CptCostInputRow = {
     outdated_dcl: boolean;
     cost_calculation_method: cost_calculation_method | null;
     cost_percent: number | string | null;
+    registration_fee_percent: number | string | null;
     policy_exclusion_reason: string | null;
 };
 
@@ -1874,6 +1882,7 @@ async function fetchPortfolioRangeCostInputs(
             t.outdated_dcl,
             t.cost_calculation_method,
             t.cost_percent,
+            t.registration_fee_percent,
             t.policy_exclusion_reason
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${accountId}
@@ -1973,6 +1982,9 @@ async function fetchPortfolioRangeCostInputs(
             approvedLimit: optionalFiniteNumber(row.approved_limit),
             costCalculationMethod: row.cost_calculation_method,
             costPercent: optionalFiniteNumber(row.cost_percent),
+            registrationFeePercent: optionalFiniteNumber(
+                row.registration_fee_percent
+            ),
             excludedFromPolicy: row.excluded_from_policy,
             outdatedDcl: row.outdated_dcl,
             policyExclusionReason: row.policy_exclusion_reason,
