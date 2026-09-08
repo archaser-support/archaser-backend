@@ -207,6 +207,17 @@ export interface BillingAccountExtension {
         filter: string;
         extension_config: Record<string, unknown> | null;
     }): string[] | null;
+    /**
+     * Unique left-to-right `$orderby` fields for keyset pagination on custom
+     * ERP entity sets. Return null to keep the provider default.
+     * Account 10149 IDG payments: FNCDATE,FNCNUM,KLINE (KLINE alone collides
+     * across receipts on the same day).
+     */
+    resolvePullKeysetOrderFields?(params: {
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string[] | null;
 }
 
 export type ExtensionAttachmentUpsertInput = {
