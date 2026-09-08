@@ -173,7 +173,9 @@ npm_ci_low_memory() {
     # Ignore scripts so prisma/husky do not spawn extra Node during peak install.
     # Prisma generate still runs later in this script.
     NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 2 --ignore-scripts
+        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 2 --ignore-scripts || \
+    NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
+        npm install --include=dev --no-audit --no-fund --ignore-scripts
 }
 
 ENVIRONMENT=""
