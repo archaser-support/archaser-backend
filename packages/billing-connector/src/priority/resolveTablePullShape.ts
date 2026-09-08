@@ -35,6 +35,8 @@ export const DATE_FIELD_FALLBACKS = [
 /**
  * Secondary sort for keyset pagination when the primary order-by is not unique
  * (e.g. IDG_ARFNCITEMS4: many KLINE rows share one FNCNUM).
+ * Prefer a full unique chain via {@link resolveKeysetOrderFields} / extension
+ * hooks — KLINE alone is not unique across documents on the same FNCDATE.
  */
 export const KEYSET_TIE_BREAKER_FIELDS = ["KLINE"] as const;
 
@@ -76,6 +78,43 @@ export function pickKeysetTieBreaker(
     return null;
 }
 
+/**
+ * Keep only fields that exist on the table, preserving caller order.
+ * Returns [] when nothing usable remains.
+ */
+export function filterKeysetOrderFields(
+    fields: readonly string[] | null | undefined,
+    columns: Set<string>
+): string[] {
+    if (!fields || fields.length === 0) {
+        return [];
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const field of fields) {
+        const name = field.trim();
+        if (!name || seen.has(name) || !columns.has(name)) {
+            continue;
+        }
+        seen.add(name);
+        out.push(name);
+    }
+    return out;
+}
+
+/** Encode N keyset field values (must not contain `|`). */
+export function encodeKeysetCursorValues(values: readonly string[]): string {
+    return values.map((value) => value.trim()).join(KEYSET_CURSOR_SEP);
+}
+
+export function parseKeysetCursorValues(afterKey: string): string[] {
+    return afterKey
+        .trim()
+        .split(KEYSET_CURSOR_SEP)
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0);
+}
+
 export function encodeKeysetCursor(
     primary: string,
     secondary?: string | null
@@ -85,23 +124,17 @@ export function encodeKeysetCursor(
     if (!s) {
         return p;
     }
-    return `${p}${KEYSET_CURSOR_SEP}${s}`;
+    return encodeKeysetCursorValues([p, s]);
 }
 
 export function parseKeysetCursor(afterKey: string): {
     primary: string;
     secondary: string | null;
 } {
-    const trimmed = afterKey.trim();
-    const sep = trimmed.indexOf(KEYSET_CURSOR_SEP);
-    if (sep < 0) {
-        return { primary: trimmed, secondary: null };
-    }
-    const primary = trimmed.slice(0, sep).trim();
-    const secondary = trimmed.slice(sep + 1).trim();
+    const parts = parseKeysetCursorValues(afterKey);
     return {
-        primary,
-        secondary: secondary.length > 0 ? secondary : null,
+        primary: parts[0] ?? afterKey.trim(),
+        secondary: parts[1] ?? null,
     };
 }
 
@@ -117,10 +150,16 @@ function isODataDateTimeLiteral(value: string): boolean {
     );
 }
 
-/** KLINE is usually Edm.Int32; other keyset fields are Edm.String. */
-function odataTieBreakerLiteral(value: string): string {
-    if (/^-?\d+$/.test(value)) {
+/** Known Edm.Int32 / numeric keyset fields — everything else is quoted string. */
+const ODATA_INT_KEYSET_FIELDS = new Set(["KLINE"]);
+
+/** KLINE is Edm.Int32; FNCNUM and most Priority keys are Edm.String. */
+function odataKeysetFieldLiteral(field: string, value: string): string {
+    if (ODATA_INT_KEYSET_FIELDS.has(field) && /^-?\d+$/.test(value)) {
         return value;
+    }
+    if (isODataDateTimeLiteral(value)) {
+        return value.trim();
     }
     return odataQuotedString(value);
 }
@@ -136,6 +175,49 @@ function odataOrderByLiteral(value: string): string {
 }
 
 /**
+ * Lexicographic keyset filter for N ordered fields.
+ * Example fields [A,B,C] values [a,b,c]:
+ *   (A gt a) or ((A eq a) and (B gt b)) or ((A eq a) and (B eq b) and (C gt c))
+ * When the cursor has fewer values than fields (resume mid-upgrade), only the
+ * matching prefix is applied.
+ */
+export function buildKeysetFilterForFields(
+    fields: readonly string[],
+    afterKey: string
+): string {
+    if (fields.length === 0) {
+        throw new Error("buildKeysetFilterForFields requires at least one field");
+    }
+    const values = parseKeysetCursorValues(afterKey);
+    if (values.length === 0) {
+        throw new Error("buildKeysetFilterForFields requires a non-empty afterKey");
+    }
+    const depth = Math.min(fields.length, values.length);
+    const clauses: string[] = [];
+    for (let i = 0; i < depth; i++) {
+        const parts: string[] = [];
+        for (let j = 0; j < i; j++) {
+            const field = fields[j]!;
+            const lit =
+                j === 0
+                    ? odataOrderByLiteral(values[j]!)
+                    : odataKeysetFieldLiteral(field, values[j]!);
+            parts.push(`(${field} eq ${lit})`);
+        }
+        const field = fields[i]!;
+        const lit =
+            i === 0
+                ? odataOrderByLiteral(values[i]!)
+                : odataKeysetFieldLiteral(field, values[i]!);
+        parts.push(`(${field} gt ${lit})`);
+        clauses.push(
+            parts.length === 1 ? parts[0]! : `(${parts.join(" and ")})`
+        );
+    }
+    return clauses.length === 1 ? clauses[0]! : clauses.join(" or ");
+}
+
+/**
  * Keyset filter after `afterKey`.
  * With a tie-breaker and composite cursor `primary|secondary`:
  *   (orderBy gt primary) or ((orderBy eq primary) and (tieBreaker gt secondary))
@@ -146,23 +228,21 @@ export function buildKeysetFilter(
     afterKey: string,
     tieBreaker: string | null
 ): string {
-    const { primary, secondary } = parseKeysetCursor(afterKey);
-    const primaryLit = odataOrderByLiteral(primary);
-    if (!tieBreaker || secondary == null) {
-        return `${orderBy} gt ${primaryLit}`;
-    }
-    const secondaryLit = odataTieBreakerLiteral(secondary);
-    return (
-        `(${orderBy} gt ${primaryLit}) or ` +
-        `((${orderBy} eq ${primaryLit}) and (${tieBreaker} gt ${secondaryLit}))`
-    );
+    const fields = tieBreaker ? [orderBy, tieBreaker] : [orderBy];
+    return buildKeysetFilterForFields(fields, afterKey);
+}
+
+export function formatOrderByFields(fields: readonly string[]): string {
+    return fields.join(",");
 }
 
 export function formatOrderByClause(
     orderBy: string,
     tieBreaker: string | null
 ): string {
-    return tieBreaker ? `${orderBy},${tieBreaker}` : orderBy;
+    return formatOrderByFields(
+        tieBreaker ? [orderBy, tieBreaker] : [orderBy]
+    );
 }
 
 export function pickDateField(

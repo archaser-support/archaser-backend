@@ -17,11 +17,12 @@ import { applyPaymentSyntheticsToRecords } from "../payment/connectorPaymentSynt
 import { tracePaymentImportByRaw } from "../import/paymentImportTrace";
 import {
     assertFilterFieldsExist,
-    buildKeysetFilter,
+    buildKeysetFilterForFields,
     columnNameSet,
     DATE_FIELD_FALLBACKS,
-    encodeKeysetCursor,
-    formatOrderByClause,
+    encodeKeysetCursorValues,
+    filterKeysetOrderFields,
+    formatOrderByFields,
     intersectSelectFields,
     KEYSET_TIE_BREAKER_FIELDS,
     odataFilterFieldNames,
@@ -40,6 +41,7 @@ import {
     testPriorityConnection,
     type PriorityConnectionConfig,
 } from "./PriorityClient";
+import { summarizePriorityHttpErrorBody } from "./priorityHttpErrorMessage";
 
 /** Classic FNCPAY / CINVOICES payment fields that are not on IDG_ARFNCITEMS*. */
 const IDG_PAYMENT_OMIT_FALLBACK_COLUMNS = [
@@ -94,17 +96,6 @@ function buildQueryString(params: Record<string, string>): string {
     return search.toString();
 }
 
-function summarizePriorityHttpError(status: number, body: string): string {
-    const trimmed = body.trim();
-    if (!trimmed) {
-        return `HTTP ${status}`;
-    }
-    if (/^<!DOCTYPE/i.test(trimmed) || /^<html/i.test(trimmed)) {
-        return `HTTP ${status} HTML gateway error`;
-    }
-    return trimmed.slice(0, 200);
-}
-
 function andODataFilters(
     ...parts: Array<string | null | undefined>
 ): string | undefined {
@@ -132,20 +123,22 @@ function recordFieldValue(
     return text.length > 0 ? text : null;
 }
 
-function recordKeysetCursor(
+function recordKeysetCursorForFields(
     record: Record<string, unknown>,
-    orderBy: string,
-    tieBreaker: string | null
+    fields: readonly string[]
 ): string | null {
-    const primary = recordFieldValue(record, orderBy);
-    if (primary == null) {
+    if (fields.length === 0) {
         return null;
     }
-    if (!tieBreaker) {
-        return primary;
+    const values: string[] = [];
+    for (const field of fields) {
+        const value = recordFieldValue(record, field);
+        if (value == null) {
+            return null;
+        }
+        values.push(value);
     }
-    const secondary = recordFieldValue(record, tieBreaker);
-    return encodeKeysetCursor(primary, secondary);
+    return encodeKeysetCursorValues(values);
 }
 
 function dateGeIso(date: Date, overlapMinutes: number): string {
@@ -262,8 +255,37 @@ export class PriorityProviderClient implements BillingProviderClient {
         const preferredOrderBy = isIdgPayment
             ? "FNCDATE"
             : endpoint.defaultOrderBy;
-        const orderBy = pickOrderByField(preferredOrderBy, columns);
-        const tieBreaker = pickKeysetTieBreaker(columns, orderBy);
+        const extensionKeysetFields = filterKeysetOrderFields(
+            options.keysetOrderFields,
+            columns
+        );
+        if (
+            options.keysetOrderFields &&
+            options.keysetOrderFields.length > 0 &&
+            extensionKeysetFields.length !==
+                options.keysetOrderFields.filter((f) => f.trim()).length
+        ) {
+            const missing = options.keysetOrderFields
+                .map((f) => f.trim())
+                .filter((f) => f && !columns.has(f));
+            throw new Error(
+                `keysetOrderFields not on table ${collectionUrl}: ${missing.join(", ")}`
+            );
+        }
+        const orderFields =
+            extensionKeysetFields.length > 0
+                ? extensionKeysetFields
+                : (() => {
+                      const primary = pickOrderByField(
+                          preferredOrderBy,
+                          columns
+                      );
+                      const secondary = pickKeysetTieBreaker(
+                          columns,
+                          primary
+                      );
+                      return secondary ? [primary, secondary] : [primary];
+                  })();
         const needsDate =
             options.createdOnOrAfter != null || options.since != null;
         const dateField = pickDateField(options.preferredDateField, columns);
@@ -273,17 +295,12 @@ export class PriorityProviderClient implements BillingProviderClient {
 
         const selectFields = intersectSelectFields(
             [
-                orderBy,
-                ...(tieBreaker ? [tieBreaker] : []),
+                ...orderFields,
                 ...(dateField ? [dateField] : []),
                 ...(options.select ?? []),
             ],
             columns,
-            [
-                orderBy,
-                ...(tieBreaker ? [tieBreaker] : []),
-                ...(dateField ? [dateField] : []),
-            ]
+            [...orderFields, ...(dateField ? [dateField] : [])]
         );
 
         const params: Record<string, string> = { $top: String(pageSize) };
@@ -296,7 +313,7 @@ export class PriorityProviderClient implements BillingProviderClient {
             params.$skip = String(safeSkip);
         }
 
-        params.$orderby = formatOrderByClause(orderBy, tieBreaker);
+        params.$orderby = formatOrderByFields(orderFields);
         // IDG payment forms: $select of many columns often 502s while the same
         // filter with no $select ($top=5 sample) succeeds. Pull full rows.
         if (
@@ -310,7 +327,7 @@ export class PriorityProviderClient implements BillingProviderClient {
         const afterKey = options.afterKey?.trim();
         const keysetFilter =
             useKeyset && afterKey
-                ? buildKeysetFilter(orderBy, afterKey, tieBreaker)
+                ? buildKeysetFilterForFields(orderFields, afterKey)
                 : null;
         const dateBound = options.createdOnOrAfter ?? options.since;
         const overlapMinutes =
@@ -338,7 +355,8 @@ export class PriorityProviderClient implements BillingProviderClient {
         const url = `${collectionUrl}?${buildQueryString(params)}`;
         if (entity === "Payment") {
             this.config.onLog?.(
-                `[payment-pull] GET pageSize=${pageSize} orderBy=${orderBy}${tieBreaker ? `,${tieBreaker}` : ""} selectFields=${selectFields.length} filterLen=${(combinedFilter ?? "").length} url=${url.slice(0, 500)}`
+                `[payment-pull] GET pageSize=${pageSize} orderBy=${orderFields.join(",")}` +
+                    ` selectFields=${selectFields.length} filterLen=${(combinedFilter ?? "").length} url=${url.slice(0, 500)}`
             );
         }
         const pullStartedAt = Date.now();
@@ -381,10 +399,9 @@ export class PriorityProviderClient implements BillingProviderClient {
 
         const hasMore = records.length === pageSize;
         const lastKey = records.length
-            ? recordKeysetCursor(
+            ? recordKeysetCursorForFields(
                   records[records.length - 1],
-                  orderBy,
-                  tieBreaker
+                  orderFields
               )
             : null;
         const nextCursor = useKeyset
@@ -562,7 +579,7 @@ export class PriorityProviderClient implements BillingProviderClient {
         const elapsedMs = Date.now() - startedAt;
         if (!response.ok) {
             const body = await response.text().catch(() => "");
-            const summary = summarizePriorityHttpError(response.status, body);
+            const summary = summarizePriorityHttpErrorBody(response.status, body);
             this.config.onLog?.(
                 `Priority HTTP ${response.status} after ${elapsedMs}ms: ${summary}`
             );
