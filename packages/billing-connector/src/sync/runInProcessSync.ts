@@ -1056,7 +1056,10 @@ async function runInProcessSyncBody(
                 providerLabel: connector.provider,
                 timeZone: connector.time_zone,
                 ...(cachedRowsByEntity
-                    ? { cachedRowsByEntity }
+                    ? {
+                          cachedRowsByEntity,
+                          cachedImportExecutionId: useCachedExecutionId,
+                      }
                     : {}),
             });
 
