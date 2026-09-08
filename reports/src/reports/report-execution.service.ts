@@ -335,16 +335,31 @@ export class ReportExecutionService {
             fields
         );
         const needsComputedFormattedSort = computedSortTarget != null;
+        // CustomerPolicy-backed columns (limit_type, approved_limit, …) are not
+        // Customer scalars and cannot drive Prisma orderBy on the to-many join.
+        // Sort after formatRow extracts the active-policy value — for every
+        // Customer report, not only dashboard_credit_customers.
+        const policyBackedSortLeaf = (() => {
+            if (primaryTable !== "Customer" || !effectiveSortField) {
+                return null;
+            }
+            const raw = effectiveSortField.trim();
+            const leaf = raw.startsWith("Customer.")
+                ? raw.slice("Customer.".length)
+                : raw;
+            return isCustomerPolicyBackedReportField(leaf) ? leaf : null;
+        })();
+        const needsPolicyBackedFormattedSort = policyBackedSortLeaf != null;
         // Enriched metrics (Open AR, policy risk, …) must sort in memory after
         // enrichment — independent of report.context so builder/copied reports work.
         const needsCreditDashboardInMemorySort =
             primaryTable === "Customer" &&
             !!effectiveSortField &&
-            (isCreditDashboardEnrichedSortField(effectiveSortField) ||
-                (report.context === "dashboard_credit_customers" &&
-                    isCustomerPolicyBackedReportField(effectiveSortField)));
+            isCreditDashboardEnrichedSortField(effectiveSortField);
         const needsInMemorySort =
-            needsCreditDashboardInMemorySort || needsComputedFormattedSort;
+            needsCreditDashboardInMemorySort ||
+            needsComputedFormattedSort ||
+            needsPolicyBackedFormattedSort;
 
         const orderBy = needsInMemorySort
             ? []
@@ -449,6 +464,25 @@ export class ReportExecutionService {
             resultRows = sortFormattedReportRows(
                 resultRows,
                 computedSortTarget.outputKey,
+                effectiveSortDirection === "desc" ? "desc" : "asc"
+            );
+            totalRecords = resultRows.length;
+            resultRows = resultRows.slice(skip, skip + limit);
+        } else if (needsPolicyBackedFormattedSort && policyBackedSortLeaf) {
+            const match = fields.find(
+                (f) =>
+                    f.table === "Customer" &&
+                    (f.field === policyBackedSortLeaf ||
+                        getFieldOutputKey(f) === effectiveSortField)
+            );
+            const outputKey = match
+                ? getFieldOutputKey(match)
+                : effectiveSortField!.includes(".")
+                  ? effectiveSortField!
+                  : `Customer.${policyBackedSortLeaf}`;
+            resultRows = sortFormattedReportRows(
+                resultRows,
+                outputKey,
                 effectiveSortDirection === "desc" ? "desc" : "asc"
             );
             totalRecords = resultRows.length;
