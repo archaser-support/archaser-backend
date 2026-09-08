@@ -7,7 +7,12 @@ cd "$SCRIPT_DIR"
 NETWORK_NAME="${BACKEND_DOCKER_NETWORK_PRODUCTION:-archaser-backend-production_default}"
 docker network create "$NETWORK_NAME" 2>/dev/null || true
 
-echo "==> Starting Production Grafana/Monitoring Stack..."
+ENV_FILE="../.env"
+if [[ -f "../.env.production" ]]; then
+  ENV_FILE="../.env.production"
+fi
+
+echo "==> Starting Production Grafana/Monitoring Stack using $ENV_FILE..."
 MONITORING_ENV=production \
 GRAFANA_HOST_PORT=3201 \
 PROMETHEUS_HOST_PORT=9091 \
@@ -16,6 +21,7 @@ GRAFANA_ROOT_URL=https://grafana.portal.archaser.com/ \
 GRAFANA_DOMAIN=grafana.portal.archaser.com \
 BACKEND_DOCKER_NETWORK="$NETWORK_NAME" \
 docker compose --project-name archaser-monitoring-production \
+  --env-file "$ENV_FILE" \
   -f docker-compose.logging.yml up -d
 
 echo "==> Checking status of archaser-grafana-production..."
