@@ -50,7 +50,7 @@ Do **not** call ClickUp MCP from `/to-issues`. ClickUp holds the human ticket (s
 | **Default space** | **ARchaser** — `90122374962` |
 | **Default list** | **ARchaser** — `901206394222` |
 | **Default status** | **Selected for Development** |
-| **Default assignee** | **Nilotpal Bose** — `93674717` (`nilotpal@archaser.com`) |
+| **Default assignee** | **Current ClickUp user** — pass `assignees: ["me"]` on `clickup_create_task` (authenticated MCP user). Override only when the user names someone else. |
 
 Pass `workspace_id` on hierarchy/search calls unless the user specifies another team. Create new tasks in the **default list** unless the user specifies another list.
 
@@ -70,7 +70,7 @@ Do not use other spaces in the same workspace (e.g. Development, Zman App) unles
 | Context | Tracker | Notes |
 |---------|---------|-------|
 | Vertical slices (`/to-issues`) | **Commit-able markdown** under `.cursor/plans/<feature-slug>/issues/` | `**Status:** ready-for-agent`; `OVERVIEW.md` when 2+ slices |
-| Feature or bug (ClickUp) | ClickUp default list | Standard **Task** type (omit `task_type`); durable summary + How to test; status ladder in `docs/agents/clickup-git-workflow.md`; assignees `["93674717"]` |
+| Feature or bug (ClickUp) | ClickUp default list | Standard **Task** type (omit `task_type`); durable summary + How to test; status ladder in `docs/agents/clickup-git-workflow.md`; assignees `["me"]` (current authenticated ClickUp user) |
 
 **When creating ClickUp items**, use the standard Task type: omit `task_type` on `clickup_create_task`. Do not pass the literal value `"Task"` because the API may reject it when only custom task types are enumerated.
 
