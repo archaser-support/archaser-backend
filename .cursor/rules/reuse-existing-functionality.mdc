@@ -1,0 +1,26 @@
+---
+description: Before adding or changing behavior, search for existing shared implementations to reuse
+alwaysApply: true
+---
+
+# Reuse existing functionality
+
+Before creating **new** functionality or updating an **existing** one, **search the codebase first** for the same (or close) behavior and prefer a shared implementation over a one-off copy.
+
+## Required scan (before writing code)
+
+1. Search by behavior name, types, helpers, hooks, components, services, and similar call sites (`grep`, semantic search, and/or explore subagents).
+2. Check likely shared homes first: `shared/`, domain packages, existing hooks/utils, theme/design-system helpers, and nearby feature modules that already do the same job.
+3. Prefer, in order: **reuse as-is** → **extend the shared module** → **extract shared** only when two+ call sites need the same logic → **local one-off** only when nothing fits.
+
+## Rules
+
+- ❌ Do **not** reimplement helpers, hooks, UI patterns, validation, date/range logic, API mappers, or domain rules that already exist elsewhere
+- ❌ Do **not** copy-paste a near-duplicate into a second feature file when a shared module can own it
+- ✅ If a close match exists but is incomplete, **extend that shared place** (or extract one) instead of forking
+- ✅ If reuse would force an awkward abstraction, stop and ask — do not invent a “shared” API that only one caller needs
+- ✅ This applies to both **greenfield** work and **updates** to existing features (an update is a chance to converge on shared code)
+
+## Quick check
+
+Ask: “Would another screen/service need this same behavior?” If yes (or if it already exists twice), put it in shared code and call that.
