@@ -78,7 +78,7 @@ Later: coding → Ready-PR → Post-merge (see below). Do not force full impleme
 **Completion:** A ClickUp task id/URL is known and status is `requirement definition` (full path).
 
 1. If the user already gave a task URL/id → use it. Fetch the task if useful.
-2. If no task is known → run **Intake — ask when missing** (ClickUp row). **Create only** when they choose create / say “create a ClickUp task”. Use MCP from `.cursorrules` (discover tools first). Include title, short description, and **How to test** unless they opt out. Default list/assignee from `.cursorrules`.
+2. If no task is known → run **Intake — ask when missing** (ClickUp row). **Create only** when they choose create / say “create a ClickUp task”. Use MCP from `.cursorrules` (discover tools first). Include title, short description, and **How to test** unless they opt out. Default list from `.cursorrules`. **Assignee:** `assignees: ["me"]` (current authenticated ClickUp user) unless the user names someone else.
 3. Set status to `requirement definition` for full-path intake (existing ARchaser name only).
 4. Do **not** create tasks for every observation or mid-thought — wait for an explicit ask (including answering the intake question with “create”).
 
@@ -166,7 +166,7 @@ Allowed **only** for tiny, obvious fixes (e.g. typo, one-liner). Skips grill, PR
 
 **Completion:** Fix is on a named feature branch from `staging`, ready for (or past) the Ready-PR phase; ClickUp statuses follow the short ladder.
 
-1. **Ensure ClickUp task** — if URL/id unknown, ask via **Intake**; create **only** when they confirm create. May start at `selected for development` (skip early design statuses).
+1. **Ensure ClickUp task** — if URL/id unknown, ask via **Intake**; create **only** when they confirm create. Same list + `assignees: ["me"]` rules as Phase 1. May start at `selected for development` (skip early design statuses).
 2. **Branch** from latest `staging` in the primary repo: `{type}/CU-{taskId}-{short-slug}`. Same naming and primary-repo rules as full path. Sibling repos only when touched.
 3. **Fix** on that branch. Set status to `in progress` when coding starts.
 4. If scope grows or becomes unclear → **stop short path** and **upgrade to full path** (grill → PRD → slices) before more code.

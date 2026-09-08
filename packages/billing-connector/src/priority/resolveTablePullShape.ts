@@ -109,10 +109,28 @@ function odataQuotedString(value: string): string {
     return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** ISO DateTimeOffset / date — must stay unquoted for Edm.DateTimeOffset compares. */
+function isODataDateTimeLiteral(value: string): boolean {
+    return (
+        /^\d{4}-\d{2}-\d{2}T[\d:.+-]+Z?$/i.test(value.trim()) ||
+        /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+    );
+}
+
 /** KLINE is usually Edm.Int32; other keyset fields are Edm.String. */
 function odataTieBreakerLiteral(value: string): string {
     if (/^-?\d+$/.test(value)) {
         return value;
+    }
+    return odataQuotedString(value);
+}
+
+function odataOrderByLiteral(value: string): string {
+    if (isODataDateTimeLiteral(value)) {
+        return value.trim();
+    }
+    if (/^-?\d+(\.\d+)?$/.test(value.trim())) {
+        return value.trim();
     }
     return odataQuotedString(value);
 }
@@ -129,7 +147,7 @@ export function buildKeysetFilter(
     tieBreaker: string | null
 ): string {
     const { primary, secondary } = parseKeysetCursor(afterKey);
-    const primaryLit = odataQuotedString(primary);
+    const primaryLit = odataOrderByLiteral(primary);
     if (!tieBreaker || secondary == null) {
         return `${orderBy} gt ${primaryLit}`;
     }
