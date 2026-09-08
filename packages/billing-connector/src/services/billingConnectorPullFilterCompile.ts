@@ -101,3 +101,228 @@ export function compileEntityPullFilter(
     }
     return null;
 }
+
+function unwrapBalancedOuterParens(expr: string): string {
+    let s = expr.trim();
+    while (s.startsWith("(") && s.endsWith(")")) {
+        let depth = 0;
+        let balanced = true;
+        for (let i = 0; i < s.length; i++) {
+            const ch = s[i];
+            if (ch === "(") {
+                depth += 1;
+            } else if (ch === ")") {
+                depth -= 1;
+                if (depth === 0 && i < s.length - 1) {
+                    balanced = false;
+                    break;
+                }
+                if (depth < 0) {
+                    balanced = false;
+                    break;
+                }
+            }
+        }
+        if (!balanced || depth !== 0) {
+            break;
+        }
+        s = s.slice(1, -1).trim();
+    }
+    return s;
+}
+
+function splitTopLevelAnd(expr: string): string[] {
+    const parts: string[] = [];
+    let depth = 0;
+    let start = 0;
+    const s = expr.trim();
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === "(") {
+            depth += 1;
+            continue;
+        }
+        if (ch === ")") {
+            depth -= 1;
+            continue;
+        }
+        if (depth !== 0) {
+            continue;
+        }
+        if (/^and\b/i.test(s.slice(i))) {
+            const before = s.slice(start, i).trim();
+            if (before) {
+                parts.push(before);
+            }
+            i += 2; // skip "and"
+            while (i + 1 < s.length && /\s/.test(s[i + 1]!)) {
+                i += 1;
+            }
+            start = i + 1;
+        }
+    }
+    const tail = s.slice(start).trim();
+    if (tail) {
+        parts.push(tail);
+    }
+    return parts.length > 0 ? parts : [s];
+}
+
+function splitTopLevelOr(expr: string): string[] {
+    const parts: string[] = [];
+    let depth = 0;
+    let start = 0;
+    const s = expr.trim();
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === "(") {
+            depth += 1;
+            continue;
+        }
+        if (ch === ")") {
+            depth -= 1;
+            continue;
+        }
+        if (depth !== 0) {
+            continue;
+        }
+        if (/^or\b/i.test(s.slice(i))) {
+            const before = s.slice(start, i).trim();
+            if (before) {
+                parts.push(before);
+            }
+            i += 1; // skip "or"
+            while (i + 1 < s.length && /\s/.test(s[i + 1]!)) {
+                i += 1;
+            }
+            start = i + 1;
+        }
+    }
+    const tail = s.slice(start).trim();
+    if (tail) {
+        parts.push(tail);
+    }
+    return parts.length > 0 ? parts : [s];
+}
+
+const FNCPATNAME_EQ_RE =
+    /^\(?\s*FNCPATNAME\s+eq\s+'((?:[^']|'')*)'\s*\)?$/i;
+
+/** Pure `FNCPATNAME eq '…' or …` group → literal values (unescaped). */
+function extractFncPatNameEqLiterals(conjunct: string): string[] | null {
+    const unwrapped = unwrapBalancedOuterParens(conjunct);
+    const parts = splitTopLevelOr(unwrapped);
+    if (parts.length === 0) {
+        return null;
+    }
+    const values: string[] = [];
+    for (const part of parts) {
+        const match = FNCPATNAME_EQ_RE.exec(unwrapBalancedOuterParens(part));
+        if (!match?.[1]) {
+            return null;
+        }
+        values.push(match[1].replace(/''/g, "'"));
+    }
+    return values;
+}
+
+/**
+ * Split a Payment $filter that ORs several FNCPATNAME eq values into one
+ * filter per value. Walks nested AND groups. Priority often 502s on the
+ * combined OR; each single-eq pull keeps the same receipt-code semantics.
+ *
+ * Returns `[original]` when there is no multi-value FNCPATNAME OR group.
+ */
+export function expandPaymentFncPatNameOrFilters(
+    filter: string | null | undefined
+): string[] {
+    if (filter == null) {
+        return [];
+    }
+    const trimmed = filter.trim();
+    if (!trimmed) {
+        return [];
+    }
+    if (!/\bFNCPATNAME\b/i.test(trimmed)) {
+        return [trimmed];
+    }
+
+    const direct = extractFncPatNameEqLiterals(trimmed);
+    if (direct && direct.length > 1) {
+        return direct.map(
+            (value) => `FNCPATNAME eq ${escapeODataStringLiteral(value)}`
+        );
+    }
+
+    const andParts = splitTopLevelAnd(unwrapBalancedOuterParens(trimmed));
+    if (andParts.length <= 1) {
+        return [trimmed];
+    }
+
+    for (let i = 0; i < andParts.length; i++) {
+        const partExpanded = expandPaymentFncPatNameOrFilters(andParts[i]);
+        if (partExpanded.length > 1) {
+            return partExpanded.map(
+                (partFilter) =>
+                    andODataFilters(
+                        ...andParts.map((part, index) =>
+                            index === i ? partFilter : part
+                        )
+                    ) ?? trimmed
+            );
+        }
+    }
+
+    return [trimmed];
+}
+
+/**
+ * Preview / column-sample only: drop AND-conjuncts that reference FNCPATNAME
+ * when a fast sample is enough. Live Payment pulls must keep FNCPATNAME —
+ * use {@link expandPaymentFncPatNameOrFilters} instead of dropping codes.
+ */
+export function lightenPaymentPullODataFilter(
+    filter: string | null | undefined
+): string | null {
+    if (filter == null) {
+        return null;
+    }
+    const trimmed = filter.trim();
+    if (!trimmed) {
+        return null;
+    }
+    if (!/\bFNCPATNAME\b/i.test(trimmed)) {
+        return trimmed;
+    }
+
+    const lighten = (expr: string): string | null => {
+        const unwrapped = unwrapBalancedOuterParens(expr);
+        const parts = splitTopLevelAnd(unwrapped);
+        if (parts.length <= 1) {
+            return /\bFNCPATNAME\b/i.test(unwrapped) ? null : unwrapped;
+        }
+        const kept: string[] = [];
+        for (const part of parts) {
+            if (/\bFNCPATNAME\b/i.test(part)) {
+                // Drop this conjunct entirely when it is only FNCPATNAME logic;
+                // if nested ANDs mix FNCPATNAME with other fields, recurse.
+                const nested = unwrapBalancedOuterParens(part);
+                const nestedParts = splitTopLevelAnd(nested);
+                if (nestedParts.length > 1) {
+                    const nestedKept = lighten(part);
+                    if (nestedKept) {
+                        kept.push(nestedKept);
+                    }
+                }
+                continue;
+            }
+            kept.push(part);
+        }
+        return andODataFilters(...kept);
+    };
+
+    return lighten(trimmed);
+}
+
+/** @deprecated Prefer {@link lightenPaymentPullODataFilter}. */
+export const lightenPaymentPreviewODataFilter = lightenPaymentPullODataFilter;

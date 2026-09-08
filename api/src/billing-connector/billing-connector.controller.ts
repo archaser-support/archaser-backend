@@ -118,6 +118,20 @@ export class BillingConnectorController {
         return this.service.searchCustomers(user, accountId, q);
     }
 
+    @Get("sync/cache-check")
+    @ApiOperation({
+        summary:
+            "Same-day import cache availability per entity (manual Start suggestion)",
+    })
+    async cacheCheck(
+        @CurrentUser() user: JwtPayload,
+        @Param("accountId", ParseIntPipe) accountId: number,
+        @Query("mode") mode?: string,
+        @Query("customer_id") customerId?: string
+    ) {
+        return this.service.checkImportCache(user, accountId, mode, customerId);
+    }
+
     @Post("sync/cancel")
     @ApiOperation({ summary: "Cancel the in-process running sync" })
     async cancel(

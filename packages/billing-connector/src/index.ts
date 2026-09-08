@@ -354,6 +354,38 @@ export {
 } from "./syncHistory";
 
 export {
+    DEFAULT_IMPORT_CACHE_TIME_ZONE,
+    IMPORT_CACHE_CUSTOMER_SCOPE_ALL,
+    IMPORT_CACHE_ENTITY_TYPES,
+    IMPORT_CACHE_TTL_SECONDS,
+    chunkImportCacheRows,
+    findSameDayCacheRuns,
+    findSameDayCaches,
+    loadEntityImportCache,
+    loadImportCachesForReplay,
+    loadSameDayImportCachesForReplay,
+    normalizeImportCacheCustomerScope,
+    parseUseCachedExecutionId,
+    parseUseCachedImport,
+    resolveImportCacheDay,
+    rowsEnteringImport,
+    saveEntityImportCache,
+    saveEntityImportCacheOrThrow,
+    trySaveEntityImportCache,
+    useMemoryImportCacheStoreForTests,
+    resetImportCacheStoreForTests,
+    type ImportCacheEntityType,
+    type ImportCacheKey,
+    type ImportCacheSyncMode,
+    type LoadImportCachesForReplayResult,
+    type LoadSameDayImportCachesResult,
+    type SameDayCacheRun,
+    type SameDayCacheRunEntity,
+    type SameDayCacheSummary,
+    type SaveEntityImportCacheInput,
+} from "./importCache";
+
+export {
     importMappedEntityBatch,
     extractMaxUpdatedAt,
     shouldSkipReportingBreachOnConnectorWrite,

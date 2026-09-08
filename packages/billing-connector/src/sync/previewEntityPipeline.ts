@@ -8,7 +8,9 @@ import {
     type PriorityConnectionConfig,
 } from "../priority/PriorityClient";
 import { isPriorityEntityImportType } from "../priority/priorityApiContract";
-import { andODataFilters } from "../services/billingConnectorPullFilterCompile";
+import {
+    andODataFilters,
+} from "../services/billingConnectorPullFilterCompile";
 import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
 import {
     resolveImportPullFilterOData,
@@ -22,8 +24,12 @@ import {
 import { STAGED_ENTITY_ORDER } from "./stagedExtensionSync";
 
 export const PREVIEW_SAMPLE_TOP = 50;
+/** Payment IDG tables often scan slowly under $filter; keep preview samples small. */
+const PREVIEW_PAYMENT_SAMPLE_TOP = 10;
 /** Keep Payment preview from hanging for the full 180s Priority timeout. */
 const PREVIEW_PAYMENT_TIMEOUT_SECONDS = 45;
+/** Prefer newest payments first so Priority can stop after $top without a full scan. */
+const PREVIEW_PAYMENT_ORDER_BY = "FNCDATE desc";
 
 /** Same entity order as staged live sync (Customer → Payment → Invoice → Contact). */
 export const PREVIEW_ENTITY_ORDER: ImportType[] = [...STAGED_ENTITY_ORDER];
@@ -293,11 +299,28 @@ export async function previewEntityFromConnector(params: {
                   extension_config: extensionConfig,
               })
             : null;
-    const entityBaseFilter = resolveImportPullFilterOData(
+    const fullEntityBaseFilter = resolveImportPullFilterOData(
         connector.pull_filters,
         importType,
         { entitySet }
     );
+    // Account extensions may split heavy ORs (10149 FNCPATNAME); preview uses
+    // the first part so samples stay representative without the full OR 502.
+    const extensionExpanded =
+        importType === "Payment" &&
+        typeof extension?.expandEntityPullFilters === "function" &&
+        fullEntityBaseFilter
+            ? extension.expandEntityPullFilters({
+                  entityType: importType,
+                  entitySet,
+                  filter: fullEntityBaseFilter,
+                  extension_config: extensionConfig,
+              })
+            : null;
+    const entityBaseFilter =
+        extensionExpanded && extensionExpanded.length > 0
+            ? extensionExpanded[0]!
+            : fullEntityBaseFilter;
     const cutoverClause = previewCutoverDateOData({
         importType,
         backfillStartDate: params.backfillStartDate,
@@ -315,7 +338,19 @@ export async function previewEntityFromConnector(params: {
         }
         return withScope;
     };
+    const withFullCutover = (scope: string | null): string | null => {
+        const withScope = andODataFilters(fullEntityBaseFilter, scope);
+        if (
+            cutoverClause &&
+            cutoverField &&
+            !filterAlreadyHasDateField(withScope, cutoverField)
+        ) {
+            return andODataFilters(withScope, cutoverClause);
+        }
+        return withScope;
+    };
     const primaryFilter = withCutover(runtimeCustomerClause);
+    const fullPrimaryFilter = withFullCutover(runtimeCustomerClause);
     const fallbackFilter =
         typeof fallbackCustomerClause === "string" &&
         fallbackCustomerClause.trim().length > 0
@@ -337,23 +372,40 @@ export async function previewEntityFromConnector(params: {
         };
     }
 
-    const timeoutSeconds =
-        importType === "Payment" ? PREVIEW_PAYMENT_TIMEOUT_SECONDS : undefined;
+    const isPayment = importType === "Payment";
+    const effectiveSampleTop = isPayment
+        ? Math.min(sampleTop, PREVIEW_PAYMENT_SAMPLE_TOP)
+        : sampleTop;
+    const timeoutSeconds = isPayment
+        ? PREVIEW_PAYMENT_TIMEOUT_SECONDS
+        : undefined;
+    const orderBy = isPayment ? PREVIEW_PAYMENT_ORDER_BY : null;
     const onLog = config.onLog;
+    if (
+        isPayment &&
+        fullPrimaryFilter &&
+        primaryFilter &&
+        fullPrimaryFilter !== primaryFilter
+    ) {
+        onLog?.(
+            `[preview-entity] payment preview filter uses extension-expanded part fullFilter=${fullPrimaryFilter} previewFilter=${primaryFilter}`
+        );
+    }
     onLog?.(
-        `[preview-entity] start entity=${importType} entitySet=${entitySet ?? "default"} filterLen=${(primaryFilter ?? "").length} filterPreview=${(primaryFilter ?? "").slice(0, 280)}`
+        `[preview-entity] start entity=${importType} entitySet=${entitySet ?? "default"} sampleTop=${effectiveSampleTop} timeoutSec=${timeoutSeconds ?? "default"} orderBy=${orderBy ?? "(none)"} filterLen=${(primaryFilter ?? "").length} filter=${primaryFilter ?? "(none)"}`
     );
 
+    const fetchStartedAt = Date.now();
     const fetchResult = await fetchPriorityEntitySamples(
         config,
         importType,
-        sampleTop,
-        { entitySet, filter: primaryFilter, timeoutSeconds }
+        effectiveSampleTop,
+        { entitySet, filter: primaryFilter, orderBy, timeoutSeconds }
     );
 
     if (!fetchResult.ok) {
         onLog?.(
-            `[preview-entity] primary fetch failed entity=${importType}: ${fetchResult.error ?? "unknown"}`
+            `[preview-entity] primary fetch failed entity=${importType} elapsedMs=${Date.now() - fetchStartedAt}: ${fetchResult.error ?? "unknown"}`
         );
         return {
             import_type: importType,
@@ -372,7 +424,7 @@ export async function previewEntityFromConnector(params: {
     }
 
     onLog?.(
-        `[preview-entity] primary fetch ok entity=${importType} rows=${fetchResult.records.length}`
+        `[preview-entity] primary fetch ok entity=${importType} rows=${fetchResult.records.length} elapsedMs=${Date.now() - fetchStartedAt}`
     );
 
     let mergedRecords = [...fetchResult.records];
@@ -381,13 +433,13 @@ export async function previewEntityFromConnector(params: {
 
     if (fallbackFilter && importType === "Payment") {
         onLog?.(
-            `[preview-entity] fallback IDC scope entity=${importType} filterPreview=${fallbackFilter.slice(0, 280)}`
+            `[preview-entity] fallback IDC scope entity=${importType} sampleTop=${effectiveSampleTop} orderBy=${orderBy ?? "(none)"} filter=${fallbackFilter}`
         );
         const fallbackResult = await fetchPriorityEntitySamples(
             config,
             importType,
-            sampleTop,
-            { entitySet, filter: fallbackFilter, timeoutSeconds }
+            effectiveSampleTop,
+            { entitySet, filter: fallbackFilter, orderBy, timeoutSeconds }
         );
         if (fallbackResult.ok && fallbackResult.records.length > 0) {
             const seen = new Set(
