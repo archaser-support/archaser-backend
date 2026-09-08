@@ -581,91 +581,99 @@ groups:
           severity: high
           type: errors
 
-  - uid: billing-connector-auth-failures-prod
-    title: Billing Connector Auth Failures
-    condition: C
-    data:
-      - refId: A
-        relativeTimeRange:
-          from: 3600
-          to: 0
-        datasourceUid: Prometheus
-        model:
-          expr: increase(archaser_billing_connector_errors_total{instance="Production", error_type="auth"}[1h])
-          instant: true
-          refId: A
-      - refId: C
-        relativeTimeRange:
-          from: 0
-          to: 0
-        datasourceUid: __expr__
-        model:
-          conditions:
-            - evaluator:
-                params:
-                  - 3
-                type: gt
-              operator:
-                type: and
-              query:
-                params:
-                  - A
-              reducer:
-                type: last
-          refId: C
-          type: classic_conditions
-    noDataState: NoData
-    execErrState: Error
-    for: 5m
-    annotations:
-      summary: Repeated ERP authentication failures
-      description: Priority/auth errors exceeded threshold. Check credentials on affected accounts.
-    labels:
-      severity: critical
-      type: billing_connector
+  # ============================================================
+  # Billing Connector — Production
+  # ============================================================
+  - orgId: 1
+    name: Billing Connector - Production
+    folder: Production
+    interval: 1m
+    rules:
+      - uid: billing-connector-auth-failures-prod
+        title: Billing Connector Auth Failures
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: increase(archaser_billing_connector_errors_total{instance="Production", error_type="auth"}[1h])
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 3
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: Repeated ERP authentication failures
+          description: Priority/auth errors exceeded threshold. Check credentials on affected accounts.
+        labels:
+          severity: critical
+          type: billing_connector
 
-  - uid: billing-connector-in-error-prod
-    title: Billing Connectors In Error State
-    condition: C
-    data:
-      - refId: A
-        relativeTimeRange:
-          from: 300
-          to: 0
-        datasourceUid: Prometheus
-        model:
-          expr: archaser_billing_connector_connectors_in_error{instance="Production"}
-          instant: true
-          refId: A
-      - refId: C
-        relativeTimeRange:
-          from: 0
-          to: 0
-        datasourceUid: __expr__
-        model:
-          conditions:
-            - evaluator:
-                params:
-                  - 0
-                type: gt
-              operator:
-                type: and
-              query:
-                params:
-                  - A
-              reducer:
-                type: last
-          refId: C
-          type: classic_conditions
-    noDataState: NoData
-    execErrState: Error
-    for: 10m
-    annotations:
-      summary: One or more billing connectors in Error status
-      description: Connector circuit breaker or connection failure. Admin Account Details → Billing integration.
-    labels:
-      severity: critical
-      type: billing_connector
+      - uid: billing-connector-in-error-prod
+        title: Billing Connectors In Error State
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_billing_connector_connectors_in_error{instance="Production"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: One or more billing connectors in Error status
+          description: Connector circuit breaker or connection failure. Admin Account Details → Billing integration.
+        labels:
+          severity: critical
+          type: billing_connector
 
   # ============================================================
   # Postgres server logs (RDS → CloudWatch → Loki)
