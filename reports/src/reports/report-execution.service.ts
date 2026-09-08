@@ -298,6 +298,7 @@ export class ReportExecutionService {
                 withinDays: creditDashboardWithinDays ?? 30,
             });
             const locale = body.locale || "en-US";
+            const language = body.language || user.language || undefined;
             const timezone = body.timezone;
             const data = topUpResult.rows.map((row) =>
                 this.formatRow(
@@ -306,7 +307,8 @@ export class ReportExecutionService {
                     fields,
                     locale,
                     creditDashboardPolicyId,
-                    timezone
+                    timezone,
+                    language
                 )
             );
             const formulaResult = applyFormulasToRows(data, config, {
@@ -443,6 +445,7 @@ export class ReportExecutionService {
         }
 
         const locale = body.locale || "en-US";
+        const language = body.language || user.language || undefined;
         const timezone = body.timezone;
         const data = rows.map((row) =>
             this.formatRow(
@@ -451,7 +454,8 @@ export class ReportExecutionService {
                 fields,
                 locale,
                 creditDashboardPolicyId,
-                timezone
+                timezone,
+                language
             )
         );
         const formulaResult = applyFormulasToRows(data, config, {
@@ -1332,7 +1336,8 @@ export class ReportExecutionService {
         }>,
         locale: string,
         scopedPolicyId?: number,
-        timezone?: string
+        timezone?: string,
+        language?: string
     ): Record<string, unknown> {
         const out: Record<string, unknown> = {
             id: row.id,
@@ -1371,7 +1376,7 @@ export class ReportExecutionService {
             ) {
                 const label = formatTermsBreachReasonForDisplay(
                     String(value),
-                    locale
+                    language
                 );
                 if (label) {
                     value = label;
