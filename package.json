@@ -58,7 +58,8 @@
     "format:check": "prettier --check .",
     "migrate:activity-keys": "npx tsx scripts/database/run-migration.ts",
     "migrate:activity-keys:dry": "npx tsx scripts/database/run-migration.ts --dry-run",
-    "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js"
+    "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js",
+    "update:rds-ip": "bash ./scripts/development/update-rds-ip.sh"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
