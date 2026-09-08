@@ -21,6 +21,8 @@ import {
     resolveImportCacheDay,
     rowsEnteringImport,
     saveEntityImportCacheOrThrow,
+    savePendingInvoiceCloseCacheOrThrow,
+    loadPendingInvoiceCloseCache,
     type ImportCacheSyncMode,
 } from "../importCache";
 import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
@@ -30,7 +32,9 @@ import {
     MATURITY_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    isEntityPipelineStatusKey,
     type ConnectorSyncCounts,
+    type EntityPipelineStatusKey,
     type TailStepKey,
     type TailStepDetail,
     type TailStepState,
@@ -188,6 +192,11 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
      * Cron / scheduled sync must omit this.
      */
     cachedRowsByEntity?: Map<ExtensionEntityType, Record<string, unknown>[]>;
+    /**
+     * Execution id of the chosen import-cache backup (when replaying).
+     * Used to load PendingInvoiceClose targets alongside Payment rows.
+     */
+    cachedImportExecutionId?: string | null;
 }
 
 export interface RunStagedExtensionSyncResult {
@@ -499,6 +508,7 @@ export async function runStagedExtensionSync(
         if (!importCacheByEntity.has(entityType)) {
             importCacheByEntity.set(entityType, rows);
         }
+        const cacheDay = resolveImportCacheDay(new Date(), options.timeZone);
         await saveEntityImportCacheOrThrow(
             {
                 accountId: options.accountId,
@@ -506,13 +516,31 @@ export async function runStagedExtensionSync(
                 provider: options.providerLabel?.trim() || "UNKNOWN",
                 importType: entityType,
                 syncMode: cacheSyncMode,
-                cacheDay: resolveImportCacheDay(new Date(), options.timeZone),
+                cacheDay,
                 customerScope: cacheCustomerScope,
                 executionId: options.executionId ?? null,
                 rows,
             },
             log
         );
+        // Persist virtual-close IVNUMs with Payment so Helam-debit closes survive
+        // cache replay (debit rows are dropped before Payment import/cache).
+        if (entityType === "Payment" && pendingInvoiceCloses.size > 0) {
+            await savePendingInvoiceCloseCacheOrThrow(
+                {
+                    accountId: options.accountId,
+                    connectorId: options.connectorId,
+                    provider: options.providerLabel?.trim() || "UNKNOWN",
+                    syncMode: cacheSyncMode,
+                    cacheDay,
+                    customerScope: cacheCustomerScope,
+                    executionId: options.executionId ?? null,
+                    invoiceNumbers: pendingInvoiceCloses,
+                    closeDates: pendingInvoiceCloseDates,
+                },
+                log
+            );
+        }
     };
     setPaymentImportTraceSink(log);
     const paymentTraceKeys = getPaymentImportTraceKeys();
@@ -523,6 +551,9 @@ export async function runStagedExtensionSync(
     }
     let activeStep: string | null = null;
     let activeStepDetail: string | null = null;
+    const entityStatuses: Partial<
+        Record<EntityPipelineStatusKey, "running" | "done" | "failed">
+    > = {};
     let lastProgressEmitSignature = "";
     const emitProgress = () => {
         const signature = `cust=${stats.customersProcessed} pay=${stats.paymentsProcessed} inv=${stats.invoicesProcessed} contact=${stats.contactsProcessed} step=${activeStep ?? "none"}`;
@@ -534,11 +565,23 @@ export async function runStagedExtensionSync(
                 ...stats,
                 ...paymentLink,
                 tailSteps: { ...tailSteps },
+                entityStatuses: { ...entityStatuses },
             },
             { activeStep, activeStepDetail }
         );
     };
     const setActiveStep = (step: string, detail?: string | null) => {
+        if (
+            activeStep &&
+            isEntityPipelineStatusKey(activeStep) &&
+            activeStep !== step &&
+            entityStatuses[activeStep] !== "failed"
+        ) {
+            entityStatuses[activeStep] = "done";
+        }
+        if (isEntityPipelineStatusKey(step)) {
+            entityStatuses[step] = "running";
+        }
         activeStep = step;
         activeStepDetail = detail ?? null;
     };
@@ -546,6 +589,7 @@ export async function runStagedExtensionSync(
         ...stats,
         ...paymentLink,
         tailSteps: { ...tailSteps },
+        entityStatuses: { ...entityStatuses },
     });
     const setTailStep = (key: TailStepKey, state: TailStepState) => {
         // A late `running` update must not resurrect a finished step.
@@ -620,15 +664,29 @@ export async function runStagedExtensionSync(
             for (const customerId of flushResult.customerIds ?? []) {
                 arAffectedCustomerIds.add(customerId);
             }
+            const missing = flushResult.missingNumbers ?? [];
             pendingInvoiceCloses.clear();
-            pendingInvoiceCloseDates.clear();
+            // Keep close dates for numbers that still need a retry after Invoice.
+            const missingSet = new Set(missing);
+            for (const invoiceNumber of Array.from(
+                pendingInvoiceCloseDates.keys()
+            )) {
+                if (!missingSet.has(invoiceNumber)) {
+                    pendingInvoiceCloseDates.delete(invoiceNumber);
+                }
+            }
+            for (const invoiceNumber of missing) {
+                pendingInvoiceCloses.add(invoiceNumber);
+            }
+            const settled = flushResult.closedIds.length;
             log(
-                `Extension pending invoice closes (${label}): ${flushResult.closedIds.length} settled (${pendingNumbers.length} virtual)`
+                `Extension pending invoice closes (${label}): ${settled} settled, ${missing.length} missing of ${pendingNumbers.length} queued`
             );
             setTailStep(PENDING_CLOSES_ENTITY_STATS_KEY, {
                 status: "done",
-                processed: pendingTotal,
+                processed: settled,
                 total: pendingTotal,
+                skipped: missing.length,
             });
         } catch (error) {
             const message =
@@ -691,6 +749,11 @@ export async function runStagedExtensionSync(
         try {
             if (!dryRun && !result.cancelled) {
                 await flushExtensionPendingCloses("finalize");
+                if (pendingInvoiceCloses.size > 0) {
+                    log(
+                        `Extension pending invoice closes still missing after finalize: ${pendingInvoiceCloses.size} (${Array.from(pendingInvoiceCloses).slice(0, 20).join(", ")}${pendingInvoiceCloses.size > 20 ? ", …" : ""})`
+                    );
+                }
                 // Payment-only (or Invoice-not-orchestrated) fallback: same
                 // orchestrator as post-Invoice, including deferred maturity.
                 // Skip when Invoice already ran post-ingest in this sync.
@@ -774,6 +837,49 @@ export async function runStagedExtensionSync(
                 log(
                     `Using same-day import cache for ${entityType} (${cachedRows.length} row(s)); skipping ERP pull`
                 );
+                if (
+                    entityType === "Payment" &&
+                    typeof options.cachedImportExecutionId === "string" &&
+                    options.cachedImportExecutionId.trim().length > 0
+                ) {
+                    try {
+                        const closeTargets = await loadPendingInvoiceCloseCache({
+                            accountId: options.accountId,
+                            executionId: options.cachedImportExecutionId.trim(),
+                            syncMode: cacheSyncMode,
+                            cacheDay: resolveImportCacheDay(
+                                new Date(),
+                                options.timeZone
+                            ),
+                            customerScope: cacheCustomerScope,
+                        });
+                        for (const invoiceNumber of closeTargets.invoiceNumbers) {
+                            pendingInvoiceCloses.add(invoiceNumber);
+                        }
+                        for (const [invoiceNumber, iso] of Object.entries(
+                            closeTargets.closeDates
+                        )) {
+                            const parsed = new Date(iso);
+                            if (!Number.isNaN(parsed.getTime())) {
+                                pendingInvoiceCloseDates.set(
+                                    invoiceNumber,
+                                    parsed
+                                );
+                            }
+                        }
+                        if (closeTargets.invoiceNumbers.length > 0) {
+                            log(
+                                `Loaded ${closeTargets.invoiceNumbers.length} pending invoice close target(s) from import cache execution=${options.cachedImportExecutionId}`
+                            );
+                        }
+                    } catch (err) {
+                        const message =
+                            err instanceof Error ? err.message : String(err);
+                        log(
+                            `Pending invoice close cache load failed: ${message}`
+                        );
+                    }
+                }
                 setActiveStep(entityType, "importing");
                 bumpProcessedPage(stats, entityType, cachedRows.length);
                 emitProgress();
@@ -1188,6 +1294,18 @@ export async function runStagedExtensionSync(
                         pageSize: entityPageSize,
                         entitySet,
                         filter: phase.filter,
+                        keysetOrderFields:
+                            typeof options.extension
+                                .resolvePullKeysetOrderFields === "function"
+                                ? options.extension.resolvePullKeysetOrderFields(
+                                      {
+                                          entityType,
+                                          entitySet,
+                                          extension_config:
+                                              options.extensionConfig,
+                                      }
+                                  )
+                                : null,
                         select: odataSelectFieldsFromMapping({
                             mappingRules: rules,
                             extraFields: [

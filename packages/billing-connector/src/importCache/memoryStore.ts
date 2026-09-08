@@ -89,9 +89,19 @@ export function createMemoryImportCacheStore(): ImportCacheStore {
                 } else if (first.created_at > run.created_at) {
                     run.created_at = first.created_at;
                 }
-                run.entities.set(first.import_type, {
-                    row_count: first.row_count,
-                });
+                if (
+                    !IMPORT_CACHE_ENTITY_TYPES.includes(
+                        first.import_type as (typeof IMPORT_CACHE_ENTITY_TYPES)[number]
+                    )
+                ) {
+                    continue;
+                }
+                run.entities.set(
+                    first.import_type as (typeof IMPORT_CACHE_ENTITY_TYPES)[number],
+                    {
+                        row_count: first.row_count,
+                    }
+                );
             }
 
             const runs: SameDayCacheRun[] = [];
