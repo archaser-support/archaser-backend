@@ -2,6 +2,7 @@ import type { ConnectorSyncRunSummary } from "../sync/connectorSyncRuntime";
 import { createMemorySyncHistoryStore } from "./memoryStore";
 import { mongooseSyncHistoryStore } from "./mongooseStore";
 import { applyPostIngestDrainProgressToEntityStats } from "./postIngestDrainEntityStats";
+import { notifyOnSyncFailure } from "../notify";
 import {
     defaultSinceDate,
     HEARTBEAT_INTERVAL_SECONDS,
@@ -131,6 +132,17 @@ export async function finalizeAwaitingPostIngestDrainExecutions(
         );
         if (finalized) {
             completed += 1;
+            // Fire-and-forget failure notification for deferred executions.
+            if (pendingStatus !== "SUCCESS") {
+                void notifyOnSyncFailure({
+                    accountId: execution.account_id,
+                    provider: execution.provider ?? "UNKNOWN",
+                    status: pendingStatus as "FAILED" | "PARTIAL" | "TIMEOUT",
+                    errorMessage: execution.pending_error_message ?? null,
+                    executionId: execution.execution_id,
+                    completedAt: new Date(),
+                }).catch(() => undefined);
+            }
         }
     }
     return completed;
