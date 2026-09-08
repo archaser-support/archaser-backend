@@ -12,7 +12,7 @@ Triage roles map to `**Status:**` on `.cursor/plans/` issue files (and to ClickU
 
 ### Domain docs
 
-**Single-context** — `CONTEXT.md` and `docs/adr/` at the repo root when they exist. See `docs/agents/domain.md`.
+**Single-context** — `CONTEXT.md` and `docs/adr/` at the repo root when they exist. Credit-insurance as-of / trend snapshot rules (snapshot day ≠ today): `docs/agents/domain.md`.
 
 ### ClickUp ↔ Git workflow
 
