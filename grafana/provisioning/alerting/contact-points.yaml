@@ -11,7 +11,7 @@ contactPoints:
         settings:
           # URL is set by environment variable GRAFANA_SNS_WEBHOOK_URL
           # Format: https://xxxxx.execute-api.eu-north-1.amazonaws.com/v1/alert
-          url: ${GRAFANA_SNS_WEBHOOK_URL}
+          url: ${GRAFANA_SNS_WEBHOOK_URL:http://127.0.0.1:9}
           httpMethod: POST
           # Authorization header can be added if needed
           # authorization_scheme: Bearer
