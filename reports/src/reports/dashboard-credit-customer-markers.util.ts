@@ -18,7 +18,11 @@ export type PreparedDashboardCreditCustomerMarkers = {
     policyId?: number;
     /** From top_up_expiring membership value; default 30 when type matches. */
     withinDays?: number;
-    /** From utilization_bin membership value (YYYY-MM-DD). */
+    /** From utilization_bin membership value (range start YYYY-MM-DD). */
+    fromDate?: string;
+    /** From utilization_bin membership value (range end YYYY-MM-DD). */
+    toDate?: string;
+    /** Same as toDate for utilization_bin (legacy field). */
     asOfDate?: string;
     /** From utilization_bin membership value. */
     utilizationBin?: string;
@@ -74,8 +78,19 @@ export function parseCreditDashboardCustomerMembershipValue(value: unknown): {
     includeNoPolicyExposure: boolean;
     withinDays: number | null;
     utilizationBin: string | null;
+    fromDate: string | null;
+    toDate: string | null;
     asOfDate: string | null;
 } {
+    const empty = {
+        type: null as null,
+        includeNoPolicyExposure: true,
+        withinDays: null as number | null,
+        utilizationBin: null as string | null,
+        fromDate: null as string | null,
+        toDate: null as string | null,
+        asOfDate: null as string | null,
+    };
     const raw = value == null ? "" : String(value);
     if (
         raw === "capacity" ||
@@ -84,72 +99,66 @@ export function parseCreditDashboardCustomerMembershipValue(value: unknown): {
         raw === "zero_limit_warning" ||
         raw === "top_up"
     ) {
-        return {
-            type: raw,
-            includeNoPolicyExposure: true,
-            withinDays: null,
-            utilizationBin: null,
-            asOfDate: null,
-        };
+        return { ...empty, type: raw };
     }
     if (raw === "no_policy_exposure") {
-        return {
-            type: "no_policy_exposure",
-            includeNoPolicyExposure: true,
-            withinDays: null,
-            utilizationBin: null,
-            asOfDate: null,
-        };
+        return { ...empty, type: "no_policy_exposure" };
     }
     if (raw === "no_policy_exposure:0") {
         return {
+            ...empty,
             type: "no_policy_exposure",
             includeNoPolicyExposure: false,
-            withinDays: null,
-            utilizationBin: null,
-            asOfDate: null,
         };
     }
     if (raw === "top_up_expiring") {
-        return {
-            type: "top_up_expiring",
-            includeNoPolicyExposure: true,
-            withinDays: 30,
-            utilizationBin: null,
-            asOfDate: null,
-        };
+        return { ...empty, type: "top_up_expiring", withinDays: 30 };
     }
     if (raw.startsWith("top_up_expiring:")) {
         const days = Number.parseInt(raw.slice("top_up_expiring:".length), 10);
         return {
+            ...empty,
             type: "top_up_expiring",
-            includeNoPolicyExposure: true,
             withinDays: Number.isFinite(days) ? Math.max(1, days) : 30,
-            utilizationBin: null,
-            asOfDate: null,
         };
     }
-    // utilization_bin:<bin>:<asOfYmd> or …:0 for exclude no-policy
+    // utilization_bin:<bin>:<from>:<to>[:0] or legacy utilization_bin:<bin>:<asOf>[:0]
     if (raw.startsWith("utilization_bin:")) {
         const parts = raw.split(":");
         const bin = parts[1] ?? "";
-        const asOfDate = parts[2] ?? "";
-        const excludeFlag = parts[3];
+        const dateA = parts[2] ?? "";
+        const dateB = parts[3] ?? "";
+        const ymd = /^\d{4}-\d{2}-\d{2}$/;
+        if (ymd.test(dateA) && ymd.test(dateB)) {
+            const excludeFlag = parts[4];
+            return {
+                type: "utilization_bin",
+                includeNoPolicyExposure: excludeFlag !== "0",
+                withinDays: null,
+                utilizationBin: bin || null,
+                fromDate: dateA,
+                toDate: dateB,
+                asOfDate: dateB,
+            };
+        }
+        if (ymd.test(dateA) && (dateB === "" || dateB === "0")) {
+            return {
+                type: "utilization_bin",
+                includeNoPolicyExposure: dateB !== "0",
+                withinDays: null,
+                utilizationBin: bin || null,
+                fromDate: dateA,
+                toDate: dateA,
+                asOfDate: dateA,
+            };
+        }
         return {
+            ...empty,
             type: "utilization_bin",
-            includeNoPolicyExposure: excludeFlag !== "0",
-            withinDays: null,
             utilizationBin: bin || null,
-            asOfDate: /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? asOfDate : null,
         };
     }
-    return {
-        type: null,
-        includeNoPolicyExposure: true,
-        withinDays: null,
-        utilizationBin: null,
-        asOfDate: null,
-    };
+    return empty;
 }
 
 /**
@@ -169,6 +178,8 @@ export async function prepareDashboardCreditCustomerMarkers(
     let membershipWhere: PrismaWhere | undefined;
     let policyId: number | undefined;
     let withinDays: number | undefined;
+    let fromDate: string | undefined;
+    let toDate: string | undefined;
     let asOfDate: string | undefined;
     let utilizationBin: string | undefined;
     let membershipType: PreparedDashboardCreditCustomerMarkers["membershipType"];
@@ -204,6 +215,8 @@ export async function prepareDashboardCreditCustomerMarkers(
                 withinDays = parsed.withinDays ?? 30;
             }
             if (parsed.type === "utilization_bin") {
+                fromDate = parsed.fromDate ?? undefined;
+                toDate = parsed.toDate ?? undefined;
                 asOfDate = parsed.asOfDate ?? undefined;
                 utilizationBin = parsed.utilizationBin ?? undefined;
             }
@@ -236,6 +249,8 @@ export async function prepareDashboardCreditCustomerMarkers(
                             parsed.includeNoPolicyExposure,
                         withinDays: parsed.withinDays ?? undefined,
                         utilizationBin: parsed.utilizationBin ?? undefined,
+                        fromDate: parsed.fromDate ?? undefined,
+                        toDate: parsed.toDate ?? undefined,
                         asOfDate: parsed.asOfDate ?? undefined,
                     }
                 );
@@ -263,6 +278,8 @@ export async function prepareDashboardCreditCustomerMarkers(
                 : andWhere([scopeWhere, membershipWhere]),
         policyId,
         withinDays,
+        fromDate,
+        toDate,
         asOfDate,
         utilizationBin,
         membershipType,
