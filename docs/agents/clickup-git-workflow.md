@@ -57,10 +57,10 @@ When a new bug or requirement appears while another branch is in progress:
 ## Branch naming
 
 ```
-{type}/CU-{taskId}-{short-slug}
+{type}/{short-slug}-CU-{taskId}
 ```
 
-Examples: `fix/CU-abc123-login-typo`, `feat/CU-xyz789-portfolio-health`.
+Examples: `fix/login-typo-CU-abc123`, `feat/portfolio-health-CU-xyz789`.
 
 Use the **same branch name** in every repo you touch for that ClickUp task.
 
