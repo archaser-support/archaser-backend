@@ -108,19 +108,19 @@ Ask only if the work shape is ambiguous; otherwise pick from the table.
 #### Branch naming
 
 ```
-{type}/CU-{taskId}-{short-slug}
+{type}/{short-slug}-CU-{taskId}
 ```
 
 - `{type}` — e.g. `feat`, `fix`, `chore`
-- `{taskId}` — ClickUp task id
 - `{short-slug}` — short kebab-case topic
+- `{taskId}` — ClickUp task id (always at the end)
 
 Same name will be used in every repo **when** that repo is later touched. **Do not** create the branch in sibling repos until files there change.
 
 #### Git steps (primary repo)
 
 1. Fetch / update so `staging` is current.
-2. Create and check out `{type}/CU-{taskId}-{short-slug}` from latest `staging` (not from an unrelated feature branch).
+2. Create and check out `{type}/{short-slug}-CU-{taskId}` from latest `staging` (not from an unrelated feature branch).
 3. Leave sibling repos alone for now.
 
 ### Phase 4 — PRD and slices
@@ -167,7 +167,7 @@ Allowed **only** for tiny, obvious fixes (e.g. typo, one-liner). Skips grill, PR
 **Completion:** Fix is on a named feature branch from `staging`, ready for (or past) the Ready-PR phase; ClickUp statuses follow the short ladder.
 
 1. **Ensure ClickUp task** — if URL/id unknown, ask via **Intake**; create **only** when they confirm create. Same list + `assignees: ["me"]` rules as Phase 1. May start at `selected for development` (skip early design statuses).
-2. **Branch** from latest `staging` in the primary repo: `{type}/CU-{taskId}-{short-slug}`. Same naming and primary-repo rules as full path. Sibling repos only when touched.
+2. **Branch** from latest `staging` in the primary repo: `{type}/{short-slug}-CU-{taskId}`. Same naming and primary-repo rules as full path. Sibling repos only when touched.
 3. **Fix** on that branch. Set status to `in progress` when coding starts.
 4. If scope grows or becomes unclear → **stop short path** and **upgrade to full path** (grill → PRD → slices) before more code.
 5. When ready → run **Ready-PR phase** (merge `staging`, open ready-for-review PR(s), `pending internal`).
@@ -186,7 +186,7 @@ When a new bug or requirement appears while another feature branch has WIP:
 1. **Park** current WIP — guide the user to `git stash` or a WIP commit on the **current** feature branch. Do not discard their work.
 2. **Refuse mixing** — do **not** commit the new concern onto the parked feature branch. Do not “just fix it quickly” on the old branch.
 3. **ClickUp** — create or use a **new** task **only when the user asks** to create one (or they already supplied a different task). Include How to test unless opted out.
-4. **Branch** — fetch latest `staging`, then create `{type}/CU-{newTaskId}-{short-slug}` from **fresh `staging`**, **not** from the parked feature branch.
+4. **Branch** — fetch latest `staging`, then create `{type}/{short-slug}-CU-{newTaskId}` from **fresh `staging`**, **not** from the parked feature branch.
 5. Continue on **full path** or **short path** as appropriate for the new task.
 6. When returning to parked work later: restore stash / continue WIP commit on the **original** branch.
 
@@ -253,7 +253,7 @@ If invoked mid-flow (task exists, grill done, branch exists, coding done, etc.):
 - [ ] Full path: branch only after grill; from latest `staging`; primary repo only first
 - [ ] Short path: skip grill/PRD/slices only for tiny obvious fixes; still ClickUp + named branch + ready PR rules; upgrade when scope grows
 - [ ] Interrupt: park WIP; new task on ask; new branch from fresh `staging`; refuse mixing into parked branch
-- [ ] Branch name `{type}/CU-{taskId}-{short-slug}`; same name in every touched repo
+- [ ] Branch name `{type}/{short-slug}-CU-{taskId}`; same name in every touched repo
 - [ ] Sibling repos not branched until touched
 - [ ] Full path: PRD + slices via `/to-prd` / `/to-issues` under `.cursor/plans/`
 - [ ] Planning committed and pushed; no default planning-only PR
