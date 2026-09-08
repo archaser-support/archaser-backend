@@ -15,9 +15,9 @@
 services:
   loki:
     image: grafana/loki:3.4.2
-    container_name: archaser-loki
+    container_name: archaser-loki-${MONITORING_ENV:-staging}
     ports:
-      - "3100:3100"
+      - "${LOKI_HOST_PORT:-3100}:3100"
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
@@ -34,7 +34,7 @@ services:
 
   grafana-db:
     image: postgres:16-alpine
-    container_name: archaser-grafana-db
+    container_name: archaser-grafana-db-${MONITORING_ENV:-staging}
     environment:
       - POSTGRES_USER=${GRAFANA_INTERNAL_DB_USER:-postgres}
       - POSTGRES_PASSWORD=${GRAFANA_INTERNAL_DB_PASSWORD:-postgres}
@@ -53,9 +53,9 @@ services:
 
   grafana:
     image: grafana/grafana:11.5.2
-    container_name: archaser-grafana
+    container_name: archaser-grafana-${MONITORING_ENV:-staging}
     ports:
-      - "127.0.0.1:${GRAFANA_HOST_PORT:-3200}:3000"
+      - "${GRAFANA_HOST_PORT:-3200}:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
@@ -107,9 +107,9 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.55.1
-    container_name: archaser-prometheus
+    container_name: archaser-prometheus-${MONITORING_ENV:-staging}
     ports:
-      - "127.0.0.1:9090:9090"
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
     volumes:
       # MONITORING_ENV=staging|production selects instance label for Grafana dashboards
       - ./prometheus-${MONITORING_ENV:-staging}.yml:/etc/prometheus/prometheus.yml:ro
@@ -129,7 +129,7 @@ services:
 
   promtail:
     image: grafana/promtail:3.4.2
-    container_name: archaser-promtail
+    container_name: archaser-promtail-${MONITORING_ENV:-staging}
     volumes:
       - ./promtail-config.yaml:/etc/promtail/config.yml:ro
       - ${PM2_LOGS_HOST_PATH:-/home/ubuntu/logs}:/var/log/pm2:ro

@@ -645,7 +645,7 @@ export class ReportsService {
                 },
             },
         });
-        if (userDefault?.Report) {
+        if (userDefault?.Report && userDefault.Report.account_id === accountId) {
             return userDefault.Report;
         }
 

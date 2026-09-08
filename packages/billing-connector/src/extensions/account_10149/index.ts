@@ -11,7 +11,10 @@ import type {
 import { countUniquePendingCloseInvoiceNumbers } from "../pendingCloseProgress";
 import { parseErpDateOnly } from "../../utils/connectorFieldUtils";
 import { deriveInvoiceFxRatio } from "../../payment/alignPaymentToInvoiceCurrency";
-import { escapeODataStringLiteral } from "../../services/billingConnectorPullFilterCompile";
+import {
+    escapeODataStringLiteral,
+    expandPaymentFncPatNameOrFilters,
+} from "../../services/billingConnectorPullFilterCompile";
 import { tracePaymentImport } from "../../import/paymentImportTrace";
 import {
     applyReconciledVirtualCloses,
@@ -25,7 +28,7 @@ export const ILS_CURRENCY_CODE = "ILS";
 export const USD_CURRENCY_CODE = "USD";
 
 /**
- * Priority company codes on IDG_ARFNCITEMS4. IDG_CUSTNAME is often
+ * Priority company codes on IDG_ARFNCITEMS4. ACCNAME is often
  * customer_number + company without leading zeros ("002" → suffix "02").
  * Override via extension_config.idgPaymentCompanyCodes.
  */
@@ -35,13 +38,11 @@ export const ACCOUNT_10149_DEFAULT_IDG_PAYMENT_COMPANY_CODES = [
 ] as const;
 
 /**
- * Account-specific IDG_* / IDC_* columns required on IDG_ARFNCITEMS4 Payment pulls.
- * Kept out of generic PAYMENT_ALWAYS_SELECT_SOURCES.
+ * Extra Payment $select columns for IDG_ARFNCITEMS4.
+ * ACCNAME (customer AR account) is already in PAYMENT_ALWAYS_SELECT_SOURCES.
+ * Former IDG_CUSTNAME / IDC_CUSTNAMEIV are no longer on this OData type.
  */
-export const ACCOUNT_10149_PAYMENT_EXTRA_SELECT_FIELDS = [
-    "IDC_CUSTNAMEIV",
-    "IDG_CUSTNAME",
-] as const;
+export const ACCOUNT_10149_PAYMENT_EXTRA_SELECT_FIELDS = [] as const;
 
 const IDG_PAYMENT_COMPANY_CODES_CONFIG_KEY = "idgPaymentCompanyCodes";
 
@@ -432,7 +433,7 @@ function transformInvoiceRow(
 }
 
 /**
- * Priority COMPANYNAME → IDG_CUSTNAME suffix.
+ * Priority COMPANYNAME → ACCNAME suffix.
  * "000" → none (plain customer number); "002" → "02" (not "2").
  */
 export function account10149CompanySuffix(
@@ -445,7 +446,7 @@ export function account10149CompanySuffix(
     if (!trimmed || /^0+$/.test(trimmed)) {
         return "";
     }
-    // 3-digit company codes drop one leading zero in IDG_CUSTNAME ("002" → "02").
+    // 3-digit company codes drop one leading zero in ACCNAME ("002" → "02").
     if (/^0\d{2}$/.test(trimmed)) {
         return trimmed.slice(1);
     }
@@ -514,9 +515,8 @@ function odataEqAny(field: string, values: string[]): string | null {
 }
 
 /**
- * IDG_ARFNCITEMS4 customer scope (fast path): company-suffixed IDG_CUSTNAME.
- * IDC_CUSTNAMEIV is a separate fallback query — OR'ing it here makes Priority
- * full-scan the form and hang preview/backfill for minutes.
+ * IDG_ARFNCITEMS4 customer scope (fast path): company-suffixed ACCNAME
+ * (customer AR account — same values formerly on IDG_CUSTNAME).
  */
 export function buildAccount10149RuntimeCustomerScopeOData(params: {
     customerNumber: string;
@@ -538,35 +538,24 @@ export function buildAccount10149RuntimeCustomerScopeOData(params: {
             values.add(trimmed);
         }
     }
-    return odataEqAny("IDG_CUSTNAME", [...values]);
+    return odataEqAny("ACCNAME", [...values]);
 }
 
 /**
- * Fallback scope for Helam/VAT lines where IDG_CUSTNAME is empty and the
- * customer is only on IDC_CUSTNAMEIV (base Archaser customer_number).
- * Run as a second Payment pull — do not OR into the IDG_CUSTNAME filter.
- *
- * Do not add `IDG_CUSTNAME eq null` / `eq ''` here — Priority returns HTTP 500
- * ("Object reference not set…") on that clause. Drop non-empty IDG rows
- * client-side after the pull instead.
+ * Former Helam/VAT fallback used IDC_CUSTNAMEIV. That property is no longer
+ * on IDG_ARFNCITEMS4 OData — return null so sync does not HTTP 400.
  */
 export function buildAccount10149IdcFallbackCustomerScopeOData(params: {
     customerNumber: string;
     entityType: ExtensionEntityType | string;
     entitySet?: string | null;
 }): string | null {
-    if (!isAccount10149IdgPaymentEntitySet(params.entityType, params.entitySet)) {
-        return null;
-    }
-    const base = params.customerNumber.trim();
-    if (!base) {
-        return null;
-    }
-    return odataEqAny("IDC_CUSTNAMEIV", [base]);
+    void params;
+    return null;
 }
 
 /**
- * Map IDG_CUSTNAME / mapped customer_number back to Archaser customer_number
+ * Map ACCNAME / mapped customer_number back to Archaser customer_number
  * using COMPANYNAME on the ERP row when present, else known company suffixes.
  */
 export function normalizeAccount10149PaymentCustomerNumber(
@@ -626,7 +615,8 @@ function normalizeAccount10149PaymentCustomerOnRow(
     const normalizedCustomer = normalizeAccount10149PaymentCustomerNumber(
         typeof row.customer_number === "string"
             ? row.customer_number
-            : asNonEmptyString(raw.IDG_CUSTNAME) ??
+            : asNonEmptyString(raw.ACCNAME) ??
+                  asNonEmptyString(raw.IDG_CUSTNAME) ??
                   asNonEmptyString(raw.CUSTNAME) ??
                   asNonEmptyString(raw.IDC_CUSTNAMEIV),
         {
@@ -684,6 +674,7 @@ function paymentRowHasCustomerNumber(row: Record<string, unknown>): boolean {
     }
     const raw = rawRecordOf(row);
     return (
+        asNonEmptyString(raw.ACCNAME) != null ||
         asNonEmptyString(raw.IDG_CUSTNAME) != null ||
         asNonEmptyString(raw.CUSTNAME) != null ||
         asNonEmptyString(raw.IDC_CUSTNAMEIV) != null
@@ -915,6 +906,25 @@ export const account10149Extension: BillingAccountExtension = {
             entityType: params.entityType,
             entitySet: params.entitySet,
         });
+    },
+    /**
+     * Priority 502s on IDG Payment pulls that OR several FNCPATNAME receipt
+     * codes. Split into one pull per code so each query stays selective.
+     */
+    expandEntityPullFilters(params) {
+        if (params.entityType !== "Payment") {
+            return null;
+        }
+        if (
+            !isAccount10149IdgPaymentEntitySet(
+                params.entityType,
+                params.entitySet
+            )
+        ) {
+            return null;
+        }
+        const expanded = expandPaymentFncPatNameOrFilters(params.filter);
+        return expanded.length > 1 ? expanded : null;
     },
     async transform(
         ctx: ExtensionTransformContext
