@@ -14,6 +14,8 @@ const SYNTHETIC_SOURCE_FIELDS: Record<string, readonly string[]> = {
         "IVNUM",
         "PAYNUM",
         "TRANSNUM",
+        // DOCNUM is on classic FNCPAY forms — not IDG_ARFNCITEMS*. Including it
+        // in $select after a failed column-sample fallback returns HTTP 400.
         "DOCNUM",
         "FNCIREF1",
     ],
@@ -26,8 +28,8 @@ const SYNTHETIC_SOURCE_FIELDS: Record<string, readonly string[]> = {
  * FRECONNUM / BAL drive recon virtual-close; PAY_REFERENCE sources are needed
  * even when the connector maps `reference` to IVNUM/PAYNUM instead of PAY_REFERENCE.
  * CREDIT5/DEBIT5/CODE5/CURDATE are Priority dual-currency / rate-date fields.
- * Account-specific columns (IDG_*, IDC_CUSTNAMEIV, …) belong on the account
- * extension via `extraSelectFields` — not here.
+ * Account-specific columns belong on the account extension via
+ * `extraSelectFields` — not here.
  */
 export const PAYMENT_ALWAYS_SELECT_SOURCES = [
     "ACCNAME",

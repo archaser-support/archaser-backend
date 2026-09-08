@@ -16,6 +16,13 @@ import {
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "../import/entityImporter";
+import {
+    normalizeImportCacheCustomerScope,
+    resolveImportCacheDay,
+    rowsEnteringImport,
+    saveEntityImportCacheOrThrow,
+    type ImportCacheSyncMode,
+} from "../importCache";
 import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
 import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
 import {
@@ -45,10 +52,12 @@ import { PRIORITY_RATE_LIMITS } from "../priority/priorityApiContract";
 import { odataSelectFieldsFromMapping } from "../priority/prioritySelectFields";
 import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
 import {
+    andODataFilters,
+} from "../services/billingConnectorPullFilterCompile";
+import {
     resolveImportPullFilterOData,
     resolveRuntimeCustomerScopeOData,
 } from "../services/billingConnectorPullFilters";
-import { andODataFilters } from "../services/billingConnectorPullFilterCompile";
 import {
     getPaymentImportTraceKeys,
     isTracedPaymentRow,
@@ -162,6 +171,23 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
     overlapMinutes?: number;
     /** Account MEP breach start date — narrows AR replay event load when set. */
     mepBreachStartDate?: Date | null;
+    /** BACKFILL | INCREMENTAL — keys the Mongo import cache (not preview). */
+    syncMode?: ImportCacheSyncMode;
+    /** Sync execution id for cache metadata. */
+    executionId?: string | null;
+    /** Provider label for cache metadata (e.g. PRIORITY). */
+    providerLabel?: string | null;
+    /**
+     * IANA timezone from BillingConnector.time_zone for cache_day.
+     * Omit / null → Asia/Jerusalem.
+     */
+    timeZone?: string | null;
+    /**
+     * Manual Start only: already-loaded same-day mapped rows per entity.
+     * Those entities skip ERP pull/map/plugin and import from cache.
+     * Cron / scheduled sync must omit this.
+     */
+    cachedRowsByEntity?: Map<ExtensionEntityType, Record<string, unknown>[]>;
 }
 
 export interface RunStagedExtensionSyncResult {
@@ -453,6 +479,41 @@ export async function runStagedExtensionSync(
     const dryRun = options.dryRun === true;
     const tailSteps: Partial<Record<TailStepKey, TailStepState>> = {};
     const log = (message: string) => options.onLog?.(message);
+    const importCacheByEntity = new Map<
+        ExtensionEntityType,
+        Record<string, unknown>[]
+    >();
+    /** Entities already imported from Mongo cache (skip on later windows). */
+    const cachedEntitiesDone = new Set<ExtensionEntityType>();
+    const cacheSyncMode: ImportCacheSyncMode =
+        options.syncMode === "INCREMENTAL" ? "INCREMENTAL" : "BACKFILL";
+    const cacheCustomerScope = normalizeImportCacheCustomerScope(
+        options.runtimeCustomerNumber
+    );
+    const flushEntityImportCache = async (entityType: ExtensionEntityType) => {
+        if (dryRun) {
+            return;
+        }
+        const rows = importCacheByEntity.get(entityType) ?? [];
+        // Track that we attempted a flush so zero-row successes still write.
+        if (!importCacheByEntity.has(entityType)) {
+            importCacheByEntity.set(entityType, rows);
+        }
+        await saveEntityImportCacheOrThrow(
+            {
+                accountId: options.accountId,
+                connectorId: options.connectorId,
+                provider: options.providerLabel?.trim() || "UNKNOWN",
+                importType: entityType,
+                syncMode: cacheSyncMode,
+                cacheDay: resolveImportCacheDay(new Date(), options.timeZone),
+                customerScope: cacheCustomerScope,
+                executionId: options.executionId ?? null,
+                rows,
+            },
+            log
+        );
+    };
     setPaymentImportTraceSink(log);
     const paymentTraceKeys = getPaymentImportTraceKeys();
     if (paymentTraceKeys.length > 0) {
@@ -664,7 +725,30 @@ export async function runStagedExtensionSync(
         }
     };
 
-    for (const window of options.windows) {
+    const flushEntityImportCacheOrAbort = async (
+        entityType: ExtensionEntityType
+    ): Promise<RunStagedExtensionSyncResult | null> => {
+        try {
+            await flushEntityImportCache(entityType);
+            return null;
+        } catch (err) {
+            const message =
+                err instanceof Error ? err.message : String(err);
+            log(`Import cache save failed for ${entityType}: ${message}`);
+            stats.importErrors += 1;
+            return finishWithBalances({
+                ok: false,
+                windows,
+                previewBatch,
+                stats: resultStats(),
+                error: `Import cache save failed for ${entityType}: ${message}`,
+            });
+        }
+    };
+
+    for (let windowIndex = 0; windowIndex < options.windows.length; windowIndex += 1) {
+        const window = options.windows[windowIndex]!;
+        const isLastWindow = windowIndex === options.windows.length - 1;
         log(
             window.start || window.end
                 ? `Window ${window.start?.toISOString() ?? "start"} → ${window.end?.toISOString() ?? "now"}`
@@ -680,6 +764,201 @@ export async function runStagedExtensionSync(
             if (!options.enabledEntities.includes(entityType)) {
                 continue;
             }
+
+            const cachedRows = options.cachedRowsByEntity?.get(entityType);
+            if (cachedRows !== undefined) {
+                if (cachedEntitiesDone.has(entityType)) {
+                    continue;
+                }
+                cachedEntitiesDone.add(entityType);
+                log(
+                    `Using same-day import cache for ${entityType} (${cachedRows.length} row(s)); skipping ERP pull`
+                );
+                setActiveStep(entityType, "importing");
+                bumpProcessedPage(stats, entityType, cachedRows.length);
+                emitProgress();
+                if (!dryRun && cachedRows.length > 0) {
+                    const importResult = await importFn(
+                        options.prisma,
+                        entityType,
+                        cachedRows,
+                        options.accountId,
+                        null,
+                        options.userId,
+                        {
+                            skipReportingBreach:
+                                options.skipReportingBreach === true,
+                            skipDeferredPaymentMaturity:
+                                entityType === "Invoice",
+                            onLog: options.onLog,
+                            shouldCancel: options.shouldCancel,
+                            extension: options.extension,
+                        }
+                    );
+                    bumpImported(
+                        stats,
+                        entityType,
+                        importResult.success,
+                        importResult.failed
+                    );
+                    const cacheRows = rowsEnteringImport(
+                        cachedRows,
+                        importResult
+                    );
+                    if (cacheRows.length > 0) {
+                        const existing =
+                            importCacheByEntity.get(entityType) ?? [];
+                        existing.push(...cacheRows);
+                        importCacheByEntity.set(entityType, existing);
+                    }
+                    windowImported += importResult.success;
+                    windowErrors += importResult.failed;
+                    if (entityType === "Payment" || entityType === "Invoice") {
+                        for (const id of importResult.affectedCustomerIds) {
+                            arAffectedCustomerIds.add(id);
+                            if (entityType === "Payment") {
+                                paymentAffectedCustomerIds.add(id);
+                            }
+                        }
+                        for (const id of importResult.entityIds ?? []) {
+                            if (entityType === "Invoice") {
+                                arAffectedInvoiceIds.add(id);
+                            } else {
+                                arAffectedPaymentIds.add(id);
+                            }
+                        }
+                    }
+                    if (!dryRun) {
+                        await checkpointEntityPage({
+                            prisma: options.prisma,
+                            connectorId: options.connectorId,
+                            entityType,
+                            pulled: cachedRows.length,
+                            nextCursor: null,
+                            maxUpdated:
+                                cacheRows.length > 0
+                                    ? extractMaxUpdatedAt(cacheRows)
+                                    : null,
+                            lastError:
+                                importResult.failed > 0
+                                    ? importResult.errors
+                                          .slice(0, 3)
+                                          .join("; ")
+                                    : null,
+                            pageComplete: true,
+                            pageSize: cachedRows.length || 1,
+                            providerTotalCount: cachedRows.length,
+                        });
+                    }
+                } else if (!dryRun) {
+                    await checkpointEntityPage({
+                        prisma: options.prisma,
+                        connectorId: options.connectorId,
+                        entityType,
+                        pulled: 0,
+                        nextCursor: null,
+                        maxUpdated: null,
+                        lastError: null,
+                        pageComplete: true,
+                        pageSize: 1,
+                        providerTotalCount: 0,
+                    });
+                }
+                emitProgress();
+
+                if (!dryRun && entityType === "Invoice") {
+                    setActiveStep(MATURITY_ENTITY_STATS_KEY, "linking");
+                    paymentLink.paymentLinkStatus = "running";
+                    paymentLink.paymentLinkError = undefined;
+                    paymentLink.paymentsLinked = 0;
+                    paymentLink.paymentsStillDeferred = 0;
+                    paymentLink.paymentsLinkTotal = 0;
+                    emitProgress();
+                    try {
+                        const maturityStarted = Date.now();
+                        const maturityResult =
+                            await applyMaturedDeferredPayments(
+                                options.prisma,
+                                options.accountId,
+                                new Date(),
+                                undefined,
+                                {
+                                    userId: options.userId,
+                                    onProgress: ({
+                                        linked,
+                                        totalCandidates,
+                                        detail,
+                                    }) => {
+                                        paymentLink.paymentLinkStatus =
+                                            "running";
+                                        paymentLink.paymentsLinked = linked;
+                                        paymentLink.paymentsLinkTotal =
+                                            totalCandidates;
+                                        paymentLink.paymentsStillDeferred =
+                                            Math.max(
+                                                0,
+                                                totalCandidates - linked
+                                            );
+                                        paymentLink.paymentLinkDetail = detail;
+                                        emitProgress();
+                                    },
+                                }
+                            );
+                        for (const id of maturityResult.affectedCustomerIds) {
+                            arAffectedCustomerIds.add(id);
+                        }
+                        paymentLink.paymentLinkStatus = "done";
+                        paymentLink.paymentLinkDetail = undefined;
+                        paymentLink.paymentsLinked = maturityResult.matured;
+                        paymentLink.paymentsStillDeferred =
+                            maturityResult.deferredRemaining;
+                        paymentLink.paymentsLinkTotal =
+                            maturityResult.totalCandidates;
+                        if (activeStep === MATURITY_ENTITY_STATS_KEY) {
+                            activeStep = null;
+                            activeStepDetail = null;
+                        }
+                        emitProgress();
+                        log(
+                            `Invoice entity maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
+                        );
+                    } catch (error) {
+                        const message =
+                            error instanceof Error
+                                ? error.message
+                                : "Deferred payment maturity failed";
+                        paymentLink.paymentLinkStatus = "failed";
+                        paymentLink.paymentLinkError = message;
+                        if (activeStep === MATURITY_ENTITY_STATS_KEY) {
+                            activeStep = null;
+                            activeStepDetail = null;
+                        }
+                        emitProgress();
+                        log(`Invoice entity maturity failed: ${message}`);
+                    }
+
+                    if (pendingInvoiceCloses.size > 0) {
+                        await flushExtensionPendingCloses("after Invoice");
+                    }
+
+                    invoicePostIngestRan = true;
+                    await runArTailWithProgress({
+                        customerIds: Array.from(arAffectedCustomerIds),
+                        invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                        paymentEntityIds: Array.from(arAffectedPaymentIds),
+                        runMaturity: false,
+                    });
+                }
+
+                const cacheAbort = await flushEntityImportCacheOrAbort(
+                    entityType
+                );
+                if (cacheAbort) {
+                    return cacheAbort;
+                }
+                continue;
+            }
+
             const rules = options.mappingByType.get(entityType);
             if (!rules || rules.length === 0) {
                 log(`Skipping ${entityType}: no field mapping configured`);
@@ -804,24 +1083,60 @@ export async function runStagedExtensionSync(
                           fallbackScopeClause.trim()
                       )
                     : null;
+            const expandPullPhases = (
+                labelPrefix: string,
+                filter: string | null,
+                startAfterKey: string | null
+            ): Array<{
+                label: string;
+                filter: string | null;
+                startAfterKey: string | null;
+            }> => {
+                if (!filter) {
+                    return [{ label: labelPrefix, filter, startAfterKey }];
+                }
+                const expanded =
+                    typeof options.extension.expandEntityPullFilters ===
+                    "function"
+                        ? options.extension.expandEntityPullFilters({
+                              entityType,
+                              entitySet,
+                              filter,
+                              extension_config: options.extensionConfig,
+                          })
+                        : null;
+                if (!expanded || expanded.length <= 1) {
+                    return [
+                        {
+                            label: labelPrefix,
+                            filter: expanded?.[0] ?? filter,
+                            startAfterKey,
+                        },
+                    ];
+                }
+                log(
+                    `[payment-watch] ${entityType} ${labelPrefix} split into ${expanded.length} extension pulls`
+                );
+                return expanded.map((phaseFilter, index) => ({
+                    label: `${labelPrefix}_part_${index + 1}`,
+                    filter: phaseFilter,
+                    startAfterKey: index === 0 ? startAfterKey : null,
+                }));
+            };
             const pullPhases: Array<{
                 label: string;
                 filter: string | null;
                 /** Resume cursor only for the primary phase. */
                 startAfterKey: string | null;
-            }> = [
-                {
-                    label: "primary",
-                    filter: primaryPullFilter,
-                    startAfterKey: afterKey,
-                },
-            ];
+            }> = [...expandPullPhases("primary", primaryPullFilter, afterKey)];
             if (fallbackPullFilter) {
-                pullPhases.push({
-                    label: "idc_fallback",
-                    filter: fallbackPullFilter,
-                    startAfterKey: null,
-                });
+                pullPhases.push(
+                    ...expandPullPhases(
+                        "idc_fallback",
+                        fallbackPullFilter,
+                        null
+                    )
+                );
             }
 
             let watchedPaymentSeen = false;
@@ -830,7 +1145,7 @@ export async function runStagedExtensionSync(
                 if (entityType === "Payment") {
                     const filterText = phase.filter ?? "";
                     log(
-                        `[payment-watch] Payment ${phase.label} filterLen=${filterText.length} hasIdcCustnameIv=${filterText.includes("IDC_CUSTNAMEIV")} hasIdgCustname=${filterText.includes("IDG_CUSTNAME")} filterPreview=${filterText.slice(0, 360)}`
+                        `[payment-watch] Payment ${phase.label} filterLen=${filterText.length} hasAccname=${filterText.includes("ACCNAME")} hasIdcCustnameIv=${filterText.includes("IDC_CUSTNAMEIV")} hasIdgCustname=${filterText.includes("IDG_CUSTNAME")} filterPreview=${filterText.slice(0, 360)}`
                     );
                 }
 
@@ -921,7 +1236,7 @@ export async function runStagedExtensionSync(
                     // Priority rejects IDG null in $filter, so partition here.
                     if (
                         entityType === "Payment" &&
-                        phase.label === "idc_fallback"
+                        phase.label.startsWith("idc_fallback")
                     ) {
                         const idg = String(raw.IDG_CUSTNAME ?? "").trim();
                         if (idg.length > 0) {
@@ -965,6 +1280,9 @@ export async function runStagedExtensionSync(
                             (mapped._rawRecord as
                                 | Record<string, unknown>
                                 | undefined) ?? raw;
+                        const accname = String(
+                            rawRecord.ACCNAME ?? ""
+                        ).trim();
                         const idgCustname = String(
                             rawRecord.IDG_CUSTNAME ?? ""
                         ).trim();
@@ -974,6 +1292,8 @@ export async function runStagedExtensionSync(
                         const inScope =
                             (rowCustomer.length > 0 &&
                                 allowedCustomerNumbers.has(rowCustomer)) ||
+                            (accname.length > 0 &&
+                                allowedCustomerNumbers.has(accname)) ||
                             (idgCustname.length > 0 &&
                                 allowedCustomerNumbers.has(idgCustname)) ||
                             (idcCustnameIv.length > 0 &&
@@ -982,6 +1302,7 @@ export async function runStagedExtensionSync(
                             if (entityType === "Payment") {
                                 tracePaymentImport("pull_skip_customer_scope", mapped, {
                                     rowCustomer,
+                                    accname: accname || null,
                                     idgCustname: idgCustname || null,
                                     idcCustnameIv: idcCustnameIv || null,
                                     scopedCustomerNumber,
@@ -998,7 +1319,7 @@ export async function runStagedExtensionSync(
                 }
                 if (
                     entityType === "Payment" &&
-                    phase.label === "idc_fallback" &&
+                    phase.label.startsWith("idc_fallback") &&
                     idcFallbackDroppedIdg > 0
                 ) {
                     log(
@@ -1114,6 +1435,16 @@ export async function runStagedExtensionSync(
                             importResult.success,
                             importResult.failed
                         );
+                        const cacheRows = rowsEnteringImport(
+                            pageRows,
+                            importResult
+                        );
+                        if (cacheRows.length > 0) {
+                            const existing =
+                                importCacheByEntity.get(entityType) ?? [];
+                            existing.push(...cacheRows);
+                            importCacheByEntity.set(entityType, existing);
+                        }
                         windowImported += importResult.success;
                         windowErrors += importResult.failed;
                         if (
@@ -1315,6 +1646,16 @@ export async function runStagedExtensionSync(
                     paymentEntityIds: Array.from(arAffectedPaymentIds),
                     runMaturity: false,
                 });
+            }
+
+            // Write once after the entity finishes all windows for this run.
+            if (isLastWindow) {
+                const cacheAbort = await flushEntityImportCacheOrAbort(
+                    entityType
+                );
+                if (cacheAbort) {
+                    return cacheAbort;
+                }
             }
         }
 

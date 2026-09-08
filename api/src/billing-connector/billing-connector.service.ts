@@ -70,9 +70,17 @@ import {
     resolveSyncErrorType,
     parseClearBeforeImport,
     parseCustomerIdForClearBeforeImport,
+    parseUseCachedExecutionId,
+    parseUseCachedImport,
     resolveAccountCustomerById,
     searchAccountCustomers,
+    findSameDayCacheRuns,
+    loadImportCachesForReplay,
+    normalizeImportCacheCustomerScope,
+    resolveImportCacheDay,
+    DEFAULT_IMPORT_CACHE_TIME_ZONE,
     type ClearBeforeImportEntity,
+    type ImportCacheEntityType,
     type ConnectorSyncRunSummary,
     type EntitySetsMap,
     type PullFiltersMap,
@@ -352,6 +360,7 @@ export class BillingConnectorApiService {
         consecutive_auth_failures: number;
         backfill_started_at?: Date | null;
         backfill_start_date?: Date | null;
+        time_zone?: string | null;
         mep_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
         skip_reporting_breach_on_backfill?: boolean;
@@ -415,6 +424,11 @@ export class BillingConnectorApiService {
             backfill_start_date: formatBackfillStartDateForApi(
                 connector.backfill_start_date
             ),
+            time_zone:
+                typeof connector.time_zone === "string" &&
+                connector.time_zone.trim().length > 0
+                    ? connector.time_zone.trim()
+                    : "Asia/Jerusalem",
             mep_breach_start_date: formatBackfillStartDateForApi(
                 connector.mep_breach_start_date
             ),
@@ -721,6 +735,25 @@ export class BillingConnectorApiService {
                     code: err.code ?? "INVALID_INVOICE_PAID_TOLERANCE",
                 });
             }
+        }
+        if (body.time_zone !== undefined) {
+            const raw =
+                typeof body.time_zone === "string" ? body.time_zone.trim() : "";
+            if (!raw) {
+                throw new BadRequestException({
+                    error: "time_zone must be a non-empty IANA timezone",
+                    code: "INVALID_TIME_ZONE",
+                });
+            }
+            try {
+                Intl.DateTimeFormat(undefined, { timeZone: raw });
+            } catch {
+                throw new BadRequestException({
+                    error: `Invalid IANA time_zone: ${raw}`,
+                    code: "INVALID_TIME_ZONE",
+                });
+            }
+            data.time_zone = raw;
         }
 
         let extensionPatch;
@@ -1085,6 +1118,7 @@ export class BillingConnectorApiService {
             mode === "backfill" && !isResumeBackfill
                 ? parseCustomerIdForClearBeforeImport(body?.customer_id)
                 : null;
+        let customerScopeForCache = "all";
         if (customerId != null) {
             const customer = await resolveAccountCustomerById({
                 prisma: this.db,
@@ -1095,6 +1129,42 @@ export class BillingConnectorApiService {
                 throw new BadRequestException({
                     error: `Customer not found on this account: id ${customerId}`,
                     code: "CUSTOMER_NOT_FOUND",
+                });
+            }
+            customerScopeForCache = normalizeImportCacheCustomerScope(
+                customer.customer_number
+            );
+        }
+
+        const useCachedImport = parseUseCachedImport(body?.use_cached_import);
+        const useCachedExecutionId = parseUseCachedExecutionId(
+            body?.use_cached_execution_id
+        );
+        if (useCachedImport.length > 0) {
+            if (!useCachedExecutionId) {
+                throw new BadRequestException({
+                    error: "use_cached_execution_id is required when use_cached_import is set",
+                    code: "IMPORT_CACHE_EXECUTION_ID_REQUIRED",
+                });
+            }
+            const syncMode =
+                mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
+            const loaded = await loadImportCachesForReplay({
+                accountId,
+                executionId: useCachedExecutionId,
+                syncMode,
+                importTypes: useCachedImport,
+                customerScope: customerScopeForCache,
+                timeZone: connector.time_zone,
+            });
+            if (!loaded.ok) {
+                throw new BadRequestException({
+                    error: `No import cache for execution ${useCachedExecutionId}: ${loaded.missing.join(", ")} (day=${loaded.cacheDay}, scope=${loaded.customerScope})`,
+                    code: "IMPORT_CACHE_NOT_FOUND",
+                    missing: loaded.missing,
+                    cache_day: loaded.cacheDay,
+                    customer_scope: loaded.customerScope,
+                    execution_id: useCachedExecutionId,
                 });
             }
         }
@@ -1179,6 +1249,9 @@ export class BillingConnectorApiService {
             onLog,
             clearBeforeImport,
             customerId,
+            useCachedImport,
+            useCachedExecutionId:
+                useCachedImport.length > 0 ? useCachedExecutionId : null,
         });
 
         return {
@@ -1326,6 +1399,8 @@ export class BillingConnectorApiService {
         onLog: (message: string) => void;
         clearBeforeImport?: ClearBeforeImportEntity[];
         customerId?: number | null;
+        useCachedImport?: ImportCacheEntityType[];
+        useCachedExecutionId?: string | null;
     }) {
         const {
             accountId,
@@ -1337,6 +1412,8 @@ export class BillingConnectorApiService {
             onLog,
             clearBeforeImport,
             customerId,
+            useCachedImport,
+            useCachedExecutionId,
         } = params;
         try {
             const heartbeat = createSyncProgressHeartbeat(executionId);
@@ -1351,6 +1428,14 @@ export class BillingConnectorApiService {
                     ? { clearBeforeImport }
                     : {}),
                 ...(customerId != null ? { customerId } : {}),
+                ...(useCachedImport?.length
+                    ? {
+                          useCachedImport,
+                          ...(useCachedExecutionId
+                              ? { useCachedExecutionId }
+                              : {}),
+                      }
+                    : {}),
                 onLog,
                 ...this.buildPostIngestDeferOptions(accountId, mode),
                 observability: {
@@ -1681,6 +1766,81 @@ export class BillingConnectorApiService {
             );
             throw error;
         }
+    }
+
+    async checkImportCache(
+        user: JwtPayload,
+        accountId: number,
+        modeRaw?: string,
+        customerIdRaw?: string
+    ) {
+        await this.assertAccess(user, accountId, "view_billing_connector");
+        const mode = String(modeRaw ?? "").toLowerCase();
+        if (mode !== "backfill" && mode !== "incremental") {
+            throw new BadRequestException({
+                error: "mode must be backfill or incremental",
+                code: "INVALID_SYNC_MODE",
+            });
+        }
+        const connector = await this.db.billingConnector.findUnique({
+            where: { account_id: accountId },
+        });
+        if (!connector) {
+            throw new NotFoundException({
+                error: "Billing connector not configured",
+            });
+        }
+
+        const customerId = parseCustomerIdForClearBeforeImport(customerIdRaw);
+        let customerScope = "all";
+        if (customerId != null) {
+            const customer = await resolveAccountCustomerById({
+                prisma: this.db,
+                accountId,
+                customerId,
+            });
+            if (!customer) {
+                throw new BadRequestException({
+                    error: `Customer not found on this account: id ${customerId}`,
+                    code: "CUSTOMER_NOT_FOUND",
+                });
+            }
+            customerScope = normalizeImportCacheCustomerScope(
+                customer.customer_number
+            );
+        }
+
+        const syncMode = mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
+        const timeZone =
+            typeof connector.time_zone === "string" &&
+            connector.time_zone.trim().length > 0
+                ? connector.time_zone.trim()
+                : null;
+        const cacheDay = resolveImportCacheDay(new Date(), timeZone);
+        const runs = await findSameDayCacheRuns({
+            accountId,
+            syncMode,
+            customerScope,
+            timeZone,
+        });
+        return {
+            sync_mode: syncMode,
+            cache_day: cacheDay,
+            customer_scope: customerScope,
+            time_zone: timeZone ?? DEFAULT_IMPORT_CACHE_TIME_ZONE,
+            runs: runs.map((run) => ({
+                execution_id: run.execution_id,
+                created_at: run.created_at.toISOString(),
+                sync_mode: run.sync_mode,
+                cache_day: run.cache_day,
+                customer_scope: run.customer_scope,
+                entities: run.entities.map((entity) => ({
+                    import_type: entity.import_type,
+                    row_count: entity.row_count,
+                    available: entity.available,
+                })),
+            })),
+        };
     }
 
     async resetBackfill(
