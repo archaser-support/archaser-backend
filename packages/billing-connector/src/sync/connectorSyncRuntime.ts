@@ -141,11 +141,43 @@ export interface ConnectorSyncCounts {
             import("../import/aggregateEntityImportStats").EntityImportStatsAccum
         >
     >;
+    /**
+     * Pipeline status for Customer/Payment/Invoice/Contact so the progress
+     * panel can drive Running/Done without client frontier heuristics.
+     */
+    entityStatuses?: Partial<
+        Record<
+            "Customer" | "Contact" | "Invoice" | "Payment",
+            "running" | "done" | "failed"
+        >
+    >;
+}
+
+const ENTITY_PIPELINE_STATUS_KEYS = [
+    "Customer",
+    "Payment",
+    "Invoice",
+    "Contact",
+] as const;
+
+export type EntityPipelineStatusKey =
+    (typeof ENTITY_PIPELINE_STATUS_KEYS)[number];
+
+export function isEntityPipelineStatusKey(
+    value: string
+): value is EntityPipelineStatusKey {
+    return (ENTITY_PIPELINE_STATUS_KEYS as readonly string[]).includes(value);
 }
 
 export function entityStatsFromCounts(
     stats: ConnectorSyncCounts
 ): ConnectorEntityStats {
+    const statusFor = (
+        key: EntityPipelineStatusKey
+    ): Pick<ConnectorEntityStatSlice, "status"> => {
+        const status = stats.entityStatuses?.[key];
+        return status ? { status } : {};
+    };
     const entityStats: ConnectorEntityStats = {
         Customer: {
             pulled: stats.customersProcessed,
@@ -155,6 +187,7 @@ export function entityStatsFromCounts(
             ...(stats.customersDeleted != null
                 ? { deleted: stats.customersDeleted }
                 : {}),
+            ...statusFor("Customer"),
         },
         Contact: {
             pulled: stats.contactsProcessed,
@@ -164,6 +197,7 @@ export function entityStatsFromCounts(
             ...(stats.contactsDeleted != null
                 ? { deleted: stats.contactsDeleted }
                 : {}),
+            ...statusFor("Contact"),
         },
         Invoice: {
             pulled: stats.invoicesProcessed,
@@ -173,6 +207,7 @@ export function entityStatsFromCounts(
             ...(stats.invoicesDeleted != null
                 ? { deleted: stats.invoicesDeleted }
                 : {}),
+            ...statusFor("Invoice"),
         },
         Payment: {
             pulled: stats.paymentsProcessed,
@@ -182,6 +217,7 @@ export function entityStatsFromCounts(
             ...(stats.paymentsDeleted != null
                 ? { deleted: stats.paymentsDeleted }
                 : {}),
+            ...statusFor("Payment"),
         },
     };
 
