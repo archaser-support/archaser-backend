@@ -235,17 +235,38 @@ const TERMS_BREACH_CAUSE_LABELS: Record<"en" | "he", Record<string, string>> = {
     },
 };
 
+/**
+ * Resolve UI language for Term Breach Reason labels.
+ * Accepts session language ("Hebrew" / "English") or short language codes
+ * ("he" / "en"). Do not pass date locale (e.g. "en-US", "he-IL") — locale
+ * only controls date/time format.
+ */
+function resolveTermsBreachLabelLanguage(
+    language?: string
+): "en" | "he" {
+    if (!language) {
+        return "en";
+    }
+    const trimmed = language.trim().toLowerCase();
+    if (
+        trimmed === "hebrew" ||
+        trimmed === "he" ||
+        trimmed === "iw"
+    ) {
+        return "he";
+    }
+    return "en";
+}
+
 export function formatTermsBreachReasonForDisplay(
     codesJoined: string | null | undefined,
-    locale?: string
+    language?: string
 ): string {
     if (codesJoined == null || String(codesJoined).trim() === "") {
         return "";
     }
-    const language = (locale?.split("-")[0] === "he" ? "he" : "en") as
-        | "en"
-        | "he";
-    const labels = TERMS_BREACH_CAUSE_LABELS[language];
+    const labelLanguage = resolveTermsBreachLabelLanguage(language);
+    const labels = TERMS_BREACH_CAUSE_LABELS[labelLanguage];
     return String(codesJoined)
         .split(" · ")
         .map((code) => {
