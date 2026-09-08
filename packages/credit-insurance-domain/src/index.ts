@@ -60,6 +60,7 @@ export {
 export { syncCustomerInsuranceFields } from "./credit-insurance/domain/syncCustomerInsuranceFields";
 export {
     refreshInsuranceTargetDatesForInvoiceIds,
+    refreshTermsBreachFlagsForCustomer,
     sweepReportingBreachForOverdueInvoiceIds,
 } from "./credit-insurance/domain/syncInvoiceReportingBreach";
 export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/insurancePolicyStatusCron";
