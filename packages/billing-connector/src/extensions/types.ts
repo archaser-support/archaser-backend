@@ -140,7 +140,12 @@ export interface BillingAccountExtension {
             processed: number;
             total: number;
         }) => void;
-    }): Promise<{ closedIds: number[]; customerIds?: number[] }>;
+    }): Promise<{
+        closedIds: number[];
+        customerIds?: number[];
+        /** Still-missing invoice numbers — caller should retry after Invoice. */
+        missingNumbers?: string[];
+    }>;
     /** Canonicalize payment vs invoice currency before attach. */
     normalizePaymentCurrency?(currency: string | null | undefined): string;
     /**
@@ -150,7 +155,7 @@ export interface BillingAccountExtension {
     alignPaymentAmountsForInvoice?(
         input: ExtensionAlignPaymentAmountsInput
     ): ExtensionAlignedPaymentAmounts;
-/**
+    /**
      * Extra OData $select columns for live/preview pulls (account-specific
      * ERP fields such as IDG_*). Merged with mapping-derived select.
      */
@@ -205,6 +210,17 @@ export interface BillingAccountExtension {
         entityType: ExtensionEntityType;
         entitySet?: string | null;
         filter: string;
+        extension_config: Record<string, unknown> | null;
+    }): string[] | null;
+    /**
+     * Unique left-to-right `$orderby` fields for keyset pagination on custom
+     * ERP entity sets. Return null to keep the provider default.
+     * Account 10149 IDG payments: FNCDATE,FNCNUM,KLINE (KLINE alone collides
+     * across receipts on the same day).
+     */
+    resolvePullKeysetOrderFields?(params: {
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
         extension_config: Record<string, unknown> | null;
     }): string[] | null;
 }

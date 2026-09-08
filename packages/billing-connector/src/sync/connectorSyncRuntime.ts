@@ -41,6 +41,8 @@ export type TailStepState = {
     /** Customers / rows handled, when the step can count them. */
     processed?: number;
     total?: number;
+    /** Queued items still unresolved (e.g. pending virtual closes missing invoices). */
+    skipped?: number;
     error?: string;
     /** What the step is doing right now, for a sub-line under the bar. */
     detail?: TailStepDetail;
@@ -141,11 +143,43 @@ export interface ConnectorSyncCounts {
             import("../import/aggregateEntityImportStats").EntityImportStatsAccum
         >
     >;
+    /**
+     * Pipeline status for Customer/Payment/Invoice/Contact so the progress
+     * panel can drive Running/Done without client frontier heuristics.
+     */
+    entityStatuses?: Partial<
+        Record<
+            "Customer" | "Contact" | "Invoice" | "Payment",
+            "running" | "done" | "failed"
+        >
+    >;
+}
+
+const ENTITY_PIPELINE_STATUS_KEYS = [
+    "Customer",
+    "Payment",
+    "Invoice",
+    "Contact",
+] as const;
+
+export type EntityPipelineStatusKey =
+    (typeof ENTITY_PIPELINE_STATUS_KEYS)[number];
+
+export function isEntityPipelineStatusKey(
+    value: string
+): value is EntityPipelineStatusKey {
+    return (ENTITY_PIPELINE_STATUS_KEYS as readonly string[]).includes(value);
 }
 
 export function entityStatsFromCounts(
     stats: ConnectorSyncCounts
 ): ConnectorEntityStats {
+    const statusFor = (
+        key: EntityPipelineStatusKey
+    ): Pick<ConnectorEntityStatSlice, "status"> => {
+        const status = stats.entityStatuses?.[key];
+        return status ? { status } : {};
+    };
     const entityStats: ConnectorEntityStats = {
         Customer: {
             pulled: stats.customersProcessed,
@@ -155,6 +189,7 @@ export function entityStatsFromCounts(
             ...(stats.customersDeleted != null
                 ? { deleted: stats.customersDeleted }
                 : {}),
+            ...statusFor("Customer"),
         },
         Contact: {
             pulled: stats.contactsProcessed,
@@ -164,6 +199,7 @@ export function entityStatsFromCounts(
             ...(stats.contactsDeleted != null
                 ? { deleted: stats.contactsDeleted }
                 : {}),
+            ...statusFor("Contact"),
         },
         Invoice: {
             pulled: stats.invoicesProcessed,
@@ -173,6 +209,7 @@ export function entityStatsFromCounts(
             ...(stats.invoicesDeleted != null
                 ? { deleted: stats.invoicesDeleted }
                 : {}),
+            ...statusFor("Invoice"),
         },
         Payment: {
             pulled: stats.paymentsProcessed,
@@ -182,6 +219,7 @@ export function entityStatsFromCounts(
             ...(stats.paymentsDeleted != null
                 ? { deleted: stats.paymentsDeleted }
                 : {}),
+            ...statusFor("Payment"),
         },
     };
 
@@ -241,11 +279,13 @@ export function entityStatsFromCounts(
         }
         const processed = step.processed ?? 0;
         const total = step.total ?? processed;
+        const skipped = step.skipped ?? 0;
         entityStats[key] = {
             pulled: total,
-            success: step.status === "done" ? total : processed,
+            // Settled only — do not treat missing invoice numbers as success.
+            success: processed,
             failed: step.status === "failed" ? 1 : 0,
-            skipped: 0,
+            skipped,
             status: step.status,
             ...(step.detail ? { detail: step.detail } : {}),
             ...(step.error ? { sample_errors: [step.error] } : {}),

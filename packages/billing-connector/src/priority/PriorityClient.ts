@@ -11,6 +11,7 @@ import type { PriorityEntityImportType } from "./samplePayloads";
 import { discoverFieldPathsFromRecords } from "../utils/connectorFieldUtils";
 import { applyPaymentSyntheticsToRecords } from "../payment/connectorPaymentSynthetics";
 import { columnNamesFromRecords } from "./resolveTablePullShape";
+import { summarizePriorityHttpErrorBody } from "./priorityHttpErrorMessage";
 
 export interface PriorityConnectionConfig {
     baseUrl: string;
@@ -109,7 +110,9 @@ export async function testPriorityConnection(
 
             if (!response.ok) {
                 const body = await response.text().catch(() => "");
-                const detail = body ? body.slice(0, 200) : response.statusText;
+                const detail = body
+                    ? summarizePriorityHttpErrorBody(response.status, body)
+                    : response.statusText;
                 return {
                     ok: false,
                     statusCode: response.status,
@@ -174,7 +177,9 @@ async function fetchPriorityJson(
 
             if (!response.ok) {
                 const body = await response.text().catch(() => "");
-                const detail = body ? body.slice(0, 200) : response.statusText;
+                const detail = body
+                    ? summarizePriorityHttpErrorBody(response.status, body)
+                    : response.statusText;
                 return {
                     ok: false,
                     statusCode: response.status,
