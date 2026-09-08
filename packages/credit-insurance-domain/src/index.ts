@@ -176,6 +176,7 @@ export {
     type AsOfOpenInvoiceLedger,
 } from "./credit-insurance/domain/asOfOpenArLedgerPreload";
 export {
+    buildAsOfTermsMapFromActiveCustomerPolicies,
     buildCreditAsOfBackfillRunContext,
     createMinimalCreditAsOfBackfillRunContext,
     deriveDashboardSnapshotScopes,
