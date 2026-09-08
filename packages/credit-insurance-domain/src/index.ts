@@ -109,6 +109,12 @@ export {
     clearInvoicePaidToleranceCache,
     resolveInvoicePaidTolerance,
 } from "./credit-insurance/domain/resolveInvoicePaidTolerance";
+export {
+    INVOICE_PAID_TOLERANCE,
+    INVOICE_PAID_TOLERANCE_MAX,
+    INVOICE_PAID_TOLERANCE_MIN,
+    isWithinPaidTolerance,
+} from "./credit-insurance/domain/invoicePaidTolerance";
 
 // --- Reporting breach start date gate (imported pre-go-live history) ---
 export { isInvoiceInReportingBreachScope } from "./credit-insurance/domain/shared/reportingBreachScope";
