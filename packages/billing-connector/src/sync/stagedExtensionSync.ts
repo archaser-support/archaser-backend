@@ -30,7 +30,9 @@ import {
     MATURITY_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
+    isEntityPipelineStatusKey,
     type ConnectorSyncCounts,
+    type EntityPipelineStatusKey,
     type TailStepKey,
     type TailStepDetail,
     type TailStepState,
@@ -523,6 +525,9 @@ export async function runStagedExtensionSync(
     }
     let activeStep: string | null = null;
     let activeStepDetail: string | null = null;
+    const entityStatuses: Partial<
+        Record<EntityPipelineStatusKey, "running" | "done" | "failed">
+    > = {};
     let lastProgressEmitSignature = "";
     const emitProgress = () => {
         const signature = `cust=${stats.customersProcessed} pay=${stats.paymentsProcessed} inv=${stats.invoicesProcessed} contact=${stats.contactsProcessed} step=${activeStep ?? "none"}`;
@@ -534,11 +539,23 @@ export async function runStagedExtensionSync(
                 ...stats,
                 ...paymentLink,
                 tailSteps: { ...tailSteps },
+                entityStatuses: { ...entityStatuses },
             },
             { activeStep, activeStepDetail }
         );
     };
     const setActiveStep = (step: string, detail?: string | null) => {
+        if (
+            activeStep &&
+            isEntityPipelineStatusKey(activeStep) &&
+            activeStep !== step &&
+            entityStatuses[activeStep] !== "failed"
+        ) {
+            entityStatuses[activeStep] = "done";
+        }
+        if (isEntityPipelineStatusKey(step)) {
+            entityStatuses[step] = "running";
+        }
         activeStep = step;
         activeStepDetail = detail ?? null;
     };
@@ -546,6 +563,7 @@ export async function runStagedExtensionSync(
         ...stats,
         ...paymentLink,
         tailSteps: { ...tailSteps },
+        entityStatuses: { ...entityStatuses },
     });
     const setTailStep = (key: TailStepKey, state: TailStepState) => {
         // A late `running` update must not resurrect a finished step.
@@ -1188,6 +1206,18 @@ export async function runStagedExtensionSync(
                         pageSize: entityPageSize,
                         entitySet,
                         filter: phase.filter,
+                        keysetOrderFields:
+                            typeof options.extension
+                                .resolvePullKeysetOrderFields === "function"
+                                ? options.extension.resolvePullKeysetOrderFields(
+                                      {
+                                          entityType,
+                                          entitySet,
+                                          extension_config:
+                                              options.extensionConfig,
+                                      }
+                                  )
+                                : null,
                         select: odataSelectFieldsFromMapping({
                             mappingRules: rules,
                             extraFields: [
