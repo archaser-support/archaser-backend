@@ -3,6 +3,7 @@
 > **Note**: This project uses modular rules files in `.cursor/rules/` directory.
 > See individual rule files for specific guidelines:
 > - `.cursor/rules/critical-rules.mdc` - Critical rules and development workflow
+> - `.cursor/rules/reuse-existing-functionality.mdc` - Before add/update: search and reuse shared implementations
 > - `.cursor/rules/planning.mdc` - Impact analysis, plan generation, repo plan copies, and **required codebase scan before finalizing plans**
 > - `.cursor/rules/testing.mdc` - Testing guidelines and test planning
 > - `.cursor/rules/test-unit-creation-process.mdc` - Process for creating integration/e2e test units (cron/workflow flows)

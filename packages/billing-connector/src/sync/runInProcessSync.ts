@@ -45,8 +45,10 @@ import {
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
     PURGE_ENTITY_STATS_KEY,
     entityStatsFromCounts,
+    isEntityPipelineStatusKey,
     type ConnectorSyncCounts,
     type ConnectorSyncProgressPatch,
+    type EntityPipelineStatusKey,
     type TailStepKey,
     type TailStepState,
 } from "./connectorSyncRuntime";
@@ -433,8 +435,35 @@ async function runInProcessSyncBody(
     const stats = emptyStats();
     let activeStep: string | null = null;
     let activeStepDetail: string | null = null;
-    const emit = () =>
+    const entityStatuses: Partial<
+        Record<EntityPipelineStatusKey, "running" | "done" | "failed">
+    > = {};
+    const syncEntityStatusesOntoStats = () => {
+        stats.entityStatuses = { ...entityStatuses };
+    };
+    const setPipelineActiveStep = (
+        step: string | null,
+        detail?: string | null
+    ) => {
+        if (
+            activeStep &&
+            isEntityPipelineStatusKey(activeStep) &&
+            activeStep !== step &&
+            entityStatuses[activeStep] !== "failed"
+        ) {
+            entityStatuses[activeStep] = "done";
+        }
+        if (step && isEntityPipelineStatusKey(step)) {
+            entityStatuses[step] = "running";
+        }
+        activeStep = step;
+        activeStepDetail = detail ?? null;
+        syncEntityStatusesOntoStats();
+    };
+    const emit = () => {
+        syncEntityStatusesOntoStats();
         emitProgress(options.onProgress, stats, activeStep, activeStepDetail);
+    };
     const resolveExtension =
         options.resolveExtension ?? getRegisteredExtension;
     const importBatch = options.importBatch ?? importMappedEntityBatch;
@@ -453,8 +482,7 @@ async function runInProcessSyncBody(
         }
         stats.tailSteps = { ...(stats.tailSteps ?? {}), [key]: state };
         if (state.status === "running") {
-            activeStep = key;
-            activeStepDetail = state.detail?.step ?? null;
+            setPipelineActiveStep(key, state.detail?.step ?? null);
         } else if (
             (state.status === "done" || state.status === "failed") &&
             activeStep === key
@@ -623,8 +651,7 @@ async function runInProcessSyncBody(
             };
             stats.purgeStatus = "running";
             stats.purgeDetail = { step: "deleting", processed: 0 };
-            activeStep = PURGE_ENTITY_STATS_KEY;
-            activeStepDetail = "deleting";
+            setPipelineActiveStep(PURGE_ENTITY_STATS_KEY, "deleting");
             emit();
             let purgeResult: Awaited<ReturnType<typeof clearBeforeImport>>;
             try {
@@ -706,8 +733,7 @@ async function runInProcessSyncBody(
             }
             stats.purgeStatus = "done";
             stats.purgeDetail = { step: "deleting" };
-            activeStep = enabled[0] ?? null;
-            activeStepDetail = "sampling";
+            setPipelineActiveStep(enabled[0] ?? null, "sampling");
             emit();
         }
 
@@ -1030,7 +1056,10 @@ async function runInProcessSyncBody(
                 providerLabel: connector.provider,
                 timeZone: connector.time_zone,
                 ...(cachedRowsByEntity
-                    ? { cachedRowsByEntity }
+                    ? {
+                          cachedRowsByEntity,
+                          cachedImportExecutionId: useCachedExecutionId,
+                      }
                     : {}),
             });
 
@@ -1186,8 +1215,7 @@ async function runInProcessSyncBody(
             const mapping = mappingByType.get(entityType);
             if (!mapping && !cachedRowsByEntity?.has(entityType)) continue;
 
-            activeStep = entityType;
-            activeStepDetail = "pulling";
+            setPipelineActiveStep(entityType, "pulling");
 
             try {
                 const cachedRows = cachedRowsByEntity?.get(entityType);
@@ -1195,7 +1223,7 @@ async function runInProcessSyncBody(
                     log(
                         `Using same-day import cache for ${entityType} (${cachedRows.length} row(s)); skipping ERP pull`
                     );
-                    activeStepDetail = "importing";
+                    setPipelineActiveStep(entityType, "importing");
                     const processedKey =
                         `${entityType.toLowerCase()}sProcessed` as keyof typeof stats;
                     const importedKey =
@@ -1380,7 +1408,7 @@ async function runInProcessSyncBody(
                     pullResult.records.length;
                 emit();
 
-                activeStepDetail = "importing";
+                setPipelineActiveStep(entityType, "importing");
                 const importResult: EntityImportBatchResult = await importBatch(
                     prisma,
                     entityType,
