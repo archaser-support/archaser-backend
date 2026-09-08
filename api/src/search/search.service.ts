@@ -384,7 +384,7 @@ export class SearchService {
     ) {
         const conditions: Record<string, unknown>[] = [
             { account_id: accountId },
-            { status: { in: ["Overdue", "Due"] } },
+            { status: { in: ["Overdue", "Due", "Paid"] } },
         ];
         if (Object.keys(ownerFilter).length > 0) {
             conditions.push({ Customer: ownerFilter });
