@@ -140,7 +140,12 @@ export interface BillingAccountExtension {
             processed: number;
             total: number;
         }) => void;
-    }): Promise<{ closedIds: number[]; customerIds?: number[] }>;
+    }): Promise<{
+        closedIds: number[];
+        customerIds?: number[];
+        /** Still-missing invoice numbers — caller should retry after Invoice. */
+        missingNumbers?: string[];
+    }>;
     /** Canonicalize payment vs invoice currency before attach. */
     normalizePaymentCurrency?(currency: string | null | undefined): string;
     /**
@@ -150,7 +155,7 @@ export interface BillingAccountExtension {
     alignPaymentAmountsForInvoice?(
         input: ExtensionAlignPaymentAmountsInput
     ): ExtensionAlignedPaymentAmounts;
-/**
+    /**
      * Extra OData $select columns for live/preview pulls (account-specific
      * ERP fields such as IDG_*). Merged with mapping-derived select.
      */

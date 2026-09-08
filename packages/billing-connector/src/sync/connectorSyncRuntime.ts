@@ -41,6 +41,8 @@ export type TailStepState = {
     /** Customers / rows handled, when the step can count them. */
     processed?: number;
     total?: number;
+    /** Queued items still unresolved (e.g. pending virtual closes missing invoices). */
+    skipped?: number;
     error?: string;
     /** What the step is doing right now, for a sub-line under the bar. */
     detail?: TailStepDetail;
@@ -277,11 +279,13 @@ export function entityStatsFromCounts(
         }
         const processed = step.processed ?? 0;
         const total = step.total ?? processed;
+        const skipped = step.skipped ?? 0;
         entityStats[key] = {
             pulled: total,
-            success: step.status === "done" ? total : processed,
+            // Settled only — do not treat missing invoice numbers as success.
+            success: processed,
             failed: step.status === "failed" ? 1 : 0,
-            skipped: 0,
+            skipped,
             status: step.status,
             ...(step.detail ? { detail: step.detail } : {}),
             ...(step.error ? { sample_errors: [step.error] } : {}),

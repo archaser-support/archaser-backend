@@ -164,7 +164,17 @@ export const mongooseImportCacheStore: ImportCacheStore = {
             } else if (doc.created_at > run.created_at) {
                 run.created_at = doc.created_at;
             }
-            run.entities.set(doc.import_type, { row_count: doc.row_count });
+            // Skip internal PendingInvoiceClose — not a Start picker entity.
+            if (
+                !IMPORT_CACHE_ENTITY_TYPES.includes(
+                    doc.import_type as (typeof IMPORT_CACHE_ENTITY_TYPES)[number]
+                )
+            ) {
+                continue;
+            }
+            run.entities.set(doc.import_type as (typeof IMPORT_CACHE_ENTITY_TYPES)[number], {
+                row_count: doc.row_count,
+            });
         }
 
         const runs: SameDayCacheRun[] = [];

@@ -2,11 +2,15 @@ import { resolveImportCacheDay } from "./cacheDay";
 import { createMemoryImportCacheStore } from "./memoryStore";
 import { mongooseImportCacheStore } from "./mongooseStore";
 import type { ImportCacheStore } from "./store";
-import type {
-    ImportCacheDocument,
-    ImportCacheKey,
-    SameDayCacheRun,
-    SaveEntityImportCacheInput,
+import {
+    IMPORT_CACHE_PENDING_INVOICE_CLOSE,
+    PENDING_INVOICE_CLOSE_ROW_MARKER,
+    type ImportCacheDocument,
+    type ImportCacheEntityType,
+    type ImportCacheKey,
+    type PendingInvoiceCloseTargets,
+    type SameDayCacheRun,
+    type SaveEntityImportCacheInput,
 } from "./types";
 
 let store: ImportCacheStore = mongooseImportCacheStore;
@@ -132,17 +136,14 @@ export type LoadImportCachesForReplayResult =
           cacheDay: string;
           customerScope: string;
           executionId: string;
-          rowsByEntity: Map<
-              ImportCacheKey["importType"],
-              Record<string, unknown>[]
-          >;
+          rowsByEntity: Map<ImportCacheEntityType, Record<string, unknown>[]>;
       }
     | {
           ok: false;
           cacheDay: string;
           customerScope: string;
           executionId: string;
-          missing: ImportCacheKey["importType"][];
+          missing: ImportCacheEntityType[];
       };
 
 /** @deprecated Alias for LoadImportCachesForReplayResult. */
@@ -152,12 +153,13 @@ export type LoadSameDayImportCachesResult = LoadImportCachesForReplayResult;
  * Load backups for the requested entities on a specific execution.
  * Missing keys fail clearly (no silent ERP fallback). Empty row arrays are
  * valid when a backup exists (including zero-row successes).
+ * PendingInvoiceClose is loaded separately via {@link loadPendingInvoiceCloseCache}.
  */
 export async function loadImportCachesForReplay(input: {
     accountId: number;
     executionId: string;
     syncMode: ImportCacheKey["syncMode"];
-    importTypes: ImportCacheKey["importType"][];
+    importTypes: ImportCacheEntityType[];
     customerScope?: string | null;
     timeZone?: string | null;
     at?: Date;
@@ -170,10 +172,10 @@ export async function loadImportCachesForReplay(input: {
             ? input.customerScope.trim()
             : "all";
     const rowsByEntity = new Map<
-        ImportCacheKey["importType"],
+        ImportCacheEntityType,
         Record<string, unknown>[]
     >();
-    const missing: ImportCacheKey["importType"][] = [];
+    const missing: ImportCacheEntityType[] = [];
     for (const importType of input.importTypes) {
         const docs = await store.load({
             accountId: input.accountId,
@@ -209,7 +211,7 @@ export async function loadImportCachesForReplay(input: {
 export async function loadSameDayImportCachesForReplay(input: {
     accountId: number;
     syncMode: ImportCacheKey["syncMode"];
-    importTypes: ImportCacheKey["importType"][];
+    importTypes: ImportCacheEntityType[];
     customerScope?: string | null;
     timeZone?: string | null;
     at?: Date;
@@ -251,6 +253,120 @@ export async function saveEntityImportCacheOrThrow(
     onLog?.(
         `Import cache saved ${input.importType} ${input.syncMode} day=${input.cacheDay} scope=${input.customerScope} execution=${String(input.executionId)} rows=${result.rowCount} chunks=${result.chunkCount}`
     );
+}
+
+function encodePendingInvoiceCloseRows(
+    targets: PendingInvoiceCloseTargets
+): Record<string, unknown>[] {
+    return [
+        {
+            [PENDING_INVOICE_CLOSE_ROW_MARKER]: true,
+            invoice_numbers: targets.invoiceNumbers,
+            close_dates: targets.closeDates,
+        },
+    ];
+}
+
+export function decodePendingInvoiceCloseRows(
+    rows: Record<string, unknown>[]
+): PendingInvoiceCloseTargets {
+    const invoiceNumbers: string[] = [];
+    const closeDates: Record<string, string> = {};
+    const seen = new Set<string>();
+    for (const row of rows) {
+        if (!row || row[PENDING_INVOICE_CLOSE_ROW_MARKER] !== true) {
+            continue;
+        }
+        const numbers = row.invoice_numbers;
+        if (Array.isArray(numbers)) {
+            for (const value of numbers) {
+                if (typeof value !== "string") continue;
+                const trimmed = value.trim();
+                if (!trimmed || seen.has(trimmed)) continue;
+                seen.add(trimmed);
+                invoiceNumbers.push(trimmed);
+            }
+        }
+        const dates = row.close_dates;
+        if (dates && typeof dates === "object" && !Array.isArray(dates)) {
+            for (const [key, value] of Object.entries(
+                dates as Record<string, unknown>
+            )) {
+                const invoiceNumber = key.trim();
+                if (
+                    !invoiceNumber ||
+                    typeof value !== "string" ||
+                    value.trim().length === 0
+                ) {
+                    continue;
+                }
+                closeDates[invoiceNumber] = value;
+            }
+        }
+    }
+    return { invoiceNumbers, closeDates };
+}
+
+/**
+ * Save reconciled virtual-close IVNUMs for a Payment run so cache replay can
+ * flush Helam-debit closes even though those rows are dropped from Payment.
+ */
+export async function savePendingInvoiceCloseCacheOrThrow(
+    input: {
+        accountId: number;
+        connectorId: number;
+        provider: string;
+        syncMode: ImportCacheKey["syncMode"];
+        cacheDay: string;
+        customerScope: string;
+        executionId: string | null | undefined;
+        invoiceNumbers: Iterable<string>;
+        closeDates?: Map<string, Date>;
+    },
+    onLog?: (message: string) => void
+): Promise<void> {
+    const invoiceNumbers = Array.from(
+        new Set(
+            Array.from(input.invoiceNumbers)
+                .map((value) => value.trim())
+                .filter((value) => value.length > 0)
+        )
+    );
+    const closeDates: Record<string, string> = {};
+    if (input.closeDates) {
+        for (const [invoiceNumber, date] of input.closeDates) {
+            const trimmed = invoiceNumber.trim();
+            if (!trimmed || Number.isNaN(date.getTime())) continue;
+            closeDates[trimmed] = date.toISOString();
+        }
+    }
+    await saveEntityImportCacheOrThrow(
+        {
+            accountId: input.accountId,
+            connectorId: input.connectorId,
+            provider: input.provider,
+            importType: IMPORT_CACHE_PENDING_INVOICE_CLOSE,
+            syncMode: input.syncMode,
+            cacheDay: input.cacheDay,
+            customerScope: input.customerScope,
+            executionId: input.executionId,
+            rows: encodePendingInvoiceCloseRows({
+                invoiceNumbers,
+                closeDates,
+            }),
+        },
+        onLog
+    );
+}
+
+export async function loadPendingInvoiceCloseCache(
+    key: Omit<ImportCacheKey, "importType">
+): Promise<PendingInvoiceCloseTargets> {
+    const rows = await loadEntityImportCache({
+        ...key,
+        importType: IMPORT_CACHE_PENDING_INVOICE_CLOSE,
+    });
+    return decodePendingInvoiceCloseRows(rows);
 }
 
 /**
