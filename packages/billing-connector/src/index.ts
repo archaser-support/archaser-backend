@@ -256,6 +256,7 @@ export {
     patchSyncRunEntityStats,
     patchSyncRunProgress,
     entityStatsFromCounts,
+    isEntityPipelineStatusKey,
     type ConnectorSyncProgressPatch,
     type ConnectorSyncRunSummary,
     type PreviewJobState,
