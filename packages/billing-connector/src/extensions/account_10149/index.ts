@@ -44,6 +44,17 @@ export const ACCOUNT_10149_DEFAULT_IDG_PAYMENT_COMPANY_CODES = [
  */
 export const ACCOUNT_10149_PAYMENT_EXTRA_SELECT_FIELDS = [] as const;
 
+/**
+ * IDG_ARFNCITEMS4 payment keyset must be unique across receipts. FNCDATE+KLINE
+ * alone collides (many docs share KLINE on the same day) and drops lines such
+ * as a single recon allocation mid-receipt. FNCNUM disambiguates the document.
+ */
+export const ACCOUNT_10149_IDG_PAYMENT_KEYSET_ORDER_FIELDS = [
+    "FNCDATE",
+    "FNCNUM",
+    "KLINE",
+] as const;
+
 const IDG_PAYMENT_COMPANY_CODES_CONFIG_KEY = "idgPaymentCompanyCodes";
 
 const INVOICE_AMOUNT_FIELDS = [
@@ -258,17 +269,59 @@ function hasFreconnum(raw: Record<string, unknown>): boolean {
     return typeof freconnum === "string" && freconnum.trim().length > 0;
 }
 
-function pickInvoiceNumber(
+/**
+ * Prefer the sales-invoice link (FNCIREF1 / PAY_INVOICE_NUMBER) over the
+ * payment document number (IVNUM). Receipts often have IVNUM=RC* while
+ * FNCIREF1=SI* — virtual close must target the Archaser invoice.
+ */
+export function pickVirtualCloseInvoiceNumber(
+    raw: Record<string, unknown>,
+    row: Record<string, unknown> = {}
+): string | null {
+    return (
+        asNonEmptyString(raw.FNCIREF1) ??
+        asNonEmptyString(raw.PAY_INVOICE_NUMBER) ??
+        asNonEmptyString(row.PAY_INVOICE_NUMBER) ??
+        asNonEmptyString(row.invoice_number) ??
+        asNonEmptyString(raw.IVNUM) ??
+        asNonEmptyString(row.IVNUM)
+    );
+}
+
+/** ERP payment / cancel document number (RC*, CR*, SI* stamp). */
+function pickPaymentDocumentNumber(
     raw: Record<string, unknown>,
     row: Record<string, unknown>
 ): string | null {
     return (
         asNonEmptyString(raw.IVNUM) ??
-        asNonEmptyString(row.invoice_number) ??
-        asNonEmptyString(raw.FNCIREF1) ??
-        asNonEmptyString(raw.PAY_INVOICE_NUMBER) ??
-        asNonEmptyString(row.PAY_INVOICE_NUMBER)
+        asNonEmptyString(row.IVNUM) ??
+        asNonEmptyString(row.invoice_number)
     );
+}
+
+/**
+ * All invoice numbers a reconciled IDG line should virtual-close.
+ * Primary = sales invoice link; also queue IVNUM when it differs (Helam
+ * cancel stamp, dual-doc recon, etc.).
+ */
+export function collectReconciledVirtualCloseInvoiceNumbers(
+    raw: Record<string, unknown>,
+    row: Record<string, unknown> = {}
+): string[] {
+    const primary = pickVirtualCloseInvoiceNumber(raw, row);
+    const document = pickPaymentDocumentNumber(raw, row);
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const value of [primary, document]) {
+        const trimmed = value?.trim() ?? "";
+        if (!trimmed || seen.has(trimmed)) {
+            continue;
+        }
+        seen.add(trimmed);
+        out.push(trimmed);
+    }
+    return out;
 }
 
 /**
@@ -500,6 +553,21 @@ function isAccount10149IdgPaymentEntitySet(
     return setName.includes("IDG_ARFNCITEMS") || setName.startsWith("IDG_");
 }
 
+export function resolveAccount10149PullKeysetOrderFields(params: {
+    entityType: ExtensionEntityType | string;
+    entitySet?: string | null;
+}): string[] | null {
+    if (
+        !isAccount10149IdgPaymentEntitySet(
+            params.entityType,
+            params.entitySet
+        )
+    ) {
+        return null;
+    }
+    return [...ACCOUNT_10149_IDG_PAYMENT_KEYSET_ORDER_FIELDS];
+}
+
 function odataEqAny(field: string, values: string[]): string | null {
     const clauses = values
         .map((value) => value.trim())
@@ -699,8 +767,9 @@ export function shouldImportAccount10149CashPayment(
         return false;
     }
     const raw = rawRecordOf(row);
-    const ivnum = pickInvoiceNumber(raw, row);
-    if (isAccount10149CreditInvoiceNumber(ivnum)) {
+    // Credit-note docs are IVNUM=CR*; do not use FNCIREF1 (often the original SI).
+    const documentNumber = pickPaymentDocumentNumber(raw, row);
+    if (isAccount10149CreditInvoiceNumber(documentNumber)) {
         return false;
     }
     return true;
@@ -710,8 +779,8 @@ export function shouldImportAccount10149CashPayment(
  * IDG_ARFNCITEMS4 only returns closed AR lines. Any reconciled row
  * (FRECONNUM + invoice + BAL=0) queues virtual close by invoice number.
  * Customer receipts (including VAT ledger lines with a customer id) import as
- * cash; virtual fills remaining. Helam offset cancels queue both IVNUM and
- * FNCIREF1 (no stamp-close).
+ * cash; virtual fills remaining. Queues FNCIREF1/PAY_INVOICE_NUMBER first
+ * (sales invoice), and also IVNUM when it differs (Helam stamp / dual doc).
  */
 export function transformAccount10149Batch(
     batch: ExtensionMappedBatch,
@@ -749,27 +818,24 @@ export function transformAccount10149Batch(
                 ...normalizedRow,
                 ...raw,
             });
-            const ivnum = pickInvoiceNumber(raw, normalizedRow);
-            const fnciref1 = asNonEmptyString(raw.FNCIREF1);
+            const closeTargets = reconciled
+                ? collectReconciledVirtualCloseInvoiceNumbers(
+                      raw,
+                      normalizedRow
+                  )
+                : [];
+            const primaryClose = closeTargets[0] ?? null;
+            const documentNumber = pickPaymentDocumentNumber(
+                raw,
+                normalizedRow
+            );
             const helamOffset =
                 reconciled && isAccount10149HelamOffsetCancelRow(normalizedRow);
 
             if (reconciled) {
-                queueReconciledInvoiceClose(
-                    ivnum,
-                    raw,
-                    normalizedRow,
-                    queuedCloseNumbers,
-                    queuedCloseDates
-                );
-                // Helam two-invoice cancel: also close the original (FNCIREF1).
-                if (
-                    helamOffset &&
-                    fnciref1 &&
-                    fnciref1 !== (ivnum?.trim() ?? "")
-                ) {
+                for (const target of closeTargets) {
                     queueReconciledInvoiceClose(
-                        fnciref1,
+                        target,
                         raw,
                         normalizedRow,
                         queuedCloseNumbers,
@@ -784,14 +850,15 @@ export function transformAccount10149Batch(
                         ? "helam_offset_virtual_close"
                         : isAccount10149DebitPaymentRow(normalizedRow)
                           ? "reconciled_debit_virtual_close"
-                          : isAccount10149CreditInvoiceNumber(ivnum)
+                          : isAccount10149CreditInvoiceNumber(documentNumber)
                             ? "credit_invoice_virtual_close"
                             : !paymentRowHasCustomerNumber(normalizedRow)
                               ? "missing_customer_number"
                               : "cash_import_skipped",
                     reconciled,
-                    ivnum,
-                    queuedVirtualClose: reconciled ? ivnum ?? null : null,
+                    ivnum: documentNumber,
+                    queuedVirtualClose: primaryClose,
+                    queuedVirtualCloses: closeTargets,
                 });
                 continue;
             }
@@ -806,7 +873,8 @@ export function transformAccount10149Batch(
                         ? "helam_cancel_debit_import"
                         : "receipt_import",
                     reconciled,
-                    queuedVirtualClose: reconciled ? ivnum ?? null : null,
+                    queuedVirtualClose: primaryClose,
+                    queuedVirtualCloses: closeTargets,
                 });
                 kept.push(transformed);
             } else {
@@ -926,6 +994,12 @@ export const account10149Extension: BillingAccountExtension = {
         const expanded = expandPaymentFncPatNameOrFilters(params.filter);
         return expanded.length > 1 ? expanded : null;
     },
+    resolvePullKeysetOrderFields(params) {
+        return resolveAccount10149PullKeysetOrderFields({
+            entityType: params.entityType,
+            entitySet: params.entitySet,
+        });
+    },
     async transform(
         ctx: ExtensionTransformContext
     ): Promise<ExtensionMappedBatch> {
@@ -949,6 +1023,7 @@ export const account10149Extension: BillingAccountExtension = {
     async flushPendingInvoiceCloses(ctx) {
         const closedIds = new Set<number>();
         const customerIds = new Set<number>();
+        let missingNumbers: string[] = [];
 
         const total = countUniquePendingCloseInvoiceNumbers(ctx.invoiceNumbers);
         const report = (processed: number) => {
@@ -974,11 +1049,12 @@ export const account10149Extension: BillingAccountExtension = {
                 ctx.userId,
                 ctx.invoiceCloseDates
             );
-            processed += result.missingNumbers.length;
+            missingNumbers = result.missingNumbers;
+            // Progress counts settled invoices only (missing reported via return).
+            processed = result.touchedIds.length;
             report(processed);
 
             const recalcBaseline = processed;
-            const recalcTotal = result.touchedIds.length;
 
             if (result.touchedIds.length > 0) {
                 // Dynamic import avoids account_10149 ↔ extensions ↔ recalc cycle.
@@ -997,7 +1073,6 @@ export const account10149Extension: BillingAccountExtension = {
                     }
                 );
             }
-            processed = recalcBaseline + recalcTotal;
             report(processed);
 
             for (const id of result.touchedIds) {
@@ -1009,12 +1084,13 @@ export const account10149Extension: BillingAccountExtension = {
         }
 
         if (total > 0) {
-            report(total);
+            report(Math.min(processed, total));
         }
 
         return {
             closedIds: [...closedIds],
             customerIds: [...customerIds],
+            missingNumbers,
         };
     },
     normalizePaymentCurrency: normalizeAccount10149PaymentCurrency,

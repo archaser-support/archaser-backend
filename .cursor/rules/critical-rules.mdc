@@ -48,6 +48,7 @@ These rules take precedence over all other guidelines. Always follow the pre-com
 - Use NextAuth.js with role-based access control
 - Create feature branches, review before merging
 - Write or update tests only when the user explicitly asks
+- **Before creating or updating functionality**: Search for existing shared implementations and reuse/extend them — see `.cursor/rules/reuse-existing-functionality.mdc`
 - **When generating plans**: Always include a Testing Strategy section with test units mapped to business requirements (see Testing Guidelines)
 
 ### Database Guidelines
