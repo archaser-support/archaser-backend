@@ -14,7 +14,6 @@ import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import { ExecuteReportDto, ReportFilterDto } from "./dto/execute-report.dto";
 import {
-    CONTEXT_PRIMARY_TABLE,
     CREDIT_DASHBOARD_CONTEXTS,
     DASHBOARD_REPORT_CONTEXTS,
     ENTITY_LIST_REPORT_CONTEXTS,
@@ -23,6 +22,7 @@ import {
     MODEL_NAME_MAP,
     OPERATION_DASHBOARD_CONTEXTS,
     RELATION_FROM_PRIMARY,
+    resolveReportPrimaryTable,
 } from "./report.constants";
 import {
     bindCreditInsurancePrisma,
@@ -95,6 +95,8 @@ import {
 
 type ReportConfig = {
     tables?: string[];
+    /** Explicit report grain; context override still wins at execute time. */
+    primaryTable?: string;
     fields?: Array<{
         table: string;
         field: string;
@@ -145,10 +147,11 @@ export class ReportExecutionService {
             (report.report_config || {}) as ReportConfig,
             REPORT_METADATA.tables
         );
-        const primaryTable =
-            CONTEXT_PRIMARY_TABLE[report.context || ""] ||
-            config.tables?.[0] ||
-            "Customer";
+        const primaryTable = resolveReportPrimaryTable({
+            context: report.context,
+            primaryTable: config.primaryTable,
+            tables: config.tables,
+        });
         const modelKey = MODEL_NAME_MAP[primaryTable];
         if (!modelKey) {
             throw new ForbiddenException(
@@ -774,6 +777,9 @@ export class ReportExecutionService {
         const select: Record<string, unknown> = { id: true };
         const relationMap = RELATION_FROM_PRIMARY[primaryTable] || {};
 
+        // To-many joins (Customer→Invoice, Contact, …) load one sample row
+        // so nested scalars display without exploding the primary grain.
+        // Matches CustomerCollectionPeriod / CustomerPolicy sample patterns.
         const ensureRelSelect = (
             rel: string
         ): Record<string, unknown> => {
@@ -784,11 +790,34 @@ export class ReportExecutionService {
                 existing !== null &&
                 "select" in (existing as object)
             ) {
-                return (existing as { select: Record<string, unknown> })
+                if (isPrismaListRelation(primaryTable, rel)) {
+                    const existingObj = existing as {
+                        select: Record<string, unknown>;
+                        take?: number;
+                        orderBy?: unknown;
+                    };
+                    if (existingObj.take == null) {
+                        select[rel] = {
+                            ...existingObj,
+                            take: 1,
+                            orderBy:
+                                existingObj.orderBy ?? { id: "asc" as const },
+                        };
+                    }
+                }
+                return (select[rel] as { select: Record<string, unknown> })
                     .select;
             }
             const nested: Record<string, unknown> = { id: true };
-            select[rel] = { select: nested };
+            if (isPrismaListRelation(primaryTable, rel)) {
+                select[rel] = {
+                    take: 1,
+                    orderBy: { id: "asc" as const },
+                    select: nested,
+                };
+            } else {
+                select[rel] = { select: nested };
+            }
             return nested;
         };
 
@@ -1603,7 +1632,7 @@ export class ReportExecutionService {
             if (f.field.includes(".")) {
                 const [relTable, ...rest] = f.field.split(".");
                 const rel = relationMap[relTable] || relTable;
-                const nested = row[rel] as Record<string, unknown> | null;
+                const nested = this.unwrapRelationSample(row[rel]);
                 if (relTable === "Customer" && rest.join(".") === "name") {
                     return nested
                         ? this.extractCustomerName(nested)
@@ -1614,9 +1643,7 @@ export class ReportExecutionService {
             return row[f.field];
         }
         const rel = relationMap[f.table];
-        const nested = rel
-            ? (row[rel] as Record<string, unknown> | null)
-            : null;
+        const nested = rel ? this.unwrapRelationSample(row[rel]) : null;
         if (
             primaryTable === "CustomerBanks" &&
             f.table === "Country" &&
@@ -1644,7 +1671,30 @@ export class ReportExecutionService {
         if (f.field.includes(".")) {
             return this.getNestedValue(nested, f.field) ?? null;
         }
-        return nested?.[f.field];
+        return nested?.[f.field] ?? null;
+    }
+
+    /**
+     * Prisma list relations return arrays; sample-row selects use take:1.
+     * Unwrap to the first related object (or null) for scalar extraction.
+     */
+    private unwrapRelationSample(
+        value: unknown
+    ): Record<string, unknown> | null {
+        if (value == null) {
+            return null;
+        }
+        if (Array.isArray(value)) {
+            const first = value[0];
+            if (first != null && typeof first === "object") {
+                return first as Record<string, unknown>;
+            }
+            return null;
+        }
+        if (typeof value === "object") {
+            return value as Record<string, unknown>;
+        }
+        return null;
     }
 
     private applyAuditUserSelect(
@@ -1712,7 +1762,14 @@ export class ReportExecutionService {
             if (acc == null || typeof acc !== "object") {
                 return null;
             }
-            return (acc as Record<string, unknown>)[part];
+            // List-relation hops arrive as arrays; use the sample first row.
+            const obj = Array.isArray(acc)
+                ? (acc[0] as Record<string, unknown> | undefined)
+                : (acc as Record<string, unknown>);
+            if (obj == null || typeof obj !== "object") {
+                return null;
+            }
+            return obj[part];
         }, value);
     }
 
