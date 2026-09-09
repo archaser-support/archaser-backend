@@ -99,7 +99,7 @@ export interface SameDayCacheRunEntity {
     available: boolean;
 }
 
-/** One successful sync run’s backups for today (may be incomplete). */
+/** One successful sync run’s backups for a cache day (may be incomplete). */
 export interface SameDayCacheRun {
     execution_id: string;
     created_at: Date;
@@ -107,4 +107,10 @@ export interface SameDayCacheRun {
     cache_day: string;
     customer_scope: string;
     entities: SameDayCacheRunEntity[];
+}
+
+/** Calendar day with ≥1 selectable entity backup within TTL. */
+export interface ImportCacheDaySummary {
+    cache_day: string;
+    run_count: number;
 }
