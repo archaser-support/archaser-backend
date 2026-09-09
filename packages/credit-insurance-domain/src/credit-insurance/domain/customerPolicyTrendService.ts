@@ -37,6 +37,7 @@ import {
 } from "./creditAsOfBackfillRunContext";
 import {
     batchUpsertCustomerPolicyTrendRows,
+    pruneInactiveCustomerPolicyTrendRows,
     type CustomerPolicyTrendUpsertRow,
 } from "./customerPolicyTrendBatchUpsert";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
@@ -1316,6 +1317,11 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         mepBreachStartDate?: Date | null;
         /** Preloaded static inputs for multi-day Generate / drain replay. */
         runContext?: CreditAsOfBackfillRunContext;
+        /**
+         * When true, `asOfLines` already have terms flags overlaid (shared
+         * Generate day-loop overlay on start and resume).
+         */
+        asOfTermsFlagsApplied?: boolean;
     }
 ): Promise<number> {
     const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
@@ -1332,6 +1338,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             policyId: options?.policyId,
             customerIds: options?.customerIds,
         }));
+
     const openArByCustomer = buildAsOfOpenReceivableByCustomerMapFromLines(
         ledgerLines,
         snapshotDate
@@ -1446,15 +1453,23 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             termsByCustomerAndPolicy.set(fallbackKey, terms);
         }
     }
-    ledgerLines = overlayAsOfTermsFlagsOnLines(
-        ledgerLines,
-        snapshotDate,
-        termsByCustomerAndPolicy,
-        {
-            ignoreReportingBreach: options?.ignoreReportingBreach === true,
-            mepBreachStartDate,
-        }
-    );
+    if (options?.asOfTermsFlagsApplied !== true) {
+        ledgerLines = overlayAsOfTermsFlagsOnLines(
+            ledgerLines,
+            snapshotDate,
+            termsByCustomerAndPolicy,
+            {
+                ignoreReportingBreach: options?.ignoreReportingBreach === true,
+                mepBreachStartDate,
+            }
+        );
+    } else if (options?.ignoreReportingBreach === true) {
+        ledgerLines = ledgerLines.map((line) =>
+            line.reportingBreach
+                ? { ...line, reportingBreach: false }
+                : line
+        );
+    }
 
     const waterfallScopeByCustomerPolicy = new Map<
         string,
@@ -1560,7 +1575,15 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         runContext.priorDayTrendCostByKey = nextPriorDayCache;
     }
 
-    return batchUpsertCustomerPolicyTrendRows(upsertRows);
+    const upserted = await batchUpsertCustomerPolicyTrendRows(upsertRows);
+    await pruneInactiveCustomerPolicyTrendRows({
+        accountId,
+        snapshotDate,
+        policyId: options?.policyId,
+        customerIds: options?.customerIds,
+    });
+
+    return upserted;
 }
 
 /**
