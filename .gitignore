@@ -94,3 +94,6 @@ temp_interactive_push.bat
 .scratch/
 frontend/.scratch/
 backend/.scratch/
+
+# Grafana Mongo datasource rendered from MONGODB_URI (may contain secrets)
+grafana/provisioning/datasources/mongodb.generated.yaml
