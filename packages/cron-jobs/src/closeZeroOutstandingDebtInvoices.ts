@@ -160,7 +160,9 @@ export async function closeZeroOutstandingDebtInvoices(
 
     bindCreditInsurancePrisma(prisma);
     for (const customerId of customerIds) {
-        await syncCustomerInsuranceFields(customerId);
+        await syncCustomerInsuranceFields(customerId, {
+            refreshTermsBreachFlags: true,
+        });
     }
 
     if (freeze && freeze.frozenAccountIds.size > 0) {

@@ -1253,6 +1253,17 @@ export async function getCreditDashboardSummary(
         accountSettings?: CreditDashboardAccountSettings;
         /** When true, skip insurancePolicy.findMany (alerts unused in daily snapshot upsert). */
         skipPolicyExpirationLoad?: boolean;
+        /**
+         * As-of terms overlay: skip recomputing reporting-late (CPT Generate /
+         * daily snapshot default). Omit / true when `asOfDate` is set unless
+         * explicitly false.
+         */
+        ignoreReportingBreach?: boolean;
+        /**
+         * When true, `asOfLines` already have terms flags overlaid (Generate
+         * day-level single overlay). Skip per-scope MEP/terms overlay.
+         */
+        asOfTermsFlagsApplied?: boolean;
     }
 ): Promise<CreditDashboardSummary> {
     const whereCust = customersScoped(accountId, policyId, businessUnitFilter);
@@ -1484,50 +1495,70 @@ export async function getCreditDashboardSummary(
         await fetchCustomerIdsWithActiveLinkedPolicy(customerIds);
     const customerHasActiveLinkedPolicy = (customerId: number): boolean =>
         activeLinkedPolicyCustomerIds.has(customerId);
-    const [openArByCustomer, termsOutstandingByCustomer] =
-        asOfDate != null
-            ? await (async () => {
-                  const asOf = await import("./asOfOpenAr");
-                  const lines =
-                      asOfLines ??
-                      (await asOf.loadAsOfOpenInvoiceCandidates(
-                          accountId,
-                          asOfDate,
-                          { customerIds, policyId }
-                      ));
-                  return Promise.all([
-                      asOf.buildAsOfOpenReceivableByCustomerMapInAccountCurrencyFromLines(
-                          lines,
-                          accountCurrency,
-                          asOfDate,
-                          { customerIds, policyId }
-                      ),
-                      asOf.buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLines(
-                          lines,
-                          accountCurrency,
-                          asOfDate,
-                          {
-                              policyId,
-                              excludeCapacityGapInvoices: false,
-                              customerIds,
-                          }
-                      ),
-                  ]);
-              })()
-            : await Promise.all([
-                  fetchOpenReceivableByCustomerMapInAccountCurrency(
-                      accountId,
-                      accountCurrency,
-                      { customerIds, policyId }
-                  ),
-                  fetchTermsBreachOutstandingByCustomerInAccountCurrency(
-                      accountId,
-                      accountCurrency,
-                      policyId,
-                      false,
-                      businessUnitFilter
-                  ),
-              ]);
+
+    let preparedAsOfLines:
+        | import("./asOfOpenAr").AsOfOpenInvoiceLine[]
+        | undefined;
+    let openArByCustomer: Map<number, number>;
+    let termsOutstandingByCustomer: Map<number, number>;
+    if (asOfDate != null) {
+        const asOf = await import("./asOfOpenAr");
+        let lines =
+            asOfLines ??
+            (await asOf.loadAsOfOpenInvoiceCandidates(accountId, asOfDate, {
+                customerIds,
+                policyId,
+            }));
+        const ignoreReportingBreach =
+            options?.ignoreReportingBreach !== false;
+        if (options?.asOfTermsFlagsApplied === true) {
+            if (ignoreReportingBreach) {
+                lines = asOf.withReportingBreachIgnored(lines, true);
+            }
+        } else {
+            lines = await asOf.overlayAsOfTermsFlagsForAccountLines({
+                accountId,
+                asOfDate,
+                lines,
+                customers,
+                ignoreReportingBreach,
+            });
+        }
+        preparedAsOfLines = lines;
+        [openArByCustomer, termsOutstandingByCustomer] = await Promise.all([
+            asOf.buildAsOfOpenReceivableByCustomerMapInAccountCurrencyFromLines(
+                lines,
+                accountCurrency,
+                asOfDate,
+                { customerIds, policyId }
+            ),
+            asOf.buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLines(
+                lines,
+                accountCurrency,
+                asOfDate,
+                {
+                    policyId,
+                    excludeCapacityGapInvoices: false,
+                    customerIds,
+                }
+            ),
+        ]);
+    } else {
+        [openArByCustomer, termsOutstandingByCustomer] = await Promise.all([
+            fetchOpenReceivableByCustomerMapInAccountCurrency(
+                accountId,
+                accountCurrency,
+                { customerIds, policyId }
+            ),
+            fetchTermsBreachOutstandingByCustomerInAccountCurrency(
+                accountId,
+                accountCurrency,
+                policyId,
+                false,
+                businessUnitFilter
+            ),
+        ]);
+    }
 
     const openArForCustomer = (c: (typeof customers)[number]): number => {
         const fromInv = openArByCustomer.get(c.id);
@@ -1804,6 +1835,58 @@ export async function getCreditDashboardSummary(
             outdatedDcl: 0,
             invoiceAfterPolicyEnd: 0,
         };
+    } else if (preparedAsOfLines && asOfDate) {
+        const asOf = await import("./asOfOpenAr");
+        const snapshotDay = asOfDate;
+        const insuredSet = new Set(insuredCustomerIdsForTermsBreach);
+        const asOfTermRows: Array<{
+            outstanding_debt: number | null;
+            customer_outstanding_debt: number | null;
+            amount: number | null;
+            reporting_breach: boolean;
+            ctv_payment_term: boolean;
+            ctv_customer_overdue_mep: boolean;
+            ctv_outdated_dcl: boolean;
+            ctv_invoice_after_policy_end: boolean;
+        }> = [];
+        for (const line of preparedAsOfLines) {
+            if (!insuredSet.has(line.customerId)) {
+                continue;
+            }
+            if (policyId != null && line.policyId !== policyId) {
+                continue;
+            }
+            if (
+                !line.reportingBreach &&
+                !line.ctvPaymentTerm &&
+                !line.ctvCustomerOverdueMep &&
+                !line.ctvOutdatedDcl &&
+                !line.ctvInvoiceAfterPolicyEnd
+            ) {
+                continue;
+            }
+            const computed = asOf.computeAsOfOpenInvoiceLine(line, snapshotDay);
+            if (!computed || computed.openAmount <= 0) {
+                continue;
+            }
+            if (Number(line.amount ?? 0) < 0) {
+                continue;
+            }
+            asOfTermRows.push({
+                outstanding_debt: computed.openAmount,
+                customer_outstanding_debt: computed.openCustomerAmount,
+                amount: computed.openAmount,
+                reporting_breach: line.reportingBreach,
+                ctv_payment_term: line.ctvPaymentTerm,
+                ctv_customer_overdue_mep: line.ctvCustomerOverdueMep,
+                ctv_outdated_dcl: line.ctvOutdatedDcl,
+                ctv_invoice_after_policy_end: line.ctvInvoiceAfterPolicyEnd,
+            });
+        }
+        const agg = aggregatePortfolioTermsBreachFromInvoices(asOfTermRows);
+        termsCount = agg.invoiceCount;
+        termsTotal = agg.totalAmount;
+        countByReason = agg.countByReason;
     } else if (
         insuredCustomerIdsForTermsBreach.length < dashboardCustomers.length ||
         !includeNoPolicyExposure
@@ -1888,12 +1971,24 @@ export async function getCreditDashboardSummary(
             ? await (async () => {
                   const asOf = await import("./asOfOpenAr");
                   let lines =
+                      preparedAsOfLines ??
                       asOfLines ??
                       (await asOf.loadAsOfOpenInvoiceCandidates(
                           accountId,
                           asOfDate,
                           { customerIds: insuredCustomerIdsForAtRisk, policyId }
                       ));
+                  if (preparedAsOfLines == null) {
+                      const ignoreReportingBreach =
+                          options?.ignoreReportingBreach !== false;
+                      lines = await asOf.overlayAsOfTermsFlagsForAccountLines({
+                          accountId,
+                          asOfDate,
+                          lines,
+                          customers: dashboardCustomers,
+                          ignoreReportingBreach,
+                      });
+                  }
                   const scopeByCustomerPolicy = new Map<
                       string,
                       import("./asOfOpenAr").AsOfCapacityGapWaterfallScope

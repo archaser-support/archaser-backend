@@ -42,7 +42,10 @@ export interface CreditCustomerMembershipOptions {
     withinDays?: number;
     /** Only for utilization_bin. */
     utilizationBin?: string;
-    /** Only for utilization_bin; YYYY-MM-DD. */
+    /** Inclusive YYYY-MM-DD range for utilization_bin period average. */
+    fromDate?: string;
+    toDate?: string;
+    /** @deprecated Prefer fromDate/toDate. Single-day snapshot for utilization_bin. */
     asOfDate?: string;
 }
 
@@ -151,10 +154,13 @@ export async function resolveCreditCustomerMembershipIds(
         }
         case "utilization_bin": {
             const bin = options.utilizationBin;
-            const asOfDate = options.asOfDate;
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
             if (
                 bin == null ||
-                asOfDate == null ||
+                fromDate == null ||
+                toDate == null ||
                 !isUtilizationDistributionBinKey(bin)
             ) {
                 return [];
@@ -162,7 +168,8 @@ export async function resolveCreditCustomerMembershipIds(
             const rows = await fetchUtilizationBinCptCustomers({
                 accountId,
                 bin,
-                asOfDate,
+                fromDate,
+                toDate,
                 policyId: options.policyId,
                 customerId: options.customerId,
                 includeNoPolicyExposure: options.includeNoPolicyExposure,

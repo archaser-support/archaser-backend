@@ -502,7 +502,7 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
                 {
                     name: "cost_percent",
                     type: "number",
-                    label: "Insurance Premium Rate (%)",
+                    label: "Insurance Fee Rate (%)",
                     translationKey: "cost_percent",
                     translationNamespace: "customers",
                 },
