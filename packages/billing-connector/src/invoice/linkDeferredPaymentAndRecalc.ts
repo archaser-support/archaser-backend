@@ -10,6 +10,7 @@ import {
 } from "./invoicePaidTolerance";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
+import { shrinkOrDeleteVirtualPaymentsForInvoiceIds } from "../payment/virtualPaymentTrim";
 
 export type LinkDeferredPaymentAndRecalcResult = {
     invoicePayment: InvoicePayment;
@@ -566,6 +567,16 @@ export async function linkDeferredPaymentsAndRecalcBatch(
     for (const row of pending) {
         targets.set(row.invoiceId, recalcOptions ?? {});
     }
+
+    // Cash may land after a recon virtual fill (e.g. AR replay early-link).
+    // Shrink/delete surplus virtuals before paid recalc — never create here.
+    await shrinkOrDeleteVirtualPaymentsForInvoiceIds(
+        prisma,
+        accountId,
+        [...targets.keys()],
+        { paidTolerance: recalcOptions?.paidTolerance }
+    );
+
     await recalculateInvoicesFromLinkedPayments(prisma, targets);
 
     return {

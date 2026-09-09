@@ -3,12 +3,20 @@ import type { PrismaClient } from "@prisma/client";
 import { resolveInvoicePaidTolerance } from "../../invoice/invoicePaidTolerance";
 import { commitOps } from "../../import/bulkWrite";
 import { findManyInChunks, PRISMA_IN_CHUNK } from "../../import/prismaInChunks";
+import {
+    VIRTUAL_PAYMENT_METHOD,
+    buildVirtualPaymentReference,
+    findExistingVirtualPayment,
+    invoiceCustomerNet,
+    needsVirtualForRemaining,
+    resolveVirtualAmounts,
+    sumRealCustomerPaidExcludingVirtual,
+} from "../../payment/virtualPaymentTrim";
 
-export const VIRTUAL_PAYMENT_METHOD = "virtual";
-
-export function buildVirtualPaymentReference(invoiceNumber: string): string {
-    return `virtual|${invoiceNumber.trim()}`;
-}
+export {
+    VIRTUAL_PAYMENT_METHOD,
+    buildVirtualPaymentReference,
+} from "../../payment/virtualPaymentTrim";
 
 export type ReconciledVirtualCloseCandidate = {
     invoiceId: number;
@@ -23,43 +31,11 @@ export type ReconciledVirtualCloseByNumbersResult = {
     missingNumbers: string[];
 };
 
-type InvoiceCloseRow = {
-    id: number;
-    amount: number | null;
-    customer_amount: number | null;
-    customer_net_amount: number | null;
-    customer_currency: string | null;
-};
-
-function resolveVirtualAmounts(
-    invoice: InvoiceCloseRow,
-    remainingCustomer: number
-): { amount: number; customer_amount: number; customer_currency: string } {
-    const customer_currency = (invoice.customer_currency ?? "").trim() || "ILS";
-    const invoiceAmount = invoice.amount;
-    const invoiceCustomerAmount = invoice.customer_amount;
-    if (
-        invoiceAmount != null &&
-        invoiceCustomerAmount != null &&
-        invoiceCustomerAmount !== 0
-    ) {
-        return {
-            amount: remainingCustomer * (invoiceAmount / invoiceCustomerAmount),
-            customer_amount: remainingCustomer,
-            customer_currency,
-        };
-    }
-    return {
-        amount: remainingCustomer,
-        customer_amount: remainingCustomer,
-        customer_currency,
-    };
-}
-
 /**
  * Account 10149: for reconciled IDG_ARFNCITEMS4 invoices, upsert/delete one
  * virtual payment per invoice so remaining (full or partial) closes.
  * Handles positive AR invoices and credit notes (negative net / remaining).
+ * Leftover math is shared with {@link shrinkOrDeleteVirtualPaymentsForInvoiceIds}.
  * Callers then recalc paid totals.
  */
 export async function applyReconciledVirtualCloses(
@@ -135,46 +111,26 @@ export async function applyReconciledVirtualCloses(
 
         const linked = paymentsByInvoice.get(candidate.invoiceId) ?? [];
         const virtualRef = buildVirtualPaymentReference(candidate.invoiceNumber);
-        const existingVirtual =
-            linked.find(
-                (row) =>
-                    row.reference === virtualRef ||
-                    (row.payment_method ?? "").trim() === VIRTUAL_PAYMENT_METHOD
-            ) ?? null;
+        const existingVirtual = findExistingVirtualPayment(
+            linked,
+            candidate.invoiceNumber
+        );
 
-        let realCustomerPaid = 0;
-        let latestRealPaymentDate: Date | null = null;
-        for (const payment of linked) {
-            if (existingVirtual && payment.id === existingVirtual.id) {
-                continue;
-            }
-            if (
-                (payment.payment_method ?? "").trim() === VIRTUAL_PAYMENT_METHOD
-            ) {
-                continue;
-            }
-            realCustomerPaid += payment.customer_amount ?? 0;
-            if (
-                payment.payment_date &&
-                (latestRealPaymentDate === null ||
-                    payment.payment_date > latestRealPaymentDate)
-            ) {
-                latestRealPaymentDate = payment.payment_date;
-            }
-        }
+        const { realCustomerPaid, latestRealPaymentDate } =
+            sumRealCustomerPaidExcludingVirtual(linked, existingVirtual);
 
         // Virtual close must carry the ERP payment date, not the import time.
         const virtualPaymentDate =
             latestRealPaymentDate ?? candidate.paymentDate;
 
-        const net = invoice.customer_net_amount ?? invoice.customer_amount ?? 0;
+        const net = invoiceCustomerNet(invoice);
         const remaining = net - realCustomerPaid;
         touchedInvoiceIds.add(candidate.invoiceId);
 
-        // Positive invoices: remaining > T. Credit notes (negative net): remaining < -T.
-        // Virtual payment equals remaining so net − (real + virtual) ≈ 0 after recalc.
-        const needsVirtual =
-            remaining > paidTolerance || remaining < -paidTolerance;
+        const needsVirtual = needsVirtualForRemaining(
+            remaining,
+            paidTolerance
+        );
 
         if (needsVirtual) {
             const amounts = resolveVirtualAmounts(invoice, remaining);
