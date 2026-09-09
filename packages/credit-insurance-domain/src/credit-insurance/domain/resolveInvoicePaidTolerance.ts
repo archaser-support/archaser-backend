@@ -1,14 +1,11 @@
 /**
  * Account-scoped leftover band for as-of open AR residue.
  *
- * Lives on `BillingConnector` (one row per account). This package cannot import
- * `@archaser/billing-connector`, so the default `0.2` is duplicated here.
- * No connector row → default 0.2 (pre-feature behavior).
+ * Lives on `BillingConnector` (one row per account). Default matches shared
+ * {@link INVOICE_PAID_TOLERANCE}. No connector row → default 0.2.
  */
 import { type DbClient, prisma } from "../domain-db";
-
-/** Same default as `ASOF_OPEN_AMOUNT_TOLERANCE` / `INVOICE_PAID_TOLERANCE`. */
-const DEFAULT_INVOICE_PAID_TOLERANCE = 0.2;
+import { INVOICE_PAID_TOLERANCE } from "./invoicePaidTolerance";
 
 const CACHE_TTL_MS = 60_000;
 
@@ -34,16 +31,16 @@ async function readInvoicePaidTolerance(
             select: { invoice_paid_tolerance: true },
         });
         if (!connector) {
-            return DEFAULT_INVOICE_PAID_TOLERANCE;
+            return INVOICE_PAID_TOLERANCE;
         }
         const value = Number(connector.invoice_paid_tolerance);
-        return Number.isFinite(value) ? value : DEFAULT_INVOICE_PAID_TOLERANCE;
+        return Number.isFinite(value) ? value : INVOICE_PAID_TOLERANCE;
     } catch (error) {
         console.error("[resolveInvoicePaidTolerance] connector read failed", {
             accountId,
             message: error instanceof Error ? error.message : String(error),
         });
-        return DEFAULT_INVOICE_PAID_TOLERANCE;
+        return INVOICE_PAID_TOLERANCE;
     }
 }
 
@@ -52,7 +49,7 @@ export async function resolveInvoicePaidTolerance(
     db: DbClient = prisma
 ): Promise<number> {
     if (accountId == null || !Number.isFinite(accountId)) {
-        return DEFAULT_INVOICE_PAID_TOLERANCE;
+        return INVOICE_PAID_TOLERANCE;
     }
 
     const now = Date.now();

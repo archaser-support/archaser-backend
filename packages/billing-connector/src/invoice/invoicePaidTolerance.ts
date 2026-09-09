@@ -1,7 +1,21 @@
-/** Shared constant — keep free of extension registry imports to avoid cycles. */
-export const INVOICE_PAID_TOLERANCE = 0.2;
-export const INVOICE_PAID_TOLERANCE_MIN = 0;
-export const INVOICE_PAID_TOLERANCE_MAX = 10;
+/**
+ * Billing Integration Paid leftover — validation/resolve stay here; the band
+ * predicate lives in `@archaser/credit-insurance-domain` so CPT and connector
+ * share one rule.
+ */
+import {
+    INVOICE_PAID_TOLERANCE,
+    INVOICE_PAID_TOLERANCE_MAX,
+    INVOICE_PAID_TOLERANCE_MIN,
+    isWithinPaidTolerance,
+} from "@archaser/credit-insurance-domain";
+
+export {
+    INVOICE_PAID_TOLERANCE,
+    INVOICE_PAID_TOLERANCE_MAX,
+    INVOICE_PAID_TOLERANCE_MIN,
+    isWithinPaidTolerance,
+};
 
 const INVALID_CODE = "INVALID_INVOICE_PAID_TOLERANCE";
 
@@ -19,20 +33,6 @@ function invalidToleranceError(message: string): Error {
         statusCode: 400,
         code: INVALID_CODE,
     });
-}
-
-/**
- * Paid only when customer outstanding is near zero from both sides.
- * One-sided `<= T` wrongly closes credit notes with large negative outstanding.
- */
-export function isWithinPaidTolerance(
-    customerOutstandingDebt: number,
-    tolerance: number = INVOICE_PAID_TOLERANCE
-): boolean {
-    return (
-        customerOutstandingDebt >= -tolerance &&
-        customerOutstandingDebt <= tolerance
-    );
 }
 
 /**

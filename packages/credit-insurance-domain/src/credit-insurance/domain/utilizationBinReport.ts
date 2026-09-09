@@ -1,6 +1,7 @@
 /**
- * As-of CustomerPolicyTrend cohort for utilization-bin credit dashboard drills.
- * Same eligibility as portfolio-health distribution (approved + positive effective limit).
+ * Period CustomerPolicyTrend cohort for utilization-bin credit dashboard drills.
+ * Same eligibility as portfolio-health distribution (approved + positive effective
+ * limit), binned by mean daily utilization over the selected range.
  */
 
 import { prisma } from "../domain-db";
@@ -60,7 +61,15 @@ function resolveCustomerName(row: CptBinRawRow): string {
 export async function fetchUtilizationBinCptCustomers(options: {
     accountId: number;
     bin: UtilizationDistributionBinKey;
-    asOfDate: string;
+    /** Inclusive range start (YYYY-MM-DD). */
+    fromDate: string;
+    /** Inclusive range end (YYYY-MM-DD). */
+    toDate: string;
+    /**
+     * @deprecated Prefer fromDate/toDate. When only asOfDate is provided,
+     * treated as a single-day range.
+     */
+    asOfDate?: string;
     policyId?: number;
     customerId?: number;
     includeNoPolicyExposure?: boolean;
@@ -68,8 +77,12 @@ export async function fetchUtilizationBinCptCustomers(options: {
     if (!isUtilizationDistributionBinKey(options.bin)) {
         return [];
     }
-    const asOfDateUtc = startOfUtcDayFromYmd(options.asOfDate);
-    if (asOfDateUtc == null) {
+
+    const fromYmd = options.fromDate || options.asOfDate || "";
+    const toYmd = options.toDate || options.asOfDate || "";
+    const fromDateUtc = startOfUtcDayFromYmd(fromYmd);
+    const toDateUtc = startOfUtcDayFromYmd(toYmd);
+    if (fromDateUtc == null || toDateUtc == null) {
         return [];
     }
 
@@ -79,22 +92,29 @@ export async function fetchUtilizationBinCptCustomers(options: {
     const rows = await prisma.$queryRaw<CptBinRawRow[]>`
         SELECT
             t.customer_id,
-            COALESCE(t.usage_amount, 0)::float8 AS usage_amount,
-            CASE
-                WHEN t.effective_usage_pct IS NOT NULL THEN t.effective_usage_pct
-                ELSE (t.usage_amount / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8) * 100
-            END AS utilization_pct,
-            COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8 AS effective_limit,
-            ip.policy_number,
-            p.full_name AS person_name,
-            co.name AS company_name
+            AVG(COALESCE(t.usage_amount, 0))::float8 AS usage_amount,
+            AVG(
+                COALESCE(
+                    t.effective_usage_pct,
+                    (COALESCE(t.usage_amount, 0)
+                        / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8)
+                        * 100
+                )
+            )::float8 AS utilization_pct,
+            AVG(
+                COALESCE(t.effective_approved_limit, t.approved_limit, 0)
+            )::float8 AS effective_limit,
+            MAX(ip.policy_number) AS policy_number,
+            MAX(p.full_name) AS person_name,
+            MAX(co.name) AS company_name
         FROM "CustomerPolicyTrend" t
         INNER JOIN "Customer" c ON c.id = t.customer_id
         LEFT JOIN "Person" p ON p.id = c.person_id
         LEFT JOIN "Company" co ON co.id = c.company_id
         LEFT JOIN "InsurancePolicy" ip ON ip.id = t.insurance_policy_id
         WHERE t.account_id = ${options.accountId}
-          AND t.snapshot_date = ${asOfDateUtc}::date
+          AND t.snapshot_date >= ${fromDateUtc}::date
+          AND t.snapshot_date <= ${toDateUtc}::date
           AND t.insurance_policy_id IS NOT NULL
           AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
           AND COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
@@ -111,6 +131,7 @@ export async function fetchUtilizationBinCptCustomers(options: {
             OR COALESCE(t.total_receivables, 0) <= 0
             OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, ''))) IS DISTINCT FROM ${pendingReviewLiteral}
           )
+        GROUP BY t.customer_id
     `;
 
     return rows
@@ -135,6 +156,9 @@ export async function fetchAsOfUtilizationByCustomerIds(options: {
     asOfDate: string;
     customerIds: number[];
     policyId?: number;
+    /** When set with toDate, averages over the range instead of a single day. */
+    fromDate?: string;
+    toDate?: string;
 }): Promise<
     Map<number, { utilizationPct: number; usageAmount: number }>
 > {
@@ -145,8 +169,11 @@ export async function fetchAsOfUtilizationByCustomerIds(options: {
     if (options.customerIds.length === 0) {
         return map;
     }
-    const asOfDateUtc = startOfUtcDayFromYmd(options.asOfDate);
-    if (asOfDateUtc == null) {
+    const fromYmd = options.fromDate || options.asOfDate;
+    const toYmd = options.toDate || options.asOfDate;
+    const fromDateUtc = startOfUtcDayFromYmd(fromYmd);
+    const toDateUtc = startOfUtcDayFromYmd(toYmd);
+    if (fromDateUtc == null || toDateUtc == null) {
         return map;
     }
 
@@ -159,14 +186,19 @@ export async function fetchAsOfUtilizationByCustomerIds(options: {
     >`
         SELECT
             t.customer_id,
-            COALESCE(t.usage_amount, 0)::float8 AS usage_amount,
-            CASE
-                WHEN t.effective_usage_pct IS NOT NULL THEN t.effective_usage_pct
-                ELSE (t.usage_amount / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8) * 100
-            END AS utilization_pct
+            AVG(COALESCE(t.usage_amount, 0))::float8 AS usage_amount,
+            AVG(
+                COALESCE(
+                    t.effective_usage_pct,
+                    (COALESCE(t.usage_amount, 0)
+                        / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8)
+                        * 100
+                )
+            )::float8 AS utilization_pct
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${options.accountId}
-          AND t.snapshot_date = ${asOfDateUtc}::date
+          AND t.snapshot_date >= ${fromDateUtc}::date
+          AND t.snapshot_date <= ${toDateUtc}::date
           AND t.customer_id = ANY(${options.customerIds}::int[])
           AND (
             ${options.policyId ?? null}::int IS NULL
@@ -175,13 +207,10 @@ export async function fetchAsOfUtilizationByCustomerIds(options: {
           AND t.insurance_policy_id IS NOT NULL
           AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
           AND COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
+        GROUP BY t.customer_id
     `;
 
     for (const row of rows) {
-        // Prefer first matching approved row per customer (stable).
-        if (map.has(row.customer_id)) {
-            continue;
-        }
         map.set(row.customer_id, {
             utilizationPct: toNumber(row.utilization_pct),
             usageAmount: toNumber(row.usage_amount),

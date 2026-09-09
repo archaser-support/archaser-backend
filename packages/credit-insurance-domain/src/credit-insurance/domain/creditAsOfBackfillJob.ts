@@ -5,9 +5,14 @@ import {
     deriveAsOfOpenInvoiceCandidatesFromLedger,
     loadAsOfOpenInvoiceLedgerRange,
 } from "./asOfOpenArLedgerPreload";
-import { isAdminBackfillBlockingDrain, resolveRewriteDrainStart } from "./asOfRewriteQueue";
+import { resolveRewriteDrainStart } from "./asOfRewriteQueue";
 import type { AsOfOpenInvoiceLine } from "./asOfOpenAr";
 import {
+    overlayAsOfTermsFlagsOnLines,
+    withReportingBreachIgnored,
+} from "./asOfOpenAr";
+import {
+    buildAsOfTermsMapFromActiveCustomerPolicies,
     buildCreditAsOfBackfillRunContext,
     createMinimalCreditAsOfBackfillRunContext,
     ensureCapacityGapsForBackfillRun,
@@ -266,6 +271,7 @@ type BackfillWriters = {
             ignoreReportingBreach?: boolean;
             mepBreachStartDate?: Date | null;
             runContext?: BackfillRunContext;
+            asOfTermsFlagsApplied?: boolean;
         }
     ) => Promise<unknown>;
     takeCreditDashboardDailySnapshotsForAccount: (
@@ -275,6 +281,7 @@ type BackfillWriters = {
             asOfLines?: AsOfLines;
             ignoreReportingBreach?: boolean;
             runContext?: BackfillRunContext;
+            asOfTermsFlagsApplied?: boolean;
         }
     ) => Promise<{ scopesProcessed: number } | unknown>;
 };
@@ -369,7 +376,13 @@ export async function runCreditAsOfBackfillJob(
         );
 
         let runContext: BackfillRunContext;
-        if (options?.loadAsOfLines) {
+        /**
+         * Production Generate (start + Retry/resume) always uses the optimized
+         * path: full runContext + range ledger preload. Injected `loadAsOfLines`
+         * is tests-only and keeps a minimal context.
+         */
+        const useOptimizedReplayPath = options?.loadAsOfLines == null;
+        if (!useOptimizedReplayPath) {
             const mepBreachStartDate = await resolveMepBreachStartDate(
                 accountId,
                 db
@@ -403,7 +416,7 @@ export async function runCreditAsOfBackfillJob(
         );
 
         let loadAsOfLines: LoadAsOfLines;
-        if (options?.loadAsOfLines) {
+        if (!useOptimizedReplayPath && options?.loadAsOfLines) {
             loadAsOfLines = options.loadAsOfLines;
         } else {
             const ledger = await loadAsOfOpenInvoiceLedgerRange(
@@ -416,6 +429,13 @@ export async function runCreditAsOfBackfillJob(
         }
 
         const ignoreReportingBreach = job.skip_reporting_breach !== false;
+        const sharedTermsByCustomerAndPolicy =
+            useOptimizedReplayPath &&
+            runContext.activeCustomerPolicies.length > 0
+                ? buildAsOfTermsMapFromActiveCustomerPolicies(
+                      runContext.activeCustomerPolicies
+                  )
+                : null;
 
         let pendingCheckpoint: {
             checkpointDate: Date;
@@ -459,7 +479,24 @@ export async function runCreditAsOfBackfillJob(
             }
 
             try {
-                const asOfLines = await loadAsOfLines(accountId, day);
+                let asOfLines = await loadAsOfLines(accountId, day);
+                let asOfTermsFlagsApplied = false;
+                if (sharedTermsByCustomerAndPolicy) {
+                    asOfLines = overlayAsOfTermsFlagsOnLines(
+                        withReportingBreachIgnored(
+                            asOfLines,
+                            ignoreReportingBreach
+                        ),
+                        day,
+                        sharedTermsByCustomerAndPolicy,
+                        {
+                            ignoreReportingBreach,
+                            mepBreachStartDate: runContext.mepBreachStartDate,
+                        }
+                    );
+                    asOfTermsFlagsApplied = true;
+                }
+
                 await writers.syncCustomerPolicyTrendSnapshotForAccount(
                     accountId,
                     {
@@ -468,8 +505,10 @@ export async function runCreditAsOfBackfillJob(
                         ignoreReportingBreach,
                         mepBreachStartDate: runContext.mepBreachStartDate,
                         runContext,
+                        asOfTermsFlagsApplied,
                     }
                 );
+
                 await writers.takeCreditDashboardDailySnapshotsForAccount(
                     accountId,
                     {
@@ -477,6 +516,7 @@ export async function runCreditAsOfBackfillJob(
                         asOfLines,
                         ignoreReportingBreach,
                         runContext,
+                        asOfTermsFlagsApplied,
                     }
                 );
             } catch (error) {
@@ -540,9 +580,11 @@ export async function startCreditAsOfBackfillJob(
     const daysTotal = countInclusiveUtcDays(from, to);
     const skipReportingBreach = options?.skipReportingBreach !== false;
     const existing = await loadJob(accountId, db);
-    if (existing && isAdminBackfillBlockingDrain(existing.status)) {
+    // Only an in-flight run blocks Generate. Stop leaves status `paused` —
+    // Generate must be allowed to start a fresh range (Retry resumes checkpoint).
+    if (existing?.status === "running") {
         throw new CreditAsOfBackfillConflictError(
-            "A snapshot generate job is already running or paused for this account"
+            "A snapshot generate job is already running for this account"
         );
     }
 

@@ -224,8 +224,11 @@ export interface CreditDashboardEnrichmentOptions {
     accountLanguage?: string | null;
     requestedFields: string[];
     limitWarningByCustomerId?: Map<number, LimitWarningRow>;
-    /** YYYY-MM-DD; required when as_of_* fields are requested. */
+    /** YYYY-MM-DD; required when as_of_* fields are requested (single-day or range end). */
     asOfDate?: string;
+    /** When set with toDate (or asOfDate), averages utilization over the range. */
+    fromDate?: string;
+    toDate?: string;
 }
 
 export async function enrichCreditDashboardCustomerRows(
@@ -285,10 +288,12 @@ export async function enrichCreditDashboardCustomerRows(
                   customerIds,
               })
             : Promise.resolve(new Map()),
-        needsAsOfUtilization && options.asOfDate
+        needsAsOfUtilization && (options.fromDate || options.asOfDate)
             ? fetchAsOfUtilizationByCustomerIds({
                   accountId: options.accountId,
-                  asOfDate: options.asOfDate,
+                  asOfDate: options.asOfDate || options.toDate || options.fromDate!,
+                  fromDate: options.fromDate,
+                  toDate: options.toDate || options.asOfDate,
                   customerIds,
                   policyId: options.policyId,
               }).catch(() => {

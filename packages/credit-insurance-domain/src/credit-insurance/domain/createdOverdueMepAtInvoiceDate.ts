@@ -1,13 +1,19 @@
 import { type DbClient, prisma } from "../domain-db";
 
 import {
-    asOfCustomerOverdueBlockAt,
+    oldestOverdueDueAtEachInvoiceIssueDate,
     loadAsOfOpenInvoiceCandidates,
     type AsOfOpenInvoiceLine,
 } from "./asOfOpenAr";
-import { isEligibleForCustomerMepOverdue } from "./invoiceInsuranceFields";
+import {
+    computeCustomerOverdueBlock,
+    isEligibleForCustomerMepOverdue,
+} from "./invoiceInsuranceFields";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
-import { filterInvoicesInMepBreachScope } from "./shared/mepBreachScope";
+import {
+    filterInvoicesInMepBreachScope,
+    isInvoiceInMepBreachScope,
+} from "./shared/mepBreachScope";
 
 export type InvoiceForCreatedOverdueMep = {
     id: number;
@@ -20,10 +26,11 @@ export type InvoiceForCreatedOverdueMep = {
  * invoice using the payment ledger, so the answer is the block state on the
  * invoice's own issue date rather than the wall-clock `Customer.overdue_block`.
  *
- * Credit notes are excluded, matching {@link isEligibleForCustomerMepOverdue}.
- * Invoices outside the account's MEP breach scope are never flagged, and are
- * also dropped from the candidate ledger so a legacy line cannot block a
- * newer invoice.
+ * Flag math matches CPT overlay: {@link oldestOverdueDueAtEachInvoiceIssueDate}
+ * + {@link computeCustomerOverdueBlock} (O(C log C) sweep, not per-invoice
+ * sibling rescans). Credit notes are excluded up front to skip the ledger load
+ * when nothing eligible remains; out-of-scope lines are dropped from siblings
+ * so a legacy invoice cannot block a newer one.
  */
 export async function resolveCreatedOverdueMepByInvoiceId(args: {
     accountId: number;
@@ -78,14 +85,28 @@ export async function resolveCreatedOverdueMepByInvoiceId(args: {
         (line) => line.invoiceDate
     );
 
+    const oldestByInvoiceId = oldestOverdueDueAtEachInvoiceIssueDate(
+        lines,
+        mepBreachStartDate
+    );
+
     for (const invoice of eligible) {
+        if (
+            !isInvoiceInMepBreachScope(
+                invoice.invoice_date,
+                mepBreachStartDate
+            )
+        ) {
+            continue;
+        }
         result.set(
             invoice.id,
-            asOfCustomerOverdueBlockAt(
-                lines,
-                invoice.invoice_date,
-                args.maxAllowedMep
-            )
+            computeCustomerOverdueBlock({
+                oldestInvoiceOverdueDate:
+                    oldestByInvoiceId.get(invoice.id) ?? null,
+                maxAllowedMepDays: args.maxAllowedMep,
+                today: invoice.invoice_date,
+            })
         );
     }
     return result;
