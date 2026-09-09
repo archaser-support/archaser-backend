@@ -60,6 +60,7 @@ export {
 export { syncCustomerInsuranceFields } from "./credit-insurance/domain/syncCustomerInsuranceFields";
 export {
     refreshInsuranceTargetDatesForInvoiceIds,
+    refreshTermsBreachFlagsForCustomer,
     sweepReportingBreachForOverdueInvoiceIds,
 } from "./credit-insurance/domain/syncInvoiceReportingBreach";
 export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/insurancePolicyStatusCron";
@@ -109,6 +110,12 @@ export {
     clearInvoicePaidToleranceCache,
     resolveInvoicePaidTolerance,
 } from "./credit-insurance/domain/resolveInvoicePaidTolerance";
+export {
+    INVOICE_PAID_TOLERANCE,
+    INVOICE_PAID_TOLERANCE_MAX,
+    INVOICE_PAID_TOLERANCE_MIN,
+    isWithinPaidTolerance,
+} from "./credit-insurance/domain/invoicePaidTolerance";
 
 // --- Reporting breach start date gate (imported pre-go-live history) ---
 export { isInvoiceInReportingBreachScope } from "./credit-insurance/domain/shared/reportingBreachScope";
@@ -148,9 +155,15 @@ export {
     asOfTermsScopeKey,
     buildAsOfAtRiskInvoiceInputsByCustomerInAccountCurrencyFromLines,
     buildAsOfAtRiskInvoiceInputsFromLines,
+    buildAsOfPolicyTermsByCustomerMap,
+    computeAsOfOpenInvoiceLine,
+    isCreatedInCustomerOverdueMep,
     loadAsOfOpenInvoiceCandidates,
+    oldestOverdueDueAtEachInvoiceIssueDate,
     overlayAsOfLiveCapacityGapWaterfallOnLines,
+    overlayAsOfTermsFlagsForAccountLines,
     overlayAsOfTermsFlagsOnLines,
+    wasAsOfInvoiceOpenAt,
     type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
     type AsOfPolicyTermsForBreach,
@@ -164,6 +177,7 @@ export {
     type AsOfOpenInvoiceLedger,
 } from "./credit-insurance/domain/asOfOpenArLedgerPreload";
 export {
+    buildAsOfTermsMapFromActiveCustomerPolicies,
     buildCreditAsOfBackfillRunContext,
     createMinimalCreditAsOfBackfillRunContext,
     deriveDashboardSnapshotScopes,

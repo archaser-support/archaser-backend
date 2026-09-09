@@ -899,8 +899,8 @@ model CustomerPolicy {
   credit_score_input_date               DateTime?             @db.Date
   active_customer_since                 DateTime?             @db.Date
   outdated_dcl                          Boolean               @default(false)
-  cost_percent                          Decimal?              @db.Decimal(10, 2)
-  registration_fee_percent              Decimal?              @db.Decimal(10, 2)
+  cost_percent                          Decimal?              @db.Decimal(10, 3)
+  registration_fee_percent              Decimal?              @db.Decimal(10, 3)
   is_active                             Boolean               @default(false)
   capacity_gap_amount                   Float?
   capacity_gap_amount_date              DateTime?             @db.Date
@@ -966,8 +966,8 @@ model CustomerPolicyTrend {
   top_up_cost_currency                 String?                  @db.VarChar(16)
   total_daily_cost                     Decimal?                 @db.Decimal(20, 4)
   cost_calculation_method              cost_calculation_method?
-  cost_percent                         Decimal?                 @db.Decimal(10, 2)
-  registration_fee_percent             Decimal?                 @db.Decimal(10, 2)
+  cost_percent                         Decimal?                 @db.Decimal(10, 3)
+  registration_fee_percent             Decimal?                 @db.Decimal(10, 3)
   financial_currency                   String?                  @db.VarChar(16)
   total_receivables                    Decimal?                 @db.Decimal(20, 4)
   health_index                         Float?
@@ -1075,8 +1075,8 @@ model InsurancePolicyTrend {
   max_allowed_mep              Int?
   reporting_days               Int?
   cost_calculation_method      cost_calculation_method?
-  cost_percent                 Decimal?                 @db.Decimal(10, 2)
-  registration_fee_percent     Decimal?                 @db.Decimal(10, 2)
+  cost_percent                 Decimal?                 @db.Decimal(10, 3)
+  registration_fee_percent     Decimal?                 @db.Decimal(10, 3)
   status                       record_status            @default(Draft)
   active_customer_count        Int                      @default(0)
   total_approved_limit         Decimal?                 @db.Decimal(20, 4)
@@ -1169,8 +1169,8 @@ model InsurancePolicy {
   payment_term_cutoff_day                Int?
   payment_term_substitute_day            Int?
   cost_calculation_method                cost_calculation_method?
-  cost_percent                           Decimal?                      @db.Decimal(10, 2)
-  registration_fee_percent               Decimal?                      @db.Decimal(10, 2)
+  cost_percent                           Decimal?                      @db.Decimal(10, 3)
+  registration_fee_percent               Decimal?                      @db.Decimal(10, 3)
   status                                 record_status                 @default(Draft)
   auto_activate_on_term_start            Boolean                       @default(false)
   created_by                             String?                       @db.VarChar

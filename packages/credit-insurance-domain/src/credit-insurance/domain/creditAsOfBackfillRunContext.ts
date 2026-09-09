@@ -13,6 +13,10 @@ import {
     isPrimaryPolicyEffectivelyActive,
     isTopUpInsurancePolicyEffectivelyActive,
 } from "./shared/insurancePolicyLifecycle";
+import {
+    asOfTermsScopeKey,
+    type AsOfPolicyTermsForBreach,
+} from "./asOfOpenAr";
 
 const COLLECTION_LIVE = ["Active", "Inactive"] as const;
 
@@ -74,6 +78,36 @@ export type ActiveCustomerPolicyForTrendSync = {
         end_date: Date | null;
     } | null;
 };
+
+/** Terms map used by CPT + dashboard as-of overlay (Generate start and resume). */
+export function buildAsOfTermsMapFromActiveCustomerPolicies(
+    policies: ActiveCustomerPolicyForTrendSync[]
+): Map<string, AsOfPolicyTermsForBreach> {
+    const termsByCustomerAndPolicy = new Map<string, AsOfPolicyTermsForBreach>();
+    for (const cp of policies) {
+        const terms: AsOfPolicyTermsForBreach = {
+            maxPaymentTerm: cp.max_payment_term,
+            maxAllowedMep: cp.max_allowed_mep,
+            reportingDays: cp.reporting_days,
+            mepCutoffDay: cp.mep_cutoff_day,
+            mepSubstituteExtraDays: cp.mep_substitute_extra_days,
+            reportingCutoffDay: cp.reporting_cutoff_day,
+            reportingSubstituteExtraDays: cp.reporting_substitute_extra_days,
+            paymentTermCutoffDay: cp.payment_term_cutoff_day,
+            paymentTermSubstituteDay: cp.payment_term_substitute_day,
+            policyEndDate: cp.InsurancePolicy?.end_date ?? null,
+        };
+        termsByCustomerAndPolicy.set(
+            asOfTermsScopeKey(cp.customer_id, cp.insurance_policy_id),
+            terms
+        );
+        const fallbackKey = asOfTermsScopeKey(cp.customer_id, null);
+        if (!termsByCustomerAndPolicy.has(fallbackKey)) {
+            termsByCustomerAndPolicy.set(fallbackKey, terms);
+        }
+    }
+    return termsByCustomerAndPolicy;
+}
 
 type CachedInsurancePolicy = {
     id: number;

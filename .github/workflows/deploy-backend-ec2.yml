@@ -40,6 +40,13 @@ jobs:
             cd ${{ steps.env-name.outputs.APP_DIR }}
             git fetch origin
             git checkout ${{ github.ref_name }}
-            git pull origin ${{ github.ref_name }}
+            # Discard local EC2 hotfixes so pull/reset always matches the branch tip.
+            # Stash first (keeps a recoverable copy); then hard-reset to origin.
+            if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+              echo "==> Local EC2 changes detected; stashing before reset..."
+              git stash push -u -m "deploy-auto-stash ${{ github.ref_name }} $(date -u +%Y%m%dT%H%M%SZ)" || true
+            fi
+            git reset --hard origin/${{ github.ref_name }}
+            git clean -fd
             bash scripts/deployment/deploy-backend-docker.sh --env ${{ steps.env-name.outputs.ENV }} --app-dir ${{ steps.env-name.outputs.APP_DIR }}
 
