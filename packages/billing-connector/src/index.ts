@@ -415,6 +415,17 @@ export {
 } from "./invoice/linkDeferredPaymentAndRecalc";
 
 export {
+    VIRTUAL_PAYMENT_METHOD,
+    buildVirtualPaymentReference,
+    isAbsOverpaidInvoice,
+    isVirtualPaymentMethod,
+    needsVirtualForRemaining,
+    resolveVirtualAmounts,
+    shrinkOrDeleteVirtualPaymentsForInvoiceIds,
+    type ShrinkVirtualPaymentsResult,
+} from "./payment/virtualPaymentTrim";
+
+export {
     INVOICE_PAID_TOLERANCE,
     INVOICE_PAID_TOLERANCE_MAX,
     INVOICE_PAID_TOLERANCE_MIN,
