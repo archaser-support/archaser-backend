@@ -21,11 +21,13 @@ All translation keys must use snake_case (underscores), and both English and Heb
 ### Core Rules
 
 - Use modular namespaces: `["dashboard", "common"]`, `["customers", "common"]`, etc.
-- Update BOTH en/he files simultaneously
+- **Always** update BOTH English and Hebrew locale files in the **same change** whenever adding or changing user-facing copy — this is required for feature/slice implementation, not optional follow-up work
 - Maintain alphabetical order and identical structure
 - Add keys in EXACT same location in both files
 - Prefer reusing existing keys
 - **ALWAYS use snake_case (underscores) for all translation keys** - NEVER use camelCase
+- Do **not** leave English-only `defaultValue` as the permanent string; `defaultValue` is a fallback only after both locale files have the key
+- ❌ Do not do drive-by translation edits unrelated to the current task
 
 ### Usage Pattern
 
