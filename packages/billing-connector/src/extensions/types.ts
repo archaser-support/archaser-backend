@@ -84,6 +84,8 @@ export type ExtensionAfterPaymentLinkedContext = {
     accountId: number;
     userId?: string;
     candidates: ExtensionPaymentLinkedCandidate[];
+    /** Live progress while applying account-specific closes after linking. */
+    onProgress?: (progress: { processed: number; total: number }) => void;
 };
 
 export type ExtensionAfterPaymentLinkedResult = {
