@@ -8,6 +8,8 @@ deleteDatasources:
     orgId: 1
   - name: Postgres
     orgId: 1
+  - name: MongoDB
+    orgId: 1
 
 datasources:
   - name: Loki
