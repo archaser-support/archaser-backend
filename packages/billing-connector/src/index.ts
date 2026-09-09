@@ -294,6 +294,16 @@ export {
 } from "./sync/arPostIngestTailSteps";
 
 export {
+    buildCustomerScopedTailDetail,
+    buildCustomerPositionTailDetail,
+    mapHostProgressToCustomerScopedInner,
+    loadCustomerProgressLabels,
+    formatCustomerProgressLabel,
+    type CustomerScopedInnerProgress,
+    type CustomerScopedProgressInput,
+} from "./sync/customerScopedTailProgress";
+
+export {
     runArPostIngestViaHost,
     DEFERRED_CI_POST_INGEST_STEPS,
     invokeConnectorArPostIngest,
