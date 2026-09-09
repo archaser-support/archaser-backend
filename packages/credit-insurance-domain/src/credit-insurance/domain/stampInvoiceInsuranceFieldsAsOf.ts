@@ -12,7 +12,8 @@ import {
     parseImportDateToLocalCalendarDate,
 } from "./invoiceInsuranceFields";
 
-const STAMP_WRITE_CHUNK = 200;
+/** Rows per bulk UPDATE … FROM UNNEST (matches assessed-limit chunk size). */
+const STAMP_WRITE_CHUNK = 500;
 
 export type InvoiceInsuranceAsOfStamp = {
     invoiceId: number;
@@ -32,6 +33,83 @@ type StampWriteRow = {
     ctv_outdated_dcl: boolean;
     ctv_invoice_after_policy_end: boolean;
 };
+
+/**
+ * Persist computed as-of insurance stamps in one UPDATE per chunk.
+ * `policy_id` is only set when {@link StampWriteRow.policyIdToSet} is non-null
+ * (COALESCE keeps the existing policy otherwise).
+ */
+async function bulkWriteInsuranceAsOfStamps(
+    db: DbClient,
+    writes: StampWriteRow[]
+): Promise<void> {
+    if (writes.length === 0) {
+        return;
+    }
+    for (let i = 0; i < writes.length; i += STAMP_WRITE_CHUNK) {
+        const chunk = writes.slice(i, i + STAMP_WRITE_CHUNK);
+        const ids = chunk.map((row) => row.id);
+        const policyIds = chunk.map((row) => row.policyIdToSet);
+        const paymentTerms = chunk.map((row) => row.payment_term);
+        const targetReportingDates = chunk.map((row) =>
+            row.target_reporting_date
+                ? row.target_reporting_date.toISOString()
+                : null
+        );
+        const targetMepDates = chunk.map((row) =>
+            row.target_mep_date ? row.target_mep_date.toISOString() : null
+        );
+        const reportingBreaches = chunk.map((row) => row.reporting_breach);
+        const ctvPaymentTerms = chunk.map((row) => row.ctv_payment_term);
+        const ctvCustomerOverdueMeps = chunk.map(
+            (row) => row.ctv_customer_overdue_mep
+        );
+        const ctvCustomerExcluded = chunk.map(
+            (row) => row.ctv_customer_excluded_from_policy
+        );
+        const ctvOutdatedDcls = chunk.map((row) => row.ctv_outdated_dcl);
+        const ctvAfterPolicyEnds = chunk.map(
+            (row) => row.ctv_invoice_after_policy_end
+        );
+
+        await db.$executeRaw`
+            UPDATE "Invoice" AS inv
+            SET
+                policy_id = COALESCE(data.policy_id, inv.policy_id),
+                payment_term = data.payment_term,
+                target_reporting_date =
+                    data.target_reporting_date::timestamptz::date,
+                target_mep_date = data.target_mep_date::timestamptz::date,
+                reporting_breach = data.reporting_breach,
+                ctv_payment_term = data.ctv_payment_term,
+                ctv_customer_overdue_mep = data.ctv_customer_overdue_mep,
+                ctv_customer_excluded_from_policy =
+                    data.ctv_customer_excluded_from_policy,
+                ctv_outdated_dcl = data.ctv_outdated_dcl,
+                ctv_invoice_after_policy_end =
+                    data.ctv_invoice_after_policy_end
+            FROM (
+                SELECT
+                    UNNEST(${ids}::int[]) AS id,
+                    UNNEST(${policyIds}::int[]) AS policy_id,
+                    UNNEST(${paymentTerms}::int[]) AS payment_term,
+                    UNNEST(${targetReportingDates}::text[])
+                        AS target_reporting_date,
+                    UNNEST(${targetMepDates}::text[]) AS target_mep_date,
+                    UNNEST(${reportingBreaches}::boolean[]) AS reporting_breach,
+                    UNNEST(${ctvPaymentTerms}::boolean[]) AS ctv_payment_term,
+                    UNNEST(${ctvCustomerOverdueMeps}::boolean[])
+                        AS ctv_customer_overdue_mep,
+                    UNNEST(${ctvCustomerExcluded}::boolean[])
+                        AS ctv_customer_excluded_from_policy,
+                    UNNEST(${ctvOutdatedDcls}::boolean[]) AS ctv_outdated_dcl,
+                    UNNEST(${ctvAfterPolicyEnds}::boolean[])
+                        AS ctv_invoice_after_policy_end
+            ) AS data
+            WHERE inv.id = data.id
+        `;
+    }
+}
 
 /**
  * Persist insurance-related invoice fields using {@link asOf} as the evaluation
@@ -248,30 +326,5 @@ export async function stampInvoicesInsuranceFieldsAsOf(
         });
     }
 
-    for (let i = 0; i < writes.length; i += STAMP_WRITE_CHUNK) {
-        const chunk = writes.slice(i, i + STAMP_WRITE_CHUNK);
-        await db.$transaction(
-            chunk.map((row) =>
-                db.invoice.update({
-                    where: { id: row.id },
-                    data: {
-                        ...(row.policyIdToSet != null
-                            ? { policy_id: row.policyIdToSet }
-                            : {}),
-                        payment_term: row.payment_term,
-                        target_reporting_date: row.target_reporting_date,
-                        target_mep_date: row.target_mep_date,
-                        reporting_breach: row.reporting_breach,
-                        ctv_payment_term: row.ctv_payment_term,
-                        ctv_customer_overdue_mep: row.ctv_customer_overdue_mep,
-                        ctv_customer_excluded_from_policy:
-                            row.ctv_customer_excluded_from_policy,
-                        ctv_outdated_dcl: row.ctv_outdated_dcl,
-                        ctv_invoice_after_policy_end:
-                            row.ctv_invoice_after_policy_end,
-                    },
-                })
-            )
-        );
-    }
+    await bulkWriteInsuranceAsOfStamps(db, writes);
 }
