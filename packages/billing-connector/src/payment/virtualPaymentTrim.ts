@@ -127,7 +127,7 @@ export type ShrinkVirtualPaymentsResult = {
 
 type VirtualTrimPrisma = Pick<
     PrismaClient,
-    "invoice" | "invoicePayment" | "billingConnector"
+    "invoice" | "invoicePayment" | "billingConnector" | "$transaction"
 >;
 
 /**
