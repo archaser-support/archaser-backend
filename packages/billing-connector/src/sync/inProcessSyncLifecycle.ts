@@ -31,6 +31,7 @@ import {
     resolveSyncErrorType,
     resolveSyncExecutionStatus,
 } from "../observability/statusAndErrorType";
+import { notifyOnSyncFailure } from "../notify";
 
 export type RegisterAcceptedInProcessSyncParams = {
     accountId: number;
@@ -186,6 +187,15 @@ export async function runAcceptedInProcessSync(
                 `[account ${accountId}] Failed to complete sync history ${executionId}: ${historyMessage}`
             );
         }
+        // Fire-and-forget failure notification for unexpected crashes.
+        void notifyOnSyncFailure({
+            accountId,
+            provider: "UNKNOWN",
+            status: "FAILED",
+            errorMessage: message,
+            executionId,
+            completedAt,
+        }).catch(() => undefined);
     } finally {
         clearRunningSync(accountId);
     }
@@ -247,6 +257,18 @@ async function finalizeAcceptedInProcessSyncRun(params: {
         onError?.(
             `[account ${accountId}] Failed to complete sync history ${executionId}: ${historyMessage}`
         );
+    }
+
+    // Fire-and-forget failure notification — must never throw or block the sync lifecycle.
+    if (!result.postIngestDeferred && status !== "SUCCESS") {
+        void notifyOnSyncFailure({
+            accountId,
+            provider: result.provider ?? "UNKNOWN",
+            status: status as "FAILED" | "PARTIAL" | "TIMEOUT",
+            errorMessage: result.error ?? null,
+            executionId,
+            completedAt,
+        }).catch(() => undefined);
     }
 }
 

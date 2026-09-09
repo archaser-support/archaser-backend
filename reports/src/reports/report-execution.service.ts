@@ -198,6 +198,8 @@ export class ReportExecutionService {
         let creditDashboardPolicyId: number | undefined;
         let creditDashboardWithinDays: number | undefined;
         let creditDashboardAsOfDate: string | undefined;
+        let creditDashboardFromDate: string | undefined;
+        let creditDashboardToDate: string | undefined;
         let creditCustomerMembershipType:
             | "capacity"
             | "policy_risk"
@@ -219,6 +221,8 @@ export class ReportExecutionService {
             creditDashboardPolicyId = prepared.policyId;
             creditDashboardWithinDays = prepared.withinDays;
             creditDashboardAsOfDate = prepared.asOfDate;
+            creditDashboardFromDate = prepared.fromDate;
+            creditDashboardToDate = prepared.toDate;
             creditCustomerMembershipType = prepared.membershipType;
         } else if (report.context === "dashboard_credit_invoices") {
             const prepared = await prepareDashboardCreditInvoiceMarkers(
@@ -431,6 +435,8 @@ export class ReportExecutionService {
                 requestedFields: requestedCustomerFields,
                 limitWarningByCustomerId,
                 asOfDate: creditDashboardAsOfDate,
+                fromDate: creditDashboardFromDate,
+                toDate: creditDashboardToDate,
             });
         }
 
