@@ -24,6 +24,7 @@ const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
 };
 
 const scalarFieldCache = new Map<string, Set<string>>();
+const requiredScalarFieldCache = new Map<string, Set<string>>();
 const listRelationCache = new Map<string, Set<string>>();
 
 /** Calendar-day age past due_date (0 when not yet overdue). */
@@ -304,6 +305,40 @@ export function isPrismaScalarField(
         scalarFieldCache.set(modelName, scalars);
     }
     return scalars.has(field);
+}
+
+/**
+ * True when `field` is a required (non-nullable) scalar/enum on the Prisma
+ * model. Prisma rejects `{ not: null }` / `{ equals: null }` on these fields.
+ */
+export function isPrismaRequiredScalarField(
+    reportTable: string,
+    field: string
+): boolean {
+    if (!isPrismaScalarField(reportTable, field)) {
+        return false;
+    }
+    const modelName = REPORT_TABLE_TO_PRISMA_MODEL[reportTable];
+    if (!modelName) {
+        return false;
+    }
+    let required = requiredScalarFieldCache.get(modelName);
+    if (!required) {
+        const model = Prisma.dmmf.datamodel.models.find(
+            (m) => m.name === modelName
+        );
+        required = new Set(
+            (model?.fields || [])
+                .filter(
+                    (f) =>
+                        (f.kind === "scalar" || f.kind === "enum") &&
+                        f.isRequired
+                )
+                .map((f) => f.name)
+        );
+        requiredScalarFieldCache.set(modelName, required);
+    }
+    return required.has(field);
 }
 
 /**
