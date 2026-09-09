@@ -45,7 +45,10 @@ export async function applyReconciledVirtualCloses(
     >,
     accountId: number,
     candidates: ReconciledVirtualCloseCandidate[],
-    userId?: string
+    userId?: string,
+    options?: {
+        onProgress?: (progress: { processed: number; total: number }) => void;
+    }
 ): Promise<Set<number>> {
     const byInvoice = new Map<number, ReconciledVirtualCloseCandidate>();
     for (const candidate of candidates) {
@@ -54,6 +57,9 @@ export async function applyReconciledVirtualCloses(
     if (byInvoice.size === 0) {
         return new Set();
     }
+
+    const total = byInvoice.size;
+    options?.onProgress?.({ processed: 0, total });
 
     const paidTolerance = await resolveInvoicePaidTolerance(prisma, accountId);
 
@@ -86,6 +92,11 @@ export async function applyReconciledVirtualCloses(
             })
         ),
     ]);
+
+    options?.onProgress?.({
+        processed: Math.min(1, total),
+        total,
+    });
 
     const invoiceById = new Map(invoices.map((row) => [row.id, row]));
     const paymentsByInvoice = new Map<
@@ -171,22 +182,47 @@ export async function applyReconciledVirtualCloses(
         }
     }
 
+    const writeOps =
+        Math.ceil(inserts.length / PRISMA_IN_CHUNK) +
+        Math.ceil(updates.length / PRISMA_IN_CHUNK) +
+        Math.ceil(deleteIds.length / PRISMA_IN_CHUNK);
+    const writeTotal = Math.max(writeOps, 1);
+    let writeProcessed = 0;
+    const emitWriteProgress = () => {
+        // Map write chunks onto the candidate total so the UI keeps moving.
+        const mapped = Math.min(
+            total,
+            Math.max(
+                1,
+                Math.round((writeProcessed / writeTotal) * total)
+            )
+        );
+        options?.onProgress?.({ processed: mapped, total });
+    };
+
     if (inserts.length > 0) {
         for (let i = 0; i < inserts.length; i += PRISMA_IN_CHUNK) {
             const chunk = inserts.slice(i, i + PRISMA_IN_CHUNK);
             await prisma.invoicePayment.createMany({ data: chunk as never });
+            writeProcessed += 1;
+            emitWriteProgress();
         }
     }
     if (updates.length > 0) {
-        await commitOps(
-            prisma,
-            updates.map((row) =>
-                prisma.invoicePayment.update({
-                    where: { id: row.id },
-                    data: row.data as never,
-                })
-            )
-        );
+        for (let i = 0; i < updates.length; i += PRISMA_IN_CHUNK) {
+            const chunk = updates.slice(i, i + PRISMA_IN_CHUNK);
+            await commitOps(
+                prisma,
+                chunk.map((row) =>
+                    prisma.invoicePayment.update({
+                        where: { id: row.id },
+                        data: row.data as never,
+                    })
+                )
+            );
+            writeProcessed += 1;
+            emitWriteProgress();
+        }
     }
     if (deleteIds.length > 0) {
         for (let i = 0; i < deleteIds.length; i += PRISMA_IN_CHUNK) {
@@ -194,9 +230,12 @@ export async function applyReconciledVirtualCloses(
             await prisma.invoicePayment.deleteMany({
                 where: { id: { in: chunk }, account_id: accountId },
             });
+            writeProcessed += 1;
+            emitWriteProgress();
         }
     }
 
+    options?.onProgress?.({ processed: total, total });
     return touchedInvoiceIds;
 }
 
@@ -214,7 +253,10 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
     userId?: string,
     /** ERP CURDATE per invoice number; used when the invoice has no real payment. */
     paymentDates?: Map<string, Date>,
-    paymentDate: Date = new Date()
+    paymentDate: Date = new Date(),
+    options?: {
+        onProgress?: (progress: { processed: number; total: number }) => void;
+    }
 ): Promise<ReconciledVirtualCloseByNumbersResult> {
     const unique = Array.from(
         new Set(
@@ -226,6 +268,8 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
     if (unique.length === 0) {
         return { touchedIds: [], customerIds: [], missingNumbers: [] };
     }
+
+    options?.onProgress?.({ processed: 0, total: unique.length });
 
     const invoices = await findManyInChunks(unique, (chunk) =>
         prisma.invoice.findMany({
@@ -248,6 +292,7 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
     );
     const missingNumbers = unique.filter((value) => !foundNumbers.has(value));
     if (invoices.length === 0) {
+        options?.onProgress?.({ processed: 0, total: unique.length });
         return { touchedIds: [], customerIds: [], missingNumbers };
     }
 
@@ -265,12 +310,39 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
         customerIds.add(invoice.customer_id);
     }
 
+    options?.onProgress?.({
+        processed: Math.min(1, candidates.length),
+        total: unique.length,
+    });
+
     const touched = await applyReconciledVirtualCloses(
         prisma,
         accountId,
         candidates,
-        userId
+        userId,
+        {
+            onProgress: ({ processed, total }) => {
+                // Map candidate progress onto the queued-number total so the
+                // Settle closed invoices row keeps moving during writes.
+                const mapped =
+                    total > 0
+                        ? Math.min(
+                              unique.length,
+                              Math.round((processed / total) * unique.length)
+                          )
+                        : processed;
+                options?.onProgress?.({
+                    processed: mapped,
+                    total: unique.length,
+                });
+            },
+        }
     );
+
+    options?.onProgress?.({
+        processed: touched.size,
+        total: unique.length,
+    });
 
     return {
         touchedIds: [...touched],
