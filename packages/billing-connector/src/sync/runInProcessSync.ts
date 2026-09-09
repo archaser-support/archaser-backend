@@ -511,6 +511,7 @@ async function runInProcessSyncBody(
                 customerIds: args.customerIds,
                 onProcessOverdueCustomers: options.onProcessOverdueCustomers,
                 log,
+                prisma,
                 setTailStep: (state) =>
                     setTailStep(PROCESS_OVERDUE_ENTITY_STATS_KEY, state),
             });
@@ -773,7 +774,6 @@ async function runInProcessSyncBody(
                 customerScope: normalizeImportCacheCustomerScope(
                     runtimeCustomerNumber
                 ),
-                timeZone: connector.time_zone,
             });
             if (!loaded.ok) {
                 const missing = loaded.missing.join(", ");
@@ -1231,37 +1231,56 @@ async function runInProcessSyncBody(
                     (stats as unknown as Record<string, number>)[processedKey] =
                         cachedRows.length;
                     emit();
-                    const importResult: EntityImportBatchResult =
-                        await importBatch(
-                            prisma,
-                            entityType,
-                            cachedRows,
-                            accountId,
-                            null,
-                            userId,
-                            {
-                                skipReportingBreach,
-                                onLog,
-                                shouldCancel: () => isCancelRequested(options),
-                            }
+                    let importedFromCache = 0;
+                    let failedFromCache = 0;
+                    const cacheRowsForSave: Record<string, unknown>[] = [];
+                    const chunkSize = PRIORITY_RATE_LIMITS.recommendedPageSize;
+                    for (let i = 0; i < cachedRows.length; i += chunkSize) {
+                        const chunk = cachedRows.slice(i, i + chunkSize);
+                        if (chunk.length === 0) continue;
+                        const importResult: EntityImportBatchResult =
+                            await importBatch(
+                                prisma,
+                                entityType,
+                                chunk,
+                                accountId,
+                                null,
+                                userId,
+                                {
+                                    skipReportingBreach,
+                                    onLog,
+                                    shouldCancel: () =>
+                                        isCancelRequested(options),
+                                }
+                            );
+                        importedFromCache += importResult.success;
+                        failedFromCache += importResult.failed;
+                        const chunkRowsForSave = rowsEnteringImport(
+                            chunk,
+                            importResult
                         );
-                    (stats as unknown as Record<string, number>)[importedKey] =
-                        importResult.success;
-                    stats.importErrors += importResult.failed;
-                    if (entityType === "Payment" || entityType === "Invoice") {
-                        for (const id of importResult.affectedCustomerIds) {
-                            arAffectedCustomerIds.add(id);
-                            if (entityType === "Payment") {
-                                paymentAffectedCustomerIds.add(id);
+                        if (chunkRowsForSave.length > 0) {
+                            cacheRowsForSave.push(...chunkRowsForSave);
+                        }
+                        if (entityType === "Payment" || entityType === "Invoice") {
+                            for (const id of importResult.affectedCustomerIds) {
+                                arAffectedCustomerIds.add(id);
+                                if (entityType === "Payment") {
+                                    paymentAffectedCustomerIds.add(id);
+                                }
+                            }
+                            for (const id of importResult.entityIds ?? []) {
+                                if (entityType === "Invoice") {
+                                    arAffectedInvoiceIds.add(id);
+                                } else {
+                                    arAffectedPaymentIds.add(id);
+                                }
                             }
                         }
-                        for (const id of importResult.entityIds ?? []) {
-                            if (entityType === "Invoice") {
-                                arAffectedInvoiceIds.add(id);
-                            } else {
-                                arAffectedPaymentIds.add(id);
-                            }
-                        }
+                        (stats as unknown as Record<string, number>)[importedKey] =
+                            importedFromCache;
+                        stats.importErrors += importResult.failed;
+                        emit();
                     }
                     emit();
 
@@ -1295,10 +1314,8 @@ async function runInProcessSyncBody(
                             last_max_updated_at: maxUpdated,
                             backfill_records_pulled: cachedRows.length,
                             last_error:
-                                importResult.failed > 0
-                                    ? importResult.errors
-                                          .slice(0, 3)
-                                          .join("; ")
+                                failedFromCache > 0
+                                    ? "Some cache import chunks failed"
                                     : null,
                         },
                         update: {
@@ -1307,10 +1324,8 @@ async function runInProcessSyncBody(
                             last_max_updated_at: maxUpdated,
                             backfill_records_pulled: cachedRows.length,
                             last_error:
-                                importResult.failed > 0
-                                    ? importResult.errors
-                                          .slice(0, 3)
-                                          .join("; ")
+                                failedFromCache > 0
+                                    ? "Some cache import chunks failed"
                                     : null,
                         },
                     });
@@ -1336,10 +1351,7 @@ async function runInProcessSyncBody(
                                         runtimeCustomerNumber
                                     ),
                                 executionId: options.executionId ?? null,
-                                rows: rowsEnteringImport(
-                                    cachedRows,
-                                    importResult
-                                ),
+                                rows: cacheRowsForSave,
                             },
                             log
                         );
