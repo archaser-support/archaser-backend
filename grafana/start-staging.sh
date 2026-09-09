@@ -12,6 +12,13 @@ if [[ -f "../.env.staging" ]]; then
   ENV_FILE="../.env.staging"
 fi
 
+echo "==> Rendering MongoDB Grafana datasource from MONGODB_URI in $ENV_FILE..."
+python3 "$SCRIPT_DIR/scripts/render-mongodb-datasource.py" --env-file "$ENV_FILE"
+if [[ ! -f "$SCRIPT_DIR/provisioning/datasources/mongodb.generated.yaml" ]]; then
+  echo "ERROR: mongodb.generated.yaml missing after render."
+  exit 1
+fi
+
 echo "==> Starting Staging Grafana/Monitoring Stack using $ENV_FILE..."
 MONITORING_ENV=staging \
 GRAFANA_HOST_PORT=3200 \

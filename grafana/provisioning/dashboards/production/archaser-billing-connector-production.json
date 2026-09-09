@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "ERP billing-connector logs + run history + metrics (production).",
+  "description": "ERP billing-connector metrics/logs + Mongo sync history (production). Mongo DB name comes from MONGODB_URI path via provisioned datasource.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -843,6 +843,65 @@
       ],
       "title": "Import row issues (finish lines)",
       "type": "logs"
+    },
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 },
+      "id": 20,
+      "title": "Mongo sync history (from MONGODB_URI database path)",
+      "type": "row"
+    },
+    {
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 52 },
+      "id": 21,
+      "options": {
+        "mode": "markdown",
+        "content": "Reads `connector_sync_executions` via datasource **MongoDB**, provisioned from **`MONGODB_URI`** (database = URI path). Prometheus/Loki panels above are live metrics/logs and do not query Mongo. Re-run `grafana/start-production.sh` after changing the URI."
+      },
+      "title": "",
+      "type": "text",
+      "transparent": true
+    },
+    {
+      "datasource": { "type": "haohanyang-mongodb-datasource", "uid": "MongoDB" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 54 },
+      "id": 22,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "haohanyang-mongodb-datasource", "uid": "MongoDB" },
+          "refId": "A",
+          "collection": "connector_sync_executions",
+          "queryLanguage": "json",
+          "queryText": "[\n  { \"$match\": { \"account_id\": { \"$exists\": true } } },\n  { \"$sort\": { \"started_at\": -1 } },\n  { \"$limit\": 200 },\n  { \"$project\": {\n    \"_id\": 0,\n    \"started_at\": 1,\n    \"completed_at\": 1,\n    \"account_id\": 1,\n    \"connector_id\": 1,\n    \"provider\": 1,\n    \"trigger\": 1,\n    \"sync_mode\": 1,\n    \"status\": 1,\n    \"error_type\": 1,\n    \"error_message\": 1,\n    \"execution_id\": 1,\n    \"duration_seconds\": 1\n  } }\n]"
+        }
+      ],
+      "title": "Recent sync executions (Mongo)",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "haohanyang-mongodb-datasource", "uid": "MongoDB" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 64 },
+      "id": 23,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "haohanyang-mongodb-datasource", "uid": "MongoDB" },
+          "refId": "A",
+          "collection": "connector_sync_executions",
+          "queryLanguage": "json",
+          "queryText": "[\n  { \"$match\": { \"status\": { \"$in\": [\"FAILED\", \"PARTIAL\", \"TIMEOUT\"] } } },\n  { \"$sort\": { \"started_at\": -1 } },\n  { \"$limit\": 200 },\n  { \"$project\": {\n    \"_id\": 0,\n    \"started_at\": 1,\n    \"completed_at\": 1,\n    \"account_id\": 1,\n    \"connector_id\": 1,\n    \"provider\": 1,\n    \"trigger\": 1,\n    \"sync_mode\": 1,\n    \"status\": 1,\n    \"error_type\": 1,\n    \"error_message\": 1,\n    \"execution_id\": 1,\n    \"duration_seconds\": 1\n  } }\n]"
+        }
+      ],
+      "title": "Failed / partial / timeout executions (Mongo)",
+      "type": "table"
     }
   ],
   "refresh": "30s",
