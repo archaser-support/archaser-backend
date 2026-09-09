@@ -37,6 +37,27 @@ type ExistingPaymentRow = {
     payment_method: string;
 };
 
+const POSTGRES_BIND_LIMIT_SAFE = 30_000;
+const QUERY_CHUNK_FALLBACK = 5_000;
+
+function chunkValues<T>(values: T[], chunkSize: number): T[][] {
+    if (values.length === 0) return [];
+    const size = Number.isFinite(chunkSize) && chunkSize > 0 ? chunkSize : 1;
+    const chunks: T[][] = [];
+    for (let i = 0; i < values.length; i += size) {
+        chunks.push(values.slice(i, i + size));
+    }
+    return chunks;
+}
+
+function safeInChunkSize(otherBindCount: number): number {
+    const remaining = POSTGRES_BIND_LIMIT_SAFE - otherBindCount;
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+        return 1;
+    }
+    return Math.max(1, Math.min(QUERY_CHUNK_FALLBACK, remaining));
+}
+
 function resolveDeferredPaymentAmounts(record: InvoicePaymentInput): {
     amount: number;
     customer_amount: number;
@@ -325,6 +346,82 @@ export async function importPayments(
         ...new Set(winners.flatMap((row) => row.uniqueAliases)),
     ];
 
+    const existingPaymentsPromise = (async (): Promise<
+        Array<ExistingPaymentRow & { customer_id: number }>
+    > => {
+        if (customerIds.length === 0) {
+            return [];
+        }
+        const customerChunks = chunkValues(
+            customerIds,
+            safeInChunkSize(allAliases.length + invoiceNumbers.length + 1)
+        );
+        const existingById = new Map<number, ExistingPaymentRow & { customer_id: number }>();
+        for (const customerChunk of customerChunks) {
+            if (allAliases.length > 0) {
+                const aliasChunks = chunkValues(
+                    allAliases,
+                    safeInChunkSize(customerChunk.length + 1)
+                );
+                for (const aliasChunk of aliasChunks) {
+                    const rows = await prisma.invoicePayment.findMany({
+                        where: {
+                            account_id: accountId,
+                            customer_id: { in: customerChunk },
+                            reference: { in: aliasChunk },
+                        },
+                        select: {
+                            id: true,
+                            reference: true,
+                            amount: true,
+                            customer_amount: true,
+                            customer_currency: true,
+                            payment_date: true,
+                            invoice_id: true,
+                            invoice_number: true,
+                            payment_method: true,
+                            customer_id: true,
+                        },
+                    });
+                    for (const row of rows) {
+                        existingById.set(row.id, row);
+                    }
+                }
+            }
+            if (invoiceNumbers.length > 0) {
+                const invoiceChunks = chunkValues(
+                    invoiceNumbers,
+                    safeInChunkSize(customerChunk.length + 1)
+                );
+                for (const invoiceChunk of invoiceChunks) {
+                    const rows = await prisma.invoicePayment.findMany({
+                        where: {
+                            account_id: accountId,
+                            customer_id: { in: customerChunk },
+                            invoice_number: { in: invoiceChunk },
+                        },
+                        select: {
+                            id: true,
+                            reference: true,
+                            amount: true,
+                            customer_amount: true,
+                            customer_currency: true,
+                            payment_date: true,
+                            invoice_id: true,
+                            invoice_number: true,
+                            payment_method: true,
+                            customer_id: true,
+                        },
+                    });
+                    for (const row of rows) {
+                        existingById.set(row.id, row);
+                    }
+                }
+            }
+        }
+        return Array.from(existingById.values());
+    })();
+
     const [invoices, existingPayments] = await Promise.all([
         invoiceNumbers.length === 0
             ? Promise.resolve([])
@@ -343,32 +440,7 @@ export async function importPayments(
                       customer_id: true,
                   },
               }),
-        customerIds.length === 0
-            ? Promise.resolve([])
-            : prisma.invoicePayment.findMany({
-                  where: {
-                      account_id: accountId,
-                      customer_id: { in: customerIds },
-                      OR: [
-                          { reference: { in: allAliases } },
-                          ...(invoiceNumbers.length > 0
-                              ? [{ invoice_number: { in: invoiceNumbers } }]
-                              : []),
-                      ],
-                  },
-                  select: {
-                      id: true,
-                      reference: true,
-                      amount: true,
-                      customer_amount: true,
-                      customer_currency: true,
-                      payment_date: true,
-                      invoice_id: true,
-                      invoice_number: true,
-                      payment_method: true,
-                      customer_id: true,
-                  },
-              }),
+        existingPaymentsPromise,
     ]);
 
     const invoiceByCustomerNumber = new Map<
@@ -724,18 +796,43 @@ export async function importPayments(
     const createdPayments =
         inserts.length === 0
             ? []
-            : await prisma.invoicePayment.findMany({
-                  where: {
-                      account_id: accountId,
-                      reference: {
-                          in: createdMeta.map(
-                              (row) => row.winner.effectiveReference
-                          ),
-                      },
-                      customer_id: { in: customerIds },
-                  },
-                  select: { id: true, reference: true, customer_id: true },
-              });
+            : await (async () => {
+                  const references = createdMeta.map(
+                      (row) => row.winner.effectiveReference
+                  );
+                  const referenceChunks = chunkValues(
+                      references,
+                      safeInChunkSize(customerIds.length + 1)
+                  );
+                  const customerChunks = chunkValues(
+                      customerIds,
+                      safeInChunkSize(references.length + 1)
+                  );
+                  const createdById = new Map<
+                      number,
+                      { id: number; reference: string; customer_id: number }
+                  >();
+                  for (const customerChunk of customerChunks) {
+                      for (const referenceChunk of referenceChunks) {
+                          const rows = await prisma.invoicePayment.findMany({
+                              where: {
+                                  account_id: accountId,
+                                  reference: { in: referenceChunk },
+                                  customer_id: { in: customerChunk },
+                              },
+                              select: {
+                                  id: true,
+                                  reference: true,
+                                  customer_id: true,
+                              },
+                          });
+                          for (const row of rows) {
+                              createdById.set(row.id, row);
+                          }
+                      }
+                  }
+                  return Array.from(createdById.values());
+              })();
 
     const createdIdByKey = new Map<string, number>();
     for (const row of createdPayments) {
