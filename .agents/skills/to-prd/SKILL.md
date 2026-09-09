@@ -130,6 +130,7 @@ A list of implementation decisions that were made. This can include:
 - Schema changes
 - API contracts
 - Specific interactions
+- **i18n:** new or changed user-facing strings ship with **both English and Hebrew** locale keys in the same feature (no English-only `defaultValue` gaps)
 
 Do NOT include specific file paths or code snippets. They may end up being outdated very quickly.
 

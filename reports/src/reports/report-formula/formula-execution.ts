@@ -40,9 +40,49 @@ export type FormulaMetadataTable = {
 const AGGREGATIONS = ["SUM", "AVG", "MIN", "MAX", "COUNT"];
 
 function isFormulaOperandFieldType(type?: string): boolean {
-    return ["number", "decimal", "integer", "amount", "currency", "percentage"].includes(
-        (type || "").toLowerCase()
+    return [
+        "number",
+        "decimal",
+        "integer",
+        "amount",
+        "currency",
+        "percentage",
+        "date",
+        "datetime",
+    ].includes((type || "").toLowerCase());
+}
+
+function isFormulaDateLikeFieldType(type?: string): boolean {
+    const normalized = (type || "").toLowerCase();
+    return normalized === "date" || normalized === "datetime";
+}
+
+function resolveFieldType(
+    reference: string,
+    metadataTables: FormulaMetadataTable[]
+): string | undefined {
+    const dot = reference.indexOf(".");
+    if (dot <= 0) {
+        return undefined;
+    }
+    const table = metadataTables.find(
+        (entry) => entry.name === reference.slice(0, dot)
     );
+    const fieldName = reference.slice(dot + 1);
+    return table?.fields.find((entry) => entry.name === fieldName)?.type;
+}
+
+function formatYesNo(value: number, locale: string): string {
+    const isHebrew = locale.toLowerCase().startsWith("he");
+    if (value === 1) {
+        return isHebrew ? "כן" : "Yes";
+    }
+    if (value === 0) {
+        return isHebrew ? "לא" : "No";
+    }
+    return new Intl.NumberFormat(locale, {
+        maximumFractionDigits: 10,
+    }).format(value);
 }
 
 function candidateKeys(reference: string, fields: FormulaField[]): string[] {
@@ -59,7 +99,8 @@ function candidateKeys(reference: string, fields: FormulaField[]): string[] {
 function getRowFieldValue(
     row: Record<string, unknown>,
     reference: string,
-    fields: FormulaField[]
+    fields: FormulaField[],
+    options?: { skipFormatted?: boolean }
 ): unknown {
     const keys = candidateKeys(reference, fields);
     const raw =
@@ -74,6 +115,9 @@ function getRowFieldValue(
                 return value;
             }
         }
+    }
+    if (options?.skipFormatted) {
+        return undefined;
     }
     for (const source of sources) {
         for (const key of keys) {
@@ -198,6 +242,21 @@ function formatFormulaValue(
                 }).format(raw),
             };
         }
+        if (formula.format === "yes_no") {
+            // Grouped SUM/AVG/MIN/MAX of 1/0 is a count/average — always a number.
+            if (formula.aggregation) {
+                return {
+                    raw,
+                    formatted: new Intl.NumberFormat(locale, {
+                        maximumFractionDigits: 10,
+                    }).format(raw),
+                };
+            }
+            return {
+                raw,
+                formatted: formatYesNo(raw, locale),
+            };
+        }
         return {
             raw,
             formatted: new Intl.NumberFormat(locale, {
@@ -290,7 +349,20 @@ export function applyFormulasToRows(
                     if (isFormulaOperandReference(reference)) {
                         return output[reference] ?? null;
                     }
-                    return getRowFieldValue(output, reference, fields);
+                    const fieldType = resolveFieldType(
+                        reference,
+                        options.metadataTables
+                    );
+                    return getRowFieldValue(output, reference, fields, {
+                        // Date/datetime compares must use stored values, not locale display text.
+                        skipFormatted: isFormulaDateLikeFieldType(fieldType),
+                    });
+                },
+                (reference) => {
+                    if (isFormulaOperandReference(reference)) {
+                        return "number";
+                    }
+                    return resolveFieldType(reference, options.metadataTables);
                 }
             );
             if (evaluated.value === null) {

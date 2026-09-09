@@ -15,6 +15,20 @@
 
 ## Quick Reference
 
+### Agent skills (canonical home — this repo only)
+
+**Shared agent skills and agent process docs are owned by this backend repo.** Create, edit, and delete them only here:
+
+| Kind | Path |
+|------|------|
+| Shared skills | `.agents/skills/` |
+| Agent process docs | `docs/agents/` |
+| Agent index | `AGENTS.md` |
+
+- ❌ Do **not** add, copy, or update shared skills in `archaser-frontend` (or other repos) — duplicates make every skill appear twice in the agent skills list.
+- ✅ Frontend-only skills stay under `archaser-frontend/.cursor/skills/` (`implement-next`, `pre-commit-cleanup`, `review-ui`, `wayfinder`). Point shared-skill references at `archaser-backend/.agents/skills/...`; do not duplicate skill bodies there.
+- When the user asks to update an agent/skill, prefer this repo unless they explicitly scope a frontend-only skill.
+
 ### ClickUp ↔ Git workflow
 
 **Process (source of truth):** `docs/agents/clickup-git-workflow.md` — full path, short path, interrupt/park, branch naming, primary-repo selection, one PR per task per repo, durable ClickUp summary, and status ladder through `move to staging` (human-owned `done`).
@@ -116,7 +130,7 @@ Before finalizing any implementation plan (initial draft or after user feedback)
 
 ### 🚫 Critical Rules
 - ❌ NEVER create .md files, READMEs, or run commands without approval (except implementation plans under `.cursor/plans/`, `/to-issues` slices under `.cursor/plans/<feature-slug>/`, and process docs under `docs/agents/` — see above)
-- ❌ NEVER modify translation files without explicit permission
+- ✅ When adding or changing user-facing copy, **always update both English and Hebrew** locale files in the same change (see `.cursor/rules/translations.mdc`). Do not ship English-only `defaultValue` gaps. ❌ No drive-by translation edits unrelated to the task
 - ❌ NEVER add new styles (theme overrides, global CSS, component `sx` blocks, or new CSS classes) without explicit user approval — reuse existing theme tokens, MUI variants, and patterns first
 - ❌ NEVER add, expand, or update tests unless the user explicitly asks for tests
 - ❌ NEVER run `npx prisma db push --force-reset` or `npx prisma migrate dev`

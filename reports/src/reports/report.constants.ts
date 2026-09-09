@@ -37,6 +37,66 @@ export const CONTEXT_PRIMARY_TABLE: Record<string, string> = {
 };
 
 /**
+ * Resolve report grain: context override → primaryTable → tables[0] → Customer.
+ * Entity/dashboard contexts always win over a saved `primaryTable`.
+ */
+export function resolveReportPrimaryTable(options: {
+    context?: string | null;
+    primaryTable?: string | null;
+    tables?: string[] | null;
+    fallback?: string;
+}): string {
+    const fromContext = CONTEXT_PRIMARY_TABLE[options.context || ""];
+    if (fromContext) {
+        return fromContext;
+    }
+    if (options.primaryTable) {
+        return options.primaryTable;
+    }
+    if (options.tables?.[0]) {
+        return options.tables[0];
+    }
+    return options.fallback ?? "Customer";
+}
+
+/**
+ * Keep `tables[0]` aligned with `primaryTable` when present so legacy readers
+ * of `tables[0]` stay correct. Does not invent `primaryTable` for legacy configs.
+ */
+export function normalizeReportConfigPrimaryTables<
+    T extends { primaryTable?: string; tables?: string[] },
+>(config: T): T {
+    const tables = Array.isArray(config.tables) ? [...config.tables] : [];
+    const primaryTable =
+        typeof config.primaryTable === "string" && config.primaryTable
+            ? config.primaryTable
+            : undefined;
+
+    if (!primaryTable) {
+        return config;
+    }
+
+    if (tables.includes(primaryTable)) {
+        return {
+            ...config,
+            primaryTable,
+            tables: [
+                primaryTable,
+                ...tables.filter((table) => table !== primaryTable),
+            ],
+        };
+    }
+
+    // Invalid primary for current membership — fall back to tables[0] or clear.
+    const nextPrimary = tables[0];
+    return {
+        ...config,
+        primaryTable: nextPrimary,
+        tables,
+    };
+}
+
+/**
  * Embedded entity grids (customer detail tabs, etc.) that must execute without
  * requiring the global `view_reports` permission.
  */

@@ -2,6 +2,7 @@ import { ReportFilterDto } from "./dto/execute-report.dto";
 import {
     computedFieldToPrismaWhere,
     isComputedReportField,
+    isPrismaRequiredScalarField,
     isPrismaScalarField,
 } from "./report-virtual-fields.util";
 import {
@@ -396,6 +397,42 @@ export function splitFiltersByTable(
 
         const clause = operatorToPrisma(f.operator, f.value);
         if (!clause) {
+            continue;
+        }
+        // Required scalars reject Prisma nullness filters (`{ not: null }` /
+        // `{ equals: null }`). is_not_empty is always true (skip leaf);
+        // is_empty can never match (impossible id).
+        const nullness = nullnessOfClause(clause);
+        if (
+            nullness &&
+            !f.field.includes(".") &&
+            isPrismaRequiredScalarField(f.table, f.field)
+        ) {
+            if (nullness === "not_null") {
+                if (f.table !== primaryTable) {
+                    // Keep an empty nested where so list relations still use
+                    // `{ some: {} }` (= related row exists).
+                    if (!nested[f.table]) {
+                        nested[f.table] = {};
+                    }
+                }
+                continue;
+            }
+            const neverMatch: PrismaWhere = { id: { in: [] } };
+            if (f.table === primaryTable) {
+                primaryExtras.push(neverMatch);
+            } else {
+                if (!nested[f.table]) {
+                    nested[f.table] = {};
+                }
+                const existingAnd = nested[f.table].AND;
+                nested[f.table].AND = [
+                    ...(Array.isArray(existingAnd)
+                        ? (existingAnd as PrismaWhere[])
+                        : []),
+                    neverMatch,
+                ];
+            }
             continue;
         }
         if (f.table === primaryTable) {
