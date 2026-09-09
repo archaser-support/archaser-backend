@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     ForbiddenException,
     Injectable,
     NotFoundException,
@@ -53,6 +54,11 @@ import {
     mergeAndWhere,
     splitFiltersByTable,
 } from "./report-filter.util";
+import {
+    applyFormulaFiltersToRows,
+    findFormulaFilterGuardFailure,
+    partitionFiltersByFormulaTarget,
+} from "./report-formula-filter.util";
 import {
     buildAccountScopeWhere,
     nestBusinessUnitScopeWhere,
@@ -240,8 +246,24 @@ export class ReportExecutionService {
             body,
             { skipSelectedUserId: skipSelectedUserOnActivity }
         );
+        const normalizedFilters = this.normalizeFilters(filters, primaryTable);
+        const formulaFilterGuard = findFormulaFilterGuardFailure({
+            filters: normalizedFilters,
+            formulas: config.formulas,
+            grouping: config.grouping,
+            fields: config.fields,
+        });
+        if (formulaFilterGuard) {
+            throw new BadRequestException({
+                message: formulaFilterGuard.message,
+                errorCode: formulaFilterGuard.errorCode,
+            });
+        }
+        const { databaseFilters, formulaFilters } =
+            partitionFiltersByFormulaTarget(normalizedFilters);
+        const hasFormulaFilters = formulaFilters.length > 0;
         const { primary: filterPrimary, nested } = splitFiltersByTable(
-            this.normalizeFilters(filters, primaryTable),
+            databaseFilters,
             primaryTable
         );
 
@@ -292,8 +314,8 @@ export class ReportExecutionService {
             ).toString();
             const topUpResult = await fetchTopUpExpiringReportAsCustomerRows({
                 accountId,
-                page,
-                limit,
+                page: hasFormulaFilters ? 1 : page,
+                limit: hasFormulaFilters ? 100_000 : limit,
                 search: body.search,
                 sortField: body.sortField || config.sorting?.[0]?.field,
                 sortDirection:
@@ -319,9 +341,19 @@ export class ReportExecutionService {
                 locale,
                 metadataTables: REPORT_METADATA.tables,
             });
+            let topUpRows = formulaResult.rows;
+            let topUpTotal = topUpResult.total;
+            if (hasFormulaFilters) {
+                topUpRows = applyFormulaFiltersToRows(
+                    topUpRows,
+                    formulaFilters
+                );
+                topUpTotal = topUpRows.length;
+                topUpRows = topUpRows.slice(skip, skip + limit);
+            }
             return serializeBigInt({
-                data: formulaResult.rows,
-                totalRecords: topUpResult.total,
+                data: topUpRows,
+                totalRecords: topUpTotal,
                 ...(formulaResult.warnings.length
                     ? { formulaWarnings: formulaResult.warnings }
                     : {}),
@@ -366,7 +398,11 @@ export class ReportExecutionService {
             needsCreditDashboardInMemorySort ||
             needsComputedFormattedSort ||
             needsPolicyBackedFormattedSort;
+        // Formula filters require compute → filter → paginate on the full
+        // database-filtered set (correct totals; not "filter current page").
+        const needsFullFetch = needsInMemorySort || hasFormulaFilters;
 
+        // In-memory sorts cannot use SQL orderBy; formula-filter full fetch still can.
         const orderBy = needsInMemorySort
             ? []
             : this.buildOrderBy(
@@ -378,15 +414,17 @@ export class ReportExecutionService {
 
         const findArgs: Record<string, unknown> = {
             where,
-            skip: needsInMemorySort ? undefined : skip,
-            take: needsInMemorySort ? undefined : limit,
+            skip: needsFullFetch ? undefined : skip,
+            take: needsFullFetch ? undefined : limit,
             orderBy: orderBy.length ? orderBy : undefined,
             select,
         };
 
         let [rows, totalRecords] = await Promise.all([
             delegate.findMany(findArgs),
-            delegate.count({ where }),
+            needsFullFetch
+                ? Promise.resolve(0)
+                : delegate.count({ where }),
         ]);
 
         // Open AR / related metrics are not Prisma columns — always enrich when
@@ -440,14 +478,18 @@ export class ReportExecutionService {
             });
         }
 
+        // Credit dashboard enriched sort: when formula filters are also present,
+        // sort the full set here but defer pagination until after formula filters.
         if (needsCreditDashboardInMemorySort && effectiveSortField) {
             rows = sortCreditDashboardEnrichedRows(
                 rows,
                 effectiveSortField,
                 effectiveSortDirection
             );
-            totalRecords = rows.length;
-            rows = rows.slice(skip, skip + limit);
+            if (!hasFormulaFilters) {
+                totalRecords = rows.length;
+                rows = rows.slice(skip, skip + limit);
+            }
         }
 
         const locale = body.locale || "en-US";
@@ -470,6 +512,13 @@ export class ReportExecutionService {
         });
 
         let resultRows = formulaResult.rows;
+        if (hasFormulaFilters) {
+            resultRows = applyFormulaFiltersToRows(
+                resultRows,
+                formulaFilters
+            );
+        }
+
         if (needsComputedFormattedSort && computedSortTarget) {
             resultRows = sortFormattedReportRows(
                 resultRows,
@@ -495,6 +544,9 @@ export class ReportExecutionService {
                 outputKey,
                 effectiveSortDirection === "desc" ? "desc" : "asc"
             );
+            totalRecords = resultRows.length;
+            resultRows = resultRows.slice(skip, skip + limit);
+        } else if (hasFormulaFilters) {
             totalRecords = resultRows.length;
             resultRows = resultRows.slice(skip, skip + limit);
         }
