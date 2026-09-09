@@ -1,5 +1,9 @@
 import type { Invoice, InvoicePayment, Prisma, PrismaClient } from "@prisma/client";
 import {
+    bindCreditInsurancePrisma,
+    refreshTermsBreachFlagsForCustomer,
+} from "@archaser/credit-insurance-domain";
+import {
     INVOICE_PAID_TOLERANCE,
     isWithinPaidTolerance,
     resolveInvoicePaidTolerance,
@@ -402,6 +406,7 @@ export async function recalculateInvoicesFromLinkedPayments(
             select: {
                 id: true,
                 account_id: true,
+                customer_id: true,
                 net_amount: true,
                 customer_net_amount: true,
                 custom_code1: true,
@@ -470,25 +475,38 @@ export async function recalculateInvoicesFromLinkedPayments(
             recalcRows,
             modifiedAt
         );
-        return;
+    } else {
+        options.onProgress({ processed: 0, total: recalcRows.length });
+        for (
+            let offset = 0;
+            offset < recalcRows.length;
+            offset += RECALC_PROGRESS_CHUNK
+        ) {
+            const chunk = recalcRows.slice(offset, offset + RECALC_PROGRESS_CHUNK);
+            await bulkWriteInvoicePaidRecalcRows(
+                prisma as unknown as PrismaClient,
+                chunk,
+                modifiedAt
+            );
+            options.onProgress({
+                processed: Math.min(offset + chunk.length, recalcRows.length),
+                total: recalcRows.length,
+            });
+        }
     }
 
-    options.onProgress({ processed: 0, total: recalcRows.length });
-    for (
-        let offset = 0;
-        offset < recalcRows.length;
-        offset += RECALC_PROGRESS_CHUNK
-    ) {
-        const chunk = recalcRows.slice(offset, offset + RECALC_PROGRESS_CHUNK);
-        await bulkWriteInvoicePaidRecalcRows(
-            prisma as unknown as PrismaClient,
-            chunk,
-            modifiedAt
-        );
-        options.onProgress({
-            processed: Math.min(offset + chunk.length, recalcRows.length),
-            total: recalcRows.length,
-        });
+    // Ledger residue changed — restamp open-invoice created-in-MEP / terms CTV
+    // so Health Index does not keep stale flags after payment link / Paid close.
+    bindCreditInsurancePrisma(prisma as PrismaClient);
+    const customerIds = Array.from(
+        new Set(
+            invoices
+                .map((invoice) => invoice.customer_id)
+                .filter((id): id is number => id != null)
+        )
+    );
+    for (const customerId of customerIds) {
+        await refreshTermsBreachFlagsForCustomer(customerId);
     }
 }
 

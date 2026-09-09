@@ -9,9 +9,10 @@ contactPoints:
       - uid: webhook-sns
         type: webhook
         settings:
-          # URL is set by environment variable GRAFANA_SNS_WEBHOOK_URL
+          # Grafana provisioning only supports ${VAR} (no :default). Compose must
+          # always inject a non-empty GRAFANA_SNS_WEBHOOK_URL (see docker-compose.logging.yml).
           # Format: https://xxxxx.execute-api.eu-north-1.amazonaws.com/v1/alert
-          url: ${GRAFANA_SNS_WEBHOOK_URL:http://127.0.0.1:9}
+          url: ${GRAFANA_SNS_WEBHOOK_URL}
           httpMethod: POST
           # Authorization header can be added if needed
           # authorization_scheme: Bearer
