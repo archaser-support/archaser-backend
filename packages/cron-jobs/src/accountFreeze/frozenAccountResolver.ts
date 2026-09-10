@@ -2,6 +2,7 @@ import { listRunningSyncAccountIds } from "@archaser/billing-connector";
 import type { PrismaClient } from "@prisma/client";
 
 import { jobLog } from "../logging/jobLog";
+import { sweepStaleProcessingImportJobs } from "./sweepStaleProcessingImportJobs";
 
 export type FrozenAccountResolverDeps = {
     prisma: PrismaClient;
@@ -68,6 +69,8 @@ function mergeAccountIds(...groups: number[][]): Set<number> {
 export async function getFrozenAccountIds(
     deps: FrozenAccountResolverDeps
 ): Promise<Set<number>> {
+    await sweepStaleProcessingImportJobs({ prisma: deps.prisma });
+
     const [importIds, backfillIds, syncIds] = await Promise.all([
         queryImportProcessingAccountIds(deps.prisma),
         queryAsOfBackfillFrozenAccountIds(deps.prisma),
