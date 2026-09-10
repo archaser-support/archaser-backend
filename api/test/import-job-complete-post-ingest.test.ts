@@ -5,6 +5,10 @@ import { recalculateCustomerAmounts } from "../src/customers/domain/recalculateC
 
 jest.mock("@archaser/cron-jobs", () => ({
     runArPostIngestForCustomers: jest.fn(),
+    sweepStaleProcessingImportJobs: jest.fn().mockResolvedValue({
+        sweptCount: 0,
+        accountIds: [],
+    }),
 }));
 
 jest.mock("../../packages/credit-insurance-domain/src/credit-insurance/domain/asOfRewriteQueue", () => ({

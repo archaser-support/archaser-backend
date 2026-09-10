@@ -77,6 +77,14 @@ export {
     type FrozenAccountResolverDeps,
 } from "./accountFreeze/frozenAccountResolver";
 export {
+    STALE_IMPORT_JOB_ERROR_MESSAGE,
+    STALE_IMPORT_JOB_IDLE_HOURS,
+    buildStaleImportJobErrorMessage,
+    sweepStaleProcessingImportJobs,
+    type SweepStaleProcessingImportJobsOptions,
+    type SweepStaleProcessingImportJobsResult,
+} from "./accountFreeze/sweepStaleProcessingImportJobs";
+export {
     logFrozenAccountSkips,
     recordFrozenAccountSkips,
     reportFrozenAccountSkips,

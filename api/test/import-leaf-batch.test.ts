@@ -43,6 +43,8 @@ describe("ImportService importLeaf bulk batch", () => {
 
         const db = {
             importJob: {
+                findMany: jest.fn().mockResolvedValue([]),
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
                 findFirst: jest
                     .fn()
                     .mockResolvedValueOnce({
@@ -93,6 +95,8 @@ describe("ImportService importLeaf bulk batch", () => {
     it("importLeaf rejects when another job is Processing on the account", async () => {
         const db = {
             importJob: {
+                findMany: jest.fn().mockResolvedValue([]),
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
                 findFirst: jest
                     .fn()
                     .mockResolvedValueOnce({
@@ -127,6 +131,8 @@ describe("ImportService importLeaf bulk batch", () => {
     it("importLeaf throws ConflictException for unrelated Processing job", async () => {
         const db = {
             importJob: {
+                findMany: jest.fn().mockResolvedValue([]),
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
                 findFirst: jest
                     .fn()
                     .mockResolvedValueOnce({

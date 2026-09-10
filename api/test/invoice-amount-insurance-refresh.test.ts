@@ -110,12 +110,17 @@ describe("invoice amount update — insurance target refresh", () => {
 
         const db = {
             importJob: {
-                findFirst: jest.fn().mockResolvedValue({
-                    id: "job-1",
-                    import_type: "Invoice",
-                    status: "Pending",
-                    metadata: {},
-                }),
+                findMany: jest.fn().mockResolvedValue([]),
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+                findFirst: jest
+                    .fn()
+                    .mockResolvedValueOnce({
+                        id: "job-1",
+                        import_type: "Invoice",
+                        status: "Pending",
+                        metadata: {},
+                    })
+                    .mockResolvedValueOnce(null),
                 update: jest.fn().mockResolvedValue({}),
             },
             importRecord: {
