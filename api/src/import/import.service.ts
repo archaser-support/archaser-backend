@@ -9,7 +9,10 @@ import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { importMappedEntityBatch } from "@archaser/billing-connector";
 import { DatabaseService } from "../database/database.service";
-import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
+import {
+    runArPostIngestForCustomers,
+    sweepStaleProcessingImportJobs,
+} from "@archaser/cron-jobs";
 import {
     enqueueRewriteForImport,
     refreshInsuranceTargetDatesForInvoiceIds,
@@ -32,6 +35,45 @@ const LEAF_BODY_KEYS: Record<string, string> = {
     invoice: "invoices",
     policy: "policies",
 };
+
+/** Match connector sync HEARTBEAT_INTERVAL_SECONDS — keep Processing jobs off the 2h idle sweeper. */
+const POST_IMPORT_HEARTBEAT_MS = 60_000;
+
+/**
+ * While Invoice/Payment post-import keeps the job Processing, bump `modified_at`
+ * at least every 60s so the idle Processing sweeper does not false-fail a live run.
+ */
+function startImportJobPostIngestHeartbeat(
+    db: DatabaseService,
+    jobId: string
+): { stop: () => void } {
+    let stopped = false;
+
+    const touch = () => {
+        if (stopped) {
+            return;
+        }
+        void db.importJob
+            .update({
+                where: { id: jobId },
+                data: { modified_at: new Date() },
+            })
+            .catch(() => {
+                // Best-effort — heartbeat must not block completion.
+            });
+    };
+
+    // Interval only — avoid an immediate write so short completes stay one Completed update.
+    const interval = setInterval(touch, POST_IMPORT_HEARTBEAT_MS);
+    interval.unref?.();
+
+    return {
+        stop: () => {
+            stopped = true;
+            clearInterval(interval);
+        },
+    };
+}
 
 @Injectable()
 export class ImportService {
@@ -369,6 +411,8 @@ export class ImportService {
 
         // Shared AR post-ingest (replay + Process Overdue + live MEP/gap + as-of).
         // Job stays Processing until orchestrator returns (success or best-effort).
+        // Heartbeat modified_at so the 2h idle sweeper does not false-fail a live run.
+        const heartbeat = startImportJobPostIngestHeartbeat(this.db, jobId);
         let postIngestSkipped = false;
         let postIngestErrors: Array<{
             step: string;
@@ -377,56 +421,62 @@ export class ImportService {
             stack?: string;
         }> = [];
         try {
-            const result = await runArPostIngestForCustomers({
-                accountId,
-                customerIds,
-                runReplay: true,
-                runLiveRefresh: true,
-                enqueueAsOfRewrite: true,
-                asOfRewrite: { importType, entityIds },
-            });
-            postIngestSkipped = result.skipped;
-            postIngestErrors = result.errors;
-        } catch (error) {
-            postIngestSkipped = true;
-            postIngestErrors = [
-                {
-                    step: "orchestrator",
-                    message:
-                        error instanceof Error ? error.message : String(error),
-                    ...(error instanceof Error && error.stack
-                        ? { stack: error.stack }
-                        : {}),
-                },
-            ];
-        }
-
-        if (postIngestErrors.length > 0) {
-            await this.recordPostIngestFailures(jobId, postIngestErrors);
-        }
-
-        // Collection-only (orchestrator CI gate) and unexpected throws still
-        // keep today's as-of enqueue behavior. Overdue already ran inside
-        // the orchestrator for non-CI accounts before skipped=true.
-        if (postIngestSkipped) {
             try {
-                await enqueueRewriteForImport({
+                const result = await runArPostIngestForCustomers({
                     accountId,
-                    importType,
-                    entityIds,
                     customerIds,
+                    runReplay: true,
+                    runLiveRefresh: true,
+                    enqueueAsOfRewrite: true,
+                    asOfRewrite: { importType, entityIds },
                 });
-            } catch {
-                // Import completion should not fail if as-of enqueue fails.
+                postIngestSkipped = result.skipped;
+                postIngestErrors = result.errors;
+            } catch (error) {
+                postIngestSkipped = true;
+                postIngestErrors = [
+                    {
+                        step: "orchestrator",
+                        message:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                        ...(error instanceof Error && error.stack
+                            ? { stack: error.stack }
+                            : {}),
+                    },
+                ];
             }
-        }
 
-        if (customerIds.length > 0) {
-            try {
-                await recalculateCustomerAmounts(customerIds, this.db);
-            } catch {
-                // Import completion should not fail if rollup refresh fails.
+            if (postIngestErrors.length > 0) {
+                await this.recordPostIngestFailures(jobId, postIngestErrors);
             }
+
+            // Collection-only (orchestrator CI gate) and unexpected throws still
+            // keep today's as-of enqueue behavior. Overdue already ran inside
+            // the orchestrator for non-CI accounts before skipped=true.
+            if (postIngestSkipped) {
+                try {
+                    await enqueueRewriteForImport({
+                        accountId,
+                        importType,
+                        entityIds,
+                        customerIds,
+                    });
+                } catch {
+                    // Import completion should not fail if as-of enqueue fails.
+                }
+            }
+
+            if (customerIds.length > 0) {
+                try {
+                    await recalculateCustomerAmounts(customerIds, this.db);
+                } catch {
+                    // Import completion should not fail if rollup refresh fails.
+                }
+            }
+        } finally {
+            heartbeat.stop();
         }
 
         const job = await this.db.importJob.update({
@@ -448,6 +498,11 @@ export class ImportService {
         accountId: number,
         excludeJobId?: string
     ): Promise<void> {
+        await sweepStaleProcessingImportJobs({
+            prisma: this.db,
+            accountId,
+        });
+
         const conflicting = await this.db.importJob.findFirst({
             where: {
                 account_id: accountId,

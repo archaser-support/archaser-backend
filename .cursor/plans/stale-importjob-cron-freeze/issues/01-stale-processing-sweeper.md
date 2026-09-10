@@ -1,6 +1,6 @@
 # 01 — Stale Processing sweeper + freeze/import call sites
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1–3, 5–7, 9–12, 15–20
