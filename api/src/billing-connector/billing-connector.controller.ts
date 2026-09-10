@@ -121,15 +121,22 @@ export class BillingConnectorController {
     @Get("sync/cache-check")
     @ApiOperation({
         summary:
-            "Same-day import cache availability per entity (manual Start suggestion)",
+            "Import cache days + runs for manual Start (TTL window; optional cache_day)",
     })
     async cacheCheck(
         @CurrentUser() user: JwtPayload,
         @Param("accountId", ParseIntPipe) accountId: number,
         @Query("mode") mode?: string,
-        @Query("customer_id") customerId?: string
+        @Query("customer_id") customerId?: string,
+        @Query("cache_day") cacheDay?: string
     ) {
-        return this.service.checkImportCache(user, accountId, mode, customerId);
+        return this.service.checkImportCache(
+            user,
+            accountId,
+            mode,
+            customerId,
+            cacheDay
+        );
     }
 
     @Post("sync/cancel")

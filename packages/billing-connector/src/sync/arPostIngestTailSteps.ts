@@ -8,6 +8,10 @@ import {
     type TailStepKey,
     type TailStepState,
 } from "./connectorSyncRuntime";
+import {
+    buildCustomerPositionTailDetail,
+    mapHostProgressToCustomerScopedInner,
+} from "./customerScopedTailProgress";
 import { runInsuranceTargetsTailStep } from "./insuranceTargetsTailStep";
 import {
     runProcessOverdueTailStep,
@@ -34,6 +38,28 @@ export type RunInlineArPostIngestTailStepsParams = {
     importType: "Invoice" | "Payment";
 };
 
+type ChunkProgressHelpers = {
+    /** Customers fully finished before this chunk started. */
+    customersDoneBeforeChunk: number;
+    /** Total customers for this tail step. */
+    customerTotal: number;
+    /**
+     * Forward in-chunk host progress (e.g. replay events for the current
+     * customer) into the tail-step detail without waiting for the chunk to end.
+     */
+    reportInnerProgress: (progress: {
+        customersCompletedInChunk: number;
+        detail?: {
+            processed: number;
+            total: number;
+            customer_id?: number;
+            customer_label?: string;
+            customer_index?: number;
+            customer_total?: number;
+        };
+    }) => void;
+};
+
 async function runChunkedHostStep(params: {
     customerIds: number[];
     tailKey: TailStepKey;
@@ -41,7 +67,7 @@ async function runChunkedHostStep(params: {
     logLabel: string;
     setTailStep: (key: TailStepKey, state: TailStepState) => void;
     log: (message: string) => void;
-    runChunk: (chunk: number[]) => Promise<void>;
+    runChunk: (chunk: number[], helpers: ChunkProgressHelpers) => Promise<void>;
 }): Promise<void> {
     const customerIds = Array.from(
         new Set(params.customerIds.filter(Number.isFinite))
@@ -54,44 +80,103 @@ async function runChunkedHostStep(params: {
         status: "running",
         processed: 0,
         total: customerIds.length,
-        detail: {
+        detail: buildCustomerPositionTailDetail({
             step: params.detailStep,
-            processed: 0,
-            total: customerIds.length,
-        },
+            customersCompleted: 0,
+            customerTotal: customerIds.length,
+        }),
     });
     params.log(`${params.logLabel} starting for ${customerIds.length} customer(s)…`);
 
     try {
         const total = customerIds.length;
+        let lastInnerEmitAt = 0;
         for (let i = 0; i < total; i += AR_POST_INGEST_CUSTOMER_CHUNK) {
             const chunk = customerIds.slice(
                 i,
                 i + AR_POST_INGEST_CUSTOMER_CHUNK
             );
             const chunkEnd = Math.min(i + chunk.length, total);
-            await params.runChunk(chunk);
+            const customersDoneBeforeChunk = i;
+            await params.runChunk(chunk, {
+                customersDoneBeforeChunk,
+                customerTotal: total,
+                reportInnerProgress: ({
+                    customersCompletedInChunk,
+                    detail,
+                }) => {
+                    const nowMs = Date.now();
+                    // Event ticks can be frequent; keep UI responsive without flooding.
+                    if (
+                        detail &&
+                        nowMs - lastInnerEmitAt < 250 &&
+                        detail.processed < (detail.total ?? 0)
+                    ) {
+                        return;
+                    }
+                    lastInnerEmitAt = nowMs;
+                    const customersFinished = Math.min(
+                        total,
+                        customersDoneBeforeChunk +
+                            Math.max(0, customersCompletedInChunk)
+                    );
+                    const customerIndex =
+                        detail?.customer_index ??
+                        Math.min(
+                            total,
+                            customersFinished + (detail ? 1 : 0)
+                        );
+                    const customerTotal = detail?.customer_total ?? total;
+                    params.setTailStep(params.tailKey, {
+                        status: "running",
+                        processed: customersFinished,
+                        total,
+                        detail: detail
+                            ? {
+                                  step: params.detailStep,
+                                  processed: detail.processed,
+                                  total: detail.total,
+                                  customer_index: customerIndex,
+                                  customer_total: customerTotal,
+                                  ...(detail.customer_id != null
+                                      ? { customer_id: detail.customer_id }
+                                      : {}),
+                                  ...(detail.customer_label
+                                      ? {
+                                            customer_label:
+                                                detail.customer_label,
+                                        }
+                                      : {}),
+                              }
+                            : buildCustomerPositionTailDetail({
+                                  step: params.detailStep,
+                                  customersCompleted: customersFinished,
+                                  customerTotal: total,
+                              }),
+                    });
+                },
+            });
             const processed = chunkEnd;
             params.setTailStep(params.tailKey, {
                 status: "running",
                 processed,
                 total,
-                detail: {
+                detail: buildCustomerPositionTailDetail({
                     step: params.detailStep,
-                    processed,
-                    total,
-                },
+                    customersCompleted: processed,
+                    customerTotal: total,
+                }),
             });
         }
         params.setTailStep(params.tailKey, {
             status: "done",
             processed: customerIds.length,
             total: customerIds.length,
-            detail: {
+            detail: buildCustomerPositionTailDetail({
                 step: params.detailStep,
-                processed: customerIds.length,
-                total: customerIds.length,
-            },
+                customersCompleted: customerIds.length,
+                customerTotal: customerIds.length,
+            }),
         });
         params.log(
             `${params.logLabel} finished for ${customerIds.length} customer(s)`
@@ -138,6 +223,7 @@ export async function runInlineArPostIngestTailSteps(
             customerIds,
             onProcessOverdueCustomers: params.onProcessOverdueCustomers,
             log: params.log,
+            prisma: params.prisma,
             setTailStep: (state) =>
                 params.setTailStep(PROCESS_OVERDUE_ENTITY_STATS_KEY, state),
         });
@@ -181,7 +267,7 @@ export async function runInlineArPostIngestTailSteps(
         logLabel: "AR replay",
         setTailStep: params.setTailStep,
         log: params.log,
-        runChunk: async (chunk) => {
+        runChunk: async (chunk, helpers) => {
             await params.onArPostIngest!({
                 ...hostBase,
                 customerIds: chunk,
@@ -190,6 +276,20 @@ export async function runInlineArPostIngestTailSteps(
                 runProcessOverdue: false,
                 runMaturity: false,
                 enqueueAsOfRewrite: false,
+                onProgress: (progress) => {
+                    helpers.reportInnerProgress({
+                        customersCompletedInChunk: progress.completed,
+                        detail: mapHostProgressToCustomerScopedInner({
+                            step: "replay",
+                            hostStep: progress.step,
+                            customerId: progress.customerId,
+                            detail: progress.detail,
+                            customersDoneBeforeChunk:
+                                helpers.customersDoneBeforeChunk,
+                            customerTotal: helpers.customerTotal,
+                        }),
+                    });
+                },
             });
         },
     });
@@ -201,7 +301,7 @@ export async function runInlineArPostIngestTailSteps(
         logLabel: "Insurance live refresh",
         setTailStep: params.setTailStep,
         log: params.log,
-        runChunk: async (chunk) => {
+        runChunk: async (chunk, helpers) => {
             await params.onArPostIngest!({
                 ...hostBase,
                 customerIds: chunk,
@@ -210,6 +310,20 @@ export async function runInlineArPostIngestTailSteps(
                 runProcessOverdue: false,
                 runMaturity: false,
                 enqueueAsOfRewrite: false,
+                onProgress: (progress) => {
+                    helpers.reportInnerProgress({
+                        customersCompletedInChunk: progress.completed,
+                        detail: mapHostProgressToCustomerScopedInner({
+                            step: "live_refresh",
+                            hostStep: progress.step,
+                            customerId: progress.customerId,
+                            detail: progress.detail,
+                            customersDoneBeforeChunk:
+                                helpers.customersDoneBeforeChunk,
+                            customerTotal: helpers.customerTotal,
+                        }),
+                    });
+                },
             });
         },
     });

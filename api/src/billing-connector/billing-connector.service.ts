@@ -74,10 +74,10 @@ import {
     parseUseCachedImport,
     resolveAccountCustomerById,
     searchAccountCustomers,
+    findImportCacheDays,
     findSameDayCacheRuns,
     loadImportCachesForReplay,
     normalizeImportCacheCustomerScope,
-    resolveImportCacheDay,
     DEFAULT_IMPORT_CACHE_TIME_ZONE,
     type ClearBeforeImportEntity,
     type ImportCacheEntityType,
@@ -1155,11 +1155,10 @@ export class BillingConnectorApiService {
                 syncMode,
                 importTypes: useCachedImport,
                 customerScope: customerScopeForCache,
-                timeZone: connector.time_zone,
             });
             if (!loaded.ok) {
                 throw new BadRequestException({
-                    error: `No import cache for execution ${useCachedExecutionId}: ${loaded.missing.join(", ")} (day=${loaded.cacheDay}, scope=${loaded.customerScope})`,
+                    error: `No import cache for execution ${useCachedExecutionId}: ${loaded.missing.join(", ")} (day=${loaded.cacheDay ?? "unknown"}, scope=${loaded.customerScope})`,
                     code: "IMPORT_CACHE_NOT_FOUND",
                     missing: loaded.missing,
                     cache_day: loaded.cacheDay,
@@ -1244,7 +1243,6 @@ export class BillingConnectorApiService {
             executionId,
             mode: mode as "backfill" | "incremental",
             trigger,
-            syncMode,
             runningSummary,
             onLog,
             clearBeforeImport,
@@ -1394,7 +1392,6 @@ export class BillingConnectorApiService {
         executionId: string;
         mode: "backfill" | "incremental";
         trigger: string;
-        syncMode: string;
         runningSummary: ConnectorSyncRunSummary;
         onLog: (message: string) => void;
         clearBeforeImport?: ClearBeforeImportEntity[];
@@ -1772,7 +1769,8 @@ export class BillingConnectorApiService {
         user: JwtPayload,
         accountId: number,
         modeRaw?: string,
-        customerIdRaw?: string
+        customerIdRaw?: string,
+        cacheDayRaw?: string
     ) {
         await this.assertAccess(user, accountId, "view_billing_connector");
         const mode = String(modeRaw ?? "").toLowerCase();
@@ -1816,19 +1814,59 @@ export class BillingConnectorApiService {
             connector.time_zone.trim().length > 0
                 ? connector.time_zone.trim()
                 : null;
-        const cacheDay = resolveImportCacheDay(new Date(), timeZone);
-        const runs = await findSameDayCacheRuns({
+        const enabledEntities = parseEnabledEntities(
+            connector.enabled_entities
+        ).filter(
+            (entity): entity is ImportCacheEntityType =>
+                entity === "Customer" ||
+                entity === "Contact" ||
+                entity === "Invoice" ||
+                entity === "Payment"
+        );
+
+        const days = await findImportCacheDays({
             accountId,
             syncMode,
             customerScope,
-            timeZone,
+            importTypes: enabledEntities,
         });
+
+        const requestedCacheDay =
+            typeof cacheDayRaw === "string" &&
+            /^\d{4}-\d{2}-\d{2}$/.test(cacheDayRaw.trim())
+                ? cacheDayRaw.trim()
+                : null;
+        const selectedCacheDay =
+            requestedCacheDay ?? (days[0]?.cache_day ?? null);
+
+        const runs =
+            selectedCacheDay != null
+                ? await findSameDayCacheRuns({
+                      accountId,
+                      syncMode,
+                      customerScope,
+                      cacheDay: selectedCacheDay,
+                  })
+                : [];
+
+        const runsWithSelectable = runs.filter((run) =>
+            run.entities.some(
+                (entity) =>
+                    entity.available &&
+                    enabledEntities.includes(entity.import_type)
+            )
+        );
+
         return {
             sync_mode: syncMode,
-            cache_day: cacheDay,
+            cache_day: selectedCacheDay,
             customer_scope: customerScope,
             time_zone: timeZone ?? DEFAULT_IMPORT_CACHE_TIME_ZONE,
-            runs: runs.map((run) => ({
+            days: days.map((day) => ({
+                cache_day: day.cache_day,
+                run_count: day.run_count,
+            })),
+            runs: runsWithSelectable.map((run) => ({
                 execution_id: run.execution_id,
                 created_at: run.created_at.toISOString(),
                 sync_mode: run.sync_mode,
