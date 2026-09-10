@@ -89,6 +89,7 @@ async function syncCustomerInsuranceFieldsCore(
     // pre-cutover open invoices, which the MEP gate is not meant to touch.
     let oldestDue: Date | null = null;
     let oldestDueInMepScope: Date | null = null;
+    let oldestIssueInMepScope: Date | null = null;
     // Ungated twin of oldestDue: powers the displayed days-overdue metric, which
     // must count invoices issued before the MEP breach start date.
     let oldestDueAll: Date | null = null;
@@ -109,11 +110,20 @@ async function syncCustomerInsuranceFieldsCore(
         if (!oldestDue || dueDate < oldestDue) {
             oldestDue = dueDate;
         }
-        if (!isInvoiceInMepBreachScope(invoice.invoice_date, mepBreachStartDate)) {
-            continue;
-        }
-        if (!oldestDueInMepScope || dueDate < oldestDueInMepScope) {
+        const issueDate = invoice.invoice_date
+            ? new Date(invoice.invoice_date)
+            : null;
+        if (
+            !oldestDueInMepScope ||
+            dueDate < oldestDueInMepScope ||
+            (issueDate &&
+                oldestDueInMepScope &&
+                dueDate.getTime() === oldestDueInMepScope.getTime() &&
+                (!oldestIssueInMepScope ||
+                    issueDate < oldestIssueInMepScope))
+        ) {
             oldestDueInMepScope = dueDate;
+            oldestIssueInMepScope = issueDate;
         }
     }
 
@@ -130,6 +140,8 @@ async function syncCustomerInsuranceFieldsCore(
                   approved_limit_expiration_date: true,
                   zero_limit_date: true,
                   max_allowed_mep: true,
+                  mep_cutoff_day: true,
+                  mep_substitute_extra_days: true,
                   approved_limit_currency: true,
                   InsurancePolicy: {
                       select: {
@@ -148,6 +160,10 @@ async function syncCustomerInsuranceFieldsCore(
         oldestInvoiceOverdueDate: oldestDueInMepScope,
         maxAllowedMepDays: policyWithInsurance?.max_allowed_mep ?? null,
         today,
+        oldestInvoiceIssueDate: oldestIssueInMepScope,
+        mepCutoffDay: policyWithInsurance?.mep_cutoff_day ?? null,
+        mepSubstituteExtraDays:
+            policyWithInsurance?.mep_substitute_extra_days ?? null,
     });
 
     const outdatedDcl = policyWithInsurance
