@@ -542,6 +542,13 @@ export async function replayCustomerArImport(
     let deferredRemaining = 0;
     let eventsProcessed = 0;
 
+    if (events.length > 0) {
+        params.onProgress?.({
+            processed: 0,
+            total: events.length,
+        });
+    }
+
     for (const event of events) {
         eventsProcessed += 1;
         if (eventsProcessed % 500 === 0 || eventsProcessed === events.length) {

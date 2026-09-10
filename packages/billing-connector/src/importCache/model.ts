@@ -75,12 +75,19 @@ ConnectorImportEntityCacheSchema.index(
     },
     { unique: true }
 );
-/** Listing today’s runs by mode + customer scope. */
+/** Listing runs for a day by mode + customer scope. */
 ConnectorImportEntityCacheSchema.index({
     account_id: 1,
     sync_mode: 1,
     cache_day: 1,
     customer_scope: 1,
+});
+/** Distinct cache_day listing within TTL (mode + scope). */
+ConnectorImportEntityCacheSchema.index({
+    account_id: 1,
+    sync_mode: 1,
+    customer_scope: 1,
+    cache_day: 1,
 });
 ConnectorImportEntityCacheSchema.index(
     { created_at: 1 },

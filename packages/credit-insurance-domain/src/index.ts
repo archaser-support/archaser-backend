@@ -61,6 +61,7 @@ export { syncCustomerInsuranceFields } from "./credit-insurance/domain/syncCusto
 export {
     refreshInsuranceTargetDatesForInvoiceIds,
     refreshTermsBreachFlagsForCustomer,
+    refreshTermsBreachFlagsForCustomers,
     sweepReportingBreachForOverdueInvoiceIds,
 } from "./credit-insurance/domain/syncInvoiceReportingBreach";
 export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/insurancePolicyStatusCron";

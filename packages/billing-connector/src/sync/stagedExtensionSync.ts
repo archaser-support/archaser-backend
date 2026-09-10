@@ -721,6 +721,7 @@ export async function runStagedExtensionSync(
                 customerIds: args.customerIds,
                 onProcessOverdueCustomers: options.onProcessOverdueCustomers,
                 log,
+                prisma: options.prisma,
                 setTailStep: (state) =>
                     setTailStep(PROCESS_OVERDUE_ENTITY_STATS_KEY, state),
             });
@@ -847,10 +848,6 @@ export async function runStagedExtensionSync(
                             accountId: options.accountId,
                             executionId: options.cachedImportExecutionId.trim(),
                             syncMode: cacheSyncMode,
-                            cacheDay: resolveImportCacheDay(
-                                new Date(),
-                                options.timeZone
-                            ),
                             customerScope: cacheCustomerScope,
                         });
                         for (const invoiceNumber of closeTargets.invoiceNumbers) {
@@ -884,78 +881,88 @@ export async function runStagedExtensionSync(
                 bumpProcessedPage(stats, entityType, cachedRows.length);
                 emitProgress();
                 if (!dryRun && cachedRows.length > 0) {
-                    const importResult = await importFn(
-                        options.prisma,
-                        entityType,
-                        cachedRows,
-                        options.accountId,
-                        null,
-                        options.userId,
-                        {
-                            skipReportingBreach:
-                                options.skipReportingBreach === true,
-                            skipDeferredPaymentMaturity:
-                                entityType === "Invoice",
-                            onLog: options.onLog,
-                            shouldCancel: options.shouldCancel,
-                            extension: options.extension,
+                    const cacheRowsKept: Record<string, unknown>[] = [];
+                    const importErrors: string[] = [];
+                    let importedTotal = 0;
+                    let failedTotal = 0;
+                    const chunkSize = PRIORITY_RATE_LIMITS.recommendedPageSize;
+                    for (let i = 0; i < cachedRows.length; i += chunkSize) {
+                        const chunk = cachedRows.slice(i, i + chunkSize);
+                        if (chunk.length === 0) {
+                            continue;
                         }
-                    );
-                    bumpImported(
-                        stats,
-                        entityType,
-                        importResult.success,
-                        importResult.failed
-                    );
-                    const cacheRows = rowsEnteringImport(
-                        cachedRows,
-                        importResult
-                    );
-                    if (cacheRows.length > 0) {
-                        const existing =
-                            importCacheByEntity.get(entityType) ?? [];
-                        existing.push(...cacheRows);
+                        const importResult = await importFn(
+                            options.prisma,
+                            entityType,
+                            chunk,
+                            options.accountId,
+                            null,
+                            options.userId,
+                            {
+                                skipReportingBreach:
+                                    options.skipReportingBreach === true,
+                                skipDeferredPaymentMaturity:
+                                    entityType === "Invoice",
+                                onLog: options.onLog,
+                                shouldCancel: options.shouldCancel,
+                                extension: options.extension,
+                            }
+                        );
+                        importedTotal += importResult.success;
+                        failedTotal += importResult.failed;
+                        importErrors.push(...importResult.errors);
+                        const cacheRows = rowsEnteringImport(chunk, importResult);
+                        if (cacheRows.length > 0) {
+                            cacheRowsKept.push(...cacheRows);
+                        }
+                        if (entityType === "Payment" || entityType === "Invoice") {
+                            for (const id of importResult.affectedCustomerIds) {
+                                arAffectedCustomerIds.add(id);
+                                if (entityType === "Payment") {
+                                    paymentAffectedCustomerIds.add(id);
+                                }
+                            }
+                            for (const id of importResult.entityIds ?? []) {
+                                if (entityType === "Invoice") {
+                                    arAffectedInvoiceIds.add(id);
+                                } else {
+                                    arAffectedPaymentIds.add(id);
+                                }
+                            }
+                        }
+                        bumpImported(
+                            stats,
+                            entityType,
+                            importResult.success,
+                            importResult.failed
+                        );
+                        emitProgress();
+                    }
+                    if (cacheRowsKept.length > 0) {
+                        const existing = importCacheByEntity.get(entityType) ?? [];
+                        existing.push(...cacheRowsKept);
                         importCacheByEntity.set(entityType, existing);
                     }
-                    windowImported += importResult.success;
-                    windowErrors += importResult.failed;
-                    if (entityType === "Payment" || entityType === "Invoice") {
-                        for (const id of importResult.affectedCustomerIds) {
-                            arAffectedCustomerIds.add(id);
-                            if (entityType === "Payment") {
-                                paymentAffectedCustomerIds.add(id);
-                            }
-                        }
-                        for (const id of importResult.entityIds ?? []) {
-                            if (entityType === "Invoice") {
-                                arAffectedInvoiceIds.add(id);
-                            } else {
-                                arAffectedPaymentIds.add(id);
-                            }
-                        }
-                    }
-                    if (!dryRun) {
-                        await checkpointEntityPage({
-                            prisma: options.prisma,
-                            connectorId: options.connectorId,
-                            entityType,
-                            pulled: cachedRows.length,
-                            nextCursor: null,
-                            maxUpdated:
-                                cacheRows.length > 0
-                                    ? extractMaxUpdatedAt(cacheRows)
-                                    : null,
-                            lastError:
-                                importResult.failed > 0
-                                    ? importResult.errors
-                                          .slice(0, 3)
-                                          .join("; ")
-                                    : null,
-                            pageComplete: true,
-                            pageSize: cachedRows.length || 1,
-                            providerTotalCount: cachedRows.length,
-                        });
-                    }
+                    windowImported += importedTotal;
+                    windowErrors += failedTotal;
+                    await checkpointEntityPage({
+                        prisma: options.prisma,
+                        connectorId: options.connectorId,
+                        entityType,
+                        pulled: cachedRows.length,
+                        nextCursor: null,
+                        maxUpdated:
+                            cacheRowsKept.length > 0
+                                ? extractMaxUpdatedAt(cacheRowsKept)
+                                : null,
+                        lastError:
+                            failedTotal > 0
+                                ? importErrors.slice(0, 3).join("; ")
+                                : null,
+                        pageComplete: true,
+                        pageSize: cachedRows.length || 1,
+                        providerTotalCount: cachedRows.length,
+                    });
                 } else if (!dryRun) {
                     await checkpointEntityPage({
                         prisma: options.prisma,
