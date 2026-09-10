@@ -59,6 +59,7 @@ export {
 // --- Worker / connector entry points (currently loaded dynamically; slice 04 switches them to these) ---
 export { syncCustomerInsuranceFields } from "./credit-insurance/domain/syncCustomerInsuranceFields";
 export {
+    refreshCtvSnapshotsForInvoiceIds,
     refreshInsuranceTargetDatesForInvoiceIds,
     refreshTermsBreachFlagsForCustomer,
     refreshTermsBreachFlagsForCustomers,
@@ -168,6 +169,8 @@ export {
     type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
     type AsOfPolicyTermsForBreach,
+    type CustomerOverdueMepMonthEnd,
+    type OldestOverdueAtIssue,
 } from "./credit-insurance/domain/asOfOpenAr";
 export {
     aggregateLedgerPaymentsOnOrBefore,

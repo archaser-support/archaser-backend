@@ -243,6 +243,11 @@ export async function stampInvoicesInsuranceFieldsAsOf(
                 })),
             maxAllowedMep: insuranceCtx.max_allowed_mep,
             mepBreachStartDate: mepBreachByAccount.get(accountId) ?? null,
+            monthEnd: {
+                mepCutoffDay: insuranceCtx.mep_cutoff_day,
+                mepSubstituteExtraDays:
+                    insuranceCtx.mep_substitute_extra_days,
+            },
             db,
         });
         for (const [invoiceId, flagged] of byId) {
