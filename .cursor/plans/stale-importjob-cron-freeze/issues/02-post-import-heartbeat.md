@@ -1,6 +1,6 @@
 # 02 — Post-import modified_at heartbeat
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-stale-processing-sweeper](01-stale-processing-sweeper.md)
 **User stories:** 4, 10, 13
