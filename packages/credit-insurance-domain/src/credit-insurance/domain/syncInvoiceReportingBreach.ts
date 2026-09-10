@@ -376,7 +376,11 @@ type CtvSnapshotRow = {
     account_id: number | null;
     customer_id: number | null;
     Customer: {
-        CustomerPolicy: { max_allowed_mep: number | null }[];
+        CustomerPolicy: {
+            max_allowed_mep: number | null;
+            mep_cutoff_day: number | null;
+            mep_substitute_extra_days: number | null;
+        }[];
     } | null;
 };
 
@@ -400,6 +404,7 @@ async function resolveCreatedOverdueMepForRows(
     const resolved = new Map<number, boolean>();
     for (const bucket of byCustomer.values()) {
         const first = bucket[0]!;
+        const policy = first.Customer?.CustomerPolicy?.[0];
         const flags = await resolveCreatedOverdueMepByInvoiceId({
             accountId: first.account_id!,
             customerId: first.customer_id!,
@@ -408,10 +413,14 @@ async function resolveCreatedOverdueMepForRows(
                 invoice_date: row.invoice_date,
                 amount: row.amount,
             })),
-            maxAllowedMep:
-                first.Customer?.CustomerPolicy?.[0]?.max_allowed_mep ?? null,
+            maxAllowedMep: policy?.max_allowed_mep ?? null,
             mepBreachStartDate:
                 mepBreachStartDateByAccountId.get(first.account_id!) ?? null,
+            monthEnd: {
+                mepCutoffDay: policy?.mep_cutoff_day ?? null,
+                mepSubstituteExtraDays:
+                    policy?.mep_substitute_extra_days ?? null,
+            },
             db,
         });
         for (const [invoiceId, flag] of flags) {
@@ -460,6 +469,8 @@ export async function refreshCtvSnapshotsForInvoiceIds(
                             credit_score: true,
                             active_customer_since: true,
                             max_allowed_mep: true,
+                            mep_cutoff_day: true,
+                            mep_substitute_extra_days: true,
                         },
                     },
                 },
