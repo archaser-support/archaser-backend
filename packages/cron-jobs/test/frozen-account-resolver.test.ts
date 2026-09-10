@@ -19,6 +19,10 @@ function mockPrisma(queryResults: {
     backfill?: number[];
 }): PrismaClient {
     return {
+        importJob: {
+            findMany: jest.fn(async () => []),
+            updateMany: jest.fn(async () => ({ count: 0 })),
+        },
         $queryRaw: jest.fn(async (strings: TemplateStringsArray) => {
             const sql = strings.join(" ");
             if (sql.includes('"ImportJob"')) {
