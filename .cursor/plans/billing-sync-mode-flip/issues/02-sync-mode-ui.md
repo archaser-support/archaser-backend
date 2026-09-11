@@ -1,6 +1,6 @@
 # 02 — Show sync mode in progress and schedule UI
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-reconcile-sync-mode](01-reconcile-sync-mode.md)
 **User stories:** 10, 11, 12, 14
@@ -18,11 +18,11 @@ Show the connector **sync mode** (Backfill / Incremental) in two places on the b
 
 ## Acceptance criteria
 
-- [ ] Progress / primary-action area shows Backfill or Incremental from config
-- [ ] Schedule section shows the same mode
-- [ ] Labels update after config reload / mode repair without a full page hard-refresh beyond normal query invalidation
-- [ ] English and Hebrew keys added/updated together
-- [ ] No new styles beyond existing theme/MUI patterns already used on the tab
+- [x] Progress / primary-action area shows Backfill or Incremental from config
+- [x] Schedule section shows the same mode
+- [x] Labels update after config reload / mode repair without a full page hard-refresh beyond normal query invalidation
+- [x] English and Hebrew keys added/updated together
+- [x] No new styles beyond existing theme/MUI patterns already used on the tab
 
 ## How to test
 
