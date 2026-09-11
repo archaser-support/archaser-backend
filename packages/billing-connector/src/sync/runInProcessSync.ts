@@ -75,6 +75,10 @@ import {
     getDefaultBillingConnectorMetricsSink,
     type BillingConnectorObservabilityOptions,
 } from "../observability";
+import {
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
+} from "../syncHistory";
 
 export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions {
     prisma: PrismaClient;
@@ -995,21 +999,49 @@ async function runInProcessSyncBody(
             let windows = options.windows;
             if (!windows) {
                 if (isIncremental) {
-                    let earliest: Date | null = null;
-                    for (const entityType of enabled) {
-                        const syncState =
-                            await prisma.connectorSyncState.findFirst({
-                                where: {
-                                    connector_id: connector.id,
-                                    entity_type: entityType,
-                                },
-                            });
-                        const watermark = syncState?.last_max_updated_at ?? null;
-                        if (
-                            watermark &&
-                            (!earliest || watermark < earliest)
-                        ) {
-                            earliest = watermark;
+                    // Prefer Mongo last SUCCESS completed_at (Schedule / history
+                    // source of truth). Prisma entity watermarks are a fallback
+                    // when history is empty (e.g. first run after migrate).
+                    const historySuccess =
+                        await findLastSuccessfulExecutionForConnector(
+                            connector.id
+                        );
+                    let earliest =
+                        watermarkFromSuccessfulExecution(historySuccess);
+                    if (earliest) {
+                        onLog?.(
+                            `Incremental since=${earliest.toISOString()} ` +
+                                `from Mongo SUCCESS execution_id=${historySuccess?.execution_id}`
+                        );
+                    } else {
+                        for (const entityType of enabled) {
+                            const syncState =
+                                await prisma.connectorSyncState.findFirst({
+                                    where: {
+                                        connector_id: connector.id,
+                                        entity_type: entityType,
+                                    },
+                                });
+                            const watermark =
+                                syncState?.last_successful_run_at ??
+                                syncState?.last_max_updated_at ??
+                                null;
+                            if (
+                                watermark &&
+                                (!earliest || watermark < earliest)
+                            ) {
+                                earliest = watermark;
+                            }
+                        }
+                        if (earliest) {
+                            onLog?.(
+                                `Incremental since=${earliest.toISOString()} ` +
+                                    `from Prisma connector sync state (no Mongo SUCCESS)`
+                            );
+                        } else {
+                            onLog?.(
+                                "Incremental since=null (no Mongo SUCCESS or Prisma watermark) — pull_filters floor only"
+                            );
                         }
                     }
                     windows = planDefaultSyncWindows({
@@ -1184,7 +1216,9 @@ async function runInProcessSyncBody(
                     entityType === "Invoice" || entityType === "Payment";
                 const pullResult = await client.pull(entityType, {
                     since: usesDatePull
-                        ? syncState?.last_max_updated_at ?? null
+                        ? syncState?.last_successful_run_at ??
+                          syncState?.last_max_updated_at ??
+                          null
                         : null,
                     preferredDateField: usesDatePull
                         ? dateFieldByType.get(entityType) ?? null
@@ -1228,6 +1262,17 @@ async function runInProcessSyncBody(
         const arAffectedPaymentIds = new Set<number>();
         const paymentAffectedCustomerIds = new Set<number>();
         let invoicePostIngestRan = false;
+        const isLegacyIncremental = options.mode === "incremental";
+        const legacyHistorySince = isLegacyIncremental
+            ? watermarkFromSuccessfulExecution(
+                  await findLastSuccessfulExecutionForConnector(connector.id)
+              )
+            : null;
+        if (isLegacyIncremental && legacyHistorySince) {
+            log(
+                `Incremental since=${legacyHistorySince.toISOString()} from Mongo SUCCESS`
+            );
+        }
         for (const entityType of ENTITY_ORDER) {
             if (isCancelRequested(options)) {
                 log("Stopped by operator");
@@ -1380,7 +1425,10 @@ async function runInProcessSyncBody(
                     entityType === "Invoice" || entityType === "Payment";
                 const pullResult = await client.pull(entityType, {
                     since: usesDatePull
-                        ? syncState?.last_max_updated_at ?? null
+                        ? legacyHistorySince ??
+                          syncState?.last_successful_run_at ??
+                          syncState?.last_max_updated_at ??
+                          null
                         : null,
                     preferredDateField: usesDatePull
                         ? dateFieldByType.get(entityType) ?? null

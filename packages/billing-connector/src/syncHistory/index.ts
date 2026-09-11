@@ -8,6 +8,8 @@ export {
     listAwaitingPostIngestDrainExecutions,
     finalizeAwaitingPostIngestDrainExecutions,
     listExecutionsForAccount,
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
     listRunningSyncAccountIds,
     sweepStaleRunning,
     syncHistoryExecutionToSummary,

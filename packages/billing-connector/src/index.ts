@@ -352,6 +352,8 @@ export {
     touchAwaitingPostIngestDrainProgress,
     finalizeSyncHistoryAfterRun,
     listExecutionsForAccount,
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
     listRunningSyncAccountIds,
     sweepStaleRunning,
     syncHistoryExecutionToSummary,
