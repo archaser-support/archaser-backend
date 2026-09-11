@@ -503,6 +503,13 @@ export async function runStagedExtensionSync(
         if (dryRun) {
             return;
         }
+        // Entities loaded from backup must not re-publish under this execution.
+        if (cachedEntitiesDone.has(entityType)) {
+            log(
+                `Skipping import cache write for ${entityType} (loaded from backup)`
+            );
+            return;
+        }
         const rows = importCacheByEntity.get(entityType) ?? [];
         // Track that we attempted a flush so zero-row successes still write.
         if (!importCacheByEntity.has(entityType)) {
@@ -938,11 +945,8 @@ export async function runStagedExtensionSync(
                         );
                         emitProgress();
                     }
-                    if (cacheRowsKept.length > 0) {
-                        const existing = importCacheByEntity.get(entityType) ?? [];
-                        existing.push(...cacheRowsKept);
-                        importCacheByEntity.set(entityType, existing);
-                    }
+                    // Intentionally not staging rows into importCacheByEntity:
+                    // cache replay must not append a new Mongo backup (R1).
                     windowImported += importedTotal;
                     windowErrors += failedTotal;
                     await checkpointEntityPage({
@@ -1063,12 +1067,11 @@ export async function runStagedExtensionSync(
                     });
                 }
 
-                const cacheAbort = await flushEntityImportCacheOrAbort(
-                    entityType
+                // Replay keeps the source backup — skip Mongo write (and
+                // Payment PendingInvoiceClose companion) under this execution.
+                log(
+                    `Skipping import cache write for ${entityType} (loaded from backup)`
                 );
-                if (cacheAbort) {
-                    return cacheAbort;
-                }
                 continue;
             }
 
