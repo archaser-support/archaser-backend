@@ -139,6 +139,14 @@ export function classifyAsOfOpenStatus(
     return due.getTime() < asOf.getTime() ? "Overdue" : "Due";
 }
 
+/** True when `date` falls on the same UTC calendar day as `now` (default: wall clock). */
+export function isUtcCalendarToday(
+    date: Date,
+    now: Date = new Date()
+): boolean {
+    return toUtcDayStart(date).getTime() === toUtcDayStart(now).getTime();
+}
+
 export function toUtcDayStart(date: Date): Date {
     return new Date(
         Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
@@ -174,6 +182,8 @@ export type AsOfOpenInvoiceLine = {
      * Invoice row itself reports settled *today*. Must not erase history: when
      * payments on/before the snapshot day leave a non-zero open amount, the
      * invoice was open on that day even if status is Paid now.
+     * Exception: when the as-of day is UTC today, live Paid wins so today's CPT
+     * tip matches live At Risk (future-dated payments already applied live).
      */
     liveClosed?: boolean;
     /**
@@ -412,6 +422,13 @@ export function wasAsOfInvoiceOpenAt(
 ): boolean {
     const at = toUtcDayStart(atDate);
     if (toUtcDayStart(line.invoiceDate).getTime() > at.getTime()) {
+        return false;
+    }
+    // Today's CPT / as-of snapshot must match the live book. Future-dated ERP
+    // payments can already mark the invoice Paid while payment_date is still
+    // after today — do not reopen those on the "today" tip of the chart.
+    // Historical days keep the paid-later reopen rule below.
+    if (line.liveClosed && isUtcCalendarToday(at)) {
         return false;
     }
     const openCustomer = computeAsOfOpenCustomerAmount(line);

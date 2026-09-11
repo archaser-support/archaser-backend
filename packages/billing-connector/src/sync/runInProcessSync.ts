@@ -33,6 +33,7 @@ import { PRIORITY_RATE_LIMITS } from "../priority/priorityApiContract";
 import { odataSelectFieldsFromMapping } from "../priority/prioritySelectFields";
 import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
 import { resolveImportPullFilterOData } from "../services/billingConnectorPullFilters";
+import { persistReconciledConnectorSyncMode } from "../services/reconcileConnectorSyncMode";
 import {
     clearBeforeImport,
     parseCustomerIdForClearBeforeImport,
@@ -74,6 +75,10 @@ import {
     getDefaultBillingConnectorMetricsSink,
     type BillingConnectorObservabilityOptions,
 } from "../observability";
+import {
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
+} from "../syncHistory";
 
 export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions {
     prisma: PrismaClient;
@@ -389,10 +394,9 @@ export async function runInProcessSync(
         startedAtMs: Date.now(),
         startEmitted: false,
     };
-    const result = attachSyncMeta(
-        await runInProcessSyncBody(options, obsRuntime),
-        options
-    );
+    const bodyResult = await runInProcessSyncBody(options, obsRuntime);
+    await reconcileSyncModeAfterInProcessRun(options);
+    const result = attachSyncMeta(bodyResult, options);
     const structuredLogs = options.observability?.structuredLogs !== false;
     const metrics =
         options.observability?.metrics ??
@@ -418,6 +422,43 @@ export async function runInProcessSync(
         }
     );
     return result;
+}
+
+async function reconcileSyncModeAfterInProcessRun(
+    options: RunInProcessSyncOptions
+): Promise<void> {
+    if (options.dryRun) {
+        return;
+    }
+    try {
+        const connector = await options.prisma.billingConnector.findUnique({
+            where: { account_id: options.accountId },
+            include: { ConnectorSyncState: true },
+        });
+        if (!connector) {
+            return;
+        }
+        const customerScoped =
+            options.mode === "backfill" &&
+            parseCustomerIdForClearBeforeImport(options.customerId) != null;
+        await persistReconciledConnectorSyncMode({
+            prisma: options.prisma,
+            connectorId: connector.id,
+            currentMode: connector.sync_mode,
+            enabledEntities: enabledEntitiesFromConnector(
+                connector.enabled_entities
+            ),
+            syncStates: connector.ConnectorSyncState ?? [],
+            customerScoped,
+            onLog: options.onLog,
+        });
+    } catch (error) {
+        const message =
+            error instanceof Error ? error.message : String(error);
+        options.onLog?.(
+            `Sync mode reconcile skipped after run: ${message}`
+        );
+    }
 }
 
 async function runInProcessSyncBody(
@@ -958,21 +999,49 @@ async function runInProcessSyncBody(
             let windows = options.windows;
             if (!windows) {
                 if (isIncremental) {
-                    let earliest: Date | null = null;
-                    for (const entityType of enabled) {
-                        const syncState =
-                            await prisma.connectorSyncState.findFirst({
-                                where: {
-                                    connector_id: connector.id,
-                                    entity_type: entityType,
-                                },
-                            });
-                        const watermark = syncState?.last_max_updated_at ?? null;
-                        if (
-                            watermark &&
-                            (!earliest || watermark < earliest)
-                        ) {
-                            earliest = watermark;
+                    // Prefer Mongo last SUCCESS completed_at (Schedule / history
+                    // source of truth). Prisma entity watermarks are a fallback
+                    // when history is empty (e.g. first run after migrate).
+                    const historySuccess =
+                        await findLastSuccessfulExecutionForConnector(
+                            connector.id
+                        );
+                    let earliest =
+                        watermarkFromSuccessfulExecution(historySuccess);
+                    if (earliest) {
+                        onLog?.(
+                            `Incremental since=${earliest.toISOString()} ` +
+                                `from Mongo SUCCESS execution_id=${historySuccess?.execution_id}`
+                        );
+                    } else {
+                        for (const entityType of enabled) {
+                            const syncState =
+                                await prisma.connectorSyncState.findFirst({
+                                    where: {
+                                        connector_id: connector.id,
+                                        entity_type: entityType,
+                                    },
+                                });
+                            const watermark =
+                                syncState?.last_successful_run_at ??
+                                syncState?.last_max_updated_at ??
+                                null;
+                            if (
+                                watermark &&
+                                (!earliest || watermark < earliest)
+                            ) {
+                                earliest = watermark;
+                            }
+                        }
+                        if (earliest) {
+                            onLog?.(
+                                `Incremental since=${earliest.toISOString()} ` +
+                                    `from Prisma connector sync state (no Mongo SUCCESS)`
+                            );
+                        } else {
+                            onLog?.(
+                                "Incremental since=null (no Mongo SUCCESS or Prisma watermark) — pull_filters floor only"
+                            );
                         }
                     }
                     windows = planDefaultSyncWindows({
@@ -1147,7 +1216,9 @@ async function runInProcessSyncBody(
                     entityType === "Invoice" || entityType === "Payment";
                 const pullResult = await client.pull(entityType, {
                     since: usesDatePull
-                        ? syncState?.last_max_updated_at ?? null
+                        ? syncState?.last_successful_run_at ??
+                          syncState?.last_max_updated_at ??
+                          null
                         : null,
                     preferredDateField: usesDatePull
                         ? dateFieldByType.get(entityType) ?? null
@@ -1191,6 +1262,17 @@ async function runInProcessSyncBody(
         const arAffectedPaymentIds = new Set<number>();
         const paymentAffectedCustomerIds = new Set<number>();
         let invoicePostIngestRan = false;
+        const isLegacyIncremental = options.mode === "incremental";
+        const legacyHistorySince = isLegacyIncremental
+            ? watermarkFromSuccessfulExecution(
+                  await findLastSuccessfulExecutionForConnector(connector.id)
+              )
+            : null;
+        if (isLegacyIncremental && legacyHistorySince) {
+            log(
+                `Incremental since=${legacyHistorySince.toISOString()} from Mongo SUCCESS`
+            );
+        }
         for (const entityType of ENTITY_ORDER) {
             if (isCancelRequested(options)) {
                 log("Stopped by operator");
@@ -1233,7 +1315,6 @@ async function runInProcessSyncBody(
                     emit();
                     let importedFromCache = 0;
                     let failedFromCache = 0;
-                    const cacheRowsForSave: Record<string, unknown>[] = [];
                     const chunkSize = PRIORITY_RATE_LIMITS.recommendedPageSize;
                     for (let i = 0; i < cachedRows.length; i += chunkSize) {
                         const chunk = cachedRows.slice(i, i + chunkSize);
@@ -1255,13 +1336,6 @@ async function runInProcessSyncBody(
                             );
                         importedFromCache += importResult.success;
                         failedFromCache += importResult.failed;
-                        const chunkRowsForSave = rowsEnteringImport(
-                            chunk,
-                            importResult
-                        );
-                        if (chunkRowsForSave.length > 0) {
-                            cacheRowsForSave.push(...chunkRowsForSave);
-                        }
                         if (entityType === "Payment" || entityType === "Invoice") {
                             for (const id of importResult.affectedCustomerIds) {
                                 arAffectedCustomerIds.add(id);
@@ -1330,49 +1404,11 @@ async function runInProcessSyncBody(
                         },
                     });
 
-                    const cacheSyncMode: ImportCacheSyncMode =
-                        options.mode === "incremental"
-                            ? "INCREMENTAL"
-                            : "BACKFILL";
-                    try {
-                        await saveEntityImportCacheOrThrow(
-                            {
-                                accountId,
-                                connectorId: connector.id,
-                                provider: connector.provider,
-                                importType: entityType,
-                                syncMode: cacheSyncMode,
-                                cacheDay: resolveImportCacheDay(
-                                    new Date(),
-                                    connector.time_zone
-                                ),
-                                customerScope:
-                                    normalizeImportCacheCustomerScope(
-                                        runtimeCustomerNumber
-                                    ),
-                                executionId: options.executionId ?? null,
-                                rows: cacheRowsForSave,
-                            },
-                            log
-                        );
-                    } catch (cacheErr) {
-                        const message =
-                            cacheErr instanceof Error
-                                ? cacheErr.message
-                                : String(cacheErr);
-                        log(
-                            `Import cache save failed for ${entityType}: ${message}`
-                        );
-                        stats.importErrors += 1;
-                        return {
-                            ok: false,
-                            accountId,
-                            provider: connector.provider,
-                            stats,
-                            message: `Import cache save failed for ${entityType}: ${message}`,
-                            error: "IMPORT_CACHE_SAVE_FAILED",
-                        };
-                    }
+                    // Replay keeps the source backup — do not append a new
+                    // Mongo import-cache doc under this execution_id (R1/R2).
+                    log(
+                        `Skipping import cache write for ${entityType} (loaded from backup)`
+                    );
                     continue;
                 }
 
@@ -1389,7 +1425,10 @@ async function runInProcessSyncBody(
                     entityType === "Invoice" || entityType === "Payment";
                 const pullResult = await client.pull(entityType, {
                     since: usesDatePull
-                        ? syncState?.last_max_updated_at ?? null
+                        ? legacyHistorySince ??
+                          syncState?.last_successful_run_at ??
+                          syncState?.last_max_updated_at ??
+                          null
                         : null,
                     preferredDateField: usesDatePull
                         ? dateFieldByType.get(entityType) ?? null
