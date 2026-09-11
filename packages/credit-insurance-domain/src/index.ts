@@ -166,6 +166,7 @@ export {
     overlayAsOfTermsFlagsForAccountLines,
     overlayAsOfTermsFlagsOnLines,
     wasAsOfInvoiceOpenAt,
+    isUtcCalendarToday,
     type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
     type AsOfPolicyTermsForBreach,
