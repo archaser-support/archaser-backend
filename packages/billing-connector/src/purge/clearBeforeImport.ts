@@ -810,6 +810,19 @@ export async function clearBeforeImport(
         return result.cancelled;
     };
 
+    // Invoice deletes cascade InvoicePayment rows. Those are in plannedTotal when
+    // Payment is also targeted, so credit them toward deleted.Payment or the
+    // counter stalls below the plan after Invoice finishes.
+    let paymentsBeforeInvoice: number | null = null;
+    if (targets.includes("Invoice") && targets.includes("Payment")) {
+        paymentsBeforeInvoice = await countRowsRaw({
+            prisma: options.prisma,
+            tableSql: `"InvoicePayment"`,
+            whereSql: accountSql.whereSql,
+            whereParams: accountSql.whereParams,
+        });
+    }
+
     if (targets.includes("Invoice")) {
         const cancelled = await runEntity("Invoice", () =>
             purgeInvoices({
@@ -823,6 +836,22 @@ export async function clearBeforeImport(
         );
         if (cancelled) {
             return { deleted, cancelled: true };
+        }
+        if (paymentsBeforeInvoice != null) {
+            const paymentsAfterInvoice = await countRowsRaw({
+                prisma: options.prisma,
+                tableSql: `"InvoicePayment"`,
+                whereSql: accountSql.whereSql,
+                whereParams: accountSql.whereParams,
+            });
+            const cascadedPayments = Math.max(
+                0,
+                paymentsBeforeInvoice - paymentsAfterInvoice
+            );
+            if (cascadedPayments > 0) {
+                deleted.Payment = (deleted.Payment ?? 0) + cascadedPayments;
+                emit("Invoice");
+            }
         }
     }
 
@@ -843,12 +872,14 @@ export async function clearBeforeImport(
     }
 
     if (targets.includes("Payment")) {
+        // Cascade credit from Invoice must survive runEntity's overwrite.
+        const paymentBaseline = deleted.Payment ?? 0;
         const cancelled = await runEntity("Payment", () =>
             purgePayments({
                 prisma: options.prisma,
                 ...scope,
                 onDeleted: (count) => {
-                    deleted.Payment = count;
+                    deleted.Payment = paymentBaseline + count;
                     emit("Payment");
                 },
             })
@@ -856,6 +887,9 @@ export async function clearBeforeImport(
         if (cancelled) {
             return { deleted, cancelled: true };
         }
+        // runEntity sets deleted.Payment = Payment-step count only — restore cascade.
+        deleted.Payment = paymentBaseline + (deleted.Payment ?? 0);
+        emit("Payment");
     }
 
     if (targets.includes("Customer")) {
