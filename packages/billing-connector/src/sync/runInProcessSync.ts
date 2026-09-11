@@ -33,6 +33,7 @@ import { PRIORITY_RATE_LIMITS } from "../priority/priorityApiContract";
 import { odataSelectFieldsFromMapping } from "../priority/prioritySelectFields";
 import { parseEntitySetsMap } from "../services/billingConnectorEntitySets";
 import { resolveImportPullFilterOData } from "../services/billingConnectorPullFilters";
+import { persistReconciledConnectorSyncMode } from "../services/reconcileConnectorSyncMode";
 import {
     clearBeforeImport,
     parseCustomerIdForClearBeforeImport,
@@ -389,10 +390,9 @@ export async function runInProcessSync(
         startedAtMs: Date.now(),
         startEmitted: false,
     };
-    const result = attachSyncMeta(
-        await runInProcessSyncBody(options, obsRuntime),
-        options
-    );
+    const bodyResult = await runInProcessSyncBody(options, obsRuntime);
+    await reconcileSyncModeAfterInProcessRun(options);
+    const result = attachSyncMeta(bodyResult, options);
     const structuredLogs = options.observability?.structuredLogs !== false;
     const metrics =
         options.observability?.metrics ??
@@ -418,6 +418,43 @@ export async function runInProcessSync(
         }
     );
     return result;
+}
+
+async function reconcileSyncModeAfterInProcessRun(
+    options: RunInProcessSyncOptions
+): Promise<void> {
+    if (options.dryRun) {
+        return;
+    }
+    try {
+        const connector = await options.prisma.billingConnector.findUnique({
+            where: { account_id: options.accountId },
+            include: { ConnectorSyncState: true },
+        });
+        if (!connector) {
+            return;
+        }
+        const customerScoped =
+            options.mode === "backfill" &&
+            parseCustomerIdForClearBeforeImport(options.customerId) != null;
+        await persistReconciledConnectorSyncMode({
+            prisma: options.prisma,
+            connectorId: connector.id,
+            currentMode: connector.sync_mode,
+            enabledEntities: enabledEntitiesFromConnector(
+                connector.enabled_entities
+            ),
+            syncStates: connector.ConnectorSyncState ?? [],
+            customerScoped,
+            onLog: options.onLog,
+        });
+    } catch (error) {
+        const message =
+            error instanceof Error ? error.message : String(error);
+        options.onLog?.(
+            `Sync mode reconcile skipped after run: ${message}`
+        );
+    }
 }
 
 async function runInProcessSyncBody(
