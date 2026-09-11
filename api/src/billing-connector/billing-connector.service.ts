@@ -62,6 +62,8 @@ import {
     finalizeSyncHistoryAfterRun,
     markExecutionCancelled,
     listExecutionsForAccount,
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
     sweepStaleRunning,
     syncHistoryExecutionToSummary,
     listMergedInProcessSyncRuns,
@@ -96,6 +98,7 @@ import {
     resolveMepBreachStartDateChange,
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
+import { pickAccountLastSyncDate } from "./account-last-sync-date";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 import { MetricsService } from "../metrics/metrics.service";
 import { CronQueueService } from "../queue/cron-queue.service";
@@ -536,6 +539,15 @@ export class BillingConnectorApiService {
             modified_at: connector.modified_at.toISOString(),
             schedule_summary: describeSchedule(connector.sync_cron_expression),
             next_scheduled_sync_at_utc: nextScheduled?.toISOString() ?? null,
+            last_sync_at:
+                watermarkFromSuccessfulExecution(
+                    await findLastSuccessfulExecutionForConnector(connector.id)
+                )?.toISOString() ??
+                pickAccountLastSyncDate(
+                    parseEnabledEntities(connector.enabled_entities),
+                    connector.ConnectorSyncState ?? []
+                )?.toISOString() ??
+                null,
             schedule_preset: preset.schedule_preset,
             daily_time_utc: preset.daily_time_utc,
             weekly_day: preset.weekly_day,

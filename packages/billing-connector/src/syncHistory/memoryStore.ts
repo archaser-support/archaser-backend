@@ -199,6 +199,22 @@ export function createMemorySyncHistoryStore(): SyncHistoryStore & {
                 .slice(0, limit)
                 .map(clone);
         },
+        async findLastSuccessfulForConnector(
+            connectorId: number
+        ): Promise<SyncHistoryExecution | null> {
+            const matches = [...byId.values()].filter(
+                (doc) =>
+                    doc.connector_id === connectorId &&
+                    doc.status === "SUCCESS" &&
+                    doc.trigger !== "preview"
+            );
+            matches.sort((a, b) => {
+                const aAt = (a.completed_at ?? a.started_at).getTime();
+                const bAt = (b.completed_at ?? b.started_at).getTime();
+                return bAt - aAt;
+            });
+            return matches[0] ? clone(matches[0]) : null;
+        },
         async listRunningAccountIds(): Promise<number[]> {
             const accountIds = new Set<number>();
             for (const doc of byId.values()) {

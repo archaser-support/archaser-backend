@@ -255,6 +255,20 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
         return docs.map(toExecution);
     },
 
+    async findLastSuccessfulForConnector(
+        connectorId: number
+    ): Promise<SyncHistoryExecution | null> {
+        await ensureMongoConnection();
+        const doc = await ConnectorSyncExecutionModel.findOne({
+            connector_id: connectorId,
+            status: "SUCCESS",
+            trigger: { $ne: "preview" },
+        })
+            .sort({ completed_at: -1, started_at: -1 })
+            .lean();
+        return doc ? toExecution(doc) : null;
+    },
+
     async listRunningAccountIds(): Promise<number[]> {
         await ensureMongoConnection();
         const accountIds = await ConnectorSyncExecutionModel.distinct(
