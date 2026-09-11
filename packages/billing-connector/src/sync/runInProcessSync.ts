@@ -1233,7 +1233,6 @@ async function runInProcessSyncBody(
                     emit();
                     let importedFromCache = 0;
                     let failedFromCache = 0;
-                    const cacheRowsForSave: Record<string, unknown>[] = [];
                     const chunkSize = PRIORITY_RATE_LIMITS.recommendedPageSize;
                     for (let i = 0; i < cachedRows.length; i += chunkSize) {
                         const chunk = cachedRows.slice(i, i + chunkSize);
@@ -1255,13 +1254,6 @@ async function runInProcessSyncBody(
                             );
                         importedFromCache += importResult.success;
                         failedFromCache += importResult.failed;
-                        const chunkRowsForSave = rowsEnteringImport(
-                            chunk,
-                            importResult
-                        );
-                        if (chunkRowsForSave.length > 0) {
-                            cacheRowsForSave.push(...chunkRowsForSave);
-                        }
                         if (entityType === "Payment" || entityType === "Invoice") {
                             for (const id of importResult.affectedCustomerIds) {
                                 arAffectedCustomerIds.add(id);
@@ -1330,49 +1322,11 @@ async function runInProcessSyncBody(
                         },
                     });
 
-                    const cacheSyncMode: ImportCacheSyncMode =
-                        options.mode === "incremental"
-                            ? "INCREMENTAL"
-                            : "BACKFILL";
-                    try {
-                        await saveEntityImportCacheOrThrow(
-                            {
-                                accountId,
-                                connectorId: connector.id,
-                                provider: connector.provider,
-                                importType: entityType,
-                                syncMode: cacheSyncMode,
-                                cacheDay: resolveImportCacheDay(
-                                    new Date(),
-                                    connector.time_zone
-                                ),
-                                customerScope:
-                                    normalizeImportCacheCustomerScope(
-                                        runtimeCustomerNumber
-                                    ),
-                                executionId: options.executionId ?? null,
-                                rows: cacheRowsForSave,
-                            },
-                            log
-                        );
-                    } catch (cacheErr) {
-                        const message =
-                            cacheErr instanceof Error
-                                ? cacheErr.message
-                                : String(cacheErr);
-                        log(
-                            `Import cache save failed for ${entityType}: ${message}`
-                        );
-                        stats.importErrors += 1;
-                        return {
-                            ok: false,
-                            accountId,
-                            provider: connector.provider,
-                            stats,
-                            message: `Import cache save failed for ${entityType}: ${message}`,
-                            error: "IMPORT_CACHE_SAVE_FAILED",
-                        };
-                    }
+                    // Replay keeps the source backup — do not append a new
+                    // Mongo import-cache doc under this execution_id (R1/R2).
+                    log(
+                        `Skipping import cache write for ${entityType} (loaded from backup)`
+                    );
                     continue;
                 }
 

@@ -18,7 +18,7 @@ Billing connector backfill and daily (incremental) sync pull entity data from th
 
 ## Solution
 
-After each successful entity type in a backfill or incremental run (manual or scheduled), **append** a Mongo backup of the **mapped rows that entered import** (6-month TTL). Do **not** overwrite other successful runs the same day. Each backup is keyed by **`execution_id`** (required) plus account, entity, sync mode, calendar day, and customer scope.
+After each successful entity type in a backfill or incremental run (manual or scheduled), **append** a Mongo backup of the **mapped rows that entered import** (6-month TTL) — **unless** that entity was loaded from an existing import backup (`use_cached_import`). Do **not** overwrite other successful runs the same day. Each backup is keyed by **`execution_id`** (required) plus account, entity, sync mode, calendar day, and customer scope. Cache replay keeps the **original** backup as the reference; mixed Start may append backups only for ERP-fetched entities (incomplete new run).
 
 On manual Start (backfill or incremental), `GET cache-check` returns **`days[]`** for every calendar day in TTL that has at least one selectable entity for this Start (mode + customer scope + enabled entities), plus **`runs[]` for the default day** (most recent day with a backup). The analyst **picks a day**, then **one run** on that day, then which entities to load (`use_cached_execution_id` + `use_cached_import`). Changing day refetches with `?cache_day=`. Unchecked entities / skip-cache still pull from the ERP. Replay **loads by `execution_id` only** (calendar day is for listing/UI). `clear_before_import` stays **independent** of cache. Scheduled cron always fetches from the ERP but still writes Mongo. Preview never writes this cache.
 
@@ -63,6 +63,7 @@ On manual Start (backfill or incremental), `GET cache-check` returns **`days[]`*
 35. As an analyst, I want changing the selected day to reload that day’s runs, so that I never mix runs across days.
 36. As an analyst, I want days that only have backups for disabled/unusable entities hidden from the day list, so that I do not open empty run lists.
 37. As a developer, I want Start replay to load Mongo rows by `execution_id` (and mode/scope/entity) without requiring today’s `cache_day`, so that prior-day picks do not 404.
+38. As an analyst, I want replaying entities from an import backup **not** to create a new Mongo backup for those entities, so that the day/run list does not fill with duplicate replays.
 
 ## Implementation Decisions
 
@@ -96,10 +97,12 @@ Same-day second successful run **appends** a new backup; it does **not** delete 
 ### Write timing and failure
 
 - Write **once** after that entity type **fully finishes for the whole run** (all date windows). No mid-window Mongo publish.
+- **Skip write** when the entity was loaded from import cache for this Start (`use_cached_import`). Do not re-backup replayed rows even if re-import success/failure differs from the source backup. If Payment is from cache, also skip writing a new PendingInvoiceClose companion under the new `execution_id`.
 - No write if the entity fails before completion.
-- **`execution_id` required** — missing id → fail the entity step.
-- If Postgres import succeeded but Mongo save fails → **fail that entity step and stop the run** (do not start later entities). Do not leave a silent best-effort miss.
+- **`execution_id` required** — missing id → fail the entity step (when a write is attempted).
+- If Postgres import succeeded but Mongo save fails → **fail that entity step and stop the run** (do not start later entities). Do not leave a silent best-effort miss. (Applies only when a write is attempted — ERP entities.)
 - Preview: never writes.
+- No UI copy change for skip-on-replay (silent backend).
 
 ### Cron vs manual
 
@@ -236,6 +239,15 @@ Do not require new automated tests in slices unless the user explicitly asks at 
 | H9 | First paint | Omit `cache_day` → **`days[]` + default day’s `runs[]`** | Day change uses `?cache_day=` |
 | H10 | Day list contents | Only days with **≥1 selectable entity** for this Start | Mirror today’s run filter |
 
+#### 2026-09-11 skip re-backup on cache replay
+
+| # | Topic | Decision | Rationale / plan impact |
+|---|-------|----------|-------------------------|
+| R1 | When to skip a new backup | Skip Mongo write for **every** entity loaded from cache (mixed Start OK) | No duplicate docs for replayed entities |
+| R2 | Replay ≠ backup rows | Still skip write; keep the original backup | No partial-success re-backup after replay |
+| R3 | Mixed Start in backup list | New run lists only ERP entities (incomplete run) | Same as incomplete-run listing (D10) |
+| R4 | UI messaging | No UI copy change — silent backend only | Frontend untouched |
+
 ### Discovery gates
 
 | Gate | If Yes | If No | Blocks |
@@ -285,5 +297,6 @@ Tracer-bullet breakdown under `.cursor/plans/billing-import-mongo-cache/`.
 | 3 | Billing UI cache suggestion on Start | `issues/03-frontend-cache-suggestion.md` | done (v1) | Extended by 04 |
 | 4 | Multi-run history + Start run picker | `issues/04-multi-run-cache-picker.md` | done | Today-only list; superseded list window by 05 |
 | 5 | Historical cache day picker (TTL) | `issues/05-historical-cache-day-picker.md` | done | Implements 2026-09-09 H1–H10 |
+| 6 | Skip Mongo write on cache replay | `issues/06-skip-cache-write-on-replay.md` | done | Implements 2026-09-11 R1–R4 |
 
-**Status:** all vertical slices **01–05** done.
+**Status:** all vertical slices **01–06** done.
