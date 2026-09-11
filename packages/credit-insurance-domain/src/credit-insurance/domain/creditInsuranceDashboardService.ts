@@ -55,9 +55,11 @@ import {
     aggregatePortfolioTermsBreachFromInvoices,
 } from "./termBreachResolver";
 import {
+    isFullOpenArAtRiskCustomer,
     isNoPolicyExposureCardCustomer,
-    isUncoveredExposureCustomer,
+    uncoveredExposureFieldsFromPolicyLink,
 } from "./policyExclusion";
+import { refreshCapacityGapsForAtRiskDrift } from "./refreshCapacityGapsForAtRiskDrift";
 import type { CreditDashboardAccountSettings } from "./creditAsOfBackfillRunContext";
 
 const COLLECTION_LIVE: record_status[] = [record_status.Active, record_status.Inactive];
@@ -992,13 +994,14 @@ export type CreditDashboardSummary = {
      */
     compliantExposure: number;
     /**
-     * Sum of per-customer at-risk under the shared formula: uncovered → full AR;
-     * insured → Σ max(capacity_gap_i, terms_breach_i) per open invoice.
-     * Live portfolio has no policy max-cover residual on top of customer sums.
+     * Sum of per-customer at-risk: no-policy / pending-review → full AR;
+     * everyone else → Cap Gap + Terms − overlap (live), or invoice Σ max when as-of.
+     * Live portfolio refreshes drifted gaps before Cap Gap + At Risk reads.
+     * Portfolio total is the sum of customer at-risk only (no policy max-cover residual).
      */
     atRiskExposure: number;
     /**
-     * Sum of insured-customer at-risk (same per-invoice max formula) only.
+     * Sum of non–full-AR-cohort customer at-risk only.
      * Equals atRiskExposure minus withoutPolicy.totalAmount when without-policy
      * cohort is included in scope.
      */
@@ -1483,18 +1486,15 @@ export async function getCreditDashboardSummary(
         }),
     ]);
 
-    const { enrichCustomersWithPolicyScope, fetchCustomerIdsWithActiveLinkedPolicy } =
-        await import("./enrichCustomersWithActivePolicy");
+    const { enrichCustomersWithPolicyScope } = await import(
+        "./enrichCustomersWithActivePolicy"
+    );
     const customers = await enrichCustomersWithPolicyScope(
         customersRaw,
         policyId
     );
 
     const customerIds = customers.map((c) => c.id);
-    const activeLinkedPolicyCustomerIds =
-        await fetchCustomerIdsWithActiveLinkedPolicy(customerIds);
-    const customerHasActiveLinkedPolicy = (customerId: number): boolean =>
-        activeLinkedPolicyCustomerIds.has(customerId);
 
     let preparedAsOfLines:
         | import("./asOfOpenAr").AsOfOpenInvoiceLine[]
@@ -1567,24 +1567,39 @@ export async function getCreditDashboardSummary(
         }
         return 0;
     };
+    const scopedUncoveredFields = (c: (typeof customers)[number]) =>
+        uncoveredExposureFieldsFromPolicyLink({
+            insurancePolicyId: c.policy_id,
+            exclusionReason: c.policy_exclusion_reason,
+        });
     const isNoPolicyExposureCohortCustomer = (
         c: (typeof customers)[number]
     ): boolean =>
         isNoPolicyExposureCardCustomer({
-            hasLinkedPolicy: customerHasActiveLinkedPolicy(c.id),
-            exclusionReason: c.policy_exclusion_reason,
+            ...scopedUncoveredFields(c),
             openAr: openArForCustomer(c),
         });
-    const isUncoveredExposureCohortCustomer = (
+    const isFullArAtRiskCohortCustomer = (
         c: (typeof customers)[number]
-    ): boolean =>
-        isUncoveredExposureCustomer({
-            hasLinkedPolicy: customerHasActiveLinkedPolicy(c.id),
-            exclusionReason: c.policy_exclusion_reason,
-        });
+    ): boolean => isFullOpenArAtRiskCustomer(scopedUncoveredFields(c));
     const dashboardCustomers = includeNoPolicyExposure
         ? customers
         : customers.filter((c) => !isNoPolicyExposureCohortCustomer(c));
+
+    if (asOfDate == null) {
+        const insuredIdsForGapRefresh = dashboardCustomers
+            .filter(
+                (c) =>
+                    !isFullArAtRiskCohortCustomer(c) &&
+                    openArForCustomer(c) > 0
+            )
+            .map((c) => c.id);
+        await refreshCapacityGapsForAtRiskDrift({
+            accountId,
+            customerIds: insuredIdsForGapRefresh,
+            policyId,
+        });
+    }
 
     let totalReceivables = 0;
     for (const c of dashboardCustomers) {
@@ -1804,6 +1819,17 @@ export async function getCreditDashboardSummary(
     );
     const capacityTotal = policyGapRollup.gapBaseTotal;
     const customerOverLimit = policyGapRollup.customerOverLimitCount;
+    const capacityGapByCustomerId = new Map<number, number>();
+    for (const [key, gap] of policyGapRollup.gapByCustomerPolicy) {
+        const customerId = Number(String(key).split(":")[0]);
+        if (!Number.isFinite(customerId)) {
+            continue;
+        }
+        capacityGapByCustomerId.set(
+            customerId,
+            (capacityGapByCustomerId.get(customerId) ?? 0) + Math.max(0, gap)
+        );
+    }
 
     const invRow = invAgg[0];
     let termsCount = invRow?.c ?? 0;
@@ -1822,7 +1848,7 @@ export async function getCreditDashboardSummary(
     };
 
     const insuredCustomerIdsForTermsBreach = dashboardCustomers
-        .filter((c) => !isUncoveredExposureCohortCustomer(c))
+        .filter((c) => !isFullArAtRiskCohortCustomer(c))
         .map((c) => c.id);
 
     if (insuredCustomerIdsForTermsBreach.length === 0) {
@@ -1959,7 +1985,7 @@ export async function getCreditDashboardSummary(
 
     const insuredCustomerIdsForAtRisk = dashboardCustomers
         .filter((c) => {
-            if (isUncoveredExposureCohortCustomer(c)) {
+            if (isFullArAtRiskCohortCustomer(c)) {
                 return false;
             }
             return openArForCustomer(c) > 0;
@@ -1994,7 +2020,7 @@ export async function getCreditDashboardSummary(
                       import("./asOfOpenAr").AsOfCapacityGapWaterfallScope
                   >();
                   for (const c of dashboardCustomers) {
-                      if (isUncoveredExposureCohortCustomer(c)) {
+                      if (isFullArAtRiskCohortCustomer(c)) {
                           continue;
                       }
                       if (
@@ -2087,13 +2113,18 @@ export async function getCreditDashboardSummary(
         if (ar <= 0) {
             continue;
         }
-        const uncovered = isUncoveredExposureCohortCustomer(c);
+        const uncovered = isFullArAtRiskCohortCustomer(c);
+        const invoices = uncovered
+            ? []
+            : (atRiskInvoicesByCustomer.get(c.id) ?? []);
         const allocated = computeCustomerRiskExposure({
             uncovered,
             totalAr: ar,
-            invoices: uncovered
-                ? []
-                : (atRiskInvoicesByCustomer.get(c.id) ?? []),
+            invoices,
+            capacityGapAmount:
+                uncovered || asOfDate != null
+                    ? undefined
+                    : (capacityGapByCustomerId.get(c.id) ?? 0),
         });
         if (!uncovered) {
             policyRiskExposure += allocated;
@@ -2819,6 +2850,15 @@ export async function getPolicyRiskExposureReport(
         if (c.InsurancePolicy == null) {
             continue;
         }
+        const uncovered = isFullOpenArAtRiskCustomer(
+            uncoveredExposureFieldsFromPolicyLink({
+                insurancePolicyId: c.policy_id,
+                exclusionReason: c.policy_exclusion_reason,
+            })
+        );
+        if (uncovered) {
+            continue;
+        }
         const ar = openArFor(c);
         if (ar <= 0) {
             continue;
@@ -2829,6 +2869,7 @@ export async function getPolicyRiskExposureReport(
             uncovered: false,
             totalAr: ar,
             invoices: atRiskInvoicesByCustomer.get(c.id) ?? [],
+            capacityGapAmount: gap,
         });
         built.push({
             customerId: c.id,
@@ -2893,19 +2934,18 @@ export async function getNoPolicyExposureReport(
         fetchOpenReceivableByCustomerMap(accountId, options.policyId),
     ]);
 
-    const { enrichCustomersWithPolicyScope, fetchCustomerIdsWithActiveLinkedPolicy } =
-        await import("./enrichCustomersWithActivePolicy");
+    const { enrichCustomersWithPolicyScope } = await import(
+        "./enrichCustomersWithActivePolicy"
+    );
     const all = await enrichCustomersWithPolicyScope(allRaw, options.policyId);
-
-    const customerIds = all.map((c) => c.id);
-    const activeLinkedPolicyCustomerIds =
-        await fetchCustomerIdsWithActiveLinkedPolicy(customerIds);
 
     let list = all.filter((c) => {
         const ar = openArByCustomer.get(c.id) ?? 0;
         return isNoPolicyExposureCardCustomer({
-            hasLinkedPolicy: activeLinkedPolicyCustomerIds.has(c.id),
-            exclusionReason: c.policy_exclusion_reason,
+            ...uncoveredExposureFieldsFromPolicyLink({
+                insurancePolicyId: c.policy_id,
+                exclusionReason: c.policy_exclusion_reason,
+            }),
             openAr: ar,
         });
     });
