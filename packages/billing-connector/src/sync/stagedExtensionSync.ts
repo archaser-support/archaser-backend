@@ -686,13 +686,31 @@ export async function runStagedExtensionSync(
                 pendingInvoiceCloses.add(invoiceNumber);
             }
             const settled = flushResult.closedIds.length;
+            // Prefer cumulative settled across mid-run + finalize flushes. A
+            // finalize pass that settles 0 must not wipe earlier progress to
+            // "0 / N processed" while status stays done.
+            const previousProcessed =
+                tailSteps[PENDING_CLOSES_ENTITY_STATS_KEY]?.processed ?? 0;
+            const accountedSettled = Math.max(
+                0,
+                pendingTotal - missing.length
+            );
+            const processed = Math.max(
+                settled,
+                previousProcessed,
+                accountedSettled
+            );
             log(
                 `Extension pending invoice closes (${label}): ${settled} settled, ${missing.length} missing of ${pendingNumbers.length} queued`
             );
             setTailStep(PENDING_CLOSES_ENTITY_STATS_KEY, {
                 status: "done",
-                processed: settled,
-                total: pendingTotal,
+                processed,
+                total: Math.max(
+                    pendingTotal,
+                    tailSteps[PENDING_CLOSES_ENTITY_STATS_KEY]?.total ?? 0,
+                    processed
+                ),
                 skipped: missing.length,
             });
         } catch (error) {
@@ -783,6 +801,18 @@ export async function runStagedExtensionSync(
                     log,
                     setTailStep
                 );
+            }
+            // Empty pulls still need status=done so the progress panel does not
+            // leave Invoice/Payment as Waiting after settle/AR finished.
+            if (result.ok && !result.cancelled) {
+                for (const entityType of options.enabledEntities) {
+                    if (
+                        isEntityPipelineStatusKey(entityType) &&
+                        entityStatuses[entityType] !== "failed"
+                    ) {
+                        entityStatuses[entityType] = "done";
+                    }
+                }
             }
             return {
                 ...result,
