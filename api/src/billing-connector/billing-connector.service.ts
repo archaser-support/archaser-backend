@@ -62,6 +62,8 @@ import {
     finalizeSyncHistoryAfterRun,
     markExecutionCancelled,
     listExecutionsForAccount,
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
     sweepStaleRunning,
     syncHistoryExecutionToSummary,
     listMergedInProcessSyncRuns,
@@ -79,6 +81,8 @@ import {
     loadImportCachesForReplay,
     normalizeImportCacheCustomerScope,
     DEFAULT_IMPORT_CACHE_TIME_ZONE,
+    persistReconciledConnectorSyncMode,
+    reconcileConnectorSyncMode,
     type ClearBeforeImportEntity,
     type ImportCacheEntityType,
     type ConnectorSyncRunSummary,
@@ -94,6 +98,7 @@ import {
     resolveMepBreachStartDateChange,
     resolveSkipReportingBreachOnBackfillChange,
 } from "./billing-connector-backfill-options";
+import { pickAccountLastSyncDate } from "./account-last-sync-date";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 import { MetricsService } from "../metrics/metrics.service";
 import { CronQueueService } from "../queue/cron-queue.service";
@@ -344,6 +349,74 @@ export class BillingConnectorApiService {
         return startedAt;
     }
 
+    /**
+     * Stuck BACKFILL connectors whose enabled entities are already complete
+     * (full-account) — promote on config read. Also restores completion flags
+     * cleared by a cancelled Incremental run (no cursor / zero pulled, but
+     * last_successful_run_at present) so Stop mid-incremental does not leave
+     * the UI on Resume backfill.
+     */
+    private async repairSyncModeIfNeeded(connector: {
+        id: number;
+        sync_mode: string;
+        enabled_entities?: unknown;
+        ConnectorSyncState?: Array<{
+            id?: number;
+            entity_type: ImportType;
+            backfill_completed: boolean;
+            backfill_cursor?: string | null;
+            backfill_records_pulled?: number;
+            last_successful_run_at?: Date | null;
+        }>;
+    }): Promise<string> {
+        const enabledEntities = parseEnabledEntities(connector.enabled_entities);
+        const enabled = new Set(enabledEntities);
+        const states = connector.ConnectorSyncState ?? [];
+        // Only when already Incremental: a cancelled Incremental run used to
+        // clear completion flags and leave Resume backfill. Do not restore when
+        // mode is Backfill (e.g. after Reset) — that incorrectly promotes to
+        // Incremental and hides Start backfill.
+        const restoreIds =
+            connector.sync_mode === "INCREMENTAL"
+                ? states
+                      .filter(
+                          (state) =>
+                              enabled.has(state.entity_type) &&
+                              !state.backfill_completed &&
+                              state.last_successful_run_at != null &&
+                              state.backfill_cursor == null &&
+                              (state.backfill_records_pulled ?? 0) === 0 &&
+                              state.id != null
+                      )
+                      .map((state) => state.id as number)
+                : [];
+
+        if (restoreIds.length > 0) {
+            const restoredAt = new Date();
+            await this.db.connectorSyncState.updateMany({
+                where: { id: { in: restoreIds } },
+                data: {
+                    backfill_completed: true,
+                    backfill_completed_at: restoredAt,
+                },
+            });
+            for (const state of states) {
+                if (state.id != null && restoreIds.includes(state.id)) {
+                    state.backfill_completed = true;
+                }
+            }
+        }
+
+        return persistReconciledConnectorSyncMode({
+            prisma: this.db,
+            connectorId: connector.id,
+            currentMode: connector.sync_mode,
+            enabledEntities,
+            syncStates: states,
+            customerScoped: false,
+        });
+    }
+
     private async toPublicConfig(connector: {
         id: number;
         account_id: number;
@@ -466,6 +539,15 @@ export class BillingConnectorApiService {
             modified_at: connector.modified_at.toISOString(),
             schedule_summary: describeSchedule(connector.sync_cron_expression),
             next_scheduled_sync_at_utc: nextScheduled?.toISOString() ?? null,
+            last_sync_at:
+                watermarkFromSuccessfulExecution(
+                    await findLastSuccessfulExecutionForConnector(connector.id)
+                )?.toISOString() ??
+                pickAccountLastSyncDate(
+                    parseEnabledEntities(connector.enabled_entities),
+                    connector.ConnectorSyncState ?? []
+                )?.toISOString() ??
+                null,
             schedule_preset: preset.schedule_preset,
             daily_time_utc: preset.daily_time_utc,
             weekly_day: preset.weekly_day,
@@ -503,6 +585,8 @@ export class BillingConnectorApiService {
         if (repairedStartedAt) {
             connector.backfill_started_at = repairedStartedAt;
         }
+        const repairedSyncMode = await this.repairSyncModeIfNeeded(connector);
+        connector.sync_mode = repairedSyncMode as typeof connector.sync_mode;
         return serializeBigInt({
             config: await this.toPublicConfig(connector),
         });
@@ -568,6 +652,7 @@ export class BillingConnectorApiService {
         const actor = this.accessScope.getEffectiveUserId(userInfo);
         const existing = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
+            include: { ConnectorSyncState: true },
         });
 
         const data: Record<string, unknown> = {
@@ -835,6 +920,24 @@ export class BillingConnectorApiService {
             data.preview_passes = previewPassesToPrismaJson(
                 clearPreviewPasses(existing.preview_passes, changedEntities)
             );
+        }
+
+        if (existing) {
+            const nextEnabled = Array.isArray(body.enabled_entities)
+                ? parseEnabledEntities(body.enabled_entities)
+                : parseEnabledEntities(existing.enabled_entities);
+            // Demote Incremental → Backfill when newly enabled entities are
+            // incomplete; keep existing ConnectorSyncState completion rows.
+            const nextSyncMode = reconcileConnectorSyncMode({
+                currentMode: existing.sync_mode,
+                enabledEntities: nextEnabled,
+                syncStates: existing.ConnectorSyncState ?? [],
+                customerScoped: false,
+                allowDemote: true,
+            });
+            if (nextSyncMode !== existing.sync_mode) {
+                data.sync_mode = nextSyncMode;
+            }
         }
 
         const connector = existing
@@ -1920,19 +2023,14 @@ export class BillingConnectorApiService {
                     backfill_last_checkpoint_at: null,
                     backfill_total_records: null,
                     last_max_updated_at: null,
+                    last_successful_run_at: null,
                     last_attempt_at: null,
                     last_error: null,
                 },
             });
-            await this.db.billingConnector.update({
-                where: { id: connector.id },
-                data: {
-                    preview_passes: previewPassesToPrismaJson(
-                        clearPreviewPass(connector.preview_passes, typedEntity)
-                    ),
-                    modified_at: new Date(),
-                },
-            });
+            // Keep preview_passes — require preview again only when mapping /
+            // pull filters / entity sets change, or a newly enabled entity has
+            // never passed preview.
             return { ok: true, reset: true, entity_type: typedEntity };
         }
 
@@ -1946,6 +2044,7 @@ export class BillingConnectorApiService {
                 backfill_last_checkpoint_at: null,
                 backfill_total_records: null,
                 last_max_updated_at: null,
+                last_successful_run_at: null,
                 last_attempt_at: null,
                 last_error: null,
             },
@@ -1955,7 +2054,7 @@ export class BillingConnectorApiService {
             data: {
                 sync_mode: "BACKFILL",
                 backfill_started_at: null,
-                preview_passes: previewPassesToPrismaJson({}),
+                // Keep preview_passes (see entity reset comment above).
                 modified_at: new Date(),
             },
         });

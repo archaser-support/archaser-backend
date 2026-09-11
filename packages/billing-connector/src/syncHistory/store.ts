@@ -33,6 +33,13 @@ export interface SyncHistoryStore {
         accountId: number,
         options?: ListExecutionsOptions
     ): Promise<SyncHistoryExecution[]>;
+    /**
+     * Most recent SUCCESS for a connector (excludes preview). Used as the
+     * incremental `since` watermark when Prisma entity state is missing/stale.
+     */
+    findLastSuccessfulForConnector(
+        connectorId: number
+    ): Promise<SyncHistoryExecution | null>;
     /** Distinct account IDs with at least one RUNNING execution. */
     listRunningAccountIds(): Promise<number[]>;
     /** Updates last_progress_at (and optional entity_stats) while RUNNING. */
