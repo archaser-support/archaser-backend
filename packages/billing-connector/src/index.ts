@@ -325,6 +325,17 @@ export {
     type SyncDueBillingConnectorsResult,
 } from "./services/syncDueBillingConnectors";
 
+export {
+    areAllEnabledEntitiesBackfillComplete,
+    normalizeConnectorSyncMode,
+    persistReconciledConnectorSyncMode,
+    reconcileConnectorSyncMode,
+    type ConnectorReconcileSyncMode,
+    type ConnectorSyncStateForReconcile,
+    type PersistReconciledConnectorSyncModeParams,
+    type ReconcileConnectorSyncModeInput,
+} from "./services/reconcileConnectorSyncMode";
+
 // ==============================
 // Sync history (Mongo)
 // ==============================

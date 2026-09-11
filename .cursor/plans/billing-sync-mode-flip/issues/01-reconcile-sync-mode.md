@@ -1,6 +1,6 @@
 # 01 — Reconcile sync mode (promote, repair, demote)
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16
@@ -17,13 +17,13 @@ Ship the connector **sync mode reconcile** so finished full-account backfills be
 
 ## Acceptance criteria
 
-- [ ] Full-account backfill that completes all enabled entities sets `sync_mode` to INCREMENTAL
-- [ ] Customer-scoped backfill never promotes to INCREMENTAL
-- [ ] Credit (or any account) without Contact in `enabled_entities` can still promote
-- [ ] Config GET repairs stuck BACKFILL connectors whose enabled entities are already complete
-- [ ] End of sync promotes when the last enabled entity completes
-- [ ] Enabling a new incomplete entity while INCREMENTAL demotes to BACKFILL
-- [ ] No new “run daily sync” API is introduced
+- [x] Full-account backfill that completes all enabled entities sets `sync_mode` to INCREMENTAL
+- [x] Customer-scoped backfill never promotes to INCREMENTAL
+- [x] Credit (or any account) without Contact in `enabled_entities` can still promote
+- [x] Config GET repairs stuck BACKFILL connectors whose enabled entities are already complete
+- [x] End of sync promotes when the last enabled entity completes
+- [x] Enabling a new incomplete entity while INCREMENTAL demotes to BACKFILL
+- [x] No new “run daily sync” API is introduced
 
 ## How to test
 

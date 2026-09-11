@@ -1096,7 +1096,12 @@ export async function runStagedExtensionSync(
                 // a prior-run backfill_completed + first live page looks "Done".
                 // Also zero pulled/total so the counter does not flash the
                 // previous run's "N imported" during column sampling.
-                if (syncState?.backfill_completed) {
+                // Incremental must NOT clear completion — a Stop mid-run would
+                // leave entities incomplete and demote the connector to Backfill.
+                if (
+                    syncState?.backfill_completed &&
+                    cacheSyncMode !== "INCREMENTAL"
+                ) {
                     await options.prisma.connectorSyncState.update({
                         where: { id: syncState.id },
                         data: {
