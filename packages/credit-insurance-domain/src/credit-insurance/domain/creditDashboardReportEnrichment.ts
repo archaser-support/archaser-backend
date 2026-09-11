@@ -11,8 +11,8 @@ import { resolveAccountDisplayLanguage } from "./reportExecutionVirtualFields-st
 import { getCustomerPolicyRow } from "./reportCustomerPolicyFields-stub";
 import { computeCustomerRiskExposure } from "./invoiceInsuranceFields";
 import {
-    hasActiveLinkedPolicy,
-    isUncoveredExposureCustomer,
+    isFullOpenArAtRiskCustomer,
+    uncoveredExposureFieldsFromPolicyLink,
 } from "./shared/policyExclusion";
 
 import {
@@ -330,16 +330,25 @@ export async function enrichCreditDashboardCustomerRows(
         if (needsPolicyRisk) {
             const ar = openArByCustomer.get(customerId) ?? 0;
             const policy = getCustomerPolicyRow(row);
-            const uncovered = isUncoveredExposureCustomer({
-                hasLinkedPolicy: hasActiveLinkedPolicy(
-                    policy?.insurance_policy_id as number | null | undefined
-                ),
-                exclusionReason: policy?.policy_exclusion_reason ?? null,
-            });
+            const uncovered = isFullOpenArAtRiskCustomer(
+                uncoveredExposureFieldsFromPolicyLink({
+                    insurancePolicyId:
+                        policy?.insurance_policy_id as number | null | undefined,
+                    exclusionReason: policy?.policy_exclusion_reason ?? null,
+                })
+            );
+            const gapCard = Math.max(
+                0,
+                Number(
+                    (policy as { capacity_gap_amount?: number | null } | null)
+                        ?.capacity_gap_amount ?? 0
+                )
+            );
             const invoiceAllocated = computeCustomerRiskExposure({
                 uncovered: false,
                 totalAr: ar,
                 invoices: atRiskInvoicesByCustomer.get(customerId) ?? [],
+                capacityGapAmount: gapCard,
             });
             if (fields.has("policy_risk_allocated")) {
                 enriched.policy_risk_allocated = invoiceAllocated;

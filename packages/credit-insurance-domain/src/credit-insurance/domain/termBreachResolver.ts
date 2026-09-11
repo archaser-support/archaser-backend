@@ -2,6 +2,8 @@ import { prisma } from "../domain-db";
 import {
     hasActiveLinkedPolicy,
     isUncoveredExposureCustomer,
+    isFullOpenArAtRiskCustomer,
+    uncoveredExposureFieldsFromPolicyLink,
     type UncoveredExposureFields,
 } from "./policyExclusion";
 import { invoiceHasTermsBreachFlag } from "./customerPolicyTrendTermsBreachByReason";
@@ -130,20 +132,22 @@ export function resolveUncoveredExposureFromPolicyRows(
     policyRows: PolicyRowForUncoveredExposure[],
     policyId?: number | null
 ): boolean {
+    return isUncoveredExposureCustomer(
+        uncoveredExposureFieldsFromPolicyRows(policyRows, policyId)
+    );
+}
+
+/** Full-AR at-risk: no policy rows, no linked policy, or pending-review only. */
+export function resolveFullOpenArAtRiskFromPolicyRows(
+    policyRows: PolicyRowForUncoveredExposure[],
+    policyId?: number | null
+): boolean {
     if (policyRows.length === 0) {
         return true;
     }
-
-    const scopedRow =
-        policyId != null
-            ? policyRows.find((row) => row.insurance_policy_id === policyId) ??
-              policyRows[0]
-            : policyRows.find((row) => row.is_active) ?? policyRows[0];
-
-    return isUncoveredExposureCustomer({
-        hasLinkedPolicy: hasActiveLinkedPolicy(scopedRow?.insurance_policy_id),
-        exclusionReason: scopedRow?.policy_exclusion_reason,
-    });
+    return isFullOpenArAtRiskCustomer(
+        uncoveredExposureFieldsFromPolicyRows(policyRows, policyId)
+    );
 }
 
 export function uncoveredExposureFieldsFromPolicyRows(
@@ -160,10 +164,10 @@ export function uncoveredExposureFieldsFromPolicyRows(
               policyRows[0]
             : policyRows.find((row) => row.is_active) ?? policyRows[0];
 
-    return {
-        hasLinkedPolicy: hasActiveLinkedPolicy(scopedRow?.insurance_policy_id),
+    return uncoveredExposureFieldsFromPolicyLink({
+        insurancePolicyId: scopedRow?.insurance_policy_id,
         exclusionReason: scopedRow?.policy_exclusion_reason,
-    };
+    });
 }
 
 export type PortfolioTermsBreachInvoiceRow = {

@@ -6,8 +6,10 @@ export {
     isNoPolicyExposureCardCustomer,
     isPendingReviewExclusion,
     isUncoveredExposureCustomer,
+    isFullOpenArAtRiskCustomer,
     normalizePolicyExclusionReason,
     POLICY_EXCLUSION_REASONS,
+    uncoveredExposureFieldsFromPolicyLink,
 } from "./shared/policyExclusion";
 
 export type {
