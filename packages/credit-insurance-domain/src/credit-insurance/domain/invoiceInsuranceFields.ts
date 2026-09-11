@@ -721,13 +721,21 @@ export function computeInvoiceAtRiskAmount(
 
 /**
  * Customer at-risk from open invoices:
- * - uncovered / excluded → full open AR
- * - else Σ max(capacity_gap_i, terms_breach_i) (no post-sum AR min-cap)
+ * - uncovered / full-AR cohort → full open AR
+ * - when {@link capacityGapAmount} is set (Cap Gap card):  
+ *   `capacityGapAmount + Σ terms_breach_i − Σ min(gap_i, terms_breach_i)`  
+ *   so At Risk cannot exceed Cap Gap + Terms (same cards).
+ * - else Σ max(capacity_gap_i, terms_breach_i) (invoice-only path)
  */
 export function computeCustomerRiskExposure(args: {
     uncovered?: boolean;
     totalAr: number;
     invoices: CustomerAtRiskInvoiceInput[];
+    /**
+     * Cap Gap card amount for this customer (AR − effective limit).
+     * When provided, the gap leg uses this instead of Σ invoice gaps.
+     */
+    capacityGapAmount?: number;
 }): number {
     const ar = Math.max(0, args.totalAr);
     if (args.uncovered === true) {
@@ -736,6 +744,22 @@ export function computeCustomerRiskExposure(args: {
     if (ar <= 0) {
         return 0;
     }
+
+    if (args.capacityGapAmount != null) {
+        const gapCard = Math.max(0, args.capacityGapAmount);
+        let terms = 0;
+        let overlap = 0;
+        for (const invoice of args.invoices) {
+            const gap = Math.max(0, invoice.capacityGapAmount);
+            const breach = invoice.hasTermsBreach
+                ? Math.max(0, invoice.outstanding)
+                : 0;
+            terms += breach;
+            overlap += Math.min(gap, breach);
+        }
+        return Math.max(0, gapCard + terms - overlap);
+    }
+
     let sum = 0;
     for (const invoice of args.invoices) {
         sum += computeInvoiceAtRiskAmount(invoice);
