@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import nodemailer from "nodemailer";
+import { mapPool } from "../common/mapPool";
 import { DatabaseService } from "../database/database.service";
 import { ensureMongoConnection, mongoose } from "../logging/mongoose.connection";
 import { Log as LogModel } from "../logging/log.model";
@@ -7,6 +8,8 @@ import { LogLevel } from "../logging/mongo-log.types";
 import type { ArchaserBusinessMetrics } from "./archaser-business-metrics";
 
 const UPDATE_INTERVAL_MS = 60_000;
+/** Cap parallel Prisma queries so metrics refresh cannot exhaust the API pool. */
+const METRICS_DB_CONCURRENCY = 4;
 
 @Injectable()
 export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
@@ -14,6 +17,7 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
     private lastUpdateTime = 0;
     private m!: ArchaserBusinessMetrics;
     private timer: ReturnType<typeof setInterval> | null = null;
+    private updateInFlight: Promise<void> | null = null;
 
     constructor(private readonly db: DatabaseService) {}
 
@@ -39,12 +43,18 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
         if (!this.m) {
             return;
         }
+        if (this.updateInFlight) {
+            return this.updateInFlight;
+        }
         const now = Date.now();
         if (!force && now - this.lastUpdateTime < UPDATE_INTERVAL_MS) {
             return;
         }
         this.lastUpdateTime = now;
-        await this.updateAll();
+        this.updateInFlight = this.updateAll().finally(() => {
+            this.updateInFlight = null;
+        });
+        await this.updateInFlight;
     }
 
     private async updateAll(): Promise<void> {
@@ -299,105 +309,126 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                     smsFailed24h,
                     stuckActivities,
                     systemActivitiesCreated,
-                    lastSystemActivity,
                     emailContactsTotal,
                     emailContactsDelivered,
                     emailContactsOpened,
                     emailContactsClicked,
                     emailContactsBounced,
                     emailContactsFailed,
-                ] = await Promise.all([
-                    this.db.activity.count({
-                        where: {
-                            type: "Email",
-                            actual_delivery_time: { gte: twentyFourHoursAgo },
-                        },
-                    }),
-                    this.db.activity.count({
-                        where: {
-                            type: "Email",
-                            status: "FAILED",
-                            created_at: { gte: twentyFourHoursAgo },
-                        },
-                    }),
-                    this.db.activity.count({
-                        where: {
-                            type: "Email",
-                            status: "BOUNCED",
-                            created_at: { gte: twentyFourHoursAgo },
-                        },
-                    }),
-                    this.db.activity.count({
-                        where: {
-                            type: "SMS",
-                            actual_delivery_time: { gte: twentyFourHoursAgo },
-                        },
-                    }),
-                    this.db.activity.count({
-                        where: {
-                            type: "SMS",
-                            status: "FAILED",
-                            created_at: { gte: twentyFourHoursAgo },
-                        },
-                    }),
-                    this.db.activity.count({
-                        where: {
-                            status: "SCHEDULED",
-                            schedule_time: { lt: twoHoursAgo },
-                            system_generated: true,
-                        },
-                    }),
-                    // Count system-generated activities created in last 24 hours
-                    this.db.activity.count({
-                        where: {
-                            system_generated: true,
-                            created_at: { gte: twentyFourHoursAgo },
-                        },
-                    }),
-                    // Get last system-generated activity creation time
-                    this.db.activity.findFirst({
-                        where: { system_generated: true },
-                        orderBy: { created_at: "desc" },
-                        select: { created_at: true },
-                    }),
-                    // New Email Contact Metrics - filter by Email channel only
-                    this.db.activityContact.count({
-                        where: {
-                            communication_channel: 'Email',
-                            created_at: { gte: twentyFourHoursAgo }
-                        },
-                    }),
-                    this.db.activityContact.count({
-                        where: {
-                            communication_channel: 'Email',
-                            delivered_at: { gte: twentyFourHoursAgo }
-                        },
-                    }),
-                    this.db.activityContact.count({
-                        where: {
-                            communication_channel: 'Email',
-                            email_opened_at: { gte: twentyFourHoursAgo }
-                        },
-                    }),
-                    this.db.activityContact.count({
-                        where: {
-                            communication_channel: 'Email',
-                            email_clicked_at: { gte: twentyFourHoursAgo }
-                        },
-                    }),
-                    this.db.activityContact.count({
-                        where: {
-                            communication_channel: 'Email',
-                            bounced_at: { gte: twentyFourHoursAgo }
-                        },
-                    }),
-                    this.db.activityContact.count({
-                        where: {
-                            communication_channel: 'Email',
-                            failed_at: { gte: twentyFourHoursAgo }
-                        },
-                    }),
-                ]);
+                ] = await mapPool(
+                    [
+                        () =>
+                            this.db.activity.count({
+                                where: {
+                                    type: "Email",
+                                    actual_delivery_time: {
+                                        gte: twentyFourHoursAgo,
+                                    },
+                                },
+                            }),
+                        () =>
+                            this.db.activity.count({
+                                where: {
+                                    type: "Email",
+                                    status: "FAILED",
+                                    created_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                        () =>
+                            this.db.activity.count({
+                                where: {
+                                    type: "Email",
+                                    status: "BOUNCED",
+                                    created_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                        () =>
+                            this.db.activity.count({
+                                where: {
+                                    type: "SMS",
+                                    actual_delivery_time: {
+                                        gte: twentyFourHoursAgo,
+                                    },
+                                },
+                            }),
+                        () =>
+                            this.db.activity.count({
+                                where: {
+                                    type: "SMS",
+                                    status: "FAILED",
+                                    created_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                        () =>
+                            this.db.activity.count({
+                                where: {
+                                    status: "SCHEDULED",
+                                    schedule_time: { lt: twoHoursAgo },
+                                    system_generated: true,
+                                },
+                            }),
+                        () =>
+                            this.db.activity.count({
+                                where: {
+                                    system_generated: true,
+                                    created_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                        () =>
+                            this.db.activityContact.count({
+                                where: {
+                                    communication_channel: "Email",
+                                    created_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                        () =>
+                            this.db.activityContact.count({
+                                where: {
+                                    communication_channel: "Email",
+                                    delivered_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                        () =>
+                            this.db.activityContact.count({
+                                where: {
+                                    communication_channel: "Email",
+                                    email_opened_at: {
+                                        gte: twentyFourHoursAgo,
+                                    },
+                                },
+                            }),
+                        () =>
+                            this.db.activityContact.count({
+                                where: {
+                                    communication_channel: "Email",
+                                    email_clicked_at: {
+                                        gte: twentyFourHoursAgo,
+                                    },
+                                },
+                            }),
+                        () =>
+                            this.db.activityContact.count({
+                                where: {
+                                    communication_channel: "Email",
+                                    bounced_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                        () =>
+                            this.db.activityContact.count({
+                                where: {
+                                    communication_channel: "Email",
+                                    failed_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                    ],
+                    METRICS_DB_CONCURRENCY
+                );
+
+                const lastSystemActivity = await this.db.activity.findFirst({
+                    where: { system_generated: true },
+                    orderBy: { created_at: "desc" },
+                    select: { created_at: true },
+                });
 
                 this.m.emailsSent.set(emailsSent24h);
                 this.m.emailsFailed.set(emailsFailed24h);
@@ -431,30 +462,41 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                 // Import Metrics
                 // ============================================================
                 const [importsPending, importsStuckTotal, importsStuckBilling, imports24h] =
-                    await Promise.all([
-                    this.db.importJob.count({
-                        where: { status: { in: ["Pending", "Processing"] } },
-                    }),
-                    this.db.importJob.count({
-                        where: {
-                            status: { in: ["Pending", "Processing"] },
-                            created_at: { lt: oneHourAgo },
-                        },
-                    }),
-                    this.db.importJob.count({
-                        where: {
-                            status: { in: ["Pending", "Processing"] },
-                            created_at: { lt: oneHourAgo },
-                            metadata: {
-                                path: ["source"],
-                                equals: "billing_connector",
-                            },
-                        },
-                    }),
-                    this.db.importJob.count({
-                        where: { created_at: { gte: twentyFourHoursAgo } },
-                    }),
-                ]);
+                    await mapPool(
+                        [
+                            () =>
+                                this.db.importJob.count({
+                                    where: {
+                                        status: { in: ["Pending", "Processing"] },
+                                    },
+                                }),
+                            () =>
+                                this.db.importJob.count({
+                                    where: {
+                                        status: { in: ["Pending", "Processing"] },
+                                        created_at: { lt: oneHourAgo },
+                                    },
+                                }),
+                            () =>
+                                this.db.importJob.count({
+                                    where: {
+                                        status: { in: ["Pending", "Processing"] },
+                                        created_at: { lt: oneHourAgo },
+                                        metadata: {
+                                            path: ["source"],
+                                            equals: "billing_connector",
+                                        },
+                                    },
+                                }),
+                            () =>
+                                this.db.importJob.count({
+                                    where: {
+                                        created_at: { gte: twentyFourHoursAgo },
+                                    },
+                                }),
+                        ],
+                        METRICS_DB_CONCURRENCY
+                    );
 
                 this.m.importJobsPending.set(importsPending);
                 this.m.importJobsStuck.set(
@@ -475,45 +517,58 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                     stuckNoContacts,
                     withoutActivities,
                     overdueCreation,
-                ] = await Promise.all([
-                    this.db.customerCollectionPeriod.count({
-                        where: { period_end_date: null },
-                    }),
-                    this.db.customer.count({
-                        where: {
-                            automation_stuck_no_contacts: true,
-                        },
-                    }),
-                    this.db.customerCollectionPeriod.count({
-                        where: {
-                            period_end_date: null,
-                            current_category: "Automated",
-                            OR: [
-                                { next_activity_date: null },
-                                { next_activity_date: { lt: twentyFourHoursAgo } },
-                            ],
-                            // Match ActivityService.hasScheduledAutomatedActivities: workflow clears
-                            // next_activity_date when an automated activity row exists in SCHEDULED.
-                            NOT: {
-                                Activity: {
-                                    some: {
-                                        status: "SCHEDULED",
-                                        ActivitiesSequence: {
-                                            is: { category: "Automated" },
+                ] = await mapPool(
+                    [
+                        () =>
+                            this.db.customerCollectionPeriod.count({
+                                where: { period_end_date: null },
+                            }),
+                        () =>
+                            this.db.customer.count({
+                                where: {
+                                    automation_stuck_no_contacts: true,
+                                },
+                            }),
+                        () =>
+                            this.db.customerCollectionPeriod.count({
+                                where: {
+                                    period_end_date: null,
+                                    current_category: "Automated",
+                                    OR: [
+                                        { next_activity_date: null },
+                                        {
+                                            next_activity_date: {
+                                                lt: twentyFourHoursAgo,
+                                            },
+                                        },
+                                    ],
+                                    // Match ActivityService.hasScheduledAutomatedActivities: workflow clears
+                                    // next_activity_date when an automated activity row exists in SCHEDULED.
+                                    NOT: {
+                                        Activity: {
+                                            some: {
+                                                status: "SCHEDULED",
+                                                ActivitiesSequence: {
+                                                    is: {
+                                                        category: "Automated",
+                                                    },
+                                                },
+                                            },
                                         },
                                     },
                                 },
-                            },
-                        },
-                    }),
-                    this.db.customerCollectionPeriod.count({
-                        where: {
-                            period_end_date: null,
-                            create_next_activity: true,
-                            next_activity_date: { lt: currentTime },
-                        },
-                    }),
-                ]);
+                            }),
+                        () =>
+                            this.db.customerCollectionPeriod.count({
+                                where: {
+                                    period_end_date: null,
+                                    create_next_activity: true,
+                                    next_activity_date: { lt: currentTime },
+                                },
+                            }),
+                    ],
+                    METRICS_DB_CONCURRENCY
+                );
 
                 this.m.activeCollectionPeriods.set(activeCollPeriods);
                 this.m.automationStuckNoContacts.set(stuckNoContacts);
@@ -530,26 +585,52 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                     created24h,
                     resolved24h,
                     staleDisputes,
-                ] = await Promise.all([
-                    this.db.customerDispute.count({
-                        where: { dispute_status: "New" },
-                    }),
-                    this.db.customerDispute.count({
-                        where: { dispute_status: { in: ["New", "Under_Review", "Awaiting_Update"] } },
-                    }),
-                    this.db.customerDispute.count({
-                        where: { created_at: { gte: twentyFourHoursAgo } },
-                    }),
-                    this.db.customerDispute.count({
-                        where: { closed_at: { gte: twentyFourHoursAgo } },
-                    }),
-                    this.db.customerDispute.count({
-                        where: {
-                            dispute_status: { in: ["New", "Under_Review", "Awaiting_Update"] },
-                            created_at: { lt: sevenDaysAgo },
-                        },
-                    }),
-                ]);
+                ] = await mapPool(
+                    [
+                        () =>
+                            this.db.customerDispute.count({
+                                where: { dispute_status: "New" },
+                            }),
+                        () =>
+                            this.db.customerDispute.count({
+                                where: {
+                                    dispute_status: {
+                                        in: [
+                                            "New",
+                                            "Under_Review",
+                                            "Awaiting_Update",
+                                        ],
+                                    },
+                                },
+                            }),
+                        () =>
+                            this.db.customerDispute.count({
+                                where: {
+                                    created_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                        () =>
+                            this.db.customerDispute.count({
+                                where: {
+                                    closed_at: { gte: twentyFourHoursAgo },
+                                },
+                            }),
+                        () =>
+                            this.db.customerDispute.count({
+                                where: {
+                                    dispute_status: {
+                                        in: [
+                                            "New",
+                                            "Under_Review",
+                                            "Awaiting_Update",
+                                        ],
+                                    },
+                                    created_at: { lt: sevenDaysAgo },
+                                },
+                            }),
+                    ],
+                    METRICS_DB_CONCURRENCY
+                );
 
                 this.m.disputesOpen.set(openDisputes);
                 this.m.disputesPending.set(pendingDisputes);
@@ -565,27 +646,36 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                 const todayEnd = new Date(currentTime);
                 todayEnd.setHours(23, 59, 59, 999);
 
-                const [activePTPs, ptpToday, brokenPTPs] = await Promise.all([
-                    this.db.customerCollectionPeriod.count({
-                        where: {
-                            period_end_date: null,
-                            promise_to_pay_date: { gte: currentTime },
-                        },
-                    }),
-                    this.db.customerCollectionPeriod.count({
-                        where: {
-                            period_end_date: null,
-                            promise_to_pay_date: { gte: todayStart, lte: todayEnd },
-                        },
-                    }),
-                    this.db.customerCollectionPeriod.count({
-                        where: {
-                            period_end_date: null,
-                            promise_to_pay_date: { lt: currentTime },
-                            total_outstanding_amount: { gt: 0 },
-                        },
-                    }),
-                ]);
+                const [activePTPs, ptpToday, brokenPTPs] = await mapPool(
+                    [
+                        () =>
+                            this.db.customerCollectionPeriod.count({
+                                where: {
+                                    period_end_date: null,
+                                    promise_to_pay_date: { gte: currentTime },
+                                },
+                            }),
+                        () =>
+                            this.db.customerCollectionPeriod.count({
+                                where: {
+                                    period_end_date: null,
+                                    promise_to_pay_date: {
+                                        gte: todayStart,
+                                        lte: todayEnd,
+                                    },
+                                },
+                            }),
+                        () =>
+                            this.db.customerCollectionPeriod.count({
+                                where: {
+                                    period_end_date: null,
+                                    promise_to_pay_date: { lt: currentTime },
+                                    total_outstanding_amount: { gt: 0 },
+                                },
+                            }),
+                    ],
+                    METRICS_DB_CONCURRENCY
+                );
 
                 this.m.ptpActive.set(activePTPs);
                 this.m.ptpDueToday.set(ptpToday);
@@ -600,23 +690,41 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                     lowCommScore,
                     recentBounces,
                     recentSMSFails,
-                ] = await Promise.all([
-                    this.db.contact.count({
-                        where: { email_bounce_count: { gte: 3 } },
-                    }),
-                    this.db.contact.count({
-                        where: { sms_delivery_failure_count: { gte: 3 } },
-                    }),
-                    this.db.contact.count({
-                        where: { communication_score: { lt: 0.5 } },
-                    }),
-                    this.db.contact.count({
-                        where: { last_email_bounce: { gte: twentyFourHoursAgo } },
-                    }),
-                    this.db.contact.count({
-                        where: { last_sms_failure: { gte: twentyFourHoursAgo } },
-                    }),
-                ]);
+                ] = await mapPool(
+                    [
+                        () =>
+                            this.db.contact.count({
+                                where: { email_bounce_count: { gte: 3 } },
+                            }),
+                        () =>
+                            this.db.contact.count({
+                                where: {
+                                    sms_delivery_failure_count: { gte: 3 },
+                                },
+                            }),
+                        () =>
+                            this.db.contact.count({
+                                where: { communication_score: { lt: 0.5 } },
+                            }),
+                        () =>
+                            this.db.contact.count({
+                                where: {
+                                    last_email_bounce: {
+                                        gte: twentyFourHoursAgo,
+                                    },
+                                },
+                            }),
+                        () =>
+                            this.db.contact.count({
+                                where: {
+                                    last_sms_failure: {
+                                        gte: twentyFourHoursAgo,
+                                    },
+                                },
+                            }),
+                    ],
+                    METRICS_DB_CONCURRENCY
+                );
 
                 this.m.contactsHighBounce.set(highBounce);
                 this.m.contactsHighSMSFailure.set(highSMSFail);
