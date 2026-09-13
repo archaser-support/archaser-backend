@@ -15,7 +15,9 @@ import {
     ENTITY_LIST_REPORT_CONTEXTS,
     FINANCIAL_DASHBOARD_CONTEXTS,
     OPERATION_DASHBOARD_CONTEXTS,
+    normalizeReportConfigPrimaryTables,
 } from "./report.constants";
+import { findFormulaFilterGuardFailure } from "./report-formula-filter.util";
 import { REPORT_METADATA } from "./report-metadata";
 import { REPORT_RELATIONSHIPS } from "./report-relationships";
 import { reportVisibilityWhere } from "./report-scope.util";
@@ -234,6 +236,10 @@ export class ReportsService {
         if (!name) {
             throw new BadRequestException("name is required");
         }
+        this.assertReportConfigFormulaFilterGuards(body.report_config);
+        const normalizedReportConfig = this.normalizeStoredReportConfig(
+            body.report_config
+        );
         const baseUniqueName =
             String(body.unique_name || name)
                 .toLowerCase()
@@ -249,7 +255,7 @@ export class ReportsService {
             name,
             unique_name,
             description: (body.description as string) || null,
-            report_config: (body.report_config as never) || {
+            report_config: (normalizedReportConfig as never) || {
                 tables: [],
                 fields: [],
                 filters: [],
@@ -323,6 +329,12 @@ export class ReportsService {
             if (body[key] !== undefined) {
                 data[key] = body[key];
             }
+        }
+        if (body.report_config !== undefined) {
+            this.assertReportConfigFormulaFilterGuards(body.report_config);
+            data.report_config = this.normalizeStoredReportConfig(
+                body.report_config
+            );
         }
         let updated;
         try {
@@ -774,5 +786,43 @@ export class ReportsService {
             });
         }
         throw error;
+    }
+
+    private normalizeStoredReportConfig(reportConfig: unknown): unknown {
+        if (!reportConfig || typeof reportConfig !== "object") {
+            return reportConfig;
+        }
+        return normalizeReportConfigPrimaryTables(
+            reportConfig as {
+                primaryTable?: string;
+                tables?: string[];
+            }
+        );
+    }
+
+    private assertReportConfigFormulaFilterGuards(
+        reportConfig: unknown
+    ): void {
+        if (!reportConfig || typeof reportConfig !== "object") {
+            return;
+        }
+        const config = reportConfig as {
+            filters?: Array<{ field?: string | null }>;
+            formulas?: Array<{ id: string }>;
+            grouping?: string[];
+            fields?: Array<{ aggregation?: string | null }>;
+        };
+        const failure = findFormulaFilterGuardFailure({
+            filters: config.filters,
+            formulas: config.formulas,
+            grouping: config.grouping,
+            fields: config.fields,
+        });
+        if (failure) {
+            throw new BadRequestException({
+                message: failure.message,
+                errorCode: failure.errorCode,
+            });
+        }
     }
 }

@@ -503,6 +503,13 @@ export async function runStagedExtensionSync(
         if (dryRun) {
             return;
         }
+        // Entities loaded from backup must not re-publish under this execution.
+        if (cachedEntitiesDone.has(entityType)) {
+            log(
+                `Skipping import cache write for ${entityType} (loaded from backup)`
+            );
+            return;
+        }
         const rows = importCacheByEntity.get(entityType) ?? [];
         // Track that we attempted a flush so zero-row successes still write.
         if (!importCacheByEntity.has(entityType)) {
@@ -679,13 +686,31 @@ export async function runStagedExtensionSync(
                 pendingInvoiceCloses.add(invoiceNumber);
             }
             const settled = flushResult.closedIds.length;
+            // Prefer cumulative settled across mid-run + finalize flushes. A
+            // finalize pass that settles 0 must not wipe earlier progress to
+            // "0 / N processed" while status stays done.
+            const previousProcessed =
+                tailSteps[PENDING_CLOSES_ENTITY_STATS_KEY]?.processed ?? 0;
+            const accountedSettled = Math.max(
+                0,
+                pendingTotal - missing.length
+            );
+            const processed = Math.max(
+                settled,
+                previousProcessed,
+                accountedSettled
+            );
             log(
                 `Extension pending invoice closes (${label}): ${settled} settled, ${missing.length} missing of ${pendingNumbers.length} queued`
             );
             setTailStep(PENDING_CLOSES_ENTITY_STATS_KEY, {
                 status: "done",
-                processed: settled,
-                total: pendingTotal,
+                processed,
+                total: Math.max(
+                    pendingTotal,
+                    tailSteps[PENDING_CLOSES_ENTITY_STATS_KEY]?.total ?? 0,
+                    processed
+                ),
                 skipped: missing.length,
             });
         } catch (error) {
@@ -721,6 +746,7 @@ export async function runStagedExtensionSync(
                 customerIds: args.customerIds,
                 onProcessOverdueCustomers: options.onProcessOverdueCustomers,
                 log,
+                prisma: options.prisma,
                 setTailStep: (state) =>
                     setTailStep(PROCESS_OVERDUE_ENTITY_STATS_KEY, state),
             });
@@ -775,6 +801,18 @@ export async function runStagedExtensionSync(
                     log,
                     setTailStep
                 );
+            }
+            // Empty pulls still need status=done so the progress panel does not
+            // leave Invoice/Payment as Waiting after settle/AR finished.
+            if (result.ok && !result.cancelled) {
+                for (const entityType of options.enabledEntities) {
+                    if (
+                        isEntityPipelineStatusKey(entityType) &&
+                        entityStatuses[entityType] !== "failed"
+                    ) {
+                        entityStatuses[entityType] = "done";
+                    }
+                }
             }
             return {
                 ...result,
@@ -847,10 +885,6 @@ export async function runStagedExtensionSync(
                             accountId: options.accountId,
                             executionId: options.cachedImportExecutionId.trim(),
                             syncMode: cacheSyncMode,
-                            cacheDay: resolveImportCacheDay(
-                                new Date(),
-                                options.timeZone
-                            ),
                             customerScope: cacheCustomerScope,
                         });
                         for (const invoiceNumber of closeTargets.invoiceNumbers) {
@@ -884,78 +918,85 @@ export async function runStagedExtensionSync(
                 bumpProcessedPage(stats, entityType, cachedRows.length);
                 emitProgress();
                 if (!dryRun && cachedRows.length > 0) {
-                    const importResult = await importFn(
-                        options.prisma,
-                        entityType,
-                        cachedRows,
-                        options.accountId,
-                        null,
-                        options.userId,
-                        {
-                            skipReportingBreach:
-                                options.skipReportingBreach === true,
-                            skipDeferredPaymentMaturity:
-                                entityType === "Invoice",
-                            onLog: options.onLog,
-                            shouldCancel: options.shouldCancel,
-                            extension: options.extension,
+                    const cacheRowsKept: Record<string, unknown>[] = [];
+                    const importErrors: string[] = [];
+                    let importedTotal = 0;
+                    let failedTotal = 0;
+                    const chunkSize = PRIORITY_RATE_LIMITS.recommendedPageSize;
+                    for (let i = 0; i < cachedRows.length; i += chunkSize) {
+                        const chunk = cachedRows.slice(i, i + chunkSize);
+                        if (chunk.length === 0) {
+                            continue;
                         }
-                    );
-                    bumpImported(
-                        stats,
-                        entityType,
-                        importResult.success,
-                        importResult.failed
-                    );
-                    const cacheRows = rowsEnteringImport(
-                        cachedRows,
-                        importResult
-                    );
-                    if (cacheRows.length > 0) {
-                        const existing =
-                            importCacheByEntity.get(entityType) ?? [];
-                        existing.push(...cacheRows);
-                        importCacheByEntity.set(entityType, existing);
-                    }
-                    windowImported += importResult.success;
-                    windowErrors += importResult.failed;
-                    if (entityType === "Payment" || entityType === "Invoice") {
-                        for (const id of importResult.affectedCustomerIds) {
-                            arAffectedCustomerIds.add(id);
-                            if (entityType === "Payment") {
-                                paymentAffectedCustomerIds.add(id);
-                            }
-                        }
-                        for (const id of importResult.entityIds ?? []) {
-                            if (entityType === "Invoice") {
-                                arAffectedInvoiceIds.add(id);
-                            } else {
-                                arAffectedPaymentIds.add(id);
-                            }
-                        }
-                    }
-                    if (!dryRun) {
-                        await checkpointEntityPage({
-                            prisma: options.prisma,
-                            connectorId: options.connectorId,
+                        const importResult = await importFn(
+                            options.prisma,
                             entityType,
-                            pulled: cachedRows.length,
-                            nextCursor: null,
-                            maxUpdated:
-                                cacheRows.length > 0
-                                    ? extractMaxUpdatedAt(cacheRows)
-                                    : null,
-                            lastError:
-                                importResult.failed > 0
-                                    ? importResult.errors
-                                          .slice(0, 3)
-                                          .join("; ")
-                                    : null,
-                            pageComplete: true,
-                            pageSize: cachedRows.length || 1,
-                            providerTotalCount: cachedRows.length,
-                        });
+                            chunk,
+                            options.accountId,
+                            null,
+                            options.userId,
+                            {
+                                skipReportingBreach:
+                                    options.skipReportingBreach === true,
+                                skipDeferredPaymentMaturity:
+                                    entityType === "Invoice",
+                                onLog: options.onLog,
+                                shouldCancel: options.shouldCancel,
+                                extension: options.extension,
+                            }
+                        );
+                        importedTotal += importResult.success;
+                        failedTotal += importResult.failed;
+                        importErrors.push(...importResult.errors);
+                        const cacheRows = rowsEnteringImport(chunk, importResult);
+                        if (cacheRows.length > 0) {
+                            cacheRowsKept.push(...cacheRows);
+                        }
+                        if (entityType === "Payment" || entityType === "Invoice") {
+                            for (const id of importResult.affectedCustomerIds) {
+                                arAffectedCustomerIds.add(id);
+                                if (entityType === "Payment") {
+                                    paymentAffectedCustomerIds.add(id);
+                                }
+                            }
+                            for (const id of importResult.entityIds ?? []) {
+                                if (entityType === "Invoice") {
+                                    arAffectedInvoiceIds.add(id);
+                                } else {
+                                    arAffectedPaymentIds.add(id);
+                                }
+                            }
+                        }
+                        bumpImported(
+                            stats,
+                            entityType,
+                            importResult.success,
+                            importResult.failed
+                        );
+                        emitProgress();
                     }
+                    // Intentionally not staging rows into importCacheByEntity:
+                    // cache replay must not append a new Mongo backup (R1).
+                    windowImported += importedTotal;
+                    windowErrors += failedTotal;
+                    await checkpointEntityPage({
+                        prisma: options.prisma,
+                        connectorId: options.connectorId,
+                        entityType,
+                        pulled: cachedRows.length,
+                        nextCursor: null,
+                        maxUpdated:
+                            cacheRowsKept.length > 0
+                                ? extractMaxUpdatedAt(cacheRowsKept)
+                                : null,
+                        lastError:
+                            failedTotal > 0
+                                ? importErrors.slice(0, 3).join("; ")
+                                : null,
+                        pageComplete: true,
+                        pageSize: cachedRows.length || 1,
+                        providerTotalCount: cachedRows.length,
+                    });
                 } else if (!dryRun) {
                     await checkpointEntityPage({
                         prisma: options.prisma,
@@ -1056,12 +1097,11 @@ export async function runStagedExtensionSync(
                     });
                 }
 
-                const cacheAbort = await flushEntityImportCacheOrAbort(
-                    entityType
+                // Replay keeps the source backup — skip Mongo write (and
+                // Payment PendingInvoiceClose companion) under this execution.
+                log(
+                    `Skipping import cache write for ${entityType} (loaded from backup)`
                 );
-                if (cacheAbort) {
-                    return cacheAbort;
-                }
                 continue;
             }
 
@@ -1086,7 +1126,12 @@ export async function runStagedExtensionSync(
                 // a prior-run backfill_completed + first live page looks "Done".
                 // Also zero pulled/total so the counter does not flash the
                 // previous run's "N imported" during column sampling.
-                if (syncState?.backfill_completed) {
+                // Incremental must NOT clear completion — a Stop mid-run would
+                // leave entities incomplete and demote the connector to Backfill.
+                if (
+                    syncState?.backfill_completed &&
+                    cacheSyncMode !== "INCREMENTAL"
+                ) {
                     await options.prisma.connectorSyncState.update({
                         where: { id: syncState.id },
                         data: {

@@ -924,7 +924,10 @@ export async function afterAccount10149PaymentLinked(
             invoiceNumber: candidate.invoiceNumber,
             paymentDate: candidate.paymentDate,
         })),
-        ctx.userId
+        ctx.userId,
+        {
+            onProgress: ctx.onProgress,
+        }
     );
     return { invoiceIdsToRecalc: [...touched] };
 }
@@ -1047,20 +1050,31 @@ export const account10149Extension: BillingAccountExtension = {
                 ctx.accountId,
                 ctx.invoiceNumbers,
                 ctx.userId,
-                ctx.invoiceCloseDates
+                ctx.invoiceCloseDates,
+                new Date(),
+                {
+                    onProgress: ({ processed, total: closeTotal }) => {
+                        // Prefer the flush total so the UI stays consistent.
+                        report(
+                            Math.min(
+                                processed,
+                                total > 0 ? total : closeTotal
+                            )
+                        );
+                    },
+                }
             );
             missingNumbers = result.missingNumbers;
             // Progress counts settled invoices only (missing reported via return).
             processed = result.touchedIds.length;
             report(processed);
 
-            const recalcBaseline = processed;
-
             if (result.touchedIds.length > 0) {
                 // Dynamic import avoids account_10149 ↔ extensions ↔ recalc cycle.
                 const { recalculateInvoicesFromLinkedPayments } = await import(
                     "../../invoice/linkDeferredPaymentAndRecalc"
                 );
+                const recalcTotal = result.touchedIds.length;
                 await recalculateInvoicesFromLinkedPayments(
                     ctx.prisma,
                     new Map(
@@ -1068,7 +1082,20 @@ export const account10149Extension: BillingAccountExtension = {
                     ),
                     {
                         onProgress: ({ processed: recalcProcessed }) => {
-                            report(recalcBaseline + recalcProcessed);
+                            // Keep settle progress in the same 0..total window:
+                            // settled invoices + relative recalc progress.
+                            if (total <= 0) {
+                                report(recalcProcessed);
+                                return;
+                            }
+                            const closeShare = Math.max(0, processed);
+                            const recalcShare = Math.round(
+                                (recalcProcessed / Math.max(1, recalcTotal)) *
+                                    Math.max(0, total - closeShare)
+                            );
+                            report(
+                                Math.min(total, closeShare + recalcShare)
+                            );
                         },
                     }
                 );

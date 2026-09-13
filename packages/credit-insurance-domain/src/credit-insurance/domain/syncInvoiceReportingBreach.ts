@@ -1,5 +1,10 @@
 import { prisma } from "../domain-db";
 
+import {
+    bulkUpdateInvoiceBooleanByValue,
+    bulkUpdateInvoiceCtvSnapshots,
+    bulkUpdateInvoiceTargetDates,
+} from "./bulkInvoiceUpdates";
 import { resolveCreatedOverdueMepByInvoiceId } from "./createdOverdueMepAtInvoiceDate";
 import { loadEffectiveInsuranceForCustomers } from "./loadEffectiveInsuranceForCustomers";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
@@ -158,7 +163,7 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             db
         );
 
-    let n = 0;
+    const toSetTrue: Array<{ id: number; value: boolean }> = [];
     for (const inv of invoices) {
         if (!inv.target_reporting_date) {
             continue;
@@ -178,22 +183,20 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             }
         );
         if (should) {
-            await db.invoice.update({
-                where: { id: inv.id },
-                data: { reporting_breach: true },
-            });
-            n += 1;
+            toSetTrue.push({ id: inv.id, value: true });
         }
     }
-    return n;
+    await bulkUpdateInvoiceBooleanByValue(db, "reporting_breach", toSetTrue);
+    return toSetTrue.length;
 }
 
 /**
  * Recompute target_reporting_date and target_mep_date from invoice due_date and
  * Customer.reporting_days / max_allowed_mep (same as import / refreshInsuranceFields).
  *
- * Processes invoices in chunks with limited concurrency so large backfills do
- * not sit on sequential awaits, and optional onProgress can drive a sync tail step.
+ * Processes invoices in chunks; writes use a bulk UPDATE … FROM UNNEST so large
+ * backfills do not issue one Prisma update per invoice. Optional onProgress
+ * drives a sync tail step.
  */
 export async function refreshInsuranceTargetDatesForInvoiceIds(
     invoiceIds: number[],
@@ -203,9 +206,9 @@ export async function refreshInsuranceTargetDatesForInvoiceIds(
             processed: number;
             total: number;
         }) => void;
-        /** Invoice ids loaded/updated per outer chunk (default 200). */
+        /** Invoice ids loaded/updated per outer chunk (default 500). */
         chunkSize?: number;
-        /** Concurrent invoice updates within a chunk (default 25). */
+        /** @deprecated Ignored — writes are bulk UNNEST, not per-row concurrency. */
         concurrency?: number;
     }
 ): Promise<number> {
@@ -216,8 +219,7 @@ export async function refreshInsuranceTargetDatesForInvoiceIds(
         return 0;
     }
 
-    const chunkSize = Math.max(1, options?.chunkSize ?? 200);
-    const concurrency = Math.max(1, options?.concurrency ?? 25);
+    const chunkSize = Math.max(1, options?.chunkSize ?? 500);
     const total = uniqueIds.length;
     let processed = 0;
     let updated = 0;
@@ -297,22 +299,9 @@ export async function refreshInsuranceTargetDatesForInvoiceIds(
             });
         }
 
-        for (let i = 0; i < pendingUpdates.length; i += concurrency) {
-            const batch = pendingUpdates.slice(i, i + concurrency);
-            await Promise.all(
-                batch.map((row) =>
-                    // Date-only refresh: update targets only — do not clear reporting_breach.
-                    db.invoice.update({
-                        where: { id: row.id },
-                        data: {
-                            target_reporting_date: row.target_reporting_date,
-                            target_mep_date: row.target_mep_date,
-                        },
-                    })
-                )
-            );
-            updated += batch.length;
-        }
+        // Date-only refresh: update targets only — do not clear reporting_breach.
+        await bulkUpdateInvoiceTargetDates(db, pendingUpdates);
+        updated += pendingUpdates.length;
 
         processed = Math.min(offset + idChunk.length, total);
         options?.onProgress?.({ processed, total });
@@ -354,7 +343,7 @@ export async function refreshPaymentTermBreachForInvoiceIds(
     const insuranceByCustomerId =
         await loadEffectiveInsuranceForCustomers(customerIds);
 
-    let updated = 0;
+    const pending: Array<{ id: number; value: boolean }> = [];
     for (const inv of rows) {
         if (inv.customer_id == null) {
             continue;
@@ -373,38 +362,11 @@ export async function refreshPaymentTermBreachForInvoiceIds(
             }
         );
         if (next !== inv.ctv_payment_term) {
-            await db.invoice.update({
-                where: { id: inv.id },
-                data: { ctv_payment_term: next },
-            });
-            updated += 1;
+            pending.push({ id: inv.id, value: next });
         }
     }
-    return updated;
-}
-
-const CTV_SNAPSHOT_UPDATE_CONCURRENCY = 24;
-
-async function runWithConcurrency<T>(
-    items: readonly T[],
-    limit: number,
-    fn: (item: T) => Promise<void>
-): Promise<void> {
-    if (items.length === 0) {
-        return;
-    }
-    let cursor = 0;
-    async function worker(): Promise<void> {
-        for (;;) {
-            const i = cursor++;
-            if (i >= items.length) {
-                return;
-            }
-            await fn(items[i]!);
-        }
-    }
-    const workerCount = Math.min(limit, items.length);
-    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    await bulkUpdateInvoiceBooleanByValue(db, "ctv_payment_term", pending);
+    return pending.length;
 }
 
 type CtvSnapshotRow = {
@@ -414,7 +376,11 @@ type CtvSnapshotRow = {
     account_id: number | null;
     customer_id: number | null;
     Customer: {
-        CustomerPolicy: { max_allowed_mep: number | null }[];
+        CustomerPolicy: {
+            max_allowed_mep: number | null;
+            mep_cutoff_day: number | null;
+            mep_substitute_extra_days: number | null;
+        }[];
     } | null;
 };
 
@@ -438,6 +404,7 @@ async function resolveCreatedOverdueMepForRows(
     const resolved = new Map<number, boolean>();
     for (const bucket of byCustomer.values()) {
         const first = bucket[0]!;
+        const policy = first.Customer?.CustomerPolicy?.[0];
         const flags = await resolveCreatedOverdueMepByInvoiceId({
             accountId: first.account_id!,
             customerId: first.customer_id!,
@@ -446,10 +413,14 @@ async function resolveCreatedOverdueMepForRows(
                 invoice_date: row.invoice_date,
                 amount: row.amount,
             })),
-            maxAllowedMep:
-                first.Customer?.CustomerPolicy?.[0]?.max_allowed_mep ?? null,
+            maxAllowedMep: policy?.max_allowed_mep ?? null,
             mepBreachStartDate:
                 mepBreachStartDateByAccountId.get(first.account_id!) ?? null,
+            monthEnd: {
+                mepCutoffDay: policy?.mep_cutoff_day ?? null,
+                mepSubstituteExtraDays:
+                    policy?.mep_substitute_extra_days ?? null,
+            },
             db,
         });
         for (const [invoiceId, flag] of flags) {
@@ -461,7 +432,8 @@ async function resolveCreatedOverdueMepForRows(
 
 /**
  * Recompute created-terms violation snapshot booleans from current Customer + InsurancePolicy rows.
- * Uses batched reads + parallel updates (for cron/post-import sweep; avoids N sequential full-service refreshes).
+ * Uses batched reads + bulk UNNEST writes (for cron/post-import sweep; avoids
+ * N sequential full-service refreshes).
  */
 export async function refreshCtvSnapshotsForInvoiceIds(
     invoiceIds: number[],
@@ -497,6 +469,8 @@ export async function refreshCtvSnapshotsForInvoiceIds(
                             credit_score: true,
                             active_customer_since: true,
                             max_allowed_mep: true,
+                            mep_cutoff_day: true,
+                            mep_substitute_extra_days: true,
                         },
                     },
                 },
@@ -547,7 +521,11 @@ export async function refreshCtvSnapshotsForInvoiceIds(
 
     const pending: Array<{
         id: number;
-        data: Record<string, boolean | number>;
+        policyIdToSet: number | null;
+        ctv_customer_overdue_mep: boolean;
+        ctv_customer_excluded_from_policy: boolean;
+        ctv_outdated_dcl: boolean;
+        ctv_invoice_after_policy_end: boolean;
     }> = [];
 
     for (const inv of rows) {
@@ -609,24 +587,16 @@ export async function refreshCtvSnapshotsForInvoiceIds(
 
         pending.push({
             id: inv.id,
-            data: {
-                ...(policyIdPatch ? { policy_id: cid } : {}),
-                ctv_customer_overdue_mep: snap.ctv_customer_overdue_mep,
-                ctv_customer_excluded_from_policy:
-                    snap.ctv_customer_excluded_from_policy,
-                ctv_outdated_dcl: snap.ctv_outdated_dcl,
-                ctv_invoice_after_policy_end:
-                    snap.ctv_invoice_after_policy_end,
-            },
+            policyIdToSet: policyIdPatch ? cid : null,
+            ctv_customer_overdue_mep: snap.ctv_customer_overdue_mep,
+            ctv_customer_excluded_from_policy:
+                snap.ctv_customer_excluded_from_policy,
+            ctv_outdated_dcl: snap.ctv_outdated_dcl,
+            ctv_invoice_after_policy_end: snap.ctv_invoice_after_policy_end,
         });
     }
 
-    await runWithConcurrency(pending, CTV_SNAPSHOT_UPDATE_CONCURRENCY, async (u) => {
-        await db.invoice.update({
-            where: { id: u.id },
-            data: u.data,
-        });
-    });
+    await bulkUpdateInvoiceCtvSnapshots(db, pending);
 
     return pending.length;
 }
@@ -661,6 +631,77 @@ export async function clearCustomerExcludedFromPolicyFlagWhenIncluded(
     return result.count;
 }
 
+/** Open invoices loaded/refreshed per outer chunk in multi-customer restamp. */
+const TERMS_BREACH_INVOICE_CHUNK = 1000;
+
+/**
+ * Recompute terms-breach invoice flags for many customers' open Due/Overdue
+ * invoices in one pass (batched reads + bulk writes). Prefer this after link /
+ * maturity instead of calling {@link refreshTermsBreachFlagsForCustomer} in a
+ * loop.
+ */
+export async function refreshTermsBreachFlagsForCustomers(
+    customerIds: number[],
+    db: DbClient = prisma,
+    options?: {
+        onProgress?: (progress: { processed: number; total: number }) => void;
+    }
+): Promise<number> {
+    const uniqueCustomerIds = Array.from(
+        new Set(
+            customerIds.filter((id) => Number.isFinite(id) && id > 0)
+        )
+    );
+    if (uniqueCustomerIds.length === 0) {
+        return 0;
+    }
+
+    let updated = 0;
+    for (const customerId of uniqueCustomerIds) {
+        updated += await clearCustomerExcludedFromPolicyFlagWhenIncluded(
+            customerId,
+            db
+        );
+    }
+
+    const openInvoices = await db.invoice.findMany({
+        where: {
+            customer_id: { in: uniqueCustomerIds },
+            status: { in: ["Due", "Overdue"] },
+        },
+        select: { id: true },
+    });
+    const invoiceIds = openInvoices.map((row) => row.id);
+    if (invoiceIds.length === 0) {
+        return updated;
+    }
+
+    const totalChunks = Math.ceil(
+        invoiceIds.length / TERMS_BREACH_INVOICE_CHUNK
+    );
+    options?.onProgress?.({ processed: 0, total: totalChunks });
+    let chunkIndex = 0;
+    for (
+        let offset = 0;
+        offset < invoiceIds.length;
+        offset += TERMS_BREACH_INVOICE_CHUNK
+    ) {
+        const chunk = invoiceIds.slice(
+            offset,
+            offset + TERMS_BREACH_INVOICE_CHUNK
+        );
+        updated += await refreshCtvSnapshotsForInvoiceIds(chunk, db);
+        updated += await refreshPaymentTermBreachForInvoiceIds(chunk, db);
+        updated += await refreshInsuranceTargetDatesForInvoiceIds(chunk, db);
+        chunkIndex += 1;
+        options?.onProgress?.({
+            processed: chunkIndex,
+            total: totalChunks,
+        });
+    }
+    return updated;
+}
+
 /**
  * Recompute terms-breach invoice flags for a customer's open Due/Overdue invoices
  * after policy exclusion or limit-type changes. Also clears the "excluded from policy
@@ -670,25 +711,5 @@ export async function refreshTermsBreachFlagsForCustomer(
     customerId: number,
     db: DbClient = prisma
 ): Promise<number> {
-    let updated = await clearCustomerExcludedFromPolicyFlagWhenIncluded(
-        customerId,
-        db
-    );
-
-    const invoices = await db.invoice.findMany({
-        where: {
-            customer_id: customerId,
-            status: { in: ["Due", "Overdue"] },
-        },
-        select: { id: true },
-    });
-    const invoiceIds = invoices.map((row) => row.id);
-    if (invoiceIds.length === 0) {
-        return updated;
-    }
-
-    updated += await refreshCtvSnapshotsForInvoiceIds(invoiceIds, db);
-    updated += await refreshPaymentTermBreachForInvoiceIds(invoiceIds, db);
-    updated += await refreshInsuranceTargetDatesForInvoiceIds(invoiceIds, db);
-    return updated;
+    return refreshTermsBreachFlagsForCustomers([customerId], db);
 }

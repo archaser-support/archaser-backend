@@ -1,7 +1,7 @@
 import type { Invoice, InvoicePayment, Prisma, PrismaClient } from "@prisma/client";
 import {
     bindCreditInsurancePrisma,
-    refreshTermsBreachFlagsForCustomer,
+    refreshTermsBreachFlagsForCustomers,
 } from "@archaser/credit-insurance-domain";
 import {
     INVOICE_PAID_TOLERANCE,
@@ -10,6 +10,7 @@ import {
 } from "./invoicePaidTolerance";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
+import { shrinkOrDeleteVirtualPaymentsForInvoiceIds } from "../payment/virtualPaymentTrim";
 
 export type LinkDeferredPaymentAndRecalcResult = {
     invoicePayment: InvoicePayment;
@@ -469,6 +470,7 @@ export async function recalculateInvoicesFromLinkedPayments(
         )
     );
 
+    const writeTotal = recalcRows.length;
     if (!options?.onProgress) {
         await bulkWriteInvoicePaidRecalcRows(
             prisma as unknown as PrismaClient,
@@ -476,7 +478,7 @@ export async function recalculateInvoicesFromLinkedPayments(
             modifiedAt
         );
     } else {
-        options.onProgress({ processed: 0, total: recalcRows.length });
+        options.onProgress({ processed: 0, total: writeTotal });
         for (
             let offset = 0;
             offset < recalcRows.length;
@@ -489,8 +491,8 @@ export async function recalculateInvoicesFromLinkedPayments(
                 modifiedAt
             );
             options.onProgress({
-                processed: Math.min(offset + chunk.length, recalcRows.length),
-                total: recalcRows.length,
+                processed: Math.min(offset + chunk.length, writeTotal),
+                total: writeTotal,
             });
         }
     }
@@ -505,9 +507,19 @@ export async function recalculateInvoicesFromLinkedPayments(
                 .filter((id): id is number => id != null)
         )
     );
-    for (const customerId of customerIds) {
-        await refreshTermsBreachFlagsForCustomer(customerId);
-    }
+    // CTV restamp often dominates wall time after paid writes; keep the
+    // link-payments bar moving instead of freezing at recalc 100%.
+    await refreshTermsBreachFlagsForCustomers(customerIds, undefined, {
+        onProgress: options?.onProgress
+            ? ({ processed, total }) => {
+                  const ctvTotal = Math.max(1, total);
+                  options.onProgress!({
+                      processed: writeTotal + processed,
+                      total: writeTotal + ctvTotal,
+                  });
+              }
+            : undefined,
+    });
 }
 
 /**
@@ -566,6 +578,16 @@ export async function linkDeferredPaymentsAndRecalcBatch(
     for (const row of pending) {
         targets.set(row.invoiceId, recalcOptions ?? {});
     }
+
+    // Cash may land after a recon virtual fill (e.g. AR replay early-link).
+    // Shrink/delete surplus virtuals before paid recalc — never create here.
+    await shrinkOrDeleteVirtualPaymentsForInvoiceIds(
+        prisma,
+        accountId,
+        [...targets.keys()],
+        { paidTolerance: recalcOptions?.paidTolerance }
+    );
+
     await recalculateInvoicesFromLinkedPayments(prisma, targets);
 
     return {

@@ -65,7 +65,14 @@ export type ArPostIngestProgress = {
     step?: string;
     customerId?: number;
     /** Progress inside that step, e.g. replay events for one customer. */
-    detail?: { processed: number; total: number };
+    detail?: {
+        processed: number;
+        total: number;
+        /** Customer number / name for the row being processed. */
+        customerLabel?: string;
+        customerIndex?: number;
+        customerTotal?: number;
+    };
 };
 
 /**

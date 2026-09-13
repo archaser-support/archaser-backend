@@ -158,6 +158,26 @@ export async function listExecutionsForAccount(
     });
 }
 
+/**
+ * Latest non-preview SUCCESS for a connector (Mongo history). Prefer
+ * `completed_at` as the incremental pull watermark.
+ */
+export async function findLastSuccessfulExecutionForConnector(
+    connectorId: number
+): Promise<SyncHistoryExecution | null> {
+    return store().findLastSuccessfulForConnector(connectorId);
+}
+
+/** Watermark date from a successful history row (`completed_at` preferred). */
+export function watermarkFromSuccessfulExecution(
+    execution: SyncHistoryExecution | null | undefined
+): Date | null {
+    if (!execution) {
+        return null;
+    }
+    return execution.completed_at ?? execution.started_at ?? null;
+}
+
 export async function listRunningSyncAccountIds(): Promise<number[]> {
     return store().listRunningAccountIds();
 }

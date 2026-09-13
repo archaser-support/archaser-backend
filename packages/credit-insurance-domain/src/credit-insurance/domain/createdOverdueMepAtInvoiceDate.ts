@@ -4,6 +4,7 @@ import {
     oldestOverdueDueAtEachInvoiceIssueDate,
     loadAsOfOpenInvoiceCandidates,
     type AsOfOpenInvoiceLine,
+    type CustomerOverdueMepMonthEnd,
 } from "./asOfOpenAr";
 import {
     computeCustomerOverdueBlock,
@@ -39,6 +40,7 @@ export async function resolveCreatedOverdueMepByInvoiceId(args: {
     maxAllowedMep: number | null | undefined;
     /** Pass an already-resolved value to skip the per-account connector read. */
     mepBreachStartDate?: Date | null;
+    monthEnd?: CustomerOverdueMepMonthEnd;
     db?: DbClient;
 }): Promise<Map<number, boolean>> {
     const result = new Map<number, boolean>();
@@ -99,13 +101,16 @@ export async function resolveCreatedOverdueMepByInvoiceId(args: {
         ) {
             continue;
         }
+        const oldest = oldestByInvoiceId.get(invoice.id) ?? null;
         result.set(
             invoice.id,
             computeCustomerOverdueBlock({
-                oldestInvoiceOverdueDate:
-                    oldestByInvoiceId.get(invoice.id) ?? null,
+                oldestInvoiceOverdueDate: oldest?.dueDate ?? null,
                 maxAllowedMepDays: args.maxAllowedMep,
                 today: invoice.invoice_date,
+                oldestInvoiceIssueDate: oldest?.invoiceDate ?? null,
+                mepCutoffDay: args.monthEnd?.mepCutoffDay,
+                mepSubstituteExtraDays: args.monthEnd?.mepSubstituteExtraDays,
             })
         );
     }
@@ -119,6 +124,7 @@ export async function resolveCreatedOverdueMepForInvoice(args: {
     maxAllowedMep: number | null | undefined;
     /** Pass an already-resolved value to skip the per-account connector read. */
     mepBreachStartDate?: Date | null;
+    monthEnd?: CustomerOverdueMepMonthEnd;
     db?: DbClient;
 }): Promise<boolean> {
     const byId = await resolveCreatedOverdueMepByInvoiceId({
@@ -127,6 +133,7 @@ export async function resolveCreatedOverdueMepForInvoice(args: {
         invoices: [args.invoice],
         maxAllowedMep: args.maxAllowedMep,
         mepBreachStartDate: args.mepBreachStartDate,
+        monthEnd: args.monthEnd,
         db: args.db,
     });
     return byId.get(args.invoice.id) ?? false;
