@@ -13,7 +13,7 @@ export class DatabaseService extends PrismaClient implements OnModuleDestroy {
                         module: "api",
                         applicationName: "archaser-api",
                         connectionLimit: Number(
-                            process.env.CONNECTION_LIMIT_API || 10
+                            process.env.CONNECTION_LIMIT_API || 25
                         ),
                     }),
                 },
