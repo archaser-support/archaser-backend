@@ -3,6 +3,11 @@ import { Prisma, invoice_status } from "@prisma/client";
 import { type DbClient, prisma as defaultPrisma } from "../domain-db";
 
 import {
+    bulkUpdateInvoiceCapacityGaps,
+    bulkZeroInvoiceCapacityGaps,
+    type InvoiceCapacityGapWrite,
+} from "./bulkInvoiceUpdates";
+import {
     computeInvoiceCapacityGapDualCurrency,
     type CurrencyRateRow,
 } from "./invoiceCapacityGapAmounts";
@@ -65,30 +70,16 @@ async function fetchCurrencyRateForPair(
     return rates[0] ?? null;
 }
 
-async function zeroInvoiceCapacityGap(
-    dbClient: DbClient,
-    inv: {
-        id: number;
-        capacity_gap_amount: Prisma.Decimal | null;
-        capacity_gap_amount_limit: Prisma.Decimal | null;
-    }
-): Promise<void> {
-    const zeroed =
+function isCapacityGapAlreadyZero(inv: {
+    capacity_gap_amount: Prisma.Decimal | null;
+    capacity_gap_amount_limit: Prisma.Decimal | null;
+}): boolean {
+    return (
         inv.capacity_gap_amount != null &&
         new Prisma.Decimal(inv.capacity_gap_amount).eq(0) &&
         inv.capacity_gap_amount_limit != null &&
-        new Prisma.Decimal(inv.capacity_gap_amount_limit).eq(0);
-    if (zeroed) {
-        return;
-    }
-    await dbClient.invoice.updateMany({
-        where: { id: inv.id },
-        data: {
-            capacity_gap_amount: new Prisma.Decimal(0),
-            capacity_gap_amount_limit: new Prisma.Decimal(0),
-            capacity_gap_amount_date: null,
-        } as any,
-    });
+        new Prisma.Decimal(inv.capacity_gap_amount_limit).eq(0)
+    );
 }
 
 /**
@@ -180,11 +171,14 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
     }>;
 
     if (uncovered) {
-        for (const inv of invoices) {
-            if (OPEN_STATUSES.includes(inv.status)) {
-                await zeroInvoiceCapacityGap(dbClient, inv);
-            }
-        }
+        const zeroIds = invoices
+            .filter(
+                (inv) =>
+                    OPEN_STATUSES.includes(inv.status) &&
+                    !isCapacityGapAlreadyZero(inv)
+            )
+            .map((inv) => inv.id);
+        await bulkZeroInvoiceCapacityGaps(dbClient, zeroIds);
         return { missingRate: false };
     }
 
@@ -233,11 +227,10 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
 
     const openIdSet = new Set(openInsured.map((inv) => inv.id));
 
-    for (const inv of invoices) {
-        if (!openIdSet.has(inv.id)) {
-            await zeroInvoiceCapacityGap(dbClient, inv);
-        }
-    }
+    const zeroIds = invoices
+        .filter((inv) => !openIdSet.has(inv.id) && !isCapacityGapAlreadyZero(inv))
+        .map((inv) => inv.id);
+    await bulkZeroInvoiceCapacityGaps(dbClient, zeroIds);
 
     if (openInsured.length === 0) {
         return { missingRate };
@@ -266,6 +259,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
 
     const rateCache = new Map<string, CurrencyRateRow | null>();
     const assessedAt = new Date();
+    const pendingWrites: InvoiceCapacityGapWrite[] = [];
 
     for (const inv of openInsured) {
         const allocation = allocationById.get(inv.id);
@@ -336,19 +330,19 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
             prevAssessedCcy !== limitCurrency;
 
         if (baseChanged || limitChanged || assessedChanged) {
-            await dbClient.invoice.updateMany({
-                where: { id: inv.id },
-                data: {
-                    limit_assessed_amount: nextAssessed,
-                    limit_assessed_currency: limitCurrency,
-                    limit_assessed_at: assessedAt,
-                    capacity_gap_amount: nextBase,
-                    capacity_gap_amount_limit: nextLimit,
-                    capacity_gap_amount_date: computed.rateDate,
-                } as any,
+            pendingWrites.push({
+                id: inv.id,
+                limit_assessed_amount: nextAssessed.toNumber(),
+                limit_assessed_currency: limitCurrency,
+                capacity_gap_amount:
+                    nextBase != null ? nextBase.toNumber() : null,
+                capacity_gap_amount_limit: nextLimit.toNumber(),
+                capacity_gap_amount_date: computed.rateDate,
             });
         }
     }
+
+    await bulkUpdateInvoiceCapacityGaps(dbClient, pendingWrites, assessedAt);
 
     return { missingRate };
 }

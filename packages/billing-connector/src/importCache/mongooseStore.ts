@@ -4,11 +4,13 @@ import {
     ConnectorImportEntityCacheModel,
     IMPORT_CACHE_V1_UNIQUE_INDEX_NAME,
 } from "./model";
-import type { ImportCacheStore } from "./store";
+import type { ImportCacheLoadKey, ImportCacheStore } from "./store";
 import {
     IMPORT_CACHE_ENTITY_TYPES,
     IMPORT_CACHE_MAX_CHUNK_BYTES,
+    type ImportCacheDaySummary,
     type ImportCacheDocument,
+    type ImportCacheEntityType,
     type ImportCacheKey,
     type SameDayCacheRun,
     type SaveEntityImportCacheInput,
@@ -60,14 +62,49 @@ function executionEntityFilter(input: {
     };
 }
 
-function keyFilter(key: ImportCacheKey) {
-    return {
+function loadFilter(key: ImportCacheLoadKey) {
+    const filter: Record<string, unknown> = {
         account_id: key.accountId,
         execution_id: key.executionId,
         import_type: key.importType,
         sync_mode: key.syncMode,
-        cache_day: key.cacheDay,
         customer_scope: key.customerScope,
+    };
+    if (typeof key.cacheDay === "string" && key.cacheDay.trim().length > 0) {
+        filter.cache_day = key.cacheDay.trim();
+    }
+    return filter;
+}
+
+function toImportCacheDocument(doc: {
+    account_id: number;
+    connector_id: number;
+    provider: string;
+    import_type: ImportCacheKey["importType"];
+    sync_mode: ImportCacheKey["syncMode"];
+    cache_day: string;
+    customer_scope: string;
+    execution_id: string;
+    row_count: number;
+    chunk_index: number;
+    chunk_count: number;
+    rows?: unknown;
+    created_at: Date;
+}): ImportCacheDocument {
+    return {
+        account_id: doc.account_id,
+        connector_id: doc.connector_id,
+        provider: doc.provider,
+        import_type: doc.import_type,
+        sync_mode: doc.sync_mode,
+        cache_day: doc.cache_day,
+        customer_scope: doc.customer_scope,
+        execution_id: doc.execution_id,
+        row_count: doc.row_count,
+        chunk_index: doc.chunk_index,
+        chunk_count: doc.chunk_count,
+        rows: (doc.rows ?? []) as Record<string, unknown>[],
+        created_at: doc.created_at,
     };
 }
 
@@ -104,26 +141,12 @@ export const mongooseImportCacheStore: ImportCacheStore = {
         return { rowCount: input.rows.length, chunkCount: chunks.length };
     },
 
-    async load(key: ImportCacheKey): Promise<ImportCacheDocument[]> {
+    async load(key: ImportCacheLoadKey): Promise<ImportCacheDocument[]> {
         await ensureImportCacheIndexes();
-        const docs = await ConnectorImportEntityCacheModel.find(keyFilter(key))
+        const docs = await ConnectorImportEntityCacheModel.find(loadFilter(key))
             .sort({ chunk_index: 1 })
             .lean();
-        return docs.map((doc) => ({
-            account_id: doc.account_id,
-            connector_id: doc.connector_id,
-            provider: doc.provider,
-            import_type: doc.import_type,
-            sync_mode: doc.sync_mode,
-            cache_day: doc.cache_day,
-            customer_scope: doc.customer_scope,
-            execution_id: doc.execution_id,
-            row_count: doc.row_count,
-            chunk_index: doc.chunk_index,
-            chunk_count: doc.chunk_count,
-            rows: (doc.rows ?? []) as Record<string, unknown>[],
-            created_at: doc.created_at,
-        }));
+        return docs.map((doc) => toImportCacheDocument(doc));
     },
 
     async listSameDayRuns(input): Promise<SameDayCacheRun[]> {
@@ -143,7 +166,7 @@ export const mongooseImportCacheStore: ImportCacheStore = {
             {
                 created_at: Date;
                 entities: Map<
-                    ImportCacheKey["importType"],
+                    ImportCacheEntityType,
                     { row_count: number }
                 >;
             }
@@ -167,18 +190,22 @@ export const mongooseImportCacheStore: ImportCacheStore = {
             // Skip internal PendingInvoiceClose — not a Start picker entity.
             if (
                 !IMPORT_CACHE_ENTITY_TYPES.includes(
-                    doc.import_type as (typeof IMPORT_CACHE_ENTITY_TYPES)[number]
+                    doc.import_type as ImportCacheEntityType
                 )
             ) {
                 continue;
             }
-            run.entities.set(doc.import_type as (typeof IMPORT_CACHE_ENTITY_TYPES)[number], {
+            run.entities.set(doc.import_type as ImportCacheEntityType, {
                 row_count: doc.row_count,
             });
         }
 
         const runs: SameDayCacheRun[] = [];
         for (const [execution_id, run] of byExecution) {
+            // Skip executions that only had PendingInvoiceClose (no selectable entities).
+            if (run.entities.size === 0) {
+                continue;
+            }
             runs.push({
                 execution_id,
                 created_at: run.created_at,
@@ -205,5 +232,47 @@ export const mongooseImportCacheStore: ImportCacheStore = {
 
         runs.sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
         return runs;
+    },
+
+    async listCacheDays(input): Promise<ImportCacheDaySummary[]> {
+        await ensureImportCacheIndexes();
+        const importTypes =
+            input.importTypes && input.importTypes.length > 0
+                ? input.importTypes
+                : [...IMPORT_CACHE_ENTITY_TYPES];
+        const rows = await ConnectorImportEntityCacheModel.aggregate<{
+            _id: string;
+            execution_ids: string[];
+        }>([
+            {
+                $match: {
+                    account_id: input.accountId,
+                    sync_mode: input.syncMode,
+                    customer_scope: input.customerScope,
+                    chunk_index: 0,
+                    import_type: { $in: importTypes },
+                },
+            },
+            {
+                $group: {
+                    _id: "$cache_day",
+                    execution_ids: { $addToSet: "$execution_id" },
+                },
+            },
+            { $sort: { _id: -1 } },
+        ]);
+
+        return rows
+            .filter(
+                (row) =>
+                    typeof row._id === "string" &&
+                    row._id.length > 0 &&
+                    Array.isArray(row.execution_ids) &&
+                    row.execution_ids.length > 0
+            )
+            .map((row) => ({
+                cache_day: row._id,
+                run_count: row.execution_ids.length,
+            }));
     },
 };

@@ -53,6 +53,14 @@ export type TailStepDetail = {
     step: string;
     processed?: number;
     total?: number;
+    /** Present while replaying one customer (event-level detail). */
+    customer_id?: number;
+    /** Display label (customer_number / name) for the customer in progress. */
+    customer_label?: string;
+    /** 1-based index of the customer currently being processed. */
+    customer_index?: number;
+    /** Total customers in this tail step. */
+    customer_total?: number;
 };
 
 export type ConnectorEntityStatSlice = {

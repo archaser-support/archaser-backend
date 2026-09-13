@@ -27,6 +27,8 @@ describe("ImportService job JSON", () => {
         };
         const db = {
             importJob: {
+                findMany: jest.fn().mockResolvedValue([]),
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
                 findFirst: jest.fn().mockResolvedValue(null),
                 create: jest.fn().mockResolvedValue(created),
             },
@@ -46,6 +48,8 @@ describe("ImportService job JSON", () => {
     it("createJob rejects when another job is Processing", async () => {
         const db = {
             importJob: {
+                findMany: jest.fn().mockResolvedValue([]),
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
                 findFirst: jest.fn().mockResolvedValue({ id: "job-other" }),
             },
         };
@@ -75,6 +79,8 @@ describe("ImportService job JSON", () => {
     it("createJob throws ConflictException on concurrent Processing job", async () => {
         const db = {
             importJob: {
+                findMany: jest.fn().mockResolvedValue([]),
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
                 findFirst: jest.fn().mockResolvedValue({ id: "job-other" }),
             },
         };

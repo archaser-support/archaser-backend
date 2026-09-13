@@ -2,6 +2,8 @@
 
 ## Agent skills
 
+**Canonical home for shared skills is this repo** — `.agents/skills/`. Do not create or copy shared skills into `archaser-frontend` (frontend keeps only frontend-specific skills under `.cursor/skills/`). See `.cursorrules` → **Agent skills (canonical home)**.
+
 ### Issue tracker
 
 **ClickUp** is the human ticket (status, durable summary, How to test, branch/PR links). **`/to-issues` vertical slices** are commit-able markdown under `.cursor/plans/<feature-slug>/issues/`. PRDs stay at `.cursor/plans/<feature-slug>.prd.md`. `.scratch/` remains gitignored optional workspace. See `docs/agents/clickup-git-workflow.md` and `docs/agents/issue-tracker.md`.

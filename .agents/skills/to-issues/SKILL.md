@@ -76,6 +76,7 @@ Break the plan into **tracer bullet** issues. Each issue is a thin vertical slic
 
 - Each slice delivers a narrow but COMPLETE path through every layer needed for the demo (schema, API, UI as applicable)
 - A completed slice is demoable or verifiable on its own (via **How to test** — manual steps are fine)
+- When a slice includes user-facing copy, the slice must call for **English and Hebrew** locale updates in the same work (identical keys — see `.cursor/rules/translations.mdc`); do not defer Hebrew to a later slice
 - Do **not** require new automated tests in a slice; `/implement-next` and implementers must not add/expand tests unless the user explicitly asks
 - Any prefactoring should be done first
 
@@ -178,9 +179,10 @@ Avoid specific file paths or code snippets in the body — they go stale fast. E
 - [ ] Criterion 1
 - [ ] Criterion 2
 - [ ] Criterion 3
+- [ ] *(When the slice adds UI copy)* Matching English and Hebrew locale keys are added/updated together
 
 ## How to test
 
-Concrete steps: where to go in the app, what to do, and what to expect.
+Concrete steps: where to go in the app, what to do, and what to expect. When UI copy is in scope, include a Hebrew locale spot-check.
 
 </issue-template>

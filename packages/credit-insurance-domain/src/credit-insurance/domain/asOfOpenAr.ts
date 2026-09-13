@@ -139,6 +139,14 @@ export function classifyAsOfOpenStatus(
     return due.getTime() < asOf.getTime() ? "Overdue" : "Due";
 }
 
+/** True when `date` falls on the same UTC calendar day as `now` (default: wall clock). */
+export function isUtcCalendarToday(
+    date: Date,
+    now: Date = new Date()
+): boolean {
+    return toUtcDayStart(date).getTime() === toUtcDayStart(now).getTime();
+}
+
 export function toUtcDayStart(date: Date): Date {
     return new Date(
         Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
@@ -174,6 +182,8 @@ export type AsOfOpenInvoiceLine = {
      * Invoice row itself reports settled *today*. Must not erase history: when
      * payments on/before the snapshot day leave a non-zero open amount, the
      * invoice was open on that day even if status is Paid now.
+     * Exception: when the as-of day is UTC today, live Paid wins so today's CPT
+     * tip matches live At Risk (future-dated payments already applied live).
      */
     liveClosed?: boolean;
     /**
@@ -414,6 +424,13 @@ export function wasAsOfInvoiceOpenAt(
     if (toUtcDayStart(line.invoiceDate).getTime() > at.getTime()) {
         return false;
     }
+    // Today's CPT / as-of snapshot must match the live book. Future-dated ERP
+    // payments can already mark the invoice Paid while payment_date is still
+    // after today — do not reopen those on the "today" tip of the chart.
+    // Historical days keep the paid-later reopen rule below.
+    if (line.liveClosed && isUtcCalendarToday(at)) {
+        return false;
+    }
     const openCustomer = computeAsOfOpenCustomerAmount(line);
     if (openCustomer !== 0) {
         return true;
@@ -449,13 +466,20 @@ export function wasAsOfInvoiceOpenAt(
  * date from the candidate set, using the same shared predicate as the live
  * block computation so replay and live cannot disagree.
  */
+export type CustomerOverdueMepMonthEnd = {
+    mepCutoffDay?: number | null;
+    mepSubstituteExtraDays?: number | null;
+};
+
 export function asOfCustomerOverdueBlockAt(
     customerLines: AsOfOpenInvoiceLine[],
     atDate: Date,
     maxAllowedMep: number | null | undefined,
-    mepBreachStartDate?: Date | null
+    mepBreachStartDate?: Date | null,
+    monthEnd?: CustomerOverdueMepMonthEnd
 ): boolean {
     let oldestOverdueDue: Date | null = null;
+    let oldestOverdueIssueDate: Date | null = null;
     for (const line of customerLines) {
         if (!isInvoiceInMepBreachScope(line.invoiceDate, mepBreachStartDate)) {
             continue;
@@ -473,14 +497,24 @@ export function asOfCustomerOverdueBlockAt(
             continue;
         }
         const due = toUtcDayStart(line.dueDate);
-        if (!oldestOverdueDue || due.getTime() < oldestOverdueDue.getTime()) {
+        const issue = toUtcDayStart(line.invoiceDate);
+        if (
+            !oldestOverdueDue ||
+            due.getTime() < oldestOverdueDue.getTime() ||
+            (due.getTime() === oldestOverdueDue.getTime() &&
+                issue.getTime() < (oldestOverdueIssueDate?.getTime() ?? Infinity))
+        ) {
             oldestOverdueDue = due;
+            oldestOverdueIssueDate = issue;
         }
     }
     return computeCustomerOverdueBlock({
         oldestInvoiceOverdueDate: oldestOverdueDue,
         maxAllowedMepDays: maxAllowedMep,
         today: atDate,
+        oldestInvoiceIssueDate: oldestOverdueIssueDate,
+        mepCutoffDay: monthEnd?.mepCutoffDay,
+        mepSubstituteExtraDays: monthEnd?.mepSubstituteExtraDays,
     });
 }
 
@@ -499,6 +533,7 @@ export function isCreatedInCustomerOverdueMep(args: {
     siblingLines: AsOfOpenInvoiceLine[];
     maxAllowedMep: number | null | undefined;
     mepBreachStartDate?: Date | null;
+    monthEnd?: CustomerOverdueMepMonthEnd;
 }): boolean {
     if (args.maxAllowedMep == null) {
         return false;
@@ -518,7 +553,8 @@ export function isCreatedInCustomerOverdueMep(args: {
         args.siblingLines,
         args.invoiceDate,
         args.maxAllowedMep,
-        args.mepBreachStartDate
+        args.mepBreachStartDate,
+        args.monthEnd
     );
 }
 
@@ -557,23 +593,30 @@ function resolveAsOfOpenUntilExclusiveMs(
 const MS_PER_UTC_DAY = 86_400_000;
 
 /**
- * For each invoice, the oldest overdue due date among the customer's siblings
- * that were open and overdue on that invoice's issue date — the same
- * `oldestInvoiceOverdueDate` {@link asOfCustomerOverdueBlockAt} would find
- * before applying `maxAllowedMep`.
+ * Oldest overdue sibling open on an invoice's issue date (due + that sibling's
+ * issue date for the Extra Days cutoff gate). Same selection
+ * {@link asOfCustomerOverdueBlockAt} uses before applying max MEP / Extra Days.
  *
  * Chronological sweep: O(C log C) activate/deactivate instead of O(C²) sibling
  * rescans (CPT Generate bottleneck when one customer has hundreds of invoices).
  */
+export type OldestOverdueAtIssue = {
+    dueDate: Date;
+    invoiceDate: Date;
+};
+
 export function oldestOverdueDueAtEachInvoiceIssueDate(
     customerLines: AsOfOpenInvoiceLine[],
     mepBreachStartDate?: Date | null
-): Map<number, Date | null> {
+): Map<number, OldestOverdueAtIssue | null> {
     type Cand = {
+        invoiceId: number;
         activateMs: number;
         deactivateMs: number;
         dueDateMs: number;
         dueDate: Date;
+        invoiceDateMs: number;
+        invoiceDate: Date;
     };
     const cands: Cand[] = [];
     for (const line of customerLines) {
@@ -592,7 +635,8 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
         if (openUntilMs == null) {
             continue;
         }
-        const invoiceDateMs = toUtcDayStart(line.invoiceDate).getTime();
+        const invoiceDate = toUtcDayStart(line.invoiceDate);
+        const invoiceDateMs = invoiceDate.getTime();
         const dueDate = toUtcDayStart(line.dueDate);
         const dueDateMs = dueDate.getTime();
         // Overdue when dueDate < T ⇒ first active UTC day is the day after due.
@@ -604,10 +648,13 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
             continue;
         }
         cands.push({
+            invoiceId: line.invoiceId,
             activateMs,
             deactivateMs: openUntilMs,
             dueDateMs,
             dueDate,
+            invoiceDateMs,
+            invoiceDate,
         });
     }
 
@@ -627,20 +674,41 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
         .slice()
         .sort((a, b) => a.deactivateMs - b.deactivateMs);
 
-    const dueMeta = new Map<number, { count: number; dueDate: Date }>();
+    type DueBucket = {
+        count: number;
+        dueDate: Date;
+        byInvoiceId: Map<number, Date>;
+    };
+    const dueMeta = new Map<number, DueBucket>();
+    let cachedMin: OldestOverdueAtIssue | null = null;
     let cachedMinDueMs: number | null = null;
-    let cachedMinDue: Date | null = null;
+
+    function pickMinInvoiceDate(
+        byInvoiceId: Map<number, Date>
+    ): Date | null {
+        let best: Date | null = null;
+        for (const invoiceDate of byInvoiceId.values()) {
+            if (!best || invoiceDate.getTime() < best.getTime()) {
+                best = invoiceDate;
+            }
+        }
+        return best;
+    }
 
     function recomputeMin(): void {
         cachedMinDueMs = null;
-        cachedMinDue = null;
+        cachedMin = null;
         for (const [ms, meta] of dueMeta) {
             if (meta.count <= 0) {
                 continue;
             }
             if (cachedMinDueMs == null || ms < cachedMinDueMs) {
+                const invoiceDate = pickMinInvoiceDate(meta.byInvoiceId);
+                if (!invoiceDate) {
+                    continue;
+                }
                 cachedMinDueMs = ms;
-                cachedMinDue = meta.dueDate;
+                cachedMin = { dueDate: meta.dueDate, invoiceDate };
             }
         }
     }
@@ -649,15 +717,30 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
         const prev = dueMeta.get(cand.dueDateMs);
         if (prev) {
             prev.count += 1;
+            prev.byInvoiceId.set(cand.invoiceId, cand.invoiceDate);
         } else {
             dueMeta.set(cand.dueDateMs, {
                 count: 1,
                 dueDate: cand.dueDate,
+                byInvoiceId: new Map([[cand.invoiceId, cand.invoiceDate]]),
             });
         }
         if (cachedMinDueMs == null || cand.dueDateMs < cachedMinDueMs) {
             cachedMinDueMs = cand.dueDateMs;
-            cachedMinDue = cand.dueDate;
+            cachedMin = {
+                dueDate: cand.dueDate,
+                invoiceDate: cand.invoiceDate,
+            };
+        } else if (cachedMinDueMs === cand.dueDateMs) {
+            if (
+                !cachedMin ||
+                cand.invoiceDateMs < cachedMin.invoiceDate.getTime()
+            ) {
+                cachedMin = {
+                    dueDate: cand.dueDate,
+                    invoiceDate: cand.invoiceDate,
+                };
+            }
         }
     }
 
@@ -667,9 +750,18 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
             return;
         }
         prev.count -= 1;
+        prev.byInvoiceId.delete(cand.invoiceId);
         if (prev.count <= 0) {
             dueMeta.delete(cand.dueDateMs);
             if (cachedMinDueMs === cand.dueDateMs) {
+                recomputeMin();
+            }
+        } else if (cachedMinDueMs === cand.dueDateMs) {
+            const invoiceDate = pickMinInvoiceDate(prev.byInvoiceId);
+            cachedMin = invoiceDate
+                ? { dueDate: prev.dueDate, invoiceDate }
+                : null;
+            if (!cachedMin) {
                 recomputeMin();
             }
         }
@@ -677,7 +769,7 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
 
     let activateIndex = 0;
     let deactivateIndex = 0;
-    const oldestByInvoiceId = new Map<number, Date | null>();
+    const oldestByInvoiceId = new Map<number, OldestOverdueAtIssue | null>();
 
     for (const query of queries) {
         const tMs = query.tMs;
@@ -695,7 +787,7 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
             removeCand(byDeactivate[deactivateIndex]!);
             deactivateIndex += 1;
         }
-        oldestByInvoiceId.set(query.invoiceId, cachedMinDue);
+        oldestByInvoiceId.set(query.invoiceId, cachedMin);
     }
 
     return oldestByInvoiceId;
@@ -718,9 +810,9 @@ export function overlayAsOfTermsFlagsOnLine(
         mepBreachStartDate?: Date | null;
         /**
          * When set (batch overlay), skip the O(siblings) MEP scan and use this
-         * precomputed oldest overdue due at the line's issue date.
+         * precomputed oldest overdue (due + issue date) at the line's issue date.
          */
-        oldestOverdueDueAtIssue?: Date | null;
+        oldestOverdueAtIssue?: OldestOverdueAtIssue | null;
     }
 ): AsOfOpenInvoiceLine {
     const asOfStatus = classifyAsOfOpenStatus(line.dueDate, asOfDate);
@@ -745,8 +837,12 @@ export function overlayAsOfTermsFlagsOnLine(
         },
         today: asOfDate,
     });
+    const monthEnd: CustomerOverdueMepMonthEnd = {
+        mepCutoffDay: terms.mepCutoffDay,
+        mepSubstituteExtraDays: terms.mepSubstituteExtraDays,
+    };
     let ctvCustomerOverdueMep: boolean;
-    if (options && "oldestOverdueDueAtIssue" in options) {
+    if (options && "oldestOverdueAtIssue" in options) {
         ctvCustomerOverdueMep =
             terms.maxAllowedMep == null ||
             !isEligibleForCustomerMepOverdue(line.amount) ||
@@ -757,9 +853,13 @@ export function overlayAsOfTermsFlagsOnLine(
                 ? false
                 : computeCustomerOverdueBlock({
                       oldestInvoiceOverdueDate:
-                          options.oldestOverdueDueAtIssue ?? null,
+                          options.oldestOverdueAtIssue?.dueDate ?? null,
                       maxAllowedMepDays: terms.maxAllowedMep,
                       today: line.invoiceDate,
+                      oldestInvoiceIssueDate:
+                          options.oldestOverdueAtIssue?.invoiceDate ?? null,
+                      mepCutoffDay: monthEnd.mepCutoffDay,
+                      mepSubstituteExtraDays: monthEnd.mepSubstituteExtraDays,
                   });
     } else {
         const siblingLines = options?.siblingLines ?? [line];
@@ -769,6 +869,7 @@ export function overlayAsOfTermsFlagsOnLine(
             siblingLines,
             maxAllowedMep: terms.maxAllowedMep,
             mepBreachStartDate: options?.mepBreachStartDate,
+            monthEnd,
         });
     }
 
@@ -805,14 +906,17 @@ export function overlayAsOfTermsFlagsOnLines(
         linesByCustomer.set(line.customerId, bucket);
     }
 
-    const oldestOverdueDueByInvoiceId = new Map<number, Date | null>();
+    const oldestOverdueAtIssueByInvoiceId = new Map<
+        number,
+        OldestOverdueAtIssue | null
+    >();
     for (const customerLines of linesByCustomer.values()) {
         const oldestByInvoice = oldestOverdueDueAtEachInvoiceIssueDate(
             customerLines,
             options?.mepBreachStartDate
         );
-        for (const [invoiceId, oldestDue] of oldestByInvoice) {
-            oldestOverdueDueByInvoiceId.set(invoiceId, oldestDue);
+        for (const [invoiceId, oldest] of oldestByInvoice) {
+            oldestOverdueAtIssueByInvoiceId.set(invoiceId, oldest);
         }
     }
 
@@ -833,8 +937,8 @@ export function overlayAsOfTermsFlagsOnLines(
         return overlayAsOfTermsFlagsOnLine(line, asOfDate, terms, {
             ignoreReportingBreach: options?.ignoreReportingBreach,
             mepBreachStartDate: options?.mepBreachStartDate,
-            oldestOverdueDueAtIssue:
-                oldestOverdueDueByInvoiceId.get(line.invoiceId) ?? null,
+            oldestOverdueAtIssue:
+                oldestOverdueAtIssueByInvoiceId.get(line.invoiceId) ?? null,
         });
     });
 }

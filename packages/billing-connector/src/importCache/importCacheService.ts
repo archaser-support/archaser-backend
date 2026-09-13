@@ -6,6 +6,7 @@ import {
     IMPORT_CACHE_PENDING_INVOICE_CLOSE,
     PENDING_INVOICE_CLOSE_ROW_MARKER,
     type ImportCacheDocument,
+    type ImportCacheDaySummary,
     type ImportCacheEntityType,
     type ImportCacheKey,
     type PendingInvoiceCloseTargets,
@@ -35,6 +36,12 @@ function requireExecutionId(executionId: string | null | undefined): string {
     return executionId.trim();
 }
 
+function normalizeCustomerScope(customerScope?: string | null): string {
+    return typeof customerScope === "string" && customerScope.trim().length > 0
+        ? customerScope.trim()
+        : "all";
+}
+
 export async function saveEntityImportCache(
     input: Omit<SaveEntityImportCacheInput, "executionId"> & {
         executionId: string | null | undefined;
@@ -61,24 +68,42 @@ export async function loadEntityImportCacheDocuments(
     return store.load(key);
 }
 
+/**
+ * List cache calendar days within TTL that have ≥1 selectable entity for the
+ * given mode/scope (and optional enabled entity filter). Newest first.
+ */
+export async function findImportCacheDays(input: {
+    accountId: number;
+    syncMode: ImportCacheKey["syncMode"];
+    customerScope?: string | null;
+    importTypes?: ImportCacheEntityType[];
+}): Promise<ImportCacheDaySummary[]> {
+    return store.listCacheDays({
+        accountId: input.accountId,
+        syncMode: input.syncMode,
+        customerScope: normalizeCustomerScope(input.customerScope),
+        importTypes: input.importTypes,
+    });
+}
+
 export async function findSameDayCacheRuns(input: {
     accountId: number;
     syncMode: ImportCacheKey["syncMode"];
     customerScope?: string | null;
     timeZone?: string | null;
     at?: Date;
+    /** When set, list this day; otherwise connector-TZ "today". */
+    cacheDay?: string | null;
 }): Promise<SameDayCacheRun[]> {
-    const cacheDay = resolveImportCacheDay(input.at, input.timeZone);
-    const customerScope =
-        typeof input.customerScope === "string" &&
-        input.customerScope.trim().length > 0
-            ? input.customerScope.trim()
-            : "all";
+    const cacheDay =
+        typeof input.cacheDay === "string" && input.cacheDay.trim().length > 0
+            ? input.cacheDay.trim()
+            : resolveImportCacheDay(input.at, input.timeZone);
     return store.listSameDayRuns({
         accountId: input.accountId,
         syncMode: input.syncMode,
         cacheDay,
-        customerScope,
+        customerScope: normalizeCustomerScope(input.customerScope),
     });
 }
 
@@ -89,6 +114,7 @@ export async function findSameDayCaches(input: {
     customerScope?: string | null;
     timeZone?: string | null;
     at?: Date;
+    cacheDay?: string | null;
 }): Promise<
     Array<{
         import_type: ImportCacheKey["importType"];
@@ -140,7 +166,7 @@ export type LoadImportCachesForReplayResult =
       }
     | {
           ok: false;
-          cacheDay: string;
+          cacheDay: string | null;
           customerScope: string;
           executionId: string;
           missing: ImportCacheEntityType[];
@@ -151,8 +177,8 @@ export type LoadSameDayImportCachesResult = LoadImportCachesForReplayResult;
 
 /**
  * Load backups for the requested entities on a specific execution.
- * Missing keys fail clearly (no silent ERP fallback). Empty row arrays are
- * valid when a backup exists (including zero-row successes).
+ * Loads by execution_id (+ mode/scope/entity) — does **not** require today's
+ * cache_day (H4). Missing keys fail clearly (no silent ERP fallback).
  * PendingInvoiceClose is loaded separately via {@link loadPendingInvoiceCloseCache}.
  */
 export async function loadImportCachesForReplay(input: {
@@ -161,33 +187,29 @@ export async function loadImportCachesForReplay(input: {
     syncMode: ImportCacheKey["syncMode"];
     importTypes: ImportCacheEntityType[];
     customerScope?: string | null;
-    timeZone?: string | null;
-    at?: Date;
 }): Promise<LoadImportCachesForReplayResult> {
     const executionId = requireExecutionId(input.executionId);
-    const cacheDay = resolveImportCacheDay(input.at, input.timeZone);
-    const customerScope =
-        typeof input.customerScope === "string" &&
-        input.customerScope.trim().length > 0
-            ? input.customerScope.trim()
-            : "all";
+    const customerScope = normalizeCustomerScope(input.customerScope);
     const rowsByEntity = new Map<
         ImportCacheEntityType,
         Record<string, unknown>[]
     >();
     const missing: ImportCacheEntityType[] = [];
+    let cacheDay: string | null = null;
     for (const importType of input.importTypes) {
         const docs = await store.load({
             accountId: input.accountId,
             executionId,
             importType,
             syncMode: input.syncMode,
-            cacheDay,
             customerScope,
         });
         if (docs.length === 0) {
             missing.push(importType);
             continue;
+        }
+        if (!cacheDay && docs[0]?.cache_day) {
+            cacheDay = docs[0].cache_day;
         }
         const rows: Record<string, unknown>[] = [];
         for (const doc of docs) {
@@ -204,7 +226,13 @@ export async function loadImportCachesForReplay(input: {
             missing,
         };
     }
-    return { ok: true, cacheDay, customerScope, executionId, rowsByEntity };
+    return {
+        ok: true,
+        cacheDay: cacheDay ?? "",
+        customerScope,
+        executionId,
+        rowsByEntity,
+    };
 }
 
 /** @deprecated Use loadImportCachesForReplay with executionId. */
@@ -224,18 +252,17 @@ export async function loadSameDayImportCachesForReplay(input: {
         return {
             ok: false,
             cacheDay: resolveImportCacheDay(input.at, input.timeZone),
-            customerScope:
-                typeof input.customerScope === "string" &&
-                input.customerScope.trim().length > 0
-                    ? input.customerScope.trim()
-                    : "all",
+            customerScope: normalizeCustomerScope(input.customerScope),
             executionId: "",
             missing: [...input.importTypes],
         };
     }
     return loadImportCachesForReplay({
-        ...input,
+        accountId: input.accountId,
         executionId: input.executionId,
+        syncMode: input.syncMode,
+        importTypes: input.importTypes,
+        customerScope: input.customerScope,
     });
 }
 
@@ -359,14 +386,30 @@ export async function savePendingInvoiceCloseCacheOrThrow(
     );
 }
 
+/**
+ * Load PendingInvoiceClose by execution_id (+ mode/scope).
+ * `cacheDay` is optional — omit so prior-day Payment replay still finds closes.
+ */
 export async function loadPendingInvoiceCloseCache(
-    key: Omit<ImportCacheKey, "importType">
+    key: Omit<ImportCacheKey, "importType" | "cacheDay"> & {
+        cacheDay?: string;
+    }
 ): Promise<PendingInvoiceCloseTargets> {
-    const rows = await loadEntityImportCache({
-        ...key,
+    const docs = await store.load({
+        accountId: key.accountId,
+        executionId: key.executionId,
         importType: IMPORT_CACHE_PENDING_INVOICE_CLOSE,
+        syncMode: key.syncMode,
+        customerScope: key.customerScope,
+        ...(typeof key.cacheDay === "string" && key.cacheDay.trim().length > 0
+            ? { cacheDay: key.cacheDay.trim() }
+            : {}),
     });
-    return decodePendingInvoiceCloseRows(rows);
+    const allRows: Record<string, unknown>[] = [];
+    for (const doc of docs) {
+        allRows.push(...doc.rows);
+    }
+    return decodePendingInvoiceCloseRows(allRows);
 }
 
 /**

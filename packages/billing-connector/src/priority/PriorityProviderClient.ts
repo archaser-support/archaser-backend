@@ -146,6 +146,10 @@ function dateGeIso(date: Date, overlapMinutes: number): string {
     return new Date(ms).toISOString();
 }
 
+function dateLeIso(date: Date): string {
+    return date.toISOString();
+}
+
 function columnSampleCacheKey(
     entity: ImportType,
     entitySet?: string | null,
@@ -334,13 +338,18 @@ export class PriorityProviderClient implements BillingProviderClient {
             options.createdOnOrAfter == null && options.since
                 ? (options.overlapMinutes ?? 0)
                 : 0;
-        const filterAlreadyHasDate =
-            Boolean(dateField) &&
-            Boolean(options.filter) &&
-            new RegExp(`\\b${dateField}\\b`, "i").test(options.filter ?? "");
+        // Always AND the watermark / cutover date bound — even when pull_filters
+        // already mention the date field (e.g. FNCDATE gt backfill floor). Skipping
+        // here made INCREMENTAL re-scan from the static floor instead of since.
+        // Also cap dateField ≤ now so future-dated document dates (common on
+        // Payment FNCDATE) are not crawled after the lower bound.
+        const nowIso = dateLeIso(new Date());
         const dateFilter =
-            dateField && dateBound && !filterAlreadyHasDate
-                ? `${dateField} ge ${dateGeIso(dateBound, overlapMinutes)}`
+            dateField && dateBound
+                ? andODataFilters(
+                      `${dateField} ge ${dateGeIso(dateBound, overlapMinutes)}`,
+                      `${dateField} le ${nowIso}`
+                  )
                 : null;
         assertFilterFieldsExist(options.filter, columns);
         const combinedFilter = andODataFilters(

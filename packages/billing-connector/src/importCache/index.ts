@@ -8,6 +8,7 @@ export {
     PENDING_INVOICE_CLOSE_ROW_MARKER,
     type ImportCacheChunkMeta,
     type ImportCacheDocument,
+    type ImportCacheDaySummary,
     type ImportCacheEntityType,
     type ImportCacheKey,
     type ImportCachePendingInvoiceCloseType,
@@ -30,6 +31,7 @@ export {
 } from "./cacheDay";
 export {
     decodePendingInvoiceCloseRows,
+    findImportCacheDays,
     findSameDayCacheRuns,
     findSameDayCaches,
     loadEntityImportCache,
@@ -47,7 +49,7 @@ export {
     type LoadSameDayImportCachesResult,
 } from "./importCacheService";
 export { createMemoryImportCacheStore } from "./memoryStore";
-export type { ImportCacheStore } from "./store";
+export type { ImportCacheLoadKey, ImportCacheStore } from "./store";
 export {
     ensureImportCacheIndexes,
     resetImportCacheIndexesEnsuredForTests,

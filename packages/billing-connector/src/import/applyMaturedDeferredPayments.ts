@@ -26,7 +26,7 @@ export interface MaturityProgress {
 }
 
 export interface MaturityProgressDetail {
-    step: "link" | "close" | "recalc";
+    step: "prepare" | "link" | "close" | "recalc";
     processed?: number;
     total?: number;
 }
@@ -92,6 +92,30 @@ export async function applyMaturedDeferredPayments(
         };
     }
 
+    let matured = 0;
+    let totalCandidates = 0;
+    let lastProgressAt = 0;
+    let progressDetail: MaturityProgressDetail | undefined;
+    const emitProgress = (force = false) => {
+        const nowMs = Date.now();
+        if (
+            !force &&
+            nowMs - lastProgressAt < 250 &&
+            matured < totalCandidates
+        ) {
+            return;
+        }
+        lastProgressAt = nowMs;
+        options?.onProgress?.({
+            linked: matured,
+            totalCandidates,
+            ...(progressDetail ? { detail: progressDetail } : {}),
+        });
+    };
+
+    progressDetail = { step: "prepare" };
+    emitProgress(true);
+
     const deferredRows = await prisma.invoicePayment.findMany({
         where: {
             account_id: accountId,
@@ -114,8 +138,13 @@ export async function applyMaturedDeferredPayments(
         },
     });
 
-    const totalCandidates = deferredRows.length;
-    options?.onProgress?.({ linked: 0, totalCandidates });
+    totalCandidates = deferredRows.length;
+    progressDetail = {
+        step: "prepare",
+        processed: 0,
+        total: totalCandidates,
+    };
+    emitProgress(true);
 
     if (deferredRows.length === 0) {
         const stillDeferred = await prisma.invoicePayment.count({
@@ -139,6 +168,13 @@ export async function applyMaturedDeferredPayments(
                 .filter((n): n is string => Boolean(n))
         ),
     ];
+
+    progressDetail = {
+        step: "prepare",
+        processed: Math.min(1, totalCandidates),
+        total: totalCandidates,
+    };
+    emitProgress(true);
 
     const invoices =
         customerIds.length === 0 || deferredInvoiceNumbers.length === 0
@@ -220,30 +256,17 @@ export async function applyMaturedDeferredPayments(
         });
     }
 
-    let matured = 0;
-    let lastProgressAt = 0;
-    let progressDetail: MaturityProgressDetail | undefined;
-    const emitProgress = (force = false) => {
-        const nowMs = Date.now();
-        if (
-            !force &&
-            nowMs - lastProgressAt < 250 &&
-            matured < totalCandidates
-        ) {
-            return;
-        }
-        lastProgressAt = nowMs;
-        options?.onProgress?.({
-            linked: matured,
-            totalCandidates,
-            ...(progressDetail ? { detail: progressDetail } : {}),
-        });
+    progressDetail = {
+        step: "prepare",
+        processed: bulkLinks.length,
+        total: totalCandidates,
     };
+    emitProgress(true);
 
     const invoiceIdsToRecalc = new Map<number, Record<string, never>>();
 
     if (bulkLinks.length > 0) {
-        progressDetail = { step: "link", total: bulkLinks.length };
+        progressDetail = { step: "link", processed: 0, total: bulkLinks.length };
         emitProgress(true);
         let linkedSoFar = 0;
         matured = await bulkLinkDeferredPayments(
@@ -254,9 +277,12 @@ export async function applyMaturedDeferredPayments(
             {
                 onChunkLinked: (count) => {
                     linkedSoFar += count;
+                    // Keep bar `linked` in sync with chunks — matured was only
+                    // assigned after the await, so the UI jumped once at the end.
+                    matured = Math.min(linkedSoFar, bulkLinks.length);
                     progressDetail = {
                         step: "link",
-                        processed: Math.min(linkedSoFar, bulkLinks.length),
+                        processed: matured,
                         total: bulkLinks.length,
                     };
                     emitProgress();
@@ -266,12 +292,17 @@ export async function applyMaturedDeferredPayments(
         for (const link of bulkLinks) {
             invoiceIdsToRecalc.set(link.invoiceId, {});
         }
-        progressDetail = undefined;
+        progressDetail = {
+            step: "link",
+            processed: bulkLinks.length,
+            total: bulkLinks.length,
+        };
         emitProgress(true);
 
         if (extension?.afterPaymentLinked && linkCandidates.length > 0) {
             progressDetail = {
                 step: "close",
+                processed: 0,
                 total: linkCandidates.length,
             };
             emitProgress(true);
@@ -283,6 +314,14 @@ export async function applyMaturedDeferredPayments(
                 accountId,
                 userId: options?.userId,
                 candidates: linkCandidates,
+                onProgress: ({ processed, total }) => {
+                    progressDetail = {
+                        step: "close",
+                        processed,
+                        total,
+                    };
+                    emitProgress();
+                },
             });
             for (const invoiceId of extensionRecalcIds) {
                 invoiceIdsToRecalc.set(invoiceId, {});
@@ -290,6 +329,12 @@ export async function applyMaturedDeferredPayments(
             for (const invoiceId of extensionSkipIds ?? []) {
                 invoiceIdsToRecalc.delete(invoiceId);
             }
+            progressDetail = {
+                step: "close",
+                processed: linkCandidates.length,
+                total: linkCandidates.length,
+            };
+            emitProgress(true);
         }
 
         await recalculateInvoicesFromLinkedPayments(
@@ -298,7 +343,7 @@ export async function applyMaturedDeferredPayments(
             {
                 onProgress: ({ processed, total }) => {
                     progressDetail = { step: "recalc", processed, total };
-                    emitProgress(processed === 0 || processed === total);
+                    emitProgress(true);
                 },
             }
         );

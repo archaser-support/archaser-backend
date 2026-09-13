@@ -294,6 +294,16 @@ export {
 } from "./sync/arPostIngestTailSteps";
 
 export {
+    buildCustomerScopedTailDetail,
+    buildCustomerPositionTailDetail,
+    mapHostProgressToCustomerScopedInner,
+    loadCustomerProgressLabels,
+    formatCustomerProgressLabel,
+    type CustomerScopedInnerProgress,
+    type CustomerScopedProgressInput,
+} from "./sync/customerScopedTailProgress";
+
+export {
     runArPostIngestViaHost,
     DEFERRED_CI_POST_INGEST_STEPS,
     invokeConnectorArPostIngest,
@@ -315,6 +325,17 @@ export {
     type SyncDueBillingConnectorsResult,
 } from "./services/syncDueBillingConnectors";
 
+export {
+    areAllEnabledEntitiesBackfillComplete,
+    normalizeConnectorSyncMode,
+    persistReconciledConnectorSyncMode,
+    reconcileConnectorSyncMode,
+    type ConnectorReconcileSyncMode,
+    type ConnectorSyncStateForReconcile,
+    type PersistReconciledConnectorSyncModeParams,
+    type ReconcileConnectorSyncModeInput,
+} from "./services/reconcileConnectorSyncMode";
+
 // ==============================
 // Sync history (Mongo)
 // ==============================
@@ -331,6 +352,8 @@ export {
     touchAwaitingPostIngestDrainProgress,
     finalizeSyncHistoryAfterRun,
     listExecutionsForAccount,
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
     listRunningSyncAccountIds,
     sweepStaleRunning,
     syncHistoryExecutionToSummary,
@@ -360,6 +383,7 @@ export {
     IMPORT_CACHE_ENTITY_TYPES,
     IMPORT_CACHE_TTL_SECONDS,
     chunkImportCacheRows,
+    findImportCacheDays,
     findSameDayCacheRuns,
     findSameDayCaches,
     loadEntityImportCache,
@@ -375,6 +399,7 @@ export {
     trySaveEntityImportCache,
     useMemoryImportCacheStoreForTests,
     resetImportCacheStoreForTests,
+    type ImportCacheDaySummary,
     type ImportCacheEntityType,
     type ImportCacheKey,
     type ImportCacheSyncMode,
@@ -413,6 +438,17 @@ export {
     type InvoicePaidRecalcOptions,
     type LinkDeferredPaymentAndRecalcResult,
 } from "./invoice/linkDeferredPaymentAndRecalc";
+
+export {
+    VIRTUAL_PAYMENT_METHOD,
+    buildVirtualPaymentReference,
+    isAbsOverpaidInvoice,
+    isVirtualPaymentMethod,
+    needsVirtualForRemaining,
+    resolveVirtualAmounts,
+    shrinkOrDeleteVirtualPaymentsForInvoiceIds,
+    type ShrinkVirtualPaymentsResult,
+} from "./payment/virtualPaymentTrim";
 
 export {
     INVOICE_PAID_TOLERANCE,

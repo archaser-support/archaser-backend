@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { type DbClient, prisma } from "../domain-db";
+import { bulkUpdateInvoiceBooleanByValue } from "./bulkInvoiceUpdates";
 
 export type InvoiceForCapacityGapFlag = {
     id: number;
@@ -93,13 +94,10 @@ export async function syncInvoiceCapacityGapFlagsForCustomer(
         return;
     }
 
-    await Promise.all(
-        updates.map((u) =>
-            dbClient.invoice.update({
-                where: { id: u.id },
-                data: { in_capacity_gap: u.in_capacity_gap },
-            })
-        )
+    await bulkUpdateInvoiceBooleanByValue(
+        dbClient,
+        "in_capacity_gap",
+        updates.map((u) => ({ id: u.id, value: u.in_capacity_gap }))
     );
 }
 

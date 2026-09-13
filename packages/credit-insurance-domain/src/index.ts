@@ -59,8 +59,10 @@ export {
 // --- Worker / connector entry points (currently loaded dynamically; slice 04 switches them to these) ---
 export { syncCustomerInsuranceFields } from "./credit-insurance/domain/syncCustomerInsuranceFields";
 export {
+    refreshCtvSnapshotsForInvoiceIds,
     refreshInsuranceTargetDatesForInvoiceIds,
     refreshTermsBreachFlagsForCustomer,
+    refreshTermsBreachFlagsForCustomers,
     sweepReportingBreachForOverdueInvoiceIds,
 } from "./credit-insurance/domain/syncInvoiceReportingBreach";
 export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/insurancePolicyStatusCron";
@@ -164,9 +166,12 @@ export {
     overlayAsOfTermsFlagsForAccountLines,
     overlayAsOfTermsFlagsOnLines,
     wasAsOfInvoiceOpenAt,
+    isUtcCalendarToday,
     type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
     type AsOfPolicyTermsForBreach,
+    type CustomerOverdueMepMonthEnd,
+    type OldestOverdueAtIssue,
 } from "./credit-insurance/domain/asOfOpenAr";
 export {
     aggregateLedgerPaymentsOnOrBefore,

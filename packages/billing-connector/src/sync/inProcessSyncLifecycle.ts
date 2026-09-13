@@ -363,19 +363,18 @@ export async function listMergedInProcessSyncRuns(
         const mongoRuns = await listExecutionsForAccount(accountId, {
             limit: Math.max(limit, 25),
         });
+        const byId = new Map(memoryRuns.map((run) => [run.id, run]));
+
+        // Live RUNNING: only trust Mongo when it matches the in-process worker
+        // (otherwise stale after restart). Prefer in-memory progress over Mongo
+        // heartbeats (flushed ~60s) so the panel does not show stale zeros.
         const activeFromMongo = mongoRuns
             .filter((doc) => doc.status === "RUNNING")
             .map(syncHistoryExecutionToSummary)
-            // Mongo RUNNING without a matching in-process worker is stale
-            // (process restart, completed worker, or missed cancel).
             .filter(
                 (run) =>
                     inProcess != null && run.id === inProcess.executionId
             );
-        if (activeFromMongo.length === 0) {
-            return memoryRuns;
-        }
-        const byId = new Map(memoryRuns.map((run) => [run.id, run]));
         for (const run of activeFromMongo) {
             const existing = byId.get(run.id);
             if (
@@ -385,9 +384,6 @@ export async function listMergedInProcessSyncRuns(
             ) {
                 continue;
             }
-            // Prefer in-memory live progress over Mongo. Heartbeats only flush
-            // entity_stats about every 60s, so Mongo-first merge made the panel
-            // show stale/zero counts (e.g. "0 processed") while a tail step ran.
             byId.set(run.id, {
                 ...run,
                 ...(existing ?? {}),
@@ -397,11 +393,26 @@ export async function listMergedInProcessSyncRuns(
                     existing?.cutover_summary ?? run.cutover_summary,
             });
         }
-        return Array.from(byId.values()).sort(
-            (a, b) =>
-                new Date(b.started_at).getTime() -
-                new Date(a.started_at).getTime()
-        );
+
+        // Finished runs: hydrate from Mongo so the progress step panel survives
+        // API restart (in-memory list alone is empty after process recycle).
+        for (const doc of mongoRuns) {
+            if (doc.status === "RUNNING") {
+                continue;
+            }
+            const run = syncHistoryExecutionToSummary(doc);
+            if (!byId.has(run.id)) {
+                byId.set(run.id, run);
+            }
+        }
+
+        return Array.from(byId.values())
+            .sort(
+                (a, b) =>
+                    new Date(b.started_at).getTime() -
+                    new Date(a.started_at).getTime()
+            )
+            .slice(0, Math.max(limit, 25));
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         onWarn?.(
