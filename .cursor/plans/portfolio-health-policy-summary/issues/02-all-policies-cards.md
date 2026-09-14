@@ -1,6 +1,6 @@
 # 02 — All-policies cards set page filter
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-tab-and-live-bullets](01-tab-and-live-bullets.md)
 **User stories:** 9, 16, 17, 19
