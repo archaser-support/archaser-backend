@@ -1,6 +1,6 @@
 # 02 — Costs tab Annual Credit Assessment card
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-policy-fee-field](01-policy-fee-field.md)
 **User stories:** 7, 8, 9, 10, 11, 12, 18
@@ -18,11 +18,11 @@ Do **not** change existing Policy cost (`periodCost`), monthly/daily cost series
 
 ## Acceptance criteria
 
-- [ ] Costs tab shows assessment total using named-anytime-in-range × fee × ceil years
-- [ ] Multi-policy (no filter) sums per policy with each policy’s current fee
-- [ ] Existing Policy cost / charts / effective cost unchanged
-- [ ] Year-multiplier helper exists and matches `max(1, ceil(inclusiveDays / 365))`
-- [ ] Matching English and Hebrew locale keys are added/updated together
+- [x] Costs tab shows assessment total using named-anytime-in-range × fee × ceil years
+- [x] Multi-policy (no filter) sums per policy with each policy’s current fee
+- [x] Existing Policy cost / charts / effective cost unchanged
+- [x] Year-multiplier helper exists and matches `max(1, ceil(inclusiveDays / 365))`
+- [x] Matching English and Hebrew locale keys are added/updated together
 
 ## How to test
 
