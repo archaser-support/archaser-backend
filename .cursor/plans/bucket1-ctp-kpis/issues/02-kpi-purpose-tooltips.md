@@ -1,6 +1,6 @@
 # 02 — Purpose tooltips on all credit KPI cards
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 24, 27
@@ -12,10 +12,10 @@ Ensure every KPI card on Customer credit dashboard cards, Credit dashboard, and 
 
 ## Acceptance criteria
 
-- [ ] Every existing KPI card on the three surfaces has a purpose-oriented tooltip
-- [ ] Matching EN and HE keys updated together with no English-only `defaultValue` gaps for these strings
-- [ ] Tooltips use bottom placement consistent with project tooltip rules
-- [ ] No drive-by unrelated copy edits
+- [x] Every existing KPI card on the three surfaces has a purpose-oriented tooltip
+- [x] Matching EN and HE keys updated together with no English-only `defaultValue` gaps for these strings
+- [x] Tooltips use bottom placement consistent with project tooltip rules
+- [x] No drive-by unrelated copy edits
 
 ## How to test
 

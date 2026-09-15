@@ -1,6 +1,6 @@
 # 06 — Negative daily cost + exposure reconciliation
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** —
 **User stories:** 14, 15, 23, 28
@@ -12,11 +12,11 @@ Ship KPI #8 (anomalous negative daily cost) and KPI #13 (AR/exposure reconciliat
 
 ## Acceptance criteria
 
-- [ ] Negative cost visibility sits beside existing cost totals without changing the total formula
-- [ ] Configurable minimum magnitude applied for “worth flagging”
-- [ ] Reconciliation footnote + exportable report; stronger at-risk>total signal distinct
-- [ ] Flagged rows still appear in other views
-- [ ] EN+HE copy/tooltips
+- [x] Negative cost visibility sits beside existing cost totals without changing the total formula
+- [x] Configurable minimum magnitude applied for “worth flagging”
+- [x] Reconciliation footnote + exportable report; stronger at-risk>total signal distinct
+- [x] Flagged rows still appear in other views
+- [x] EN+HE copy/tooltips
 
 ## How to test
 

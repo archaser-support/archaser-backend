@@ -1,6 +1,6 @@
 # 04 — Stale snapshots + health slope + AR volatility
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-shared-ctp-series-utilities](01-shared-ctp-series-utilities.md)
 **User stories:** 9, 10, 11, 12, 13, 28
@@ -12,12 +12,12 @@ Ship KPI #7 (stale/carried-forward snapshots), #5 (health index trend slope), an
 
 ## Acceptance criteria
 
-- [ ] Stale identical non-zero AR runs are detected; footnote shows count; charts mark carried-forward days
-- [ ] Health slope badge/classification uses shared helper; insufficient days suppress classification
-- [ ] Volatility skips DoD pairs across data gaps and skips/caps AR[t-1]=0 safely
-- [ ] Stale days excluded from slope and volatility denominators by default
-- [ ] Peak/current health framing works for non-monotonic series
-- [ ] EN+HE purpose tooltips on new UI
+- [x] Stale identical non-zero AR runs are detected; footnote shows count; charts mark carried-forward days
+- [x] Health slope badge/classification uses shared helper; insufficient days suppress classification
+- [x] Volatility skips DoD pairs across data gaps and skips/caps AR[t-1]=0 safely
+- [x] Stale days excluded from slope and volatility denominators by default
+- [x] Peak/current health framing works for non-monotonic series
+- [x] EN+HE purpose tooltips on new UI
 
 ## How to test
 
