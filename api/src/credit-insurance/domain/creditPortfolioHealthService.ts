@@ -4,14 +4,24 @@ import {
     computeCreditDashboardHealthIndex,
     computeTopUpDailyCostAggregate,
     creditInsurancePrisma as prisma,
+    detectStaleArRuns,
+    fetchCapacityGapDaysPeriodSummary,
+    fetchBreachDilutionStreakPeriodSummary,
+    fetchExposureReconciliationPeriodSummary,
+    fetchNegativeCostPeriodSummary,
     fetchOvershootLimitCappedPeriodSummary,
+    fetchPolicyConcentrationSnapshots,
+    fetchStaleSlopeVolatilityPeriodCustomers,
+    summarizePortfolioStaleSlopeVolatility,
     isActiveTopUp,
     isPendingReviewExclusion,
+    longestExactValueStreakWindow,
     normalizePolicyExclusionReason,
     type TermsBreachByReasonSnapshotKey,
     UTILIZATION_DISTRIBUTION_BIN_KEYS,
     assignUtilizationDistributionBin,
     type UtilizationDistributionBinKey,
+    type HealthMomentumClassification,
 } from "@archaser/credit-insurance-domain";
 import {
     computeAssessmentYearMultiplier,
@@ -47,11 +57,13 @@ export type CanonicalNoCoverageReasonKey =
  */
 export type NoCoverageReasonKey = CanonicalNoCoverageReasonKey | string;
 
-export type ExactValueStreakWindow = {
-    days: number;
-    start: string | null;
-    end: string | null;
-};
+/** Shared streak helpers — re-exported for existing Portfolio Health callers. */
+export {
+    longestExactValueStreak,
+    type ExactValueStreakWindow,
+} from "@archaser/credit-insurance-domain";
+export { longestExactValueStreakWindow };
+
 
 export type PortfolioHealthSeriesMetrics = {
     averageHealthPct: number;
@@ -70,6 +82,8 @@ export type PortfolioHealthDailyPoint = {
     compliantExposure: number;
     atRiskExposure: number;
     healthIndex: number;
+    /** True when portfolio total AR was carried forward (identical non-zero). */
+    isStaleCarriedForward?: boolean;
 };
 
 export type PortfolioHealthMonthlyPoint = {
@@ -86,6 +100,80 @@ export type PortfolioHealthSection = {
     dailyB: PortfolioHealthDailyPoint[];
     monthlyA: PortfolioHealthMonthlyPoint[];
     monthlyB: PortfolioHealthMonthlyPoint[];
+    /** Chronic over-limit + capacity-gap-days (Bucket 1 KPIs #1 / #4). */
+    overLimitGap: PortfolioOverLimitGapSection | null;
+    /** Health slope, AR volatility, stale snapshots (Bucket 1 KPIs #5 / #6 / #7). */
+    staleSlopeVolatility: PortfolioStaleSlopeVolatilitySection | null;
+    /** AR / exposure reconciliation (Bucket 1 KPI #13). */
+    exposureReconciliation: PortfolioExposureReconciliationSection | null;
+    /** Breach dilution + clean-streak (Bucket 1 KPIs #11 / #12). */
+    breachDilutionStreak: PortfolioBreachDilutionStreakSection | null;
+};
+
+export type PortfolioNegativeCostPreviewEntry = {
+    customerId: number;
+    customerName: string;
+    snapshotDate: string;
+    amount: number;
+};
+
+export type PortfolioNegativeCostSection = {
+    negativeEntryCount: number;
+    negativeEntrySum: number;
+    customersAffected: number;
+    minMagnitude: number;
+    /** Top flagged rows by magnitude (most negative first). */
+    previewEntries: PortfolioNegativeCostPreviewEntry[];
+    accountCurrency: string;
+};
+
+export type PortfolioExposureReconciliationSection = {
+    failingRowCount: number;
+    maxAbsDelta: number | null;
+    customersAffected: number;
+    atRiskExceedsTotalRowCount: number;
+    atRiskExceedsTotalCustomers: number;
+    maxAtRiskExcess: number | null;
+    epsilon: number;
+    accountCurrency: string;
+};
+
+export type PortfolioOverLimitGapSection = {
+    customersWithData: number;
+    longestStreakDays: number;
+    longestStreakStart: string | null;
+    longestStreakEnd: string | null;
+    longestStreakCustomerId: number | null;
+    longestStreakCustomerName: string | null;
+    accountCurrency: string;
+};
+
+export type PortfolioStaleSlopeVolatilitySection = {
+    staleCarriedForwardDayCount: number;
+    customersWithStaleDays: number;
+    customersWithExtremeMoves: number;
+    customersWithData: number;
+    portfolioHealthSlope: number | null;
+    portfolioHealthClassification: HealthMomentumClassification | null;
+    portfolioHealthSlopeSuppressed: boolean;
+    portfolioHealthDaysUsed: number;
+    portfolioPeakHealth: number | null;
+    portfolioPeakDate: string | null;
+    portfolioCurrentHealth: number | null;
+    portfolioCurrentDate: string | null;
+    avgCustomerArSigmaPct: number | null;
+    accountCurrency: string;
+};
+
+export type PortfolioBreachDilutionStreakSection = {
+    customersWithData: number;
+    dilutedCustomerCount: number;
+    resolvedCustomerCount: number;
+    customersWithBreachHistory: number;
+    customersCurrentlyInBreach: number;
+    customersBreachFree: number;
+    customersNeverBreached: number;
+    accountCurrency: string;
 };
 
 export type PortfolioNoCoverageDailyPoint = {
@@ -204,6 +292,36 @@ export type PortfolioUtilizationDistributionBin = {
     usagePct: number;
 };
 
+/** Per-customer share on a policy as-of snapshot (Bucket 1 KPI #9). */
+export type PortfolioPolicyConcentrationCustomer = {
+    customerId: number;
+    customerName: string;
+    openAr: number;
+    sharePct: number;
+};
+
+export type PortfolioPolicyConcentrationCard = {
+    policyId: number;
+    policyNumber: string | null;
+    asOfDate: string;
+    customerCount: number;
+    customersWithOpenAr: number;
+    totalOpenAr: number;
+    top1SharePct: number | null;
+    top3SharePct: number | null;
+    top1CustomerId: number | null;
+    top1CustomerName: string | null;
+    alertEligible: boolean;
+    concentrationAlert: boolean;
+    ranking: PortfolioPolicyConcentrationCustomer[];
+};
+
+export type PortfolioConcentrationSection = {
+    asOfDate: string | null;
+    alertPolicyCount: number;
+    policies: PortfolioPolicyConcentrationCard[];
+};
+
 export type PortfolioUtilizationSection = {
     averageUtilizationPct: number;
     pctDaysAbove100: number;
@@ -245,6 +363,8 @@ export type PortfolioUtilizationSection = {
     asOfDate: string | null;
     /** Utilization overshoot ranking + limit-capped count (Bucket 1 #2 / #3). */
     overshoot: PortfolioUtilizationOvershootSection | null;
+    /** Policy concentration on latest snapshot (Bucket 1 #9). */
+    concentration: PortfolioConcentrationSection | null;
     /**
      * Named customers with no positive open AR on any Named day in the range,
      * including named customers with no daily open-AR snapshot in the range.
@@ -325,6 +445,8 @@ export type PortfolioCostsSection = {
     approvedAverageAr: number;
     /** Always null until a policy-level deductible field exists. */
     deductiblePct: null;
+    /** Anomalous negative daily-cost visibility (Bucket 1 KPI #8). */
+    negativeCost: PortfolioNegativeCostSection | null;
     /**
      * Σ over policies of (current Annual Credit Assessment Fee × distinct
      * Named customers named anytime in range × year multiplier). Standalone
@@ -411,12 +533,6 @@ function normalizeDateString(value: Date): string {
     return value.toISOString().slice(0, 10);
 }
 
-function utcDayPlusOne(ymd: string): string {
-    const d = new Date(`${ymd}T12:00:00.000Z`);
-    d.setUTCDate(d.getUTCDate() + 1);
-    return d.toISOString().slice(0, 10);
-}
-
 /** Latest snapshot YYYY-MM-DD on or before `rangeToYmd`, or null. */
 export function latestSnapshotYmdOnOrBefore(
     snapshotYmds: string[],
@@ -436,65 +552,6 @@ export function isInsurerDeclinedReason(reason: unknown): boolean {
         return false;
     }
     return String(reason).trim().toLowerCase() === INSURER_DECLINED_REASON.toLowerCase();
-}
-
-/**
- * Calendar-consecutive longest run of days whose value equals `target`.
- * Returns length plus inclusive start/end dates. When multiple equal-length
- * streaks exist, picks the most recent (later end date). Reusable for trough
- * and peak (pass min or max as `target`).
- */
-export function longestExactValueStreakWindow(
-    points: Array<{ snapshotDate: string; value: number }>,
-    target: number
-): ExactValueStreakWindow {
-    if (points.length === 0) {
-        return { days: 0, start: null, end: null };
-    }
-    const sorted = [...points].sort((a, b) =>
-        a.snapshotDate.localeCompare(b.snapshotDate)
-    );
-    let bestDays = 0;
-    let bestStart: string | null = null;
-    let bestEnd: string | null = null;
-    let current = 0;
-    let currentStart: string | null = null;
-    let prevDate: string | null = null;
-
-    for (const point of sorted) {
-        if (point.value !== target) {
-            current = 0;
-            currentStart = null;
-            prevDate = point.snapshotDate;
-            continue;
-        }
-        const continuesCalendarDay =
-            current > 0 &&
-            prevDate != null &&
-            utcDayPlusOne(prevDate) === point.snapshotDate;
-        if (continuesCalendarDay) {
-            current += 1;
-        } else {
-            current = 1;
-            currentStart = point.snapshotDate;
-        }
-        // Longer wins; equal length → most recent (ASC scan, so >= takes later).
-        if (current >= bestDays) {
-            bestDays = current;
-            bestStart = currentStart;
-            bestEnd = point.snapshotDate;
-        }
-        prevDate = point.snapshotDate;
-    }
-    return { days: bestDays, start: bestStart, end: bestEnd };
-}
-
-/** Calendar-consecutive longest run of days whose value equals `target`. */
-export function longestExactValueStreak(
-    points: Array<{ snapshotDate: string; value: number }>,
-    target: number
-): number {
-    return longestExactValueStreakWindow(points, target).days;
 }
 
 export function buildDailyHealthPoint(input: {
@@ -647,7 +704,11 @@ export function buildDualDailyHealthSeries(
 
 export function buildPortfolioHealthSection(
     dailyA: PortfolioHealthDailyPoint[],
-    dailyB: PortfolioHealthDailyPoint[]
+    dailyB: PortfolioHealthDailyPoint[],
+    overLimitGap: PortfolioOverLimitGapSection | null = null,
+    staleSlopeVolatility: PortfolioStaleSlopeVolatilitySection | null = null,
+    exposureReconciliation: PortfolioExposureReconciliationSection | null = null,
+    breachDilutionStreak: PortfolioBreachDilutionStreakSection | null = null
 ): PortfolioHealthSection {
     return {
         seriesA: computePortfolioHealthSeriesMetrics(dailyA),
@@ -656,6 +717,10 @@ export function buildPortfolioHealthSection(
         dailyB,
         monthlyA: aggregateDailyHealthToMonthly(dailyA),
         monthlyB: aggregateDailyHealthToMonthly(dailyB),
+        overLimitGap,
+        staleSlopeVolatility,
+        exposureReconciliation,
+        breachDilutionStreak,
     };
 }
 
@@ -1242,6 +1307,7 @@ export function emptyUtilizationSection(
         daily: [],
         asOfDate: null,
         overshoot: null,
+        concentration: null,
         idleNamedCustomerCount: 0,
         namedCustomerCountInRange: 0,
         idleNamedCustomerPct: 0,
@@ -1263,6 +1329,7 @@ export function buildUtilizationSection(input: {
     asOfDate?: string | null;
     accountCurrency?: string;
     overshoot?: PortfolioUtilizationOvershootSection | null;
+    concentration?: PortfolioConcentrationSection | null;
     idleNamedCustomerCount?: number;
     namedCustomerCountInRange?: number;
     idleNamedCustomerPct?: number;
@@ -1312,6 +1379,7 @@ export function buildUtilizationSection(input: {
         ),
         asOfDate: input.asOfDate ?? null,
         overshoot: input.overshoot ?? null,
+        concentration: input.concentration ?? null,
         idleNamedCustomerCount: Number.isFinite(input.idleNamedCustomerCount)
             ? Math.max(0, input.idleNamedCustomerCount as number)
             : 0,
@@ -1361,6 +1429,34 @@ export function computeAverageCompliantExposure(
     );
 }
 
+export function emptyNegativeCostSection(
+    accountCurrency = "USD"
+): PortfolioNegativeCostSection {
+    return {
+        negativeEntryCount: 0,
+        negativeEntrySum: 0,
+        customersAffected: 0,
+        minMagnitude: 1,
+        previewEntries: [],
+        accountCurrency,
+    };
+}
+
+export function emptyExposureReconciliationSection(
+    accountCurrency = "USD"
+): PortfolioExposureReconciliationSection {
+    return {
+        failingRowCount: 0,
+        maxAbsDelta: null,
+        customersAffected: 0,
+        atRiskExceedsTotalRowCount: 0,
+        atRiskExceedsTotalCustomers: 0,
+        maxAtRiskExcess: null,
+        epsilon: 1,
+        accountCurrency,
+    };
+}
+
 export function emptyCostsSection(
     accountCurrency = "USD",
     options?: {
@@ -1384,6 +1480,7 @@ export function emptyCostsSection(
         approvedArSharePct: 0,
         approvedAverageAr: 0,
         deductiblePct: null,
+        negativeCost: emptyNegativeCostSection(accountCurrency),
         annualCreditAssessmentCost: 0,
         namedCustomerCountInRange: 0,
         yearMultiplier,
@@ -1403,6 +1500,7 @@ export function buildCostsSection(input: {
         namedUtilizationPct: number | null;
     }>;
     accountCurrency: string;
+    negativeCost?: PortfolioNegativeCostSection | null;
     annualCreditAssessmentCost?: number;
     namedCustomerCountInRange?: number;
     yearMultiplier?: number;
@@ -1438,6 +1536,8 @@ export function buildCostsSection(input: {
         approvedArSharePct: footprints.approvedArSharePct,
         approvedAverageAr: footprints.approvedAverageAr,
         deductiblePct: null,
+        negativeCost:
+            input.negativeCost ?? emptyNegativeCostSection(currency),
         annualCreditAssessmentCost: Number.isFinite(
             input.annualCreditAssessmentCost
         )
@@ -2728,7 +2828,24 @@ export async function getCreditPortfolioHealth(
             to: parsed.to,
             daysAvailable: 0,
             daysInRange: parsed.daysInRange,
-            portfolioHealth: buildPortfolioHealthSection([], []),
+            portfolioHealth: buildPortfolioHealthSection([], [], {
+                customersWithData: 0,
+                longestStreakDays: 0,
+                longestStreakStart: null,
+                longestStreakEnd: null,
+                longestStreakCustomerId: null,
+                longestStreakCustomerName: null,
+                accountCurrency,
+            }, null, emptyExposureReconciliationSection(accountCurrency), {
+                customersWithData: 0,
+                dilutedCustomerCount: 0,
+                resolvedCustomerCount: 0,
+                customersWithBreachHistory: 0,
+                customersCurrentlyInBreach: 0,
+                customersBreachFree: 0,
+                customersNeverBreached: 0,
+                accountCurrency,
+            }),
             noCoverage: buildNoCoverageSection([], accountCurrency),
             utilization: emptyUtilizationSection(accountCurrency, {
                 daysInRange: parsed.daysInRange,
@@ -2798,19 +2915,77 @@ export async function getCreditPortfolioHealth(
         scopedCustomerIds,
         includeNoPolicyExposure: query.includeNoPolicyExposure,
     };
-    const [topCustomers, distributionCustomers, overshootPeriod] =
-        await Promise.all([
-            fetchCptTopUtilizationCustomers(accountId, periodScope),
-            fetchCptUtilizationDistribution(accountId, periodScope),
-            fetchOvershootLimitCappedPeriodSummary({
-                accountId,
-                fromDate: parsed.from,
-                toDate: parsed.to,
-                policyId: query.policyId,
-                scopedCustomerIds,
-                includeNoPolicyExposure: query.includeNoPolicyExposure,
-            }),
-        ]);
+    const [
+        topCustomers,
+        distributionCustomers,
+        overLimitGapPeriod,
+        slopeVolRows,
+        overshootPeriod,
+        negativeCostPeriod,
+        exposureReconPeriod,
+        concentrationSnapshots,
+        breachDilutionPeriod,
+    ] = await Promise.all([
+        fetchCptTopUtilizationCustomers(accountId, periodScope),
+        fetchCptUtilizationDistribution(accountId, periodScope),
+        fetchCapacityGapDaysPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchStaleSlopeVolatilityPeriodCustomers({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchOvershootLimitCappedPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchNegativeCostPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchExposureReconciliationPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchPolicyConcentrationSnapshots({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+            asOfDate: asOfDate ?? undefined,
+        }),
+        fetchBreachDilutionStreakPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+    ]);
 
     const withoutPolicyAmountByDate = new Map<string, number>();
     withoutPolicyByDate.forEach((value, date) => {
@@ -2831,6 +3006,32 @@ export async function getCreditPortfolioHealth(
         query.includeNoPolicyExposure
     );
 
+    const slopeVolSummary = summarizePortfolioStaleSlopeVolatility(
+        slopeVolRows,
+        dailyA.map((d) => ({
+            snapshotDate: d.snapshotDate,
+            healthIndex: d.healthIndex,
+            totalReceivables: d.totalReceivables,
+        }))
+    );
+
+    const portfolioStale = detectStaleArRuns(
+        dailyA.map((d) => ({
+            snapshotDate: d.snapshotDate,
+            totalReceivables: d.totalReceivables,
+        }))
+    );
+    for (const point of dailyA) {
+        point.isStaleCarriedForward = portfolioStale.excludeSet.has(
+            point.snapshotDate
+        );
+    }
+    for (const point of dailyB) {
+        point.isStaleCarriedForward = portfolioStale.excludeSet.has(
+            point.snapshotDate
+        );
+    }
+
     const noCoverageDaily = buildNoCoverageDailyPoints({
         cohortRows: noCoverageRows,
         reasonRows,
@@ -2839,7 +3040,26 @@ export async function getCreditPortfolioHealth(
         includeNoPolicyExposure: query.includeNoPolicyExposure,
     });
 
-    const portfolioHealth = buildPortfolioHealthSection(dailyA, dailyB);
+    const portfolioHealth = buildPortfolioHealthSection(
+        dailyA,
+        dailyB,
+        {
+            ...overLimitGapPeriod.summary,
+            accountCurrency,
+        },
+        {
+            ...slopeVolSummary,
+            accountCurrency,
+        },
+        {
+            ...exposureReconPeriod.summary,
+            accountCurrency,
+        },
+        {
+            ...breachDilutionPeriod.summary,
+            accountCurrency,
+        }
+    );
     const utilizationDaily = buildUtilizationDailyPoints(utilizationRows);
     const rangeCost = computePortfolioRangeCost({
         dayRows: rangeCostInputs.dayRows,
@@ -2897,6 +3117,33 @@ export async function getCreditPortfolioHealth(
                     limitCapped: r.limitCapped.limitCapped,
                 })),
             },
+            concentration: {
+                asOfDate:
+                    concentrationSnapshots[0]?.asOfDate ?? asOfDate ?? null,
+                alertPolicyCount: concentrationSnapshots.filter(
+                    (p) => p.concentrationAlert
+                ).length,
+                policies: concentrationSnapshots.map((p) => ({
+                    policyId: p.policyId,
+                    policyNumber: p.policyNumber,
+                    asOfDate: p.asOfDate,
+                    customerCount: p.customerCount,
+                    customersWithOpenAr: p.customersWithOpenAr,
+                    totalOpenAr: p.totalOpenAr,
+                    top1SharePct: p.top1SharePct,
+                    top3SharePct: p.top3SharePct,
+                    top1CustomerId: p.top1CustomerId,
+                    top1CustomerName: p.top1CustomerName,
+                    alertEligible: p.alertEligible,
+                    concentrationAlert: p.concentrationAlert,
+                    ranking: p.ranking.map((c) => ({
+                        customerId: c.customerId,
+                        customerName: c.customerName,
+                        openAr: c.openAr,
+                        sharePct: c.sharePct,
+                    })),
+                })),
+            },
             ...sumIdleNamedAnnualCreditAssessment(
                 assessmentByPolicy,
                 yearMultiplier
@@ -2908,6 +3155,21 @@ export async function getCreditPortfolioHealth(
             dailyHealth: dailyA,
             footprintDaily: utilizationDaily,
             accountCurrency,
+            negativeCost: {
+                negativeEntryCount:
+                    negativeCostPeriod.summary.negativeEntryCount,
+                negativeEntrySum: negativeCostPeriod.summary.negativeEntrySum,
+                customersAffected:
+                    negativeCostPeriod.summary.customersAffected,
+                minMagnitude: negativeCostPeriod.summary.minMagnitude,
+                previewEntries: negativeCostPeriod.previewEntries.map((e) => ({
+                    customerId: e.customerId,
+                    customerName: e.customerName,
+                    snapshotDate: e.snapshotDate,
+                    amount: e.amount,
+                })),
+                accountCurrency,
+            },
             ...sumAnnualCreditAssessmentCost(
                 assessmentByPolicy.map((row) => ({
                     fee: row.fee,
