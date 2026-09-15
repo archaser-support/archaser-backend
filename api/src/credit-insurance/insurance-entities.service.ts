@@ -20,6 +20,7 @@ import {
     pickPolicyPushSnapshot,
     POLICY_PUSH_CUSTOMER_FIELDS,
 } from "./domain/hasMeaningfulCustomerPolicyFieldChange";
+import { parseAnnualCreditAssessmentFee } from "./domain/annualCreditAssessmentFee";
 import { parseRegistrationFeePercent } from "./domain/registrationFeePercent";
 
 /** Match customers.parseDateOnly — YYYY-MM-DD → UTC midnight Date. */
@@ -348,6 +349,13 @@ export class InsuranceEntitiesService {
                     policy.policy_kind
                 );
             }
+            if ("annual_credit_assessment_fee" in data) {
+                data.annual_credit_assessment_fee =
+                    parseAnnualCreditAssessmentFee(
+                        data.annual_credit_assessment_fee,
+                        policy.policy_kind
+                    );
+            }
             const userInfo = await this.accessScope.resolveUserInfo(user);
             const policyId = Number(id);
             try {
@@ -476,6 +484,11 @@ export class InsuranceEntitiesService {
                         createData.registration_fee_percent,
                         policyKind
                     ),
+                    annual_credit_assessment_fee:
+                        parseAnnualCreditAssessmentFee(
+                            createData.annual_credit_assessment_fee,
+                            policyKind
+                        ),
                     created_by: userInfo.userId,
                     modified_by: userInfo.userId,
                 } as never,
