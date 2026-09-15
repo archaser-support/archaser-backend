@@ -476,3 +476,15 @@ export {
     ensureCustomerCapacityGapStored,
     syncCreditInsuranceGapPipelineForCustomer,
 } from "./credit-insurance/domain/syncCreditInsuranceGapPipeline";
+
+// --- Bucket 1 CTP overshoot / limit-capped (Portfolio Health Utilization) ---
+export {
+    fetchOvershootLimitCappedPeriodSummary,
+    fetchOvershootRankingPeriodCustomers,
+    fetchLimitCappedPeriodCustomers,
+    type FetchOvershootLimitCappedPeriodOptions,
+} from "./credit-insurance/domain/overshootLimitCappedPeriod";
+export type {
+    CustomerOvershootLimitCappedRow,
+    PortfolioOvershootSummary,
+} from "./credit-insurance/domain/shared/ctpOvershootLimitCappedMetrics";
