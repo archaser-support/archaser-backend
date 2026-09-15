@@ -1,6 +1,6 @@
 # 07 — Policy concentration + limit-breach forecast
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-shared-ctp-series-utilities](01-shared-ctp-series-utilities.md)
 **User stories:** 16, 17, 18, 19, 28
@@ -12,12 +12,12 @@ Ship KPI #9 (policy concentration) and KPI #10 (limit-breach forecast). PH conce
 
 ## Acceptance criteria
 
-- [ ] Concentration shares computed on latest (or selected) snapshot per policy
-- [ ] Single-customer policies excluded from concentration risk alerting
-- [ ] Forecast suppressed on low R² / short windows; no false-precision dates
-- [ ] Limit Warnings distinguish projected vs actual near-limit/score warnings
-- [ ] Exportable reports for concentration ranking and projected warnings
-- [ ] EN+HE purpose tooltips
+- [x] Concentration shares computed on latest (or selected) snapshot per policy
+- [x] Single-customer policies excluded from concentration risk alerting
+- [x] Forecast suppressed on low R² / short windows; no false-precision dates
+- [x] Limit Warnings distinguish projected vs actual near-limit/score warnings
+- [x] Exportable reports for concentration ranking and projected warnings
+- [x] EN+HE purpose tooltips
 
 ## How to test
 

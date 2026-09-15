@@ -61,6 +61,7 @@ import {
 } from "./policyExclusion";
 import { refreshCapacityGapsForAtRiskDrift } from "./refreshCapacityGapsForAtRiskDrift";
 import type { CreditDashboardAccountSettings } from "./creditAsOfBackfillRunContext";
+import { fetchProjectedLimitBreachCustomers } from "./limitBreachForecastPeriod";
 
 const COLLECTION_LIVE: record_status[] = [record_status.Active, record_status.Inactive];
 const DEFAULT_REPORTING_WINDOW_DAYS = 14;
@@ -1045,6 +1046,8 @@ export type CreditDashboardSummary = {
         totalAmount: number;
         thresholdPct: number;
         scoreWarnDays: number;
+        /** Distinct customers with a projected 150%/200% utilization crossing. */
+        projectedCustomerCount: number;
     };
     zeroLimitWarnings: {
         customerCount: number;
@@ -2172,6 +2175,20 @@ export async function getCreditDashboardSummary(
             limitWarningIds.add(c.id);
         }
     }
+
+    const projectedRows = await fetchProjectedLimitBreachCustomers({
+        accountId,
+        policyId: policyId ?? undefined,
+        includeNoPolicyExposure: true,
+    });
+    const projectedCustomerIds = new Set(
+        projectedRows.map((r) => r.customerId)
+    );
+    // Include projected-only customers in the Limit Warnings unique count.
+    for (const id of projectedCustomerIds) {
+        limitWarningIds.add(id);
+    }
+
     let limitWarningTotalAr = 0;
     for (const c of dashboardCustomers) {
         if (limitWarningIds.has(c.id)) {
@@ -2241,6 +2258,7 @@ export async function getCreditDashboardSummary(
             totalAmount: limitWarningTotalAr,
             thresholdPct: limitWarnThresholdPct,
             scoreWarnDays: scoreValidityWarnDays,
+            projectedCustomerCount: projectedCustomerIds.size,
         },
         zeroLimitWarnings: {
             customerCount: zeroLimitWarningsCount,
@@ -3763,6 +3781,16 @@ export type LimitWarningRow = {
     limitExpiring: boolean;
     limitExpiresInDays: number | null;
     approvedLimitExpirationDate: string | null;
+    /**
+     * Bucket 1 KPI #10 — projected utilization crossing (distinct from actual
+     * near-limit / score / limit-expiry warnings).
+     */
+    projected?: boolean;
+    projectedThresholdPct?: number | null;
+    projectedDate?: string | null;
+    projectedDaysToThreshold?: number | null;
+    projectedCurrentUsagePct?: number | null;
+    projectedRSquared?: number | null;
 };
 
 type CustomerForLimitWarning = {
@@ -3870,6 +3898,12 @@ function buildLimitWarningRow(
         approvedLimitExpirationDate: c.approved_limit_expiration_date
             ? new Date(c.approved_limit_expiration_date).toISOString().slice(0, 10)
             : null,
+        projected: false,
+        projectedThresholdPct: null,
+        projectedDate: null,
+        projectedDaysToThreshold: null,
+        projectedCurrentUsagePct: null,
+        projectedRSquared: null,
     };
 }
 
@@ -3910,6 +3944,16 @@ function sortLimitWarningRows(
             }
             case "limitExpiresInDays": {
                 c = (a.limitExpiresInDays ?? Infinity) - (b.limitExpiresInDays ?? Infinity);
+                break;
+            }
+            case "projectedDate": {
+                c = (a.projectedDate || "").localeCompare(b.projectedDate || "");
+                break;
+            }
+            case "projectedDaysToThreshold": {
+                c =
+                    (a.projectedDaysToThreshold ?? Infinity) -
+                    (b.projectedDaysToThreshold ?? Infinity);
                 break;
             }
             default: {
@@ -4015,6 +4059,55 @@ export async function getLimitWarningReport(
         if (row) {
             built.push(row);
         }
+    }
+
+    const projectedRows = await fetchProjectedLimitBreachCustomers({
+        accountId,
+        policyId: options.policyId,
+        customerId: options.customerId,
+        includeNoPolicyExposure: options.includeNoPolicyExposure,
+    });
+    const byCustomerId = new Map(built.map((r) => [r.customerId, r]));
+    for (const forecast of projectedRows) {
+        const primary = forecast.primary;
+        if (primary == null || primary.status !== "projected") {
+            continue;
+        }
+        const existing = byCustomerId.get(forecast.customerId);
+        if (existing) {
+            existing.projected = true;
+            existing.projectedThresholdPct = primary.thresholdPct;
+            existing.projectedDate = primary.projectedDate;
+            existing.projectedDaysToThreshold = primary.daysToThreshold;
+            existing.projectedCurrentUsagePct = forecast.currentUsagePct;
+            existing.projectedRSquared = forecast.rSquared;
+            continue;
+        }
+        const projectedOnly: LimitWarningRow = {
+            customerId: forecast.customerId,
+            policyNumber: forecast.policyNumber,
+            customerName: forecast.customerName,
+            nearLimit: false,
+            nearLimitUtilizationPct: null,
+            scoreExpiring: false,
+            scoreExpiresInDays: null,
+            creditScoreInputDate: null,
+            approvedLimit: null,
+            limitType: null,
+            totalAR: 0,
+            currency: accountCur,
+            limitExpiring: false,
+            limitExpiresInDays: null,
+            approvedLimitExpirationDate: null,
+            projected: true,
+            projectedThresholdPct: primary.thresholdPct,
+            projectedDate: primary.projectedDate,
+            projectedDaysToThreshold: primary.daysToThreshold,
+            projectedCurrentUsagePct: forecast.currentUsagePct,
+            projectedRSquared: forecast.rSquared,
+        };
+        built.push(projectedOnly);
+        byCustomerId.set(forecast.customerId, projectedOnly);
     }
 
     const q = options.query?.trim();

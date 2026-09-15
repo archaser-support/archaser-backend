@@ -1,6 +1,6 @@
 # 01 — Shared CTP streak, trend, and stale utilities
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 25, 26
@@ -12,11 +12,11 @@ Add shared, pure domain utilities for CTP daily series used by later KPI slices:
 
 ## Acceptance criteria
 
-- [ ] One shared streak/run API covers over-limit days, breach days, and similar boolean-day series with available-day semantics
-- [ ] Trailing-window slope helper returns slope, optional R², and suppress flag when days are insufficient
-- [ ] Stale-run helper marks carried-forward days and can produce an exclude set for slope/volatility consumers
-- [ ] Missing calendar days between snapshots break streaks and are excluded from denominators (same spirit as Portfolio Health days available)
-- [ ] No duplicate streak implementations left behind in the new call paths this slice touches
+- [x] One shared streak/run API covers over-limit days, breach days, and similar boolean-day series with available-day semantics
+- [x] Trailing-window slope helper returns slope, optional R², and suppress flag when days are insufficient
+- [x] Stale-run helper marks carried-forward days and can produce an exclude set for slope/volatility consumers
+- [x] Missing calendar days between snapshots break streaks and are excluded from denominators (same spirit as Portfolio Health days available)
+- [x] No duplicate streak implementations left behind in the new call paths this slice touches
 
 ## How to test
 

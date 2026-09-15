@@ -1,6 +1,6 @@
 # 05 — Utilization overshoot + limit-capped detection
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-shared-ctp-series-utilities](01-shared-ctp-series-utilities.md)
 **User stories:** 3, 4, 5, 6, 28
@@ -12,13 +12,13 @@ Ship KPI #2 (utilization overshoot magnitude) and KPI #3 (limit-capped / complia
 
 ## Acceptance criteria
 
-- [ ] Overshoot floors at 0 on under-100% days; mean/max with date returned
-- [ ] Null-limit customers excluded from overshoot
-- [ ] Limit-capped flag uses configurable defaults; suppressed on short windows
-- [ ] Banner shows AR growth % vs compliant growth % when flag true
-- [ ] Dual-line normalized chart only when flag true
-- [ ] Exportable overshoot report available from PH Utilization
-- [ ] EN+HE purpose tooltips
+- [x] Overshoot floors at 0 on under-100% days; mean/max with date returned
+- [x] Null-limit customers excluded from overshoot
+- [x] Limit-capped flag uses configurable defaults; suppressed on short windows
+- [x] Banner shows AR growth % vs compliant growth % when flag true
+- [x] Dual-line normalized chart only when flag true
+- [x] Exportable overshoot report available from PH Utilization
+- [x] EN+HE purpose tooltips
 
 ## How to test
 

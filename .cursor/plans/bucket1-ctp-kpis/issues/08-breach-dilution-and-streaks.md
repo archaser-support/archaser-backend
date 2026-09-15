@@ -1,6 +1,6 @@
 # 08 — Breach dilution vs resolution + clean streaks
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-shared-ctp-series-utilities](01-shared-ctp-series-utilities.md)
 **User stories:** 20, 21, 22, 28
@@ -12,12 +12,12 @@ Ship KPI #11 (breach persistence vs dilution) and KPI #12 (breach clean-streak /
 
 ## Acceptance criteria
 
-- [ ] Diluted vs resolved classification uses breach amount trend + AR growth rules from the prompt defaults
-- [ ] Never-breached customers are N/A (not resolved)
-- [ ] Clean streak vs open breach badge correct; “no breach on record” when never breached in available history
-- [ ] Episode history exportable from PH
-- [ ] Diluted queue filterable/exportable on Tab 1
-- [ ] EN+HE purpose tooltips
+- [x] Diluted vs resolved classification uses breach amount trend + AR growth rules from the prompt defaults
+- [x] Never-breached customers are N/A (not resolved)
+- [x] Clean streak vs open breach badge correct; “no breach on record” when never breached in available history
+- [x] Episode history exportable from PH
+- [x] Diluted queue filterable/exportable on Tab 1
+- [x] EN+HE purpose tooltips
 
 ## How to test
 

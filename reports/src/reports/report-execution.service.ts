@@ -219,6 +219,7 @@ export class ReportExecutionService {
         let creditDashboardAsOfDate: string | undefined;
         let creditDashboardFromDate: string | undefined;
         let creditDashboardToDate: string | undefined;
+        let creditDashboardIncludeNoPolicyExposure: boolean | undefined;
         let creditCustomerMembershipType:
             | "capacity"
             | "policy_risk"
@@ -228,6 +229,15 @@ export class ReportExecutionService {
             | "top_up"
             | "top_up_expiring"
             | "utilization_bin"
+            | "ar_extreme_moves"
+            | "utilization_overshoot"
+            | "limit_capped"
+            | "negative_daily_cost"
+            | "exposure_reconciliation"
+            | "policy_concentration"
+            | "limit_breach_forecast"
+            | "breach_dilution"
+            | "breach_episodes"
             | null
             | undefined;
         if (report.context === "dashboard_credit_customers") {
@@ -242,6 +252,8 @@ export class ReportExecutionService {
             creditDashboardAsOfDate = prepared.asOfDate;
             creditDashboardFromDate = prepared.fromDate;
             creditDashboardToDate = prepared.toDate;
+            creditDashboardIncludeNoPolicyExposure =
+                prepared.includeNoPolicyExposure;
             creditCustomerMembershipType = prepared.membershipType;
         } else if (report.context === "dashboard_credit_invoices") {
             const prepared = await prepareDashboardCreditInvoiceMarkers(
@@ -500,6 +512,8 @@ export class ReportExecutionService {
                 asOfDate: creditDashboardAsOfDate,
                 fromDate: creditDashboardFromDate,
                 toDate: creditDashboardToDate,
+                includeNoPolicyExposure:
+                    creditDashboardIncludeNoPolicyExposure,
             });
         }
 
