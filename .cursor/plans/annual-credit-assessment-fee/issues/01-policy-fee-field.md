@@ -1,6 +1,6 @@
 # 01 — Policy Annual Credit Assessment Fee field
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1, 2, 3, 4, 5, 6
@@ -12,10 +12,10 @@ Add an optional **Annual Credit Assessment Fee** money field on the insurance po
 
 ## Acceptance criteria
 
-- [ ] Policy schema/API expose nullable non-negative Annual Credit Assessment Fee in account currency
-- [ ] Create/edit policy form can set, clear, and persist the fee
-- [ ] Policy Summary displays the fee with other cost settings
-- [ ] Matching English and Hebrew locale keys are added/updated together
+- [x] Policy schema/API expose nullable non-negative Annual Credit Assessment Fee in account currency
+- [x] Create/edit policy form can set, clear, and persist the fee
+- [x] Policy Summary displays the fee with other cost settings
+- [x] Matching English and Hebrew locale keys are added/updated together
 
 ## How to test
 
