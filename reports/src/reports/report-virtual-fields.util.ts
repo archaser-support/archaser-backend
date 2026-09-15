@@ -437,7 +437,66 @@ export function applyComputedFieldSelect(
             field === "top_up_end_date" ||
             field === "top_up_days_left" ||
             field === "as_of_utilization_pct" ||
-            field === "as_of_usage_amount"
+            field === "as_of_usage_amount" ||
+            field === "period_days_available" ||
+            field === "period_ar_volatility_sigma_pct" ||
+            field === "period_ar_extreme_move_count" ||
+            field === "period_ar_worst_extreme_pct" ||
+            field === "period_ar_worst_extreme_date" ||
+            field === "period_stale_day_count" ||
+            field === "period_health_slope" ||
+            field === "period_health_momentum" ||
+            field === "period_avg_overshoot_pts" ||
+            field === "period_max_overshoot_pts" ||
+            field === "period_max_overshoot_date" ||
+            field === "period_avg_usage_pct" ||
+            field === "period_peak_usage_pct" ||
+            field === "period_peak_usage_date" ||
+            field === "period_overshoot_days_with_limit" ||
+            field === "period_days_above_limit" ||
+            field === "period_longest_above_limit_days" ||
+            field === "period_limit_capped" ||
+            field === "period_limit_capped_ar_growth_pct" ||
+            field === "period_limit_capped_compliant_growth_pct" ||
+            field === "period_limit_capped_compliant_cv" ||
+            field === "period_limit_capped_ar_cv" ||
+            field === "period_negative_cost_entry_count" ||
+            field === "period_negative_cost_sum" ||
+            field === "period_worst_negative_cost_amount" ||
+            field === "period_worst_negative_cost_date" ||
+            field === "period_recon_fail_count" ||
+            field === "period_recon_max_abs_delta" ||
+            field === "period_recon_worst_delta_date" ||
+            field === "period_at_risk_exceeds_total_count" ||
+            field === "period_at_risk_exceeds_total_max" ||
+            field === "period_policy_ar_share_pct" ||
+            field === "period_policy_open_ar" ||
+            field === "period_policy_top1_share_pct" ||
+            field === "period_policy_top3_share_pct" ||
+            field === "period_concentration_alert" ||
+            field === "period_concentration_as_of_date" ||
+            field === "period_forecast_status" ||
+            field === "period_projected_threshold_pct" ||
+            field === "period_projected_date" ||
+            field === "period_projected_days_to_threshold" ||
+            field === "period_projected_current_usage_pct" ||
+            field === "period_projected_r_squared" ||
+            field === "period_breach_dilution_classification" ||
+            field === "period_breach_dilution_ar_growth_pct" ||
+            field === "period_breach_dilution_breach_first" ||
+            field === "period_breach_dilution_breach_last" ||
+            field === "period_breach_dilution_breach_change_pct" ||
+            field === "period_breach_dilution_health_rise_pts" ||
+            field === "period_breach_status" ||
+            field === "period_breach_streak_days" ||
+            field === "period_breach_episode_count" ||
+            field === "period_breach_episodes_summary" ||
+            field === "period_breach_last_episode_start" ||
+            field === "period_breach_last_episode_end" ||
+            field === "period_breach_last_episode_ongoing" ||
+            field === "period_breach_last_episode_days" ||
+            field === "period_breach_last_episode_peak" ||
+            field === "period_longest_breach_streak_days"
         ) {
             return true;
         }
@@ -522,7 +581,66 @@ export function extractComputedFieldValue(
             field === "top_up_end_date" ||
             field === "top_up_days_left" ||
             field === "as_of_utilization_pct" ||
-            field === "as_of_usage_amount"
+            field === "as_of_usage_amount" ||
+            field === "period_days_available" ||
+            field === "period_ar_volatility_sigma_pct" ||
+            field === "period_ar_extreme_move_count" ||
+            field === "period_ar_worst_extreme_pct" ||
+            field === "period_ar_worst_extreme_date" ||
+            field === "period_stale_day_count" ||
+            field === "period_health_slope" ||
+            field === "period_health_momentum" ||
+            field === "period_avg_overshoot_pts" ||
+            field === "period_max_overshoot_pts" ||
+            field === "period_max_overshoot_date" ||
+            field === "period_avg_usage_pct" ||
+            field === "period_peak_usage_pct" ||
+            field === "period_peak_usage_date" ||
+            field === "period_overshoot_days_with_limit" ||
+            field === "period_days_above_limit" ||
+            field === "period_longest_above_limit_days" ||
+            field === "period_limit_capped" ||
+            field === "period_limit_capped_ar_growth_pct" ||
+            field === "period_limit_capped_compliant_growth_pct" ||
+            field === "period_limit_capped_compliant_cv" ||
+            field === "period_limit_capped_ar_cv" ||
+            field === "period_negative_cost_entry_count" ||
+            field === "period_negative_cost_sum" ||
+            field === "period_worst_negative_cost_amount" ||
+            field === "period_worst_negative_cost_date" ||
+            field === "period_recon_fail_count" ||
+            field === "period_recon_max_abs_delta" ||
+            field === "period_recon_worst_delta_date" ||
+            field === "period_at_risk_exceeds_total_count" ||
+            field === "period_at_risk_exceeds_total_max" ||
+            field === "period_policy_ar_share_pct" ||
+            field === "period_policy_open_ar" ||
+            field === "period_policy_top1_share_pct" ||
+            field === "period_policy_top3_share_pct" ||
+            field === "period_concentration_alert" ||
+            field === "period_concentration_as_of_date" ||
+            field === "period_forecast_status" ||
+            field === "period_projected_threshold_pct" ||
+            field === "period_projected_date" ||
+            field === "period_projected_days_to_threshold" ||
+            field === "period_projected_current_usage_pct" ||
+            field === "period_projected_r_squared" ||
+            field === "period_breach_dilution_classification" ||
+            field === "period_breach_dilution_ar_growth_pct" ||
+            field === "period_breach_dilution_breach_first" ||
+            field === "period_breach_dilution_breach_last" ||
+            field === "period_breach_dilution_breach_change_pct" ||
+            field === "period_breach_dilution_health_rise_pts" ||
+            field === "period_breach_status" ||
+            field === "period_breach_streak_days" ||
+            field === "period_breach_episode_count" ||
+            field === "period_breach_episodes_summary" ||
+            field === "period_breach_last_episode_start" ||
+            field === "period_breach_last_episode_end" ||
+            field === "period_breach_last_episode_ongoing" ||
+            field === "period_breach_last_episode_days" ||
+            field === "period_breach_last_episode_peak" ||
+            field === "period_longest_breach_streak_days"
         ) {
             return row[field] ?? null;
         }
@@ -564,7 +682,66 @@ export function isComputedReportField(
             field === "top_up_end_date" ||
             field === "top_up_days_left" ||
             field === "as_of_utilization_pct" ||
-            field === "as_of_usage_amount"
+            field === "as_of_usage_amount" ||
+            field === "period_days_available" ||
+            field === "period_ar_volatility_sigma_pct" ||
+            field === "period_ar_extreme_move_count" ||
+            field === "period_ar_worst_extreme_pct" ||
+            field === "period_ar_worst_extreme_date" ||
+            field === "period_stale_day_count" ||
+            field === "period_health_slope" ||
+            field === "period_health_momentum" ||
+            field === "period_avg_overshoot_pts" ||
+            field === "period_max_overshoot_pts" ||
+            field === "period_max_overshoot_date" ||
+            field === "period_avg_usage_pct" ||
+            field === "period_peak_usage_pct" ||
+            field === "period_peak_usage_date" ||
+            field === "period_overshoot_days_with_limit" ||
+            field === "period_days_above_limit" ||
+            field === "period_longest_above_limit_days" ||
+            field === "period_limit_capped" ||
+            field === "period_limit_capped_ar_growth_pct" ||
+            field === "period_limit_capped_compliant_growth_pct" ||
+            field === "period_limit_capped_compliant_cv" ||
+            field === "period_limit_capped_ar_cv" ||
+            field === "period_negative_cost_entry_count" ||
+            field === "period_negative_cost_sum" ||
+            field === "period_worst_negative_cost_amount" ||
+            field === "period_worst_negative_cost_date" ||
+            field === "period_recon_fail_count" ||
+            field === "period_recon_max_abs_delta" ||
+            field === "period_recon_worst_delta_date" ||
+            field === "period_at_risk_exceeds_total_count" ||
+            field === "period_at_risk_exceeds_total_max" ||
+            field === "period_policy_ar_share_pct" ||
+            field === "period_policy_open_ar" ||
+            field === "period_policy_top1_share_pct" ||
+            field === "period_policy_top3_share_pct" ||
+            field === "period_concentration_alert" ||
+            field === "period_concentration_as_of_date" ||
+            field === "period_forecast_status" ||
+            field === "period_projected_threshold_pct" ||
+            field === "period_projected_date" ||
+            field === "period_projected_days_to_threshold" ||
+            field === "period_projected_current_usage_pct" ||
+            field === "period_projected_r_squared" ||
+            field === "period_breach_dilution_classification" ||
+            field === "period_breach_dilution_ar_growth_pct" ||
+            field === "period_breach_dilution_breach_first" ||
+            field === "period_breach_dilution_breach_last" ||
+            field === "period_breach_dilution_breach_change_pct" ||
+            field === "period_breach_dilution_health_rise_pts" ||
+            field === "period_breach_status" ||
+            field === "period_breach_streak_days" ||
+            field === "period_breach_episode_count" ||
+            field === "period_breach_episodes_summary" ||
+            field === "period_breach_last_episode_start" ||
+            field === "period_breach_last_episode_end" ||
+            field === "period_breach_last_episode_ongoing" ||
+            field === "period_breach_last_episode_days" ||
+            field === "period_breach_last_episode_peak" ||
+            field === "period_longest_breach_streak_days"
         );
     }
     if (primaryTable === "Activity") {
