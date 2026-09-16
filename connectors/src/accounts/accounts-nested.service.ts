@@ -459,7 +459,6 @@ export class AccountsNestedService {
         id: number;
         account_id: number;
         provider: string;
-        status: string;
         base_url: string | null;
         auth_type: string;
         credentials_encrypted: string | null;
@@ -486,7 +485,6 @@ export class AccountsNestedService {
             id: connector.id,
             account_id: connector.account_id,
             provider: connector.provider,
-            status: connector.status,
             base_url: connector.base_url,
             auth_type: connector.auth_type,
             has_credentials: !!connector.credentials_encrypted,

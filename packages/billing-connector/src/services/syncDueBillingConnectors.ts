@@ -2,6 +2,10 @@ import { randomUUID } from "crypto";
 import type { PrismaClient } from "@prisma/client";
 import { isConnectorDue } from "./billingConnectorSchedule";
 import {
+    clearBillingConnectorAuthFailures,
+    recordBillingConnectorAuthFailure,
+} from "./billingConnectorAuthCircuitBreaker";
+import {
     runInProcessSync,
     type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
@@ -12,6 +16,10 @@ import {
     sweepStaleRunning,
 } from "../syncHistory";
 import { finalizeSyncHistoryAfterRun } from "../syncHistory/finalizeSyncHistoryAfterRun";
+import {
+    resolveSyncErrorType,
+    resolveSyncExecutionStatus,
+} from "../observability/statusAndErrorType";
 
 const MAX_CONNECTORS_PER_RUN = Number.parseInt(
     process.env.BILLING_CONNECTOR_MAX_CONNECTORS_PER_RUN ?? "5",
@@ -71,7 +79,6 @@ export async function syncDueBillingConnectors(
     const connectors = await prisma.billingConnector.findMany({
         where: {
             sync_enabled: true,
-            status: "Active",
         },
         orderBy: [{ sync_mode: "asc" }, { modified_at: "asc" }],
         take: MAX_CONNECTORS_PER_RUN,
@@ -150,6 +157,29 @@ export async function syncDueBillingConnectors(
                 );
             } catch {
                 // Best-effort history complete.
+            }
+
+            try {
+                const status = resolveSyncExecutionStatus(result);
+                const errorType = resolveSyncErrorType(result, status);
+                if (status === "SUCCESS") {
+                    await clearBillingConnectorAuthFailures({
+                        prisma,
+                        connectorId: connector.id,
+                    });
+                } else if (errorType === "auth") {
+                    const breaker = await recordBillingConnectorAuthFailure({
+                        prisma,
+                        connectorId: connector.id,
+                    });
+                    if (breaker.syncDisabled) {
+                        options?.onLog?.(
+                            `[account ${connector.account_id}] Auth circuit breaker tripped (${breaker.consecutiveAuthFailures} failures); sync_enabled set to false`
+                        );
+                    }
+                }
+            } catch {
+                // Circuit breaker must not fail the cron batch.
             }
         } catch (error) {
             failed += 1;
