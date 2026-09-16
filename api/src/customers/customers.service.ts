@@ -625,6 +625,10 @@ export class CustomersService {
         const filterType = query.filter_type;
 
         const andClause: Record<string, unknown>[] = [{ customer_id: id }];
+        // Cancelled sequence steps keep their future schedule_time, so ordering
+        // the feed by schedule_time buried freshly logged PTP/dispute rows under
+        // a pile of superseded reminders. Hide cancelled by default; cursor by id.
+        andClause.push({ status: { not: "CANCELLED" } });
         if (lastId) {
             andClause.push({ id: { lt: BigInt(lastId) } });
         }
@@ -634,7 +638,9 @@ export class CustomersService {
 
         const activities = await this.db.activity.findMany({
             where: { AND: andClause } as never,
-            orderBy: [{ schedule_time: "desc" }, { id: "desc" }],
+            // id DESC matches creation order and the last_id cursor used by the
+            // timeline infinite scroll (schedule_time DESC + id cursor skipped rows).
+            orderBy: [{ id: "desc" }],
             take: limit,
         });
 
