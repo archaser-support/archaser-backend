@@ -9,6 +9,7 @@ import {
     Res,
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { applyActivityContactDelivery } from "@archaser/cron-jobs";
 import { Response } from "express";
 import { DatabaseService } from "../database/database.service";
 
@@ -122,34 +123,61 @@ export class EmailController {
                 },
             });
             if (row) {
-                const data: Record<string, unknown> = {
-                    modified_at: new Date(),
-                };
                 const lower = eventType.toLowerCase();
                 if (lower.includes("delivery")) {
-                    data.status = "Delivered";
-                    data.delivered_at = new Date();
+                    await applyActivityContactDelivery(
+                        this.db as never,
+                        row.id,
+                        "delivered"
+                    );
                 } else if (lower.includes("bounce")) {
-                    data.status = "Bounced";
-                    data.bounced_at = new Date();
                     const bounce = message.bounce as
                         | Record<string, unknown>
                         | undefined;
-                    data.bounce_type = bounce?.bounceType ?? null;
-                    data.bounce_sub_type = bounce?.bounceSubType ?? null;
+                    await applyActivityContactDelivery(
+                        this.db as never,
+                        row.id,
+                        "bounced",
+                        {
+                            bounceType:
+                                bounce?.bounceType != null
+                                    ? String(bounce.bounceType)
+                                    : null,
+                            bounceSubType:
+                                bounce?.bounceSubType != null
+                                    ? String(bounce.bounceSubType)
+                                    : null,
+                            errorMsg: "SES bounce",
+                        }
+                    );
                 } else if (lower.includes("complaint")) {
-                    data.complaint_at = new Date();
+                    await this.db.activityContact.update({
+                        where: { id: row.id },
+                        data: {
+                            complaint_at: new Date(),
+                            modified_at: new Date(),
+                        },
+                    });
                 } else if (lower.includes("open")) {
-                    data.email_opened_at = row.email_opened_at ?? new Date();
-                    data.email_open_count = (row.email_open_count ?? 0) + 1;
+                    await this.db.activityContact.update({
+                        where: { id: row.id },
+                        data: {
+                            email_opened_at: row.email_opened_at ?? new Date(),
+                            email_open_count: (row.email_open_count ?? 0) + 1,
+                            modified_at: new Date(),
+                        },
+                    });
                 } else if (lower.includes("click")) {
-                    data.email_clicked_at = row.email_clicked_at ?? new Date();
-                    data.email_click_count = (row.email_click_count ?? 0) + 1;
+                    await this.db.activityContact.update({
+                        where: { id: row.id },
+                        data: {
+                            email_clicked_at:
+                                row.email_clicked_at ?? new Date(),
+                            email_click_count: (row.email_click_count ?? 0) + 1,
+                            modified_at: new Date(),
+                        },
+                    });
                 }
-                await this.db.activityContact.update({
-                    where: { id: row.id },
-                    data,
-                });
             }
         }
 
