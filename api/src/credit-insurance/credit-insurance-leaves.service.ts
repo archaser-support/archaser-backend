@@ -25,6 +25,7 @@ import {
     getNamedPolicyTrend,
     getNoPolicyExposureReport,
     getOverdueBlockReport,
+    getPendingAsOfRewriteWindow,
     getPolicyRiskExposureReport,
     getReportedInvoicesReport,
     getReportingCountdownOpenReport,
@@ -492,8 +493,25 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
         body: Record<string, unknown>
     ) {
         const ctx = await this.access.authorize(user, query);
-        const from = this.parseRequiredYmd(body.from ?? body.fromDate, "from");
-        const to = this.parseRequiredYmd(body.to ?? body.toDate, "to");
+        const mode = this.parseOptionalString(body.mode);
+        const isRecent = mode === "recent";
+
+        let from: Date;
+        let to: Date;
+        if (isRecent) {
+            const pending = await getPendingAsOfRewriteWindow(ctx.accountId);
+            if (!pending) {
+                throw new BadRequestException({
+                    error: "No pending rewrite window for generate recent",
+                });
+            }
+            from = pending.fromDate;
+            to = pending.toDate;
+        } else {
+            from = this.parseRequiredYmd(body.from ?? body.fromDate, "from");
+            to = this.parseRequiredYmd(body.to ?? body.toDate, "to");
+        }
+
         try {
             const status = await startCreditAsOfBackfillJob(
                 ctx.accountId,

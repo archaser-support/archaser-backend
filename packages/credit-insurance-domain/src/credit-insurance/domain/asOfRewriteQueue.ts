@@ -204,6 +204,38 @@ export async function enqueueAsOfRewriteInTransaction(
     await enqueueAsOfRewriteWithClient(tx, input);
 }
 
+export type PendingAsOfRewriteWindow = {
+    fromDate: Date;
+    toDate: Date;
+};
+
+/**
+ * Pending rewrite queue window for an account (`pending` only).
+ * `processing` / `done` / missing → null (Generate recent eligibility).
+ */
+export async function getPendingAsOfRewriteWindow(
+    accountId: number,
+    dbClient: RawCapableClient = prisma
+): Promise<PendingAsOfRewriteWindow | null> {
+    const rows = await dbClient.$queryRaw<
+        { from_date: Date; to_date: Date }[]
+    >`
+        SELECT from_date, to_date
+        FROM "CreditAsOfRewriteQueue"
+        WHERE account_id = ${accountId} AND status = 'pending'
+        ORDER BY id ASC
+        LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) {
+        return null;
+    }
+    return {
+        fromDate: toDayStartUtc(row.from_date),
+        toDate: toDayStartUtc(row.to_date),
+    };
+}
+
 export async function enqueueRewriteForImport(
     args: {
         accountId: number;
