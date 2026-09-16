@@ -50,7 +50,8 @@ host_swap_mb() {
     awk '/SwapTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0
 }
 
-# t3.small/t3.micro OOM-kills a full workspace `npm ci`. Add 2G swap when RAM is low.
+# EC2 builds can OOM during npm install even on ~4GB RAM when swap is 0.
+# Ensure at least 2GB swap for deploy stability.
 ensure_deploy_swap() {
     if [[ ! -r /proc/meminfo ]]; then
         return 0
@@ -59,7 +60,7 @@ ensure_deploy_swap() {
     mem_mb="$(host_mem_mb)"
     swap_mb="$(host_swap_mb)"
     log "Host memory: ${mem_mb}MB RAM, ${swap_mb}MB swap"
-    if (( mem_mb >= 3072 || swap_mb >= 1024 )); then
+    if (( swap_mb >= 1024 )); then
         return 0
     fi
     local swapfile="/swapfile.archaser-deploy"
@@ -70,7 +71,7 @@ ensure_deploy_swap() {
         return 0
     fi
     if [[ ! -f "$swapfile" ]]; then
-        log "Low RAM — creating 2G swap at $swapfile"
+        log "Creating 2G deploy swap at $swapfile"
         sudo fallocate -l 2G "$swapfile" || sudo dd if=/dev/zero of="$swapfile" bs=1M count=2048 status=none
         sudo chmod 600 "$swapfile"
         sudo mkswap "$swapfile" >/dev/null
@@ -223,19 +224,23 @@ sync_git_checkout() {
 npm_ci_low_memory() {
     local mem_mb heap_mb
     mem_mb="$(host_mem_mb)"
-    heap_mb=768
+    heap_mb=640
     if (( mem_mb > 0 && mem_mb < 2048 )); then
-        heap_mb=512
+        heap_mb=384
     elif (( mem_mb >= 4096 )); then
-        heap_mb=2048
+        heap_mb=1024
     fi
-    log "npm ci (heap ${heap_mb}MB, maxsockets 2, prefer-offline, ignore-scripts)"
+    log "npm ci (heap ${heap_mb}MB, maxsockets 1, prefer-offline, ignore-scripts)"
     # Ignore scripts so prisma/husky do not spawn extra Node during peak install.
     # Prisma generate still runs later in this script.
-    NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 2 --ignore-scripts || \
-    NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm install --include=dev --no-audit --no-fund --ignore-scripts
+    if NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
+        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts; then
+        return 0
+    fi
+
+    log "npm ci failed (likely memory pressure) — retrying npm install with conservative settings"
+    NODE_OPTIONS="--max-old-space-size=384" \
+        npm install --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts
 }
 
 ENVIRONMENT=""
