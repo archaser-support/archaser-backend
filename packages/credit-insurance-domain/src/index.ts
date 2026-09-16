@@ -293,9 +293,16 @@ export {
     type PortfolioOverLimitGapSummary,
 } from "./credit-insurance/domain/shared/ctpOverLimitGapMetrics";
 export {
+    fetchLinkedCptCustomerDaySeries,
+    type FetchLinkedCptCustomerDaySeriesOptions,
+    type LinkedCptCustomerDayRow,
+} from "./credit-insurance/domain/linkedCptCustomerDaySeries";
+export {
     fetchCapacityGapDaysPeriodCustomers,
     fetchCapacityGapDaysPeriodSummary,
     fetchCustomerTrailingOverLimitGapMetrics,
+    mapLinkedCptDaySeriesToCapacityGapCustomers,
+    summarizeCapacityGapFromLinkedCptDaySeries,
     type FetchCapacityGapDaysPeriodOptions,
 } from "./credit-insurance/domain/capacityGapDaysPeriod";
 export {
@@ -322,6 +329,7 @@ export {
     fetchCustomerTrailingStaleSlopeVolatilityMetrics,
     fetchStaleSlopeVolatilityPeriodCustomers,
     fetchStaleSlopeVolatilityPeriodSummary,
+    mapLinkedCptDaySeriesToStaleSlopeVolatilityCustomers,
     summarizePortfolioStaleSlopeVolatility,
     type CustomerStaleSlopeVolatilityRow,
     type FetchStaleSlopeVolatilityPeriodOptions,
@@ -354,6 +362,8 @@ export {
     fetchOvershootLimitCappedPeriodCustomers,
     fetchOvershootLimitCappedPeriodSummary,
     fetchOvershootRankingPeriodCustomers,
+    mapLinkedCptDaySeriesToOvershootLimitCappedCustomers,
+    summarizeOvershootFromLinkedCptDaySeries,
     type FetchOvershootLimitCappedPeriodOptions,
 } from "./credit-insurance/domain/overshootLimitCappedPeriod";
 export {

@@ -3,7 +3,6 @@
  * (Bucket 1 #5 / #6 / #7). Same approved-customer filter as capacity-gap-days.
  */
 
-import { prisma } from "../domain-db";
 import { detectStaleArRuns } from "./shared/ctpDailySeries";
 import {
     computeCustomerHealthSlopeVolatilityMetrics,
@@ -11,69 +10,20 @@ import {
     type CustomerHealthSlopeVolatilityMetrics,
     type HealthMomentumClassification,
 } from "./shared/ctpHealthSlopeVolatility";
+import {
+    fetchLinkedCptCustomerDaySeries,
+    type FetchLinkedCptCustomerDaySeriesOptions,
+    type LinkedCptCustomerDayRow,
+} from "./linkedCptCustomerDaySeries";
 
-type CptSlopeVolRawRow = {
-    customer_id: number;
-    snapshot_date: Date | string;
-    health_index: number | string | null;
-    total_receivables: number | string | null;
-    person_name: string | null;
-    company_name: string | null;
-};
-
-function toNumber(value: number | string | null | undefined): number {
-    if (value == null) {
-        return 0;
-    }
-    const n = typeof value === "number" ? value : Number(value);
-    return Number.isFinite(n) ? n : 0;
-}
-
-function startOfUtcDayFromYmd(ymd: string): Date | null {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
-        return null;
-    }
-    const date = new Date(`${ymd}T00:00:00.000Z`);
-    return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function normalizeSnapshotYmd(value: Date | string): string {
-    if (typeof value === "string") {
-        return value.slice(0, 10);
-    }
-    return value.toISOString().slice(0, 10);
-}
-
-function resolveCustomerName(row: {
-    person_name: string | null;
-    company_name: string | null;
-    customer_id: number;
-}): string {
-    const person = row.person_name?.trim();
-    if (person) {
-        return person;
-    }
-    const company = row.company_name?.trim();
-    if (company) {
-        return company;
-    }
-    return String(row.customer_id);
-}
-
-export type FetchStaleSlopeVolatilityPeriodOptions = {
-    accountId: number;
-    fromDate: string;
-    toDate: string;
-    policyId?: number;
-    customerId?: number;
-    scopedCustomerIds?: number[] | null;
-    includeNoPolicyExposure?: boolean;
-    /**
-     * When set, health slope uses only the last N non-stale available days
-     * (Customer dashboard default: 30). Peak/current still use the full series.
-     */
-    healthTrailingDays?: number;
-};
+export type FetchStaleSlopeVolatilityPeriodOptions =
+    FetchLinkedCptCustomerDaySeriesOptions & {
+        /**
+         * When set, health slope uses only the last N non-stale available days
+         * (Customer dashboard default: 30). Peak/current still use the full series.
+         */
+        healthTrailingDays?: number;
+    };
 
 export type CustomerStaleSlopeVolatilityRow =
     CustomerHealthSlopeVolatilityMetrics & {
@@ -126,60 +76,13 @@ function emptyPortfolioSummary(): PortfolioStaleSlopeVolatilitySummary {
 }
 
 /**
- * Approved CTP rows in range with health + AR for slope / volatility / stale.
+ * Build stale / slope / volatility customer rows from a shared linked CPT day
+ * series. Only positive-limit (approved) days are included.
  */
-export async function fetchStaleSlopeVolatilityPeriodCustomers(
-    options: FetchStaleSlopeVolatilityPeriodOptions
-): Promise<CustomerStaleSlopeVolatilityRow[]> {
-    const fromDateUtc = startOfUtcDayFromYmd(options.fromDate);
-    const toDateUtc = startOfUtcDayFromYmd(options.toDate);
-    if (fromDateUtc == null || toDateUtc == null) {
-        return [];
-    }
-
-    const pendingReviewLiteral = "pending review";
-    const includeNoPolicy = options.includeNoPolicyExposure !== false;
-    const scoped = options.scopedCustomerIds ?? null;
-
-    const rows = await prisma.$queryRaw<CptSlopeVolRawRow[]>`
-        SELECT
-            t.customer_id,
-            t.snapshot_date,
-            AVG(COALESCE(t.health_index, 0))::float8 AS health_index,
-            SUM(COALESCE(t.total_receivables, 0))::float8 AS total_receivables,
-            MAX(p.full_name) AS person_name,
-            MAX(co.name) AS company_name
-        FROM "CustomerPolicyTrend" t
-        INNER JOIN "Customer" c ON c.id = t.customer_id
-        LEFT JOIN "Person" p ON p.id = c.person_id
-        LEFT JOIN "Company" co ON co.id = c.company_id
-        WHERE t.account_id = ${options.accountId}
-          AND t.snapshot_date >= ${fromDateUtc}::date
-          AND t.snapshot_date <= ${toDateUtc}::date
-          AND t.insurance_policy_id IS NOT NULL
-          AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
-          AND COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
-          AND (
-            ${options.policyId ?? null}::int IS NULL
-            OR t.insurance_policy_id = ${options.policyId ?? null}
-          )
-          AND (
-            ${options.customerId ?? null}::int IS NULL
-            OR t.customer_id = ${options.customerId ?? null}
-          )
-          AND (
-            ${scoped == null}::boolean
-            OR t.customer_id = ANY(${scoped ?? []}::int[])
-          )
-          AND (
-            ${includeNoPolicy}::boolean
-            OR COALESCE(t.total_receivables, 0) <= 0
-            OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, ''))) IS DISTINCT FROM ${pendingReviewLiteral}
-          )
-        GROUP BY t.customer_id, t.snapshot_date
-        ORDER BY t.customer_id ASC, t.snapshot_date ASC
-    `;
-
+export function mapLinkedCptDaySeriesToStaleSlopeVolatilityCustomers(
+    dayRows: LinkedCptCustomerDayRow[],
+    options?: { healthTrailingDays?: number }
+): CustomerStaleSlopeVolatilityRow[] {
     const byCustomer = new Map<
         number,
         {
@@ -189,25 +92,26 @@ export async function fetchStaleSlopeVolatilityPeriodCustomers(
         }
     >();
 
-    for (const row of rows) {
-        const customerId = row.customer_id;
-        let entry = byCustomer.get(customerId);
+    for (const row of dayRows) {
+        if (!row.approvedDay) {
+            continue;
+        }
+        let entry = byCustomer.get(row.customerId);
         if (!entry) {
             entry = {
-                customerName: resolveCustomerName(row),
+                customerName: row.customerName,
                 healthPoints: [],
                 arPoints: [],
             };
-            byCustomer.set(customerId, entry);
+            byCustomer.set(row.customerId, entry);
         }
-        const snapshotDate = normalizeSnapshotYmd(row.snapshot_date);
         entry.healthPoints.push({
-            snapshotDate,
-            value: toNumber(row.health_index),
+            snapshotDate: row.snapshotDate,
+            value: row.approvedHealthIndex ?? 0,
         });
         entry.arPoints.push({
-            snapshotDate,
-            totalReceivables: Math.max(0, toNumber(row.total_receivables)),
+            snapshotDate: row.snapshotDate,
+            totalReceivables: row.approvedTotalReceivables,
         });
     }
 
@@ -217,7 +121,7 @@ export async function fetchStaleSlopeVolatilityPeriodCustomers(
             healthPoints: entry.healthPoints,
             arPoints: entry.arPoints,
             healthOptions:
-                options.healthTrailingDays != null
+                options?.healthTrailingDays != null
                     ? { trailingDays: options.healthTrailingDays }
                     : undefined,
         });
@@ -244,6 +148,18 @@ export async function fetchStaleSlopeVolatilityPeriodCustomers(
         });
     }
     return result;
+}
+
+/**
+ * Approved CTP rows in range with health + AR for slope / volatility / stale.
+ */
+export async function fetchStaleSlopeVolatilityPeriodCustomers(
+    options: FetchStaleSlopeVolatilityPeriodOptions
+): Promise<CustomerStaleSlopeVolatilityRow[]> {
+    const dayRows = await fetchLinkedCptCustomerDaySeries(options);
+    return mapLinkedCptDaySeriesToStaleSlopeVolatilityCustomers(dayRows, {
+        healthTrailingDays: options.healthTrailingDays,
+    });
 }
 
 export function summarizePortfolioStaleSlopeVolatility(
