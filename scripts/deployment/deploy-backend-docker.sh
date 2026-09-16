@@ -221,6 +221,26 @@ sync_git_checkout() {
     fi
 }
 
+ensure_build_tooling() {
+    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
+    if [[ -x "$ROOT_DIR/node_modules/typescript/bin/tsc" ]]; then
+        return 0
+    fi
+    log "typescript CLI missing after npm ci — installing at workspace root"
+    npm install --include=dev --no-save --no-audit --no-fund --ignore-scripts typescript@^5.9.2
+    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
+    if [[ ! -x "$ROOT_DIR/node_modules/typescript/bin/tsc" ]]; then
+        echo "Error: tsc is still missing after typescript install."
+        exit 1
+    fi
+}
+
+run_workspace_build() {
+    local workspace="$1"
+    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
+    npm run build -w "$workspace"
+}
+
 npm_ci_low_memory() {
     local mem_mb heap_mb
     mem_mb="$(host_mem_mb)"
@@ -388,17 +408,19 @@ fi
 
 if [[ "$SKIP_BUILD" != "true" ]]; then
     log "Building backend workspaces"
-    npm run build -w @archaser/database
-    npm run build -w @archaser/auth
-    npm run build -w @archaser/sms-send
-    npm run build -w @archaser/credit-insurance-domain
-    npm run build -w @archaser/billing-connector
-    npm run build -w @archaser/cron-jobs
-    npm run build -w @archaser/api
-    npm run build -w @archaser/worker
-    npm run build -w @archaser/sms
-    npm run build -w @archaser/connectors
-    npm run build -w @archaser/reports
+    ensure_build_tooling
+    run_workspace_build @archaser/database
+    run_workspace_build @archaser/auth
+    run_workspace_build @archaser/sms-send
+    run_workspace_build @archaser/credit-insurance-domain
+    run_workspace_build @archaser/billing-connector
+    run_workspace_build @archaser/cron-jobs
+    # Nest api build last — on low-memory EC2 hosts it can disturb hoisted CLI bins (tsc).
+    run_workspace_build @archaser/worker
+    run_workspace_build @archaser/sms
+    run_workspace_build @archaser/connectors
+    run_workspace_build @archaser/reports
+    run_workspace_build @archaser/api
 else
     log "Skipping backend builds (--skip-build)"
 fi
