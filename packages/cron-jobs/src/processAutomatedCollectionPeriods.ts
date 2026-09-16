@@ -67,13 +67,15 @@ export async function processAutomatedCollectionPeriods(
         });
 
         // ===== PHASE 0: Sequence Reset =====
-        // Enable activity creation for periods manually changed from Agent to Automated
+        // Enable activity creation for periods re-entering Automated at step 0
+        // (Agent, Dispute, Legal, etc.) when create_next_activity was never set.
         const manuallyChangedPeriods =
             await prisma.customerCollectionPeriod.findMany({
                 where: {
                     current_category: "Automated",
-                    previous_category: "Agent",
                     last_automated_step: 0,
+                    create_next_activity: false,
+                    is_last_automated_step_delivered: false,
                     period_end_date: null,
                     Customer: excludeCreditOnlyWhere(),
                 },

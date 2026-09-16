@@ -328,18 +328,38 @@ async function processActivity(
         })),
     });
 
-    if (channelPick.changed) {
+    let resolvedChannel = (
+        channelPick.changed ? channelPick.selectedChannel : activity.type
+    ) as string;
+
+    // WhatsApp send is not implemented in AWM — map to SMS/Email so
+    // activities do not stick forever as SCHEDULED with type WhatsApp.
+    if (resolvedChannel === "WhatsApp") {
+        const hasMobile = pendingContacts.some((ac: any) =>
+            Boolean(ac.Contact?.mobile?.trim())
+        );
+        const hasEmail = pendingContacts.some((ac: any) =>
+            Boolean(ac.Contact?.email?.trim())
+        );
+        resolvedChannel = hasMobile ? "SMS" : hasEmail ? "Email" : "SMS";
+        jobLog("activityWorkflowManager", "info", "whatsapp remapped", {
+            activityId: activity.id,
+            to: resolvedChannel,
+        });
+    }
+
+    if (channelPick.changed || resolvedChannel !== activity.type) {
         jobLog("activityWorkflowManager", "info", "channel selection", {
             activityId: activity.id,
             from: activity.type,
-            to: channelPick.selectedChannel,
+            to: resolvedChannel,
             reason: channelPick.reason,
         });
-        activity.type = channelPick.selectedChannel;
+        activity.type = resolvedChannel;
         await prisma.activity.update({
             where: { id: activity.id },
             data: {
-                type: channelPick.selectedChannel as any,
+                type: resolvedChannel as any,
                 modified_at: new Date(),
             },
         });
@@ -348,8 +368,7 @@ async function processActivity(
                 prisma.activityContact.update({
                     where: { id: ac.id },
                     data: {
-                        communication_channel:
-                            channelPick.selectedChannel as any,
+                        communication_channel: resolvedChannel as any,
                         channel_selection_reason: channelPick.reason,
                         modified_at: new Date(),
                     },
@@ -368,6 +387,11 @@ async function processActivity(
         );
     } else if (activity.type === "Email") {
         await processEmailActivity(prisma, activity, pendingContacts, stats);
+    } else {
+        // Unsupported channel after remap — leave SCHEDULED and surface error.
+        stats.errors.push(
+            `Activity ${activity.id}: unsupported channel ${activity.type}`
+        );
     }
 }
 
@@ -496,6 +520,7 @@ async function processSmsActivity(
                         vendor_message_id: result.vendorMessageId || null,
                         sms_vendor_id: vendor!.id,
                         communication_channel: "SMS",
+                        sent_at: new Date(),
                         modified_at: new Date(),
                     },
                 });
@@ -543,6 +568,7 @@ async function processSmsActivity(
         data: {
             status: finalStatus,
             modified_at: new Date(),
+            ...(sentCount > 0 ? { actual_delivery_time: new Date() } : {}),
         },
     });
 }
@@ -582,6 +608,7 @@ async function processEmailActivity(
     let emailSuccessCount = 0;
     let activitySuccessCount = 0;
     let failedCount = 0;
+    let deferredCount = 0;
 
     for (const activityContact of pendingContacts) {
         const contact = activityContact.Contact;
@@ -692,6 +719,7 @@ async function processEmailActivity(
                     ses_message_id: emailResult.messageId,
                     communication_channel:
                         activityContact.communication_channel || "Email",
+                    sent_at: new Date(),
                     modified_at: new Date(),
                 },
             });
@@ -707,6 +735,7 @@ async function processEmailActivity(
 
             if (failureResult.action === "deferred") {
                 stats.emailDeferred += 1;
+                deferredCount++;
                 continue;
             }
 
@@ -737,6 +766,11 @@ async function processEmailActivity(
     stats.emailSent += emailSuccessCount;
     stats.emailFailed += failedCount;
 
+    // If every contact was deferred, keep the activity SCHEDULED so AWM retries.
+    if (deferredCount > 0 && activitySuccessCount === 0 && failedCount === 0) {
+        return;
+    }
+
     const finalStatus =
         failedCount === 0
             ? "SENT"
@@ -749,7 +783,12 @@ async function processEmailActivity(
         data: {
             status: finalStatus,
             modified_at: new Date(),
-            ...(activitySuccessCount > 0 ? { last_sent_time: new Date() } : {}),
+            ...(activitySuccessCount > 0
+                ? {
+                      last_sent_time: new Date(),
+                      actual_delivery_time: new Date(),
+                  }
+                : {}),
         },
     });
 }
@@ -803,6 +842,8 @@ async function attemptEmailToSmsFallback(
         await prisma.activityContact.update({
             where: { id: activityContact.id },
             data: {
+                status: "Failed",
+                failed_at: new Date(),
                 failure_reason: getEmailErrorSummary(
                     new Error("Email failed; no SMS vendor for fallback")
                 ),
@@ -873,6 +914,7 @@ async function attemptEmailToSmsFallback(
                     communication_channel: "SMS",
                     channel_selection_reason:
                         "{{activity.channel_fallback_email_to_sms}}",
+                    sent_at: new Date(),
                     modified_at: new Date(),
                 },
             });
@@ -882,6 +924,8 @@ async function attemptEmailToSmsFallback(
         await prisma.activityContact.update({
             where: { id: activityContact.id },
             data: {
+                status: "Failed",
+                failed_at: new Date(),
                 failure_reason:
                     result.error ||
                     "Email failed and SMS fallback failed",
@@ -896,6 +940,8 @@ async function attemptEmailToSmsFallback(
         await prisma.activityContact.update({
             where: { id: activityContact.id },
             data: {
+                status: "Failed",
+                failed_at: new Date(),
                 failure_reason: getEmailErrorSummary(error),
                 modified_at: new Date(),
             },
@@ -1297,6 +1343,12 @@ async function processCollectionPeriodForNextActivity(
                         activity_id: activity.id,
                         contact_id: c.id,
                         status: "Scheduled",
+                        communication_channel:
+                            (nextSequence.activity_type as
+                                | "Email"
+                                | "SMS"
+                                | "WhatsApp"
+                                | null) || "Email",
                     },
                 })
             )
