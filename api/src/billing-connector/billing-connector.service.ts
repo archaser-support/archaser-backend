@@ -83,6 +83,7 @@ import {
     DEFAULT_IMPORT_CACHE_TIME_ZONE,
     persistReconciledConnectorSyncMode,
     reconcileConnectorSyncMode,
+    recordBillingConnectorAuthFailure,
     type ClearBeforeImportEntity,
     type ImportCacheEntityType,
     type ConnectorSyncRunSummary,
@@ -421,7 +422,6 @@ export class BillingConnectorApiService {
         id: number;
         account_id: number;
         provider: string;
-        status: string;
         base_url: string | null;
         auth_type: string;
         credentials_encrypted: string | null;
@@ -484,7 +484,6 @@ export class BillingConnectorApiService {
             id: connector.id,
             account_id: connector.account_id,
             provider: connector.provider,
-            status: connector.status,
             base_url: connector.base_url,
             auth_type: connector.auth_type,
             has_credentials: !!connector.credentials_encrypted,
@@ -664,6 +663,9 @@ export class BillingConnectorApiService {
         if (body.auth_type != null) data.auth_type = body.auth_type;
         if (typeof body.sync_enabled === "boolean") {
             data.sync_enabled = body.sync_enabled;
+            if (body.sync_enabled === true) {
+                data.consecutive_auth_failures = 0;
+            }
         }
         if (typeof body.sync_cron_expression === "string") {
             data.sync_cron_expression = body.sync_cron_expression;
@@ -1042,9 +1044,18 @@ export class BillingConnectorApiService {
                     last_connection_error: result.ok
                         ? null
                         : result.error ?? "Connection failed",
+                    ...(result.ok
+                        ? { consecutive_auth_failures: 0 }
+                        : {}),
                     modified_at: new Date(),
                 },
             });
+            if (!result.ok) {
+                await recordBillingConnectorAuthFailure({
+                    prisma: this.db,
+                    connectorId: connector.id,
+                });
+            }
         }
         return {
             success: result.ok,

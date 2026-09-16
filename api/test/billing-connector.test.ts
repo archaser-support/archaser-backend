@@ -75,7 +75,6 @@ function connectorRow(overrides: Record<string, unknown> = {}) {
         id: 1,
         account_id: 42,
         provider: "PRIORITY",
-        status: "ACTIVE",
         base_url: "https://erp.example.com",
         auth_type: "API_KEY",
         credentials_encrypted: "enc",
