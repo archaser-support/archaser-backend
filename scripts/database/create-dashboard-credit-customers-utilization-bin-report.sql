@@ -17,7 +17,8 @@ SELECT
             {"table": "Customer", "field": "InsurancePolicy.policy_number"},
             {"table": "Customer", "field": "name"},
             {"table": "Customer", "field": "as_of_utilization_pct"},
-            {"table": "Customer", "field": "as_of_usage_amount"}
+            {"table": "Customer", "field": "as_of_usage_amount"},
+            {"table": "Customer", "field": "approved_limit_currency"}
         ],
         "filters": [],
         "sorting": [{"field": "as_of_utilization_pct", "direction": "DESC"}],
