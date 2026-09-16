@@ -1,9 +1,11 @@
 import {
     Body,
     Controller,
+    Delete,
     Get,
     Param,
     ParseIntPipe,
+    Post,
     Put,
     Query,
     UseGuards,
@@ -36,6 +38,31 @@ export class ContactsController {
         return this.contacts.list(user, query);
     }
 
+    @Put()
+    @ApiOperation({
+        summary:
+            "Collection-level contact update (availability via ?operation=availability)",
+    })
+    async updateCollection(
+        @CurrentUser() user: JwtPayload,
+        @Query() query: ContactsListQuery,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.contacts.updateAvailability(user, query, body);
+    }
+
+    @Post()
+    @ApiOperation({
+        summary:
+            "Create or update a contact (Nest-native). Body with id updates; without id creates.",
+    })
+    async upsert(
+        @CurrentUser() user: JwtPayload,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.contacts.upsert(user, body);
+    }
+
     @Get(":id")
     @ApiOperation({ summary: "Contact detail (Nest-native)" })
     async byId(
@@ -46,12 +73,24 @@ export class ContactsController {
     }
 
     @Put(":id")
-    @ApiOperation({ summary: "Contact status update (Nest-native)" })
+    @ApiOperation({
+        summary:
+            "Update contact — status-only deactivate or full field update (Nest-native)",
+    })
     async update(
         @CurrentUser() user: JwtPayload,
         @Param("id", ParseIntPipe) id: number,
         @Body() body: Record<string, unknown>
     ) {
         return this.contacts.update(user, id, body);
+    }
+
+    @Delete(":id")
+    @ApiOperation({ summary: "Delete a contact (Nest-native)" })
+    async remove(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        return this.contacts.remove(user, id);
     }
 }
