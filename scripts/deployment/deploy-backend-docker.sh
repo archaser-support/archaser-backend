@@ -154,10 +154,33 @@ stop_legacy_backend_projects() {
     done
 }
 
+# Bare `docker network create <project>_default` (e.g. grafana/start-*.sh) leaves the
+# network without com.docker.compose.* labels. Compose then refuses `up` with:
+#   network … was found but has incorrect label com.docker.compose.network …
+ensure_backend_compose_network() {
+    local net="${BACKEND_PROJECT}_default"
+    if ! "${DOCKER[@]}" network inspect "$net" >/dev/null 2>&1; then
+        return 0
+    fi
+    local compose_net
+    compose_net="$("${DOCKER[@]}" network inspect -f '{{index .Labels "com.docker.compose.network"}}' "$net" 2>/dev/null || true)"
+    if [[ "$compose_net" == "default" ]]; then
+        return 0
+    fi
+    log "Removing mislabelled network $net so compose can recreate it"
+    local cid
+    for cid in $("${DOCKER[@]}" network inspect -f '{{range $id, $_ := .Containers}}{{println $id}}{{end}}' "$net" 2>/dev/null || true); do
+        [[ -n "$cid" ]] || continue
+        "${DOCKER[@]}" network disconnect -f "$net" "$cid" >/dev/null 2>&1 || true
+    done
+    "${DOCKER[@]}" network rm "$net" >/dev/null 2>&1 || true
+}
+
 recreate_backend_stack() {
     stop_legacy_backend_projects
     log "Recreating backend stack (down → up; bind-mounted dist/ and env apply only in new containers)"
     backend_compose down --remove-orphans
+    ensure_backend_compose_network
     if ! backend_compose up -d --force-recreate --remove-orphans --wait; then
         log "compose --wait unavailable or timed out — bringing stack up without wait"
         backend_compose up -d --force-recreate --remove-orphans
@@ -437,7 +460,10 @@ if [[ "$NO_GRAFANA" != "true" ]]; then
         for c in archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail; do
             "${DOCKER[@]}" rm -f "$c" >/dev/null 2>&1 || true
         done
-        MONITORING_ENV_VARS=(MONITORING_ENV="$ENVIRONMENT")
+        MONITORING_ENV_VARS=(
+            MONITORING_ENV="$ENVIRONMENT"
+            BACKEND_DOCKER_NETWORK="${BACKEND_PROJECT}_default"
+        )
         if [[ "$ENVIRONMENT" == "staging" ]]; then
             MONITORING_ENV_VARS+=(
                 GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
