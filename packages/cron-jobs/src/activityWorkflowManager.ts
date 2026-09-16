@@ -1322,10 +1322,11 @@ async function processCollectionPeriodForNextActivity(
                 activity_sequence_id: nextSequence.id,
                 type: nextSequence.activity_type,
                 content,
-                title: "{{activities.fields.activity_automated_scheduled}}",
+                title: "{{activities.fields.activity_automated_step_scheduled}}",
                 title_params: {
                     step: nextStep,
                     contacts: contacts.length,
+                    time: scheduleTime.toISOString(),
                 },
                 schedule_time: scheduleTime,
                 schedule_calculation: scheduleCalculation,
