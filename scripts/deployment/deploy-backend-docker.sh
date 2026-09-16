@@ -16,7 +16,7 @@ Usage:
 Options:
   --env <name>         Required. One of: staging, production
   --app-dir <path>     Backend checkout on EC2
-                       (default: /home/ubuntu/api for staging, /home/ubuntu/production for production)
+                       (default: /home/ubuntu/api — staging and production share one checkout)
   --skip-install       Skip npm ci
   --skip-build         Skip backend workspace builds
   --skip-git-pull      Skip git fetch + reset to origin (use if you already synced)
@@ -50,7 +50,8 @@ host_swap_mb() {
     awk '/SwapTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0
 }
 
-# t3.small/t3.micro OOM-kills a full workspace `npm ci`. Add 2G swap when RAM is low.
+# EC2 builds can OOM during npm install even on ~4GB RAM when swap is 0.
+# Ensure at least 2GB swap for deploy stability.
 ensure_deploy_swap() {
     if [[ ! -r /proc/meminfo ]]; then
         return 0
@@ -59,7 +60,7 @@ ensure_deploy_swap() {
     mem_mb="$(host_mem_mb)"
     swap_mb="$(host_swap_mb)"
     log "Host memory: ${mem_mb}MB RAM, ${swap_mb}MB swap"
-    if (( mem_mb >= 3072 || swap_mb >= 1024 )); then
+    if (( swap_mb >= 1024 )); then
         return 0
     fi
     local swapfile="/swapfile.archaser-deploy"
@@ -70,7 +71,7 @@ ensure_deploy_swap() {
         return 0
     fi
     if [[ ! -f "$swapfile" ]]; then
-        log "Low RAM — creating 2G swap at $swapfile"
+        log "Creating 2G deploy swap at $swapfile"
         sudo fallocate -l 2G "$swapfile" || sudo dd if=/dev/zero of="$swapfile" bs=1M count=2048 status=none
         sudo chmod 600 "$swapfile"
         sudo mkswap "$swapfile" >/dev/null
@@ -81,8 +82,33 @@ ensure_deploy_swap() {
 
 DOCKER=(docker)
 
+docker_daemon_reachable() {
+    docker info >/dev/null 2>&1 || \
+        { command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; }
+}
+
+# EC2 deploy often runs over SSH while docker.service was never started (or stopped after OOM).
+ensure_docker_daemon() {
+    if docker_daemon_reachable; then
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
+        log "Docker daemon not reachable — starting docker.service"
+        sudo -n systemctl enable docker >/dev/null 2>&1 || true
+        if sudo -n systemctl start docker >/dev/null 2>&1; then
+            sleep 3
+        fi
+    fi
+    if ! docker_daemon_reachable; then
+        echo "Error: Docker daemon is not running (or not reachable over /var/run/docker.sock)."
+        echo "On the EC2 host run: sudo systemctl enable --now docker"
+        exit 1
+    fi
+}
+
 # ubuntu is often not in the docker group yet. Use passwordless sudo when the socket is denied.
 resolve_docker_cli() {
+    ensure_docker_daemon
     if docker info >/dev/null 2>&1; then
         DOCKER=(docker)
         return 0
@@ -101,6 +127,64 @@ resolve_docker_cli() {
 
 docker_compose() {
     "${DOCKER[@]}" compose "$@"
+}
+
+backend_compose() {
+    BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
+        --project-name "$BACKEND_PROJECT" \
+        --env-file "$ENV_TARGET" \
+        -f "$COMPOSE_BACKEND" \
+        "$@"
+}
+
+# Older manual runs used the checkout directory name (e.g. project "api") as --project-name.
+# Those containers keep ports 3010/4010 until removed; compose up on archaser-backend-* then no-ops or fails.
+stop_legacy_backend_projects() {
+    local legacy
+    for legacy in api backend archaser-backend; do
+        if [[ "$legacy" == "$BACKEND_PROJECT" ]]; then
+            continue
+        fi
+        log "Removing legacy backend compose project (if any): $legacy"
+        BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
+            --project-name "$legacy" \
+            --env-file "$ENV_TARGET" \
+            -f "$COMPOSE_BACKEND" \
+            down --remove-orphans >/dev/null 2>&1 || true
+    done
+}
+
+# Bare `docker network create <project>_default` (e.g. grafana/start-*.sh) leaves the
+# network without com.docker.compose.* labels. Compose then refuses `up` with:
+#   network … was found but has incorrect label com.docker.compose.network …
+ensure_backend_compose_network() {
+    local net="${BACKEND_PROJECT}_default"
+    if ! "${DOCKER[@]}" network inspect "$net" >/dev/null 2>&1; then
+        return 0
+    fi
+    local compose_net
+    compose_net="$("${DOCKER[@]}" network inspect -f '{{index .Labels "com.docker.compose.network"}}' "$net" 2>/dev/null || true)"
+    if [[ "$compose_net" == "default" ]]; then
+        return 0
+    fi
+    log "Removing mislabelled network $net so compose can recreate it"
+    local cid
+    for cid in $("${DOCKER[@]}" network inspect -f '{{range $id, $_ := .Containers}}{{println $id}}{{end}}' "$net" 2>/dev/null || true); do
+        [[ -n "$cid" ]] || continue
+        "${DOCKER[@]}" network disconnect -f "$net" "$cid" >/dev/null 2>&1 || true
+    done
+    "${DOCKER[@]}" network rm "$net" >/dev/null 2>&1 || true
+}
+
+recreate_backend_stack() {
+    stop_legacy_backend_projects
+    log "Recreating backend stack (down → up; bind-mounted dist/ and env apply only in new containers)"
+    backend_compose down --remove-orphans
+    ensure_backend_compose_network
+    if ! backend_compose up -d --force-recreate --remove-orphans --wait; then
+        log "compose --wait unavailable or timed out — bringing stack up without wait"
+        backend_compose up -d --force-recreate --remove-orphans
+    fi
 }
 
 monitoring_stack_exists() {
@@ -160,22 +244,46 @@ sync_git_checkout() {
     fi
 }
 
+ensure_build_tooling() {
+    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
+    if [[ -x "$ROOT_DIR/node_modules/typescript/bin/tsc" ]]; then
+        return 0
+    fi
+    log "typescript CLI missing after npm ci — installing at workspace root"
+    npm install --include=dev --no-save --no-audit --no-fund --ignore-scripts typescript@^5.9.2
+    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
+    if [[ ! -x "$ROOT_DIR/node_modules/typescript/bin/tsc" ]]; then
+        echo "Error: tsc is still missing after typescript install."
+        exit 1
+    fi
+}
+
+run_workspace_build() {
+    local workspace="$1"
+    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
+    npm run build -w "$workspace"
+}
+
 npm_ci_low_memory() {
     local mem_mb heap_mb
     mem_mb="$(host_mem_mb)"
-    heap_mb=768
+    heap_mb=640
     if (( mem_mb > 0 && mem_mb < 2048 )); then
-        heap_mb=512
+        heap_mb=384
     elif (( mem_mb >= 4096 )); then
-        heap_mb=2048
+        heap_mb=1024
     fi
-    log "npm ci (heap ${heap_mb}MB, maxsockets 2, prefer-offline, ignore-scripts)"
+    log "npm ci (heap ${heap_mb}MB, maxsockets 1, prefer-offline, ignore-scripts)"
     # Ignore scripts so prisma/husky do not spawn extra Node during peak install.
     # Prisma generate still runs later in this script.
-    NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 2 --ignore-scripts || \
-    NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm install --include=dev --no-audit --no-fund --ignore-scripts
+    if NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
+        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts; then
+        return 0
+    fi
+
+    log "npm ci failed (likely memory pressure) — retrying npm install with conservative settings"
+    NODE_OPTIONS="--max-old-space-size=384" \
+        npm install --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts
 }
 
 ENVIRONMENT=""
@@ -242,14 +350,13 @@ fi
 if [[ -z "$APP_DIR" ]]; then
     if [[ -f "$(pwd)/docker-compose.backend.$ENVIRONMENT.yml" || -f "$(pwd)/backend/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
         APP_DIR="$(pwd)"
-    elif [[ "$ENVIRONMENT" == "staging" ]]; then
-        APP_DIR="/home/ubuntu/api"
     else
-        APP_DIR="/home/ubuntu/production"
+        # Staging and production share one EC2 git checkout; --env selects compose/env.
+        APP_DIR="/home/ubuntu/api"
     fi
 fi
 
-# Split-repo checkout (staging EC2: /home/ubuntu/api) or nested backend/ under a parent root.
+# Split-repo checkout (EC2: /home/ubuntu/api) or nested backend/ under a parent root.
 if [[ -f "$APP_DIR/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
     ROOT_DIR="$APP_DIR"
     BACKEND_DIR="$APP_DIR"
@@ -270,12 +377,16 @@ ENV_TARGET="$BACKEND_DIR/.env"
 COMPOSE_BACKEND="$BACKEND_DIR/docker-compose.backend.$ENVIRONMENT.yml"
 COMPOSE_MONITORING="$BACKEND_DIR/grafana/docker-compose.logging.yml"
 
-PROJECT_SUFFIX=""
 if [[ "$ENVIRONMENT" == "staging" ]]; then
-    PROJECT_SUFFIX="-staging"
+    BACKEND_PROJECT="archaser-backend-staging"
+    MONITORING_PROJECT="archaser-monitoring-staging"
+elif [[ "$ENVIRONMENT" == "production" ]]; then
+    BACKEND_PROJECT="archaser-backend-production"
+    MONITORING_PROJECT="archaser-monitoring-production"
+else
+    BACKEND_PROJECT="archaser-backend"
+    MONITORING_PROJECT="archaser-monitoring"
 fi
-BACKEND_PROJECT="archaser-backend$PROJECT_SUFFIX"
-MONITORING_PROJECT="archaser-monitoring$PROJECT_SUFFIX"
 
 require_cmd docker
 require_cmd npm
@@ -319,29 +430,25 @@ fi
 
 if [[ "$SKIP_BUILD" != "true" ]]; then
     log "Building backend workspaces"
-    npm run build -w @archaser/database
-    npm run build -w @archaser/auth
-    npm run build -w @archaser/sms-send
-    npm run build -w @archaser/credit-insurance-domain
-    npm run build -w @archaser/billing-connector
-    npm run build -w @archaser/cron-jobs
-    npm run build -w @archaser/api
-    npm run build -w @archaser/worker
-    npm run build -w @archaser/sms
-    npm run build -w @archaser/connectors
-    npm run build -w @archaser/reports
+    ensure_build_tooling
+    run_workspace_build @archaser/database
+    run_workspace_build @archaser/auth
+    run_workspace_build @archaser/sms-send
+    run_workspace_build @archaser/credit-insurance-domain
+    run_workspace_build @archaser/billing-connector
+    run_workspace_build @archaser/cron-jobs
+    # Nest api build last — on low-memory EC2 hosts it can disturb hoisted CLI bins (tsc).
+    run_workspace_build @archaser/worker
+    run_workspace_build @archaser/sms
+    run_workspace_build @archaser/connectors
+    run_workspace_build @archaser/reports
+    run_workspace_build @archaser/api
 else
     log "Skipping backend builds (--skip-build)"
 fi
 
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
-# --force-recreate: bind-mounted dist/ and env_file values apply only after container recreate.
-# Without it, `up -d` leaves old Node processes running when compose config is unchanged.
-BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
-    --project-name "$BACKEND_PROJECT" \
-    --env-file "$ENV_TARGET" \
-    -f "$COMPOSE_BACKEND" \
-    up -d --remove-orphans --force-recreate
+recreate_backend_stack
 
 if [[ "$NO_GRAFANA" != "true" ]]; then
     if [[ ! -f "$COMPOSE_MONITORING" ]]; then
@@ -353,7 +460,10 @@ if [[ "$NO_GRAFANA" != "true" ]]; then
         for c in archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail; do
             "${DOCKER[@]}" rm -f "$c" >/dev/null 2>&1 || true
         done
-        MONITORING_ENV_VARS=(MONITORING_ENV="$ENVIRONMENT")
+        MONITORING_ENV_VARS=(
+            MONITORING_ENV="$ENVIRONMENT"
+            BACKEND_DOCKER_NETWORK="${BACKEND_PROJECT}_default"
+        )
         if [[ "$ENVIRONMENT" == "staging" ]]; then
             MONITORING_ENV_VARS+=(
                 GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
@@ -381,11 +491,7 @@ else
 fi
 
 log "Backend stack status"
-BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
-    --project-name "$BACKEND_PROJECT" \
-    --env-file "$ENV_TARGET" \
-    -f "$COMPOSE_BACKEND" \
-    ps
+backend_compose ps
 
 if [[ "$NO_GRAFANA" != "true" ]]; then
     log "Monitoring stack status"
