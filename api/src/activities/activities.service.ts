@@ -188,6 +188,7 @@ export class ActivitiesService {
             send_to_escalated_contacts,
             send_to_standard_contacts,
             step,
+            id: _sequenceId,
             ...otherFields
         } = body;
 
@@ -523,10 +524,25 @@ export class ActivitiesService {
         const { accountId, effectiveUserId } = await this.accountId(user);
 
         if (operation === "toggle") {
+            let nextActive: boolean;
+            if (body.active === undefined || body.active === null) {
+                const current = await this.db.activitiesTemplate.findUnique({
+                    where: { id },
+                    select: { active: true },
+                });
+                if (!current) {
+                    throw new NotFoundException({
+                        error: "Activity template not found",
+                    });
+                }
+                nextActive = !current.active;
+            } else {
+                nextActive = body.active === true || body.active === "true";
+            }
             const template = await this.db.activitiesTemplate.update({
                 where: { id },
                 data: {
-                    active: body.active as boolean,
+                    active: nextActive,
                     modified_at: new Date(),
                     modified_by: effectiveUserId,
                 },
