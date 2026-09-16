@@ -449,7 +449,7 @@ export function createArchaserBusinessMetrics(register: Registry) {
 
     const billingConnectorConnectorsInError = new Gauge({
     name: "archaser_billing_connector_connectors_in_error",
-    help: "Number of billing connectors in Error status",
+    help: "Number of billing connectors with auth circuit breaker tripped (consecutive_auth_failures >= 3)",
     labelNames: ["provider"],
     registers: [register],
 });

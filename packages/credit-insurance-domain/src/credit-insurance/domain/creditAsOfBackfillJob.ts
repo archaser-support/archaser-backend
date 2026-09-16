@@ -5,7 +5,10 @@ import {
     deriveAsOfOpenInvoiceCandidatesFromLedger,
     loadAsOfOpenInvoiceLedgerRange,
 } from "./asOfOpenArLedgerPreload";
-import { resolveRewriteDrainStart } from "./asOfRewriteQueue";
+import {
+    getPendingAsOfRewriteWindow,
+    resolveRewriteDrainStart,
+} from "./asOfRewriteQueue";
 import type { AsOfOpenInvoiceLine } from "./asOfOpenAr";
 import {
     overlayAsOfTermsFlagsOnLines,
@@ -31,6 +34,11 @@ export type CreditAsOfBackfillStatus =
     | "failed"
     | "complete";
 
+export type PendingRewriteWindowView = {
+    from: string;
+    to: string;
+};
+
 export type CreditAsOfBackfillJobView = {
     status: CreditAsOfBackfillStatus;
     fromDate: string | null;
@@ -45,6 +53,8 @@ export type CreditAsOfBackfillJobView = {
     skipReportingBreach: boolean;
     avgSecondsPerDay: number | null;
     estimatedSecondsRemaining: number | null;
+    /** Pending CreditAsOfRewriteQueue window only; null when processing/done/missing. */
+    pendingRewrite: PendingRewriteWindowView | null;
 };
 
 type JobRow = {
@@ -168,7 +178,10 @@ function computeRunEstimates(row: JobRow): {
     };
 }
 
-function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
+function jobView(
+    row: JobRow | null,
+    pendingRewrite: PendingRewriteWindowView | null = null
+): CreditAsOfBackfillJobView {
     if (!row) {
         return {
             status: "idle",
@@ -184,6 +197,7 @@ function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
             skipReportingBreach: true,
             avgSecondsPerDay: null,
             estimatedSecondsRemaining: null,
+            pendingRewrite,
         };
     }
     const estimates = computeRunEstimates(row);
@@ -201,6 +215,7 @@ function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
         skipReportingBreach: row.skip_reporting_breach !== false,
         avgSecondsPerDay: estimates.avgSecondsPerDay,
         estimatedSecondsRemaining: estimates.estimatedSecondsRemaining,
+        pendingRewrite,
     };
 }
 
@@ -241,12 +256,30 @@ export async function listRunningCreditAsOfBackfillAccountIds(
     return rows.map((row) => Number(row.account_id));
 }
 
+async function loadPendingRewriteView(
+    accountId: number,
+    db: PrismaClientLike
+): Promise<PendingRewriteWindowView | null> {
+    const pending = await getPendingAsOfRewriteWindow(accountId, db);
+    if (!pending) {
+        return null;
+    }
+    return {
+        from: toYmd(pending.fromDate)!,
+        to: toYmd(pending.toDate)!,
+    };
+}
+
 export async function getCreditAsOfBackfillJobStatus(
     accountId: number,
     options?: { dbClient?: PrismaClientLike }
 ): Promise<CreditAsOfBackfillJobView> {
     const db = options?.dbClient ?? defaultPrisma;
-    return jobView(await loadJob(accountId, db));
+    const [job, pendingRewrite] = await Promise.all([
+        loadJob(accountId, db),
+        loadPendingRewriteView(accountId, db),
+    ]);
+    return jobView(job, pendingRewrite);
 }
 
 export class CreditAsOfBackfillConflictError extends Error {
@@ -652,7 +685,7 @@ export async function pauseCreditAsOfBackfillJob(
     const now = new Date();
     const existing = await loadJob(accountId, db);
     if (!existing || existing.status !== "running") {
-        return jobView(existing);
+        return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
     }
     await db.$executeRaw`
         UPDATE "CreditAsOfBackfillJob"
