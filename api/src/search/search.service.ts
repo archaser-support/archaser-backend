@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { appendIntIdStringContainsOr } from "@archaser/database";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
@@ -393,11 +394,14 @@ export class SearchService {
             conditions.push({ Customer: buFilter });
         }
 
-        const isNumeric = !isNaN(parseInt(searchTerm, 10));
         const searchConditions: Record<string, unknown>[] = [];
-        if (isNumeric) {
-            searchConditions.push({ id: parseInt(searchTerm, 10) });
-        }
+        await appendIntIdStringContainsOr(
+            searchConditions,
+            this.db,
+            "Invoice",
+            searchTerm,
+            { accountId }
+        );
         searchConditions.push({
             invoice_number: {
                 contains: searchTerm,
@@ -573,9 +577,14 @@ export class SearchService {
         buFilter: Record<string, unknown>
     ) {
         const disputeSearchConditions: Record<string, unknown>[] = [];
-        if (!isNaN(parseInt(searchTerm, 10))) {
-            disputeSearchConditions.push({ id: parseInt(searchTerm, 10) });
-        }
+        // CustomerDispute has no account_id; id text match is refined by the
+        // Customer account filters on the findMany below.
+        await appendIntIdStringContainsOr(
+            disputeSearchConditions,
+            this.db,
+            "CustomerDispute",
+            searchTerm
+        );
         disputeSearchConditions.push({
             Customer: {
                 account_id: accountId,
