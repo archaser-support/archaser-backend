@@ -81,8 +81,33 @@ ensure_deploy_swap() {
 
 DOCKER=(docker)
 
+docker_daemon_reachable() {
+    docker info >/dev/null 2>&1 || \
+        { command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; }
+}
+
+# EC2 deploy often runs over SSH while docker.service was never started (or stopped after OOM).
+ensure_docker_daemon() {
+    if docker_daemon_reachable; then
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
+        log "Docker daemon not reachable — starting docker.service"
+        sudo -n systemctl enable docker >/dev/null 2>&1 || true
+        if sudo -n systemctl start docker >/dev/null 2>&1; then
+            sleep 3
+        fi
+    fi
+    if ! docker_daemon_reachable; then
+        echo "Error: Docker daemon is not running (or not reachable over /var/run/docker.sock)."
+        echo "On the EC2 host run: sudo systemctl enable --now docker"
+        exit 1
+    fi
+}
+
 # ubuntu is often not in the docker group yet. Use passwordless sudo when the socket is denied.
 resolve_docker_cli() {
+    ensure_docker_daemon
     if docker info >/dev/null 2>&1; then
         DOCKER=(docker)
         return 0
@@ -101,6 +126,41 @@ resolve_docker_cli() {
 
 docker_compose() {
     "${DOCKER[@]}" compose "$@"
+}
+
+backend_compose() {
+    BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
+        --project-name "$BACKEND_PROJECT" \
+        --env-file "$ENV_TARGET" \
+        -f "$COMPOSE_BACKEND" \
+        "$@"
+}
+
+# Older manual runs used the checkout directory name (e.g. project "api") as --project-name.
+# Those containers keep ports 3010/4010 until removed; compose up on archaser-backend-* then no-ops or fails.
+stop_legacy_backend_projects() {
+    local legacy
+    for legacy in api backend archaser-backend; do
+        if [[ "$legacy" == "$BACKEND_PROJECT" ]]; then
+            continue
+        fi
+        log "Removing legacy backend compose project (if any): $legacy"
+        BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
+            --project-name "$legacy" \
+            --env-file "$ENV_TARGET" \
+            -f "$COMPOSE_BACKEND" \
+            down --remove-orphans >/dev/null 2>&1 || true
+    done
+}
+
+recreate_backend_stack() {
+    stop_legacy_backend_projects
+    log "Recreating backend stack (down → up; bind-mounted dist/ and env apply only in new containers)"
+    backend_compose down --remove-orphans
+    if ! backend_compose up -d --force-recreate --remove-orphans --wait; then
+        log "compose --wait unavailable or timed out — bringing stack up without wait"
+        backend_compose up -d --force-recreate --remove-orphans
+    fi
 }
 
 monitoring_stack_exists() {
@@ -270,11 +330,13 @@ ENV_TARGET="$BACKEND_DIR/.env"
 COMPOSE_BACKEND="$BACKEND_DIR/docker-compose.backend.$ENVIRONMENT.yml"
 COMPOSE_MONITORING="$BACKEND_DIR/grafana/docker-compose.logging.yml"
 
-PROJECT_SUFFIX=""
 if [[ "$ENVIRONMENT" == "staging" ]]; then
-    PROJECT_SUFFIX="-staging"
+    BACKEND_PROJECT="archaser-backend-staging"
+elif [[ "$ENVIRONMENT" == "production" ]]; then
+    BACKEND_PROJECT="archaser-backend-production"
+else
+    BACKEND_PROJECT="archaser-backend"
 fi
-BACKEND_PROJECT="archaser-backend$PROJECT_SUFFIX"
 MONITORING_PROJECT="archaser-monitoring$PROJECT_SUFFIX"
 
 require_cmd docker
@@ -335,13 +397,7 @@ else
 fi
 
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
-# --force-recreate: bind-mounted dist/ and env_file values apply only after container recreate.
-# Without it, `up -d` leaves old Node processes running when compose config is unchanged.
-BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
-    --project-name "$BACKEND_PROJECT" \
-    --env-file "$ENV_TARGET" \
-    -f "$COMPOSE_BACKEND" \
-    up -d --remove-orphans --force-recreate
+recreate_backend_stack
 
 if [[ "$NO_GRAFANA" != "true" ]]; then
     if [[ ! -f "$COMPOSE_MONITORING" ]]; then
@@ -381,11 +437,7 @@ else
 fi
 
 log "Backend stack status"
-BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
-    --project-name "$BACKEND_PROJECT" \
-    --env-file "$ENV_TARGET" \
-    -f "$COMPOSE_BACKEND" \
-    ps
+backend_compose ps
 
 if [[ "$NO_GRAFANA" != "true" ]]; then
     log "Monitoring stack status"
