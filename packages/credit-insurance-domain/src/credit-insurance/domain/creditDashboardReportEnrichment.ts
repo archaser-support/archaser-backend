@@ -334,15 +334,11 @@ const LIMIT_WARNING_LABELS = {
         scoreExp: (days: number) => `Credit score validity in ${days}d`,
         limitExp: (days: number) =>
             `Approved limit expires in ${days} day(s)`,
-        projected: (threshold: number, date: string) =>
-            `Projected: reach ${threshold}% by ${date}`,
     },
     he: {
         nearLimit: (pct: number) => `${pct}% ממסגרת מאושרת`,
         scoreExp: (days: number) => `תוקף ציון אשראי בעוד ${days} ימים`,
         limitExp: (days: number) => `תוקף המסגרת יפוג בעוד ${days} ימים`,
-        projected: (threshold: number, date: string) =>
-            `תחזית: להגיע ל־${threshold}% עד ${date}`,
     },
 } as const;
 
@@ -355,9 +351,6 @@ export function formatLimitWarningSummary(
         | "scoreExpiresInDays"
         | "limitExpiring"
         | "limitExpiresInDays"
-        | "projected"
-        | "projectedThresholdPct"
-        | "projectedDate"
     >,
     accountLanguage?: string | null
 ): string {
@@ -366,15 +359,6 @@ export function formatLimitWarningSummary(
     const labels =
         LIMIT_WARNING_LABELS[language] ?? LIMIT_WARNING_LABELS.en;
     const parts: string[] = [];
-    if (
-        row.projected &&
-        row.projectedThresholdPct != null &&
-        row.projectedDate
-    ) {
-        parts.push(
-            labels.projected(row.projectedThresholdPct, row.projectedDate)
-        );
-    }
     if (row.nearLimit && row.nearLimitUtilizationPct != null) {
         parts.push(labels.nearLimit(row.nearLimitUtilizationPct));
     }
