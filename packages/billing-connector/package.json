@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@archaser/credit-insurance-domain": "*",
+    "@archaser/database": "*",
     "@prisma/client": "^6.4.1",
     "cron-parser": "^4.9.0",
     "mongoose": "^9.9.4"
