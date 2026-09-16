@@ -4,12 +4,14 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
+import { applyCollectionPeriodCategoryChange } from "../common/collection-period-category.util";
 import {
     dbLanguageToLocale,
     resolveDbLanguage,
 } from "../common/language.util";
 import { presignS3Object } from "../common/s3-presign";
 import { serializeBigInt } from "../common/serialize-bigint";
+import { createPromiseToPayScheduledActivities } from "@archaser/cron-jobs";
 import { DatabaseService } from "../database/database.service";
 
 /** Invoice statuses a portal visitor may raise a dispute against. */
@@ -725,7 +727,7 @@ export class PortalService {
 
         const collection = await this.db.customerCollectionPeriod.findFirst({
             where: { customer_id: customer.id, period_end_date: null },
-            select: { id: true },
+            select: { id: true, current_category: true },
             orderBy: { id: "desc" },
         });
 
@@ -776,6 +778,15 @@ export class PortalService {
             });
 
             if (collection) {
+                await applyCollectionPeriodCategoryChange(tx as never, {
+                    collectionPeriodId: collection.id,
+                    customerId: customer.id,
+                    accountId: customer.account_id,
+                    currentCategory: collection.current_category,
+                    nextCategory: "Dispute",
+                    userId: "portal_user",
+                    isManual: false,
+                });
                 await tx.customerCollectionPeriod.update({
                     where: { id: collection.id },
                     data: { last_dispute_date: now } as never,
@@ -808,7 +819,7 @@ export class PortalService {
 
         const collection = await this.db.customerCollectionPeriod.findFirst({
             where: { customer_id: customer.id, period_end_date: null },
-            select: { id: true },
+            select: { id: true, current_category: true },
             orderBy: { id: "desc" },
         });
         if (!collection) {
@@ -856,6 +867,15 @@ export class PortalService {
                 } as never,
             });
 
+            await applyCollectionPeriodCategoryChange(tx as never, {
+                collectionPeriodId: collection.id,
+                customerId: customer.id,
+                accountId: customer.account_id,
+                currentCategory: collection.current_category,
+                nextCategory: "Dispute",
+                userId: "portal_user",
+                isManual: false,
+            });
             await tx.customerCollectionPeriod.update({
                 where: { id: collection.id },
                 data: { last_dispute_date: now } as never,
@@ -982,7 +1002,11 @@ export class PortalService {
 
         const collection = await this.db.customerCollectionPeriod.findFirst({
             where: { customer_id: customer.id, period_end_date: null },
-            select: { id: true, promise_to_pay_count: true },
+            select: {
+                id: true,
+                promise_to_pay_count: true,
+                current_category: true,
+            },
             orderBy: { id: "desc" },
         });
         if (!collection) {
@@ -1026,7 +1050,26 @@ export class PortalService {
                     system_generated: true,
                 } as never,
             });
+
+            await applyCollectionPeriodCategoryChange(tx as never, {
+                collectionPeriodId: collection.id,
+                customerId: customer.id,
+                accountId: customer.account_id,
+                currentCategory: collection.current_category,
+                nextCategory: "Promise_to_pay",
+                userId: "portal_user",
+                isManual: false,
+            });
         });
+
+        try {
+            await createPromiseToPayScheduledActivities(this.db as never, {
+                collectionPeriodId: collection.id,
+                userId: "portal_user",
+            });
+        } catch {
+            // Promise + category already persisted.
+        }
 
         return serializeBigInt({
             ok: true,

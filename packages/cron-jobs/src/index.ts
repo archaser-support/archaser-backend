@@ -99,6 +99,8 @@ export {
     registerCronFrozenAccountMetrics,
     type CronFrozenAccountMetrics,
 } from "./accountFreeze/frozenAccountMetrics";
+export { createCategoryChangeActivity } from "./activities/createCategoryChangeActivity";
+export { createPromiseToPayScheduledActivities } from "./activities/createPromiseToPayScheduledActivities";
 export {
     beginCronFrozenAccountGuard,
     partitionByFrozenAccount,
