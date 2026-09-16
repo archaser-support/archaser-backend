@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { appendIntIdStringContainsOr } from "@archaser/database";
 
 /** Entities that can be listed in Start backfill `clear_before_import`. */
 export const CLEAR_BEFORE_IMPORT_ENTITIES = [
@@ -229,10 +230,13 @@ export async function searchAccountCustomers(params: {
             },
         ];
         if (/^\d+$/.test(q)) {
-            const id = Number.parseInt(q, 10);
-            if (Number.isFinite(id) && id > 0) {
-                orClause.unshift({ id });
-            }
+            await appendIntIdStringContainsOr(
+                orClause,
+                params.prisma,
+                "Customer",
+                q,
+                { accountId: params.accountId }
+            );
         }
         andClause.push({ OR: orClause });
     }
