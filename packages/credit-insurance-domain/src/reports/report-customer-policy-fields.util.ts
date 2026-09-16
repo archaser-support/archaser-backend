@@ -2,6 +2,7 @@
 export const CUSTOMER_POLICY_BACKED_REPORT_FIELDS = new Set([
     "customer_number_policy",
     "approved_limit",
+    "approved_limit_currency",
     "approved_limit_expiration_date",
     "limit_type",
     "max_payment_term",
@@ -179,6 +180,20 @@ function mergePolicySelectFields(
     }
 
     if (CUSTOMER_POLICY_BACKED_REPORT_FIELDS.has(field)) {
+        if (field === "approved_limit_currency") {
+            target.approved_limit_currency = true;
+            const existingPolicy = target.InsurancePolicy as
+                | { select?: Record<string, boolean> }
+                | undefined;
+            if (!existingPolicy) {
+                target.InsurancePolicy = { select: { currency: true } };
+            } else if (!existingPolicy.select) {
+                existingPolicy.select = { currency: true };
+            } else {
+                existingPolicy.select.currency = true;
+            }
+            return;
+        }
         target[field] = true;
         if (field === "approved_limit") {
             target.approved_limit_currency = true;

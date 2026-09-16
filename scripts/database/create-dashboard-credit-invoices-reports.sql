@@ -37,7 +37,8 @@ SELECT
             {"table": "Customer", "field": "name"},
             {"table": "Invoice", "field": "invoice_number"},
             {"table": "Invoice", "field": "terms_breach_reason"},
-            {"table": "Invoice", "field": "customer_outstanding_debt"}
+            {"table": "Invoice", "field": "customer_outstanding_debt"},
+            {"table": "Invoice", "field": "customer_currency"}
         ],
         "filters": [],
         "sorting": [{"field": "invoice_number", "direction": "ASC"}],
@@ -77,6 +78,7 @@ SELECT
             {"table": "Customer", "field": "name"},
             {"table": "Invoice", "field": "invoice_number"},
             {"table": "Invoice", "field": "customer_outstanding_debt"},
+            {"table": "Invoice", "field": "customer_currency"},
             {"table": "Invoice", "field": "days_overdue"},
             {"table": "Invoice", "field": "days_left_for_reporting"}
         ],
@@ -118,6 +120,7 @@ SELECT
             {"table": "Customer", "field": "name"},
             {"table": "Invoice", "field": "invoice_number"},
             {"table": "Invoice", "field": "customer_outstanding_debt"},
+            {"table": "Invoice", "field": "customer_currency"},
             {"table": "Invoice", "field": "actual_reporting_date"},
             {"table": "Invoice", "field": "reporting_captured_at"},
             {"table": "Invoice", "field": "reporting_comment"}
