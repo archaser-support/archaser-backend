@@ -251,6 +251,13 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
                     translationNamespace: "customers",
                 },
                 {
+                    name: "approved_limit_currency",
+                    type: "string",
+                    label: "Approved Limit Currency",
+                    translationKey: "approved_limit_currency",
+                    translationNamespace: "customers",
+                },
+                {
                     name: "approved_limit_expiration_date",
                     type: "date",
                     label: "Approved Limit Expiration Date",
