@@ -5,13 +5,10 @@ import {
     computeTopUpDailyCostAggregate,
     creditInsurancePrisma as prisma,
     detectStaleArRuns,
-    fetchCapacityGapDaysPeriodSummary,
-    fetchBreachDilutionStreakPeriodSummary,
-    fetchExposureReconciliationPeriodSummary,
-    fetchNegativeCostPeriodSummary,
-    fetchOvershootLimitCappedPeriodSummary,
-    fetchPolicyConcentrationSnapshots,
-    fetchStaleSlopeVolatilityPeriodCustomers,
+    fetchLinkedCptCustomerDaySeries,
+    mapLinkedCptDaySeriesToStaleSlopeVolatilityCustomers,
+    summarizeCapacityGapFromLinkedCptDaySeries,
+    summarizeOvershootFromLinkedCptDaySeries,
     summarizePortfolioStaleSlopeVolatility,
     isActiveTopUp,
     isPendingReviewExclusion,
@@ -2836,15 +2833,6 @@ export async function getCreditPortfolioHealth(
                 longestStreakCustomerId: null,
                 longestStreakCustomerName: null,
                 accountCurrency,
-            }, null, emptyExposureReconciliationSection(accountCurrency), {
-                customersWithData: 0,
-                dilutedCustomerCount: 0,
-                resolvedCustomerCount: 0,
-                customersWithBreachHistory: 0,
-                customersCurrentlyInBreach: 0,
-                customersBreachFree: 0,
-                customersNeverBreached: 0,
-                accountCurrency,
             }),
             noCoverage: buildNoCoverageSection([], accountCurrency),
             utilization: emptyUtilizationSection(accountCurrency, {
@@ -2915,77 +2903,30 @@ export async function getCreditPortfolioHealth(
         scopedCustomerIds,
         includeNoPolicyExposure: query.includeNoPolicyExposure,
     };
-    const [
-        topCustomers,
-        distributionCustomers,
-        overLimitGapPeriod,
-        slopeVolRows,
-        overshootPeriod,
-        negativeCostPeriod,
-        exposureReconPeriod,
-        concentrationSnapshots,
-        breachDilutionPeriod,
-    ] = await Promise.all([
-        fetchCptTopUtilizationCustomers(accountId, periodScope),
-        fetchCptUtilizationDistribution(accountId, periodScope),
-        fetchCapacityGapDaysPeriodSummary({
-            accountId,
-            fromDate: parsed.from,
-            toDate: parsed.to,
-            policyId: query.policyId,
-            scopedCustomerIds,
-            includeNoPolicyExposure: query.includeNoPolicyExposure,
-        }),
-        fetchStaleSlopeVolatilityPeriodCustomers({
-            accountId,
-            fromDate: parsed.from,
-            toDate: parsed.to,
-            policyId: query.policyId,
-            scopedCustomerIds,
-            includeNoPolicyExposure: query.includeNoPolicyExposure,
-        }),
-        fetchOvershootLimitCappedPeriodSummary({
-            accountId,
-            fromDate: parsed.from,
-            toDate: parsed.to,
-            policyId: query.policyId,
-            scopedCustomerIds,
-            includeNoPolicyExposure: query.includeNoPolicyExposure,
-        }),
-        fetchNegativeCostPeriodSummary({
-            accountId,
-            fromDate: parsed.from,
-            toDate: parsed.to,
-            policyId: query.policyId,
-            scopedCustomerIds,
-            includeNoPolicyExposure: query.includeNoPolicyExposure,
-        }),
-        fetchExposureReconciliationPeriodSummary({
-            accountId,
-            fromDate: parsed.from,
-            toDate: parsed.to,
-            policyId: query.policyId,
-            scopedCustomerIds,
-            includeNoPolicyExposure: query.includeNoPolicyExposure,
-        }),
-        fetchPolicyConcentrationSnapshots({
-            accountId,
-            fromDate: parsed.from,
-            toDate: parsed.to,
-            policyId: query.policyId,
-            scopedCustomerIds,
-            includeNoPolicyExposure: query.includeNoPolicyExposure,
-            asOfDate: asOfDate ?? undefined,
-        }),
-        fetchBreachDilutionStreakPeriodSummary({
-            accountId,
-            fromDate: parsed.from,
-            toDate: parsed.to,
-            policyId: query.policyId,
-            scopedCustomerIds,
-            includeNoPolicyExposure: query.includeNoPolicyExposure,
-        }),
-    ]);
+    // Capacity-gap, health momentum, and overshoot share one linked CPT day
+    // series. Top/distribution stay separate (different grain). Report-only
+    // KPIs are not loaded here.
+    const linkedCptScope = {
+        accountId,
+        fromDate: parsed.from,
+        toDate: parsed.to,
+        policyId: query.policyId,
+        scopedCustomerIds,
+        includeNoPolicyExposure: query.includeNoPolicyExposure,
+    };
+    const [topCustomers, distributionCustomers, linkedCptDaySeries] =
+        await Promise.all([
+            fetchCptTopUtilizationCustomers(accountId, periodScope),
+            fetchCptUtilizationDistribution(accountId, periodScope),
+            fetchLinkedCptCustomerDaySeries(linkedCptScope),
+        ]);
+    const overLimitGapPeriod =
+        summarizeCapacityGapFromLinkedCptDaySeries(linkedCptDaySeries);
+    const slopeVolRows = mapLinkedCptDaySeriesToStaleSlopeVolatilityCustomers(
+        linkedCptDaySeries
+    );
+    const overshootPeriod =
+        summarizeOvershootFromLinkedCptDaySeries(linkedCptDaySeries);
 
     const withoutPolicyAmountByDate = new Map<string, number>();
     withoutPolicyByDate.forEach((value, date) => {
@@ -3050,14 +2991,6 @@ export async function getCreditPortfolioHealth(
         {
             ...slopeVolSummary,
             accountCurrency,
-        },
-        {
-            ...exposureReconPeriod.summary,
-            accountCurrency,
-        },
-        {
-            ...breachDilutionPeriod.summary,
-            accountCurrency,
         }
     );
     const utilizationDaily = buildUtilizationDailyPoints(utilizationRows);
@@ -3117,33 +3050,6 @@ export async function getCreditPortfolioHealth(
                     limitCapped: r.limitCapped.limitCapped,
                 })),
             },
-            concentration: {
-                asOfDate:
-                    concentrationSnapshots[0]?.asOfDate ?? asOfDate ?? null,
-                alertPolicyCount: concentrationSnapshots.filter(
-                    (p) => p.concentrationAlert
-                ).length,
-                policies: concentrationSnapshots.map((p) => ({
-                    policyId: p.policyId,
-                    policyNumber: p.policyNumber,
-                    asOfDate: p.asOfDate,
-                    customerCount: p.customerCount,
-                    customersWithOpenAr: p.customersWithOpenAr,
-                    totalOpenAr: p.totalOpenAr,
-                    top1SharePct: p.top1SharePct,
-                    top3SharePct: p.top3SharePct,
-                    top1CustomerId: p.top1CustomerId,
-                    top1CustomerName: p.top1CustomerName,
-                    alertEligible: p.alertEligible,
-                    concentrationAlert: p.concentrationAlert,
-                    ranking: p.ranking.map((c) => ({
-                        customerId: c.customerId,
-                        customerName: c.customerName,
-                        openAr: c.openAr,
-                        sharePct: c.sharePct,
-                    })),
-                })),
-            },
             ...sumIdleNamedAnnualCreditAssessment(
                 assessmentByPolicy,
                 yearMultiplier
@@ -3155,21 +3061,6 @@ export async function getCreditPortfolioHealth(
             dailyHealth: dailyA,
             footprintDaily: utilizationDaily,
             accountCurrency,
-            negativeCost: {
-                negativeEntryCount:
-                    negativeCostPeriod.summary.negativeEntryCount,
-                negativeEntrySum: negativeCostPeriod.summary.negativeEntrySum,
-                customersAffected:
-                    negativeCostPeriod.summary.customersAffected,
-                minMagnitude: negativeCostPeriod.summary.minMagnitude,
-                previewEntries: negativeCostPeriod.previewEntries.map((e) => ({
-                    customerId: e.customerId,
-                    customerName: e.customerName,
-                    snapshotDate: e.snapshotDate,
-                    amount: e.amount,
-                })),
-                accountCurrency,
-            },
             ...sumAnnualCreditAssessmentCost(
                 assessmentByPolicy.map((row) => ({
                     fee: row.fee,
