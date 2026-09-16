@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { CronJobResult } from "./handlers";
 import { jobLog } from "./logging/jobLog";
 import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
+import { applyActivityContactDelivery } from "./delivery/applyActivityContactDelivery";
 
 /**
  * Check SMS delivery status for pending Inforu messages
@@ -45,20 +46,6 @@ export async function checkInforuSmsStatus(
             },
             include: {
                 SMSVendor: true,
-                Activity: {
-                    select: {
-                        id: true,
-                        status: true,
-                        is_last_step: true,
-                        CustomerCollectionPeriod: {
-                            select: {
-                                id: true,
-                                current_category: true,
-                                is_last_automated_step_delivered: true,
-                            },
-                        },
-                    },
-                },
             },
             take: 20, // Process 20 messages per run
         });
@@ -182,17 +169,17 @@ async function checkMessageStatus(
     }
 
     // Update ActivityContact and Activity status
-    if (message.message_id) {
-        await handleSMSDeliverySlim(
+    if (message.message_id || message.id) {
+        await applyActivityContactDelivery(
             prisma,
-            message,
-            status.status,
-            status.error
+            message.id,
+            status.status === "delivered" ? "delivered" : "failed",
+            { errorMsg: status.error }
         );
         return true;
     }
 
-    jobLog("InforuSmsStatusCheck", "warn", `[InforuSmsStatusCheck] Cannot update - no message_id for ActivityContact ${message.id}`);
+    jobLog("InforuSmsStatusCheck", "warn", `[InforuSmsStatusCheck] Cannot update - no id for ActivityContact`);
     return false;
 }
 
@@ -269,112 +256,5 @@ async function getInforuMessageStatus(
                 error: error instanceof Error ? error.message : String(error),
             });
         return null;
-    }
-}
-
-/**
- * SLIM handleSMSDelivery: Updates ActivityContact + parent Activity status
- * Includes collection-period side effects IF they are self-contained Prisma updates
- *
- * Omitted from historical implementation:
- * - LogService calls (skip all logging)
- */
-async function handleSMSDeliverySlim(
-    prisma: PrismaClient,
-    activityContact: any,
-    statusStr: string,
-    errorMsg?: string
-): Promise<void> {
-    try {
-        // Map status strings
-        let activityStatus: string;
-        let contactDeliveryStatus: string;
-
-        if (statusStr === "delivered") {
-            activityStatus = "DELIVERED";
-            contactDeliveryStatus = "Delivered";
-        } else if (statusStr === "failed") {
-            activityStatus = "FAILED";
-            contactDeliveryStatus = "Failed";
-        } else {
-            activityStatus = "SCHEDULED";
-            contactDeliveryStatus = "Sent";
-        }
-
-        const deliveryTime =
-            activityStatus === "DELIVERED" ? new Date() : null;
-        const failureTime = activityStatus === "FAILED" ? new Date() : null;
-
-        // Update ActivityContact and Activity in a transaction
-        await prisma.$transaction(async (tx) => {
-            // Update ActivityContact
-            await tx.activityContact.update({
-                where: { id: activityContact.id },
-                data: {
-                    status: contactDeliveryStatus as any,
-                    delivered_at: deliveryTime,
-                    failed_at: failureTime,
-                    failure_reason: errorMsg || null,
-                    modified_at: new Date(),
-                },
-            });
-
-            // Update parent Activity status
-            const activity = activityContact.Activity;
-            if (activity) {
-                await tx.activity.update({
-                    where: { id: activity.id },
-                    data: {
-                        status: activityStatus as any,
-                        actual_delivery_time: deliveryTime,
-                        modified_at: new Date(),
-                    },
-                });
-
-                // Collection-period side effects for delivered messages
-                // (only if self-contained Prisma updates)
-                const collectionPeriod = activity.CustomerCollectionPeriod;
-                if (
-                    collectionPeriod &&
-                    contactDeliveryStatus === "Delivered" &&
-                    collectionPeriod.current_category === "Automated"
-                ) {
-                    if (!activity.is_last_step) {
-                        await tx.customerCollectionPeriod.update({
-                            where: { id: collectionPeriod.id },
-                            data: {
-                                create_next_activity: true,
-                                modified_at: new Date(),
-                            },
-                        });
-                    }
-
-                    // If this is the last automated step, set next_category=Agent
-                    if (
-                        activity.is_last_step &&
-                        !collectionPeriod.is_last_automated_step_delivered
-                    ) {
-                        const nextCategoryDate = new Date();
-                        // Add 24 hours delay before moving to Agent (historical behavior)
-                        nextCategoryDate.setHours(nextCategoryDate.getHours() + 24);
-
-                        await tx.customerCollectionPeriod.update({
-                            where: { id: collectionPeriod.id },
-                            data: {
-                                next_category: "Agent",
-                                next_category_date: nextCategoryDate,
-                                is_last_automated_step_delivered: true,
-                            },
-                        });
-                    }
-                }
-            }
-        });
-
-    } catch (error) {
-        jobLog("InforuSmsStatusCheck", "error", `handleSMSDeliverySlim error for ActivityContact ${activityContact.id}`, {
-            error: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
     }
 }

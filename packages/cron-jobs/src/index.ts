@@ -19,6 +19,11 @@ export { computeCustomerOverdueMetrics } from "./computeCustomerOverdueMetrics";
 export { closeZeroOutstandingDebtInvoices } from "./closeZeroOutstandingDebtInvoices";
 export { fixClosedCollectionData } from "./fixClosedCollectionData";
 export { checkInforuSmsStatus } from "./inforuSmsStatusCheck";
+export {
+    applyActivityContactDelivery,
+    type ActivityContactDeliveryOutcome,
+    type ApplyActivityContactDeliveryOptions,
+} from "./delivery/applyActivityContactDelivery";
 export { moveCollectionToNextCategory } from "./moveCollectionToNextCategory";
 export {
     handleOverdueInvoices,

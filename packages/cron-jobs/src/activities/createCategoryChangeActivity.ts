@@ -41,12 +41,16 @@ export async function createCategoryChangeActivity(
 
     if (!currentCategory) {
         title = "{{activities.fields.category_change_to}}";
-        titleParams = { newCategory: nextCategoryKey };
+        titleParams = {
+            newCategory: nextCategoryKey,
+            userId: systemUserId,
+        };
     } else {
         title = "{{activities.fields.category_change}}";
         titleParams = {
             oldCategory: categoryTranslationKey(currentCategory),
             newCategory: nextCategoryKey,
+            userId: systemUserId,
         };
     }
 

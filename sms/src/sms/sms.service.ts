@@ -10,6 +10,7 @@ import {
     AccessScopeService,
     JwtPayload,
 } from "@archaser/auth";
+import { applyActivityContactDelivery } from "@archaser/cron-jobs";
 import {
     SendViaVendorOptions,
     TwilioClientFactory,
@@ -636,23 +637,89 @@ export class SmsService {
             },
         });
         if (row) {
-            const data: Record<string, unknown> = {
-                status,
-                modified_at: new Date(),
-            };
-            if (status === "Delivered") data.delivered_at = new Date();
-            if (status === "Failed") {
-                data.failed_at = new Date();
-                data.failure_reason = body.ErrorMessage
-                    ? String(body.ErrorMessage)
-                    : null;
+            if (status === "Delivered") {
+                await applyActivityContactDelivery(
+                    this.db as never,
+                    row.id,
+                    "delivered"
+                );
+            } else if (status === "Failed") {
+                await applyActivityContactDelivery(
+                    this.db as never,
+                    row.id,
+                    "failed",
+                    {
+                        errorMsg: body.ErrorMessage
+                            ? String(body.ErrorMessage)
+                            : null,
+                    }
+                );
+            } else {
+                await applyActivityContactDelivery(
+                    this.db as never,
+                    row.id,
+                    "sent"
+                );
             }
-            await this.db.activityContact.update({
-                where: { id: row.id },
-                data,
-            });
         }
         return { success: true };
+    }
+
+    async handleInforuWebhook(body: Record<string, unknown>) {
+        const customerMessageId = String(
+            body.CustomerMessageId ||
+                body.CustomerMessageID ||
+                body.customerMessageId ||
+                ""
+        );
+        const statusRaw = body.Status ?? body.status;
+        const statusNum =
+            typeof statusRaw === "number"
+                ? statusRaw
+                : parseInt(String(statusRaw ?? ""), 10);
+        const statusDescription =
+            body.StatusDescription != null
+                ? String(body.StatusDescription)
+                : null;
+
+        if (!customerMessageId) {
+            throw new BadRequestException({
+                error: "Missing CustomerMessageId",
+            });
+        }
+
+        // Inforu DLR: 2 = delivered, -2 = not delivered, -4 = blocked
+        let outcome: "delivered" | "failed" | "sent" = "sent";
+        if (statusNum === 2) outcome = "delivered";
+        else if (statusNum === -2 || statusNum === -4) outcome = "failed";
+
+        const row = await this.db.activityContact.findFirst({
+            where: {
+                OR: [
+                    { message_id: customerMessageId },
+                    { vendor_message_id: customerMessageId },
+                ],
+            },
+        });
+        if (!row) {
+            return { success: true, matched: false };
+        }
+
+        await applyActivityContactDelivery(
+            this.db as never,
+            row.id,
+            outcome,
+            {
+                errorMsg:
+                    outcome === "failed"
+                        ? statusDescription ||
+                          (statusNum === -4
+                              ? "Blocked by InforuMobile"
+                              : "Not delivered")
+                        : null,
+            }
+        );
+        return { success: true, matched: true };
     }
 
     private async resolveTwilioAuthTokenForWebhook(
