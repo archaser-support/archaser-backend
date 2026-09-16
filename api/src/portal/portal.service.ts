@@ -675,6 +675,7 @@ export class PortalService {
         if (!Number.isFinite(customerId) || !Number.isFinite(reasonId)) {
             throw new BadRequestException({
                 error: "customer_id and dispute_reason_id are required",
+                message: "customer_id and dispute_reason_id are required",
             });
         }
 
@@ -698,7 +699,10 @@ export class PortalService {
             select: { id: true, name: true },
         });
         if (!reason) {
-            throw new BadRequestException({ error: "Unknown dispute reason" });
+            throw new BadRequestException({
+                error: "Unknown dispute reason",
+                message: "Unknown dispute reason",
+            });
         }
 
         // The portal submits invoice numbers (space/comma separated), not ids.
@@ -709,6 +713,7 @@ export class PortalService {
         if (invoiceNumbers.length === 0) {
             throw new BadRequestException({
                 error: "At least one invoice is required",
+                message: "At least one invoice is required",
             });
         }
 
@@ -722,6 +727,7 @@ export class PortalService {
         if (invoices.length === 0) {
             throw new BadRequestException({
                 error: "No matching invoices for this customer",
+                message: "No matching invoices for this customer",
             });
         }
 
@@ -970,19 +976,24 @@ export class PortalService {
     async updatePromiseToPay(body: Record<string, unknown>) {
         const customerId = parseInt(String(body.customer_id ?? ""), 10);
         if (!Number.isFinite(customerId)) {
-            throw new BadRequestException({ error: "customer_id is required" });
+            throw new BadRequestException({
+                error: "customer_id is required",
+                message: "customer_id is required",
+            });
         }
 
         const raw = String(body.promise_to_pay_date ?? "").slice(0, 10);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
             throw new BadRequestException({
                 error: "promise_to_pay_date must be YYYY-MM-DD",
+                message: "promise_to_pay_date must be YYYY-MM-DD",
             });
         }
         const promiseDate = new Date(`${raw}T00:00:00.000Z`);
         if (Number.isNaN(promiseDate.getTime())) {
             throw new BadRequestException({
                 error: "promise_to_pay_date is not a valid date",
+                message: "promise_to_pay_date is not a valid date",
             });
         }
 
@@ -1012,6 +1023,7 @@ export class PortalService {
         if (!collection) {
             throw new BadRequestException({
                 error: "Customer has no open collection period",
+                message: "Customer has no open collection period",
             });
         }
 
@@ -1020,6 +1032,8 @@ export class PortalService {
         if (cap > 0 && (collection.promise_to_pay_count ?? 0) >= cap) {
             throw new BadRequestException({
                 error: "Promise to pay limit reached for this collection period",
+                message:
+                    "Promise to pay limit reached for this collection period",
             });
         }
 
@@ -1063,9 +1077,11 @@ export class PortalService {
         });
 
         try {
-            await createPromiseToPayScheduledActivities(this.db as never, {
+            void createPromiseToPayScheduledActivities(this.db as never, {
                 collectionPeriodId: collection.id,
                 userId: "portal_user",
+            }).catch(() => {
+                // Promise + category already persisted.
             });
         } catch {
             // Promise + category already persisted.
