@@ -5,10 +5,8 @@ import {
     computeTopUpDailyCostAggregate,
     creditInsurancePrisma as prisma,
     detectStaleArRuns,
+    deriveCapacityAndOvershootFromLinkedCptDaySeries,
     fetchLinkedCptCustomerDaySeries,
-    mapLinkedCptDaySeriesToStaleSlopeVolatilityCustomers,
-    summarizeCapacityGapFromLinkedCptDaySeries,
-    summarizeOvershootFromLinkedCptDaySeries,
     summarizePortfolioStaleSlopeVolatility,
     isActiveTopUp,
     isPendingReviewExclusion,
@@ -31,6 +29,7 @@ import {
     RANGE_COST_EXCLUDED_INVOICE_STATUSES,
     type PortfolioRangeCostDayRow,
     type PortfolioRangeCostInvoice,
+    type PortfolioRangeCostLimitMonthAggregate,
     type PortfolioRangeCostTopUpSlice,
 } from "./portfolioRangeCost";
 
@@ -2070,9 +2069,24 @@ type CostTopUpRow = {
 };
 
 type PortfolioRangeCostFetchResult = {
+    /** Slim CPT rows for Actual Sales invoice lookups only. */
     dayRows: PortfolioRangeCostDayRow[];
     invoices: PortfolioRangeCostInvoice[];
     topUpSlices: PortfolioRangeCostTopUpSlice[];
+    /** Limit (+ Limit registration) costs summed in SQL by YYYY-MM. */
+    limitMonthAggregates: PortfolioRangeCostLimitMonthAggregate[];
+};
+
+type LimitMonthAggRow = {
+    month: string;
+    insurance_cost: number | string;
+    registration_fee_cost: number | string;
+};
+
+type ApprovedTopUpDayRow = {
+    snapshot_date: Date;
+    customer_id: number;
+    insurance_policy_id: number | null;
 };
 
 function optionalFiniteNumber(
@@ -2099,8 +2113,10 @@ async function fetchAccountCurrency(accountId: number): Promise<string> {
 }
 
 /**
- * CPT day rows, qualifying invoices, and amortized top-up day slices for
- * portfolio range cost (approved Limit / Actual Sales / top-ups).
+ * Portfolio range cost inputs without dumping every CPT row to Node:
+ * - Limit day costs aggregated in SQL by month
+ * - Slim CPT rows only for Actual Sales invoice dates
+ * - Top-up slices only on approved days that overlap an active top-up
  */
 async function fetchPortfolioRangeCostInputs(
     accountId: number,
@@ -2113,40 +2129,7 @@ async function fetchPortfolioRangeCostInputs(
     }
 ): Promise<PortfolioRangeCostFetchResult> {
     const pendingReviewLiteral = "pending review";
-
-    const rows = await prisma.$queryRaw<CptCostInputRow[]>`
-        SELECT
-            t.snapshot_date,
-            t.customer_id,
-            t.insurance_policy_id,
-            t.approved_limit,
-            t.usage_amount,
-            t.approved_limit_currency,
-            t.excluded_from_policy,
-            t.outdated_dcl,
-            t.cost_calculation_method,
-            t.cost_percent,
-            t.registration_fee_percent,
-            t.policy_exclusion_reason
-        FROM "CustomerPolicyTrend" t
-        WHERE t.account_id = ${accountId}
-          AND t.snapshot_date >= ${options.fromDateUtc}::date
-          AND t.snapshot_date <= ${options.toDateUtc}::date
-          AND (
-            ${options.policyId ?? null}::int IS NULL
-            OR t.insurance_policy_id = ${options.policyId ?? null}
-          )
-          AND (
-            ${options.scopedCustomerIds == null}::boolean
-            OR t.customer_id = ANY(${options.scopedCustomerIds ?? []}::int[])
-          )
-          AND (
-            ${options.includeNoPolicyExposure}::boolean
-            OR COALESCE(t.total_receivables, 0) <= 0
-            OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, ''))) IS DISTINCT FROM ${pendingReviewLiteral}
-          )
-        ORDER BY t.snapshot_date ASC, t.customer_id ASC
-    `;
+    const limitMethodLiteral = "Limit";
 
     const topUpWhere: Prisma.CustomerTopUpWhereInput = {
         cancelled_at: null,
@@ -2163,64 +2146,201 @@ async function fetchPortfolioRangeCostInputs(
         },
     };
 
-    const [topUpRows, invoiceRows] = await Promise.all([
-        prisma.customerTopUp.findMany({
-            where: topUpWhere,
-            select: {
-                customer_id: true,
-                premium: true,
-                premium_currency: true,
-                start_date: true,
-                end_date: true,
-                cancelled_at: true,
-                InsurancePolicy: {
-                    select: {
-                        parent_insurance_policy_id: true,
+    const [limitMonthRows, topUpRows, invoiceRows, approvedTopUpDays] =
+        await Promise.all([
+            prisma.$queryRaw<LimitMonthAggRow[]>`
+                SELECT
+                    to_char(t.snapshot_date::timestamp, 'YYYY-MM') AS month,
+                    SUM(
+                        CASE
+                            WHEN t.insurance_policy_id IS NOT NULL
+                             AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                             AND NOT COALESCE(t.excluded_from_policy, false)
+                             AND NOT COALESCE(t.outdated_dcl, false)
+                             AND t.cost_calculation_method::text = ${limitMethodLiteral}
+                             AND t.approved_limit IS NOT NULL
+                             AND t.cost_percent IS NOT NULL
+                             AND t.approved_limit::float8 > 0
+                            THEN (t.approved_limit::float8 * t.cost_percent::float8)
+                                / 100.0 / 365.0
+                            ELSE 0
+                        END
+                    )::float8 AS insurance_cost,
+                    SUM(
+                        CASE
+                            WHEN t.insurance_policy_id IS NOT NULL
+                             AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                             AND NOT COALESCE(t.excluded_from_policy, false)
+                             AND NOT COALESCE(t.outdated_dcl, false)
+                             AND t.cost_calculation_method::text = ${limitMethodLiteral}
+                             AND t.approved_limit IS NOT NULL
+                             AND t.cost_percent IS NOT NULL
+                             AND t.approved_limit::float8 > 0
+                             AND t.registration_fee_percent IS NOT NULL
+                            THEN (
+                                (t.approved_limit::float8 * t.cost_percent::float8)
+                                    / 100.0 / 365.0
+                            ) * (t.registration_fee_percent::float8 / 100.0)
+                            ELSE 0
+                        END
+                    )::float8 AS registration_fee_cost
+                FROM "CustomerPolicyTrend" t
+                WHERE t.account_id = ${accountId}
+                  AND t.snapshot_date >= ${options.fromDateUtc}::date
+                  AND t.snapshot_date <= ${options.toDateUtc}::date
+                  AND (
+                    ${options.policyId ?? null}::int IS NULL
+                    OR t.insurance_policy_id = ${options.policyId ?? null}
+                  )
+                  AND (
+                    ${options.scopedCustomerIds == null}::boolean
+                    OR t.customer_id = ANY(${options.scopedCustomerIds ?? []}::int[])
+                  )
+                  AND (
+                    ${options.includeNoPolicyExposure}::boolean
+                    OR COALESCE(t.total_receivables, 0) <= 0
+                    OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, '')))
+                        IS DISTINCT FROM ${pendingReviewLiteral}
+                  )
+                GROUP BY 1
+                ORDER BY 1 ASC
+            `,
+            prisma.customerTopUp.findMany({
+                where: topUpWhere,
+                select: {
+                    customer_id: true,
+                    premium: true,
+                    premium_currency: true,
+                    start_date: true,
+                    end_date: true,
+                    cancelled_at: true,
+                    InsurancePolicy: {
+                        select: {
+                            parent_insurance_policy_id: true,
+                        },
                     },
                 },
-            },
-        }) as Promise<CostTopUpRow[]>,
-        prisma.invoice.findMany({
-            where: {
-                account_id: accountId,
-                invoice_date: {
-                    gte: options.fromDateUtc,
-                    lte: options.toDateUtc,
+            }) as Promise<CostTopUpRow[]>,
+            prisma.invoice.findMany({
+                where: {
+                    account_id: accountId,
+                    invoice_date: {
+                        gte: options.fromDateUtc,
+                        lte: options.toDateUtc,
+                    },
+                    status: {
+                        notIn: [...RANGE_COST_EXCLUDED_INVOICE_STATUSES],
+                    },
+                    ...(options.policyId != null
+                        ? { policy_id: options.policyId }
+                        : {}),
+                    ...(options.scopedCustomerIds != null
+                        ? { customer_id: { in: options.scopedCustomerIds } }
+                        : {}),
                 },
-                status: {
-                    notIn: [...RANGE_COST_EXCLUDED_INVOICE_STATUSES],
+                select: {
+                    invoice_date: true,
+                    customer_id: true,
+                    amount: true,
+                    policy_id: true,
+                    status: true,
                 },
-                ...(options.policyId != null
-                    ? { policy_id: options.policyId }
-                    : {}),
-                ...(options.scopedCustomerIds != null
-                    ? { customer_id: { in: options.scopedCustomerIds } }
-                    : {}),
-            },
-            select: {
-                invoice_date: true,
-                customer_id: true,
-                amount: true,
-                policy_id: true,
-                status: true,
-            },
-        }),
-    ]);
+            }),
+            prisma.$queryRaw<ApprovedTopUpDayRow[]>`
+                SELECT
+                    t.snapshot_date,
+                    t.customer_id,
+                    t.insurance_policy_id
+                FROM "CustomerPolicyTrend" t
+                WHERE t.account_id = ${accountId}
+                  AND t.snapshot_date >= ${options.fromDateUtc}::date
+                  AND t.snapshot_date <= ${options.toDateUtc}::date
+                  AND t.insurance_policy_id IS NOT NULL
+                  AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+                  AND NOT COALESCE(t.excluded_from_policy, false)
+                  AND NOT COALESCE(t.outdated_dcl, false)
+                  AND (
+                    ${options.policyId ?? null}::int IS NULL
+                    OR t.insurance_policy_id = ${options.policyId ?? null}
+                  )
+                  AND (
+                    ${options.scopedCustomerIds == null}::boolean
+                    OR t.customer_id = ANY(${options.scopedCustomerIds ?? []}::int[])
+                  )
+                  AND (
+                    ${options.includeNoPolicyExposure}::boolean
+                    OR COALESCE(t.total_receivables, 0) <= 0
+                    OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, '')))
+                        IS DISTINCT FROM ${pendingReviewLiteral}
+                  )
+                  AND EXISTS (
+                    SELECT 1
+                    FROM "CustomerTopUp" tu
+                    INNER JOIN "InsurancePolicy" tip
+                        ON tip.id = tu.insurance_policy_id
+                    WHERE tu.customer_id = t.customer_id
+                      AND tu.cancelled_at IS NULL
+                      AND tip.policy_kind = 'TopUp'
+                      AND tu.start_date <= t.snapshot_date
+                      AND tu.end_date >= t.snapshot_date
+                      AND tip.parent_insurance_policy_id = t.insurance_policy_id
+                  )
+            `,
+        ]);
 
-    const topUpsByCustomerId = new Map<number, CostTopUpRow[]>();
-    for (const topUp of topUpRows) {
-        const list = topUpsByCustomerId.get(topUp.customer_id) ?? [];
-        list.push(topUp);
-        topUpsByCustomerId.set(topUp.customer_id, list);
-    }
+    const invoices: PortfolioRangeCostInvoice[] = invoiceRows
+        .filter((inv) => inv.customer_id != null)
+        .map((inv) => ({
+            invoiceDate: normalizeDateString(inv.invoice_date),
+            customerId: inv.customer_id!,
+            amount: toNumber(inv.amount),
+            policyId: inv.policy_id,
+            status: inv.status,
+        }));
 
-    const dayRows: PortfolioRangeCostDayRow[] = [];
-    const topUpSlices: PortfolioRangeCostTopUpSlice[] = [];
-
-    for (const row of rows) {
-        const snapshotDate = normalizeDateString(row.snapshot_date);
-        dayRows.push({
-            snapshotDate,
+    // Slim CPT rows only for Actual Sales invoice dates (last row wins per
+    // customer×day — same as the previous Map overwrite behavior).
+    let dayRows: PortfolioRangeCostDayRow[] = [];
+    if (invoices.length > 0) {
+        const invoiceCustomerIds = [
+            ...new Set(invoices.map((inv) => inv.customerId)),
+        ];
+        const invoiceDates = [
+            ...new Set(invoices.map((inv) => inv.invoiceDate)),
+        ];
+        const invoiceDateUtc = invoiceDates.map((ymd) =>
+            startOfUtcDayFromYmd(ymd)
+        );
+        const slimRows = await prisma.$queryRaw<CptCostInputRow[]>`
+            SELECT
+                t.snapshot_date,
+                t.customer_id,
+                t.insurance_policy_id,
+                t.approved_limit,
+                t.usage_amount,
+                t.approved_limit_currency,
+                t.excluded_from_policy,
+                t.outdated_dcl,
+                t.cost_calculation_method,
+                t.cost_percent,
+                t.registration_fee_percent,
+                t.policy_exclusion_reason
+            FROM "CustomerPolicyTrend" t
+            WHERE t.account_id = ${accountId}
+              AND t.customer_id = ANY(${invoiceCustomerIds}::int[])
+              AND t.snapshot_date IN (${Prisma.join(invoiceDateUtc)})
+              AND (
+                ${options.policyId ?? null}::int IS NULL
+                OR t.insurance_policy_id = ${options.policyId ?? null}
+              )
+              AND (
+                ${options.scopedCustomerIds == null}::boolean
+                OR t.customer_id = ANY(${options.scopedCustomerIds ?? []}::int[])
+              )
+            ORDER BY t.snapshot_date ASC, t.customer_id ASC
+        `;
+        dayRows = slimRows.map((row) => ({
+            snapshotDate: normalizeDateString(row.snapshot_date),
             customerId: row.customer_id,
             insurancePolicyId: row.insurance_policy_id,
             approvedLimit: optionalFiniteNumber(row.approved_limit),
@@ -2232,20 +2352,19 @@ async function fetchPortfolioRangeCostInputs(
             excludedFromPolicy: row.excluded_from_policy,
             outdatedDcl: row.outdated_dcl,
             policyExclusionReason: row.policy_exclusion_reason,
-        });
+        }));
+    }
 
-        const approved = isApprovedCoverageCustomer({
-            hasLinkedPolicy: row.insurance_policy_id != null,
-            exclusionReason: row.policy_exclusion_reason,
-        });
-        if (
-            !approved ||
-            row.excluded_from_policy ||
-            row.outdated_dcl
-        ) {
-            continue;
-        }
+    const topUpsByCustomerId = new Map<number, CostTopUpRow[]>();
+    for (const topUp of topUpRows) {
+        const list = topUpsByCustomerId.get(topUp.customer_id) ?? [];
+        list.push(topUp);
+        topUpsByCustomerId.set(topUp.customer_id, list);
+    }
 
+    const topUpSlices: PortfolioRangeCostTopUpSlice[] = [];
+    for (const row of approvedTopUpDays) {
+        const snapshotDate = normalizeDateString(row.snapshot_date);
         const asOfDate = startOfUtcDayFromYmd(snapshotDate);
         const scopedTopUps = (topUpsByCustomerId.get(row.customer_id) ?? [])
             .filter(
@@ -2282,17 +2401,14 @@ async function fetchPortfolioRangeCostInputs(
         }
     }
 
-    const invoices: PortfolioRangeCostInvoice[] = invoiceRows
-        .filter((inv) => inv.customer_id != null)
-        .map((inv) => ({
-            invoiceDate: normalizeDateString(inv.invoice_date),
-            customerId: inv.customer_id!,
-            amount: toNumber(inv.amount),
-            policyId: inv.policy_id,
-            status: inv.status,
+    const limitMonthAggregates: PortfolioRangeCostLimitMonthAggregate[] =
+        limitMonthRows.map((row) => ({
+            month: row.month,
+            insuranceCost: toNumber(row.insurance_cost),
+            registrationFeeCost: toNumber(row.registration_fee_cost),
         }));
 
-    return { dayRows, invoices, topUpSlices };
+    return { dayRows, invoices, topUpSlices, limitMonthAggregates };
 }
 
 async function fetchCptUtilizationDayAggregates(
@@ -2863,6 +2979,9 @@ export async function getCreditPortfolioHealth(
         withoutPolicyByDate,
         periodTopUps,
         namedAssessmentByPolicy,
+        topCustomers,
+        distributionCustomers,
+        linkedCptDaySeries,
     ] = await Promise.all([
         fetchAccountCurrency(accountId),
         fetchCptDailyHealthAggregates(accountId, cptScope),
@@ -2890,43 +3009,37 @@ export async function getCreditPortfolioHealth(
             scopedCustomerIds,
         }),
         fetchNamedInRangeAssessmentByPolicy(accountId, cptScope),
+        fetchCptTopUtilizationCustomers(accountId, {
+            fromDateUtc: parsed.fromDateUtc,
+            toDateUtc: parsed.toDateUtc,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchCptUtilizationDistribution(accountId, {
+            fromDateUtc: parsed.fromDateUtc,
+            toDateUtc: parsed.toDateUtc,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        // Capacity-gap + overshoot share one linked CPT day series.
+        fetchLinkedCptCustomerDaySeries({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
     ]);
 
     const snapshotYmds = cptRows.map((row) =>
         normalizeDateString(row.snapshot_date)
     );
     const asOfDate = latestSnapshotYmdOnOrBefore(snapshotYmds, parsed.to);
-    const periodScope = {
-        fromDateUtc: parsed.fromDateUtc,
-        toDateUtc: parsed.toDateUtc,
-        policyId: query.policyId,
-        scopedCustomerIds,
-        includeNoPolicyExposure: query.includeNoPolicyExposure,
-    };
-    // Capacity-gap, health momentum, and overshoot share one linked CPT day
-    // series. Top/distribution stay separate (different grain). Report-only
-    // KPIs are not loaded here.
-    const linkedCptScope = {
-        accountId,
-        fromDate: parsed.from,
-        toDate: parsed.to,
-        policyId: query.policyId,
-        scopedCustomerIds,
-        includeNoPolicyExposure: query.includeNoPolicyExposure,
-    };
-    const [topCustomers, distributionCustomers, linkedCptDaySeries] =
-        await Promise.all([
-            fetchCptTopUtilizationCustomers(accountId, periodScope),
-            fetchCptUtilizationDistribution(accountId, periodScope),
-            fetchLinkedCptCustomerDaySeries(linkedCptScope),
-        ]);
-    const overLimitGapPeriod =
-        summarizeCapacityGapFromLinkedCptDaySeries(linkedCptDaySeries);
-    const slopeVolRows = mapLinkedCptDaySeriesToStaleSlopeVolatilityCustomers(
-        linkedCptDaySeries
-    );
-    const overshootPeriod =
-        summarizeOvershootFromLinkedCptDaySeries(linkedCptDaySeries);
+    const { capacity: overLimitGapPeriod, overshoot: overshootPeriod } =
+        deriveCapacityAndOvershootFromLinkedCptDaySeries(linkedCptDaySeries);
 
     const withoutPolicyAmountByDate = new Map<string, number>();
     withoutPolicyByDate.forEach((value, date) => {
@@ -2948,7 +3061,9 @@ export async function getCreditPortfolioHealth(
     );
 
     const slopeVolSummary = summarizePortfolioStaleSlopeVolatility(
-        slopeVolRows,
+        // Portfolio Health UI only shows portfolio-level momentum (from dailyA).
+        // Skip per-customer stale/vol over ~100k day rows on every date change.
+        [],
         dailyA.map((d) => ({
             snapshotDate: d.snapshotDate,
             healthIndex: d.healthIndex,
@@ -2999,6 +3114,7 @@ export async function getCreditPortfolioHealth(
         invoices: rangeCostInputs.invoices,
         topUpSlices: rangeCostInputs.topUpSlices,
         policyId: query.policyId,
+        limitMonthAggregates: rangeCostInputs.limitMonthAggregates,
     });
 
     const yearMultiplier = computeAssessmentYearMultiplier(parsed.daysInRange);

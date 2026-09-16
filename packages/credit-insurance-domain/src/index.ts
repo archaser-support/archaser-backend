@@ -133,8 +133,10 @@ export {
 // reach the shared domain through these.
 export {
     enqueueAsOfRewrite,
+    getPendingAsOfRewriteWindow,
     isAdminBackfillBlockingDrain,
     resolveRewriteDrainStart,
+    type PendingAsOfRewriteWindow,
 } from "./credit-insurance/domain/asOfRewriteQueue";
 export {
     __resetCreditAsOfBackfillRunnersForTests,
@@ -151,6 +153,7 @@ export {
     startCreditAsOfBackfillJob,
     type CreditAsOfBackfillJobView,
     type CreditAsOfBackfillStatus,
+    type PendingRewriteWindowView,
 } from "./credit-insurance/domain/creditAsOfBackfillJob";
 export {
     asOfCustomerOverdueBlockAt,
@@ -297,6 +300,7 @@ export {
     type FetchLinkedCptCustomerDaySeriesOptions,
     type LinkedCptCustomerDayRow,
 } from "./credit-insurance/domain/linkedCptCustomerDaySeries";
+export { deriveCapacityAndOvershootFromLinkedCptDaySeries } from "./credit-insurance/domain/deriveCapacityAndOvershootFromLinkedCptDaySeries";
 export {
     fetchCapacityGapDaysPeriodCustomers,
     fetchCapacityGapDaysPeriodSummary,
