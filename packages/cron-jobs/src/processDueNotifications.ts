@@ -576,6 +576,12 @@ async function processInvoicesForDueStep(
                         activity_id: activity.id,
                         contact_id: c.id,
                         status: "Scheduled",
+                        communication_channel:
+                            (step.activity_type as
+                                | "Email"
+                                | "SMS"
+                                | "WhatsApp"
+                                | null) || "Email",
                     },
                 })
             )
@@ -684,6 +690,29 @@ async function mergeInvoicesIntoDueActivity(
                     data: { due_notification_state: next as any },
                 });
             })
+        );
+
+        const existingLinks = await tx.activityContact.findMany({
+            where: { activity_id: existingActivity.id },
+            select: { contact_id: true },
+        });
+        const linkedIds = new Set(existingLinks.map((l) => l.contact_id));
+        const channel =
+            (step.activity_type as "Email" | "SMS" | "WhatsApp" | null) ||
+            "Email";
+        await Promise.all(
+            contacts
+                .filter((c) => !linkedIds.has(c.id))
+                .map((c) =>
+                    tx.activityContact.create({
+                        data: {
+                            activity_id: existingActivity.id,
+                            contact_id: c.id,
+                            status: "Scheduled",
+                            communication_channel: channel,
+                        },
+                    })
+                )
         );
     });
 

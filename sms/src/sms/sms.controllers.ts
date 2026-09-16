@@ -208,4 +208,10 @@ export class SmsWebhookController {
     ) {
         return this.sms.handleTwilioWebhook(body, req);
     }
+
+    @Post("inforu")
+    @ApiOperation({ summary: "Inforu SMS delivery webhook (public)" })
+    async inforu(@Body() body: Record<string, unknown>) {
+        return this.sms.handleInforuWebhook(body);
+    }
 }
