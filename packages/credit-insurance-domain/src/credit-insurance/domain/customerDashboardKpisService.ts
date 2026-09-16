@@ -24,6 +24,18 @@ import {
     getCustomerRiskExposureAmountTrendByPolicy,
     type RiskExposurePolicySeries,
 } from "./customerPolicyTrendService";
+import { fetchCustomerTrailingOverLimitGapMetrics } from "./capacityGapDaysPeriod";
+import { fetchCustomerTrailingOvershootLimitCappedMetrics } from "./overshootLimitCappedPeriod";
+import { fetchCustomerTrailingStaleSlopeVolatilityMetrics } from "./staleSlopeVolatilityPeriod";
+import { fetchCustomerShareOfPolicyOpenAr } from "./policyConcentrationPeriod";
+import { fetchCustomerTrailingLimitBreachForecast } from "./limitBreachForecastPeriod";
+import { fetchCustomerTrailingBreachDilutionStreakMetrics } from "./breachDilutionStreakPeriod";
+import type { HealthMomentumClassification } from "./shared/ctpHealthSlopeVolatility";
+import type { LimitBreachForecastStatus } from "./shared/ctpLimitBreachForecastMetrics";
+import type {
+    BreachDilutionClassification,
+    BreachStreakStatus,
+} from "./shared/ctpBreachDilutionStreakMetrics";
 import { computeTopUpUsageMetrics } from "./invoiceCapacityGapAmounts";
 import {
     computeCustomerRiskExposure,
@@ -37,6 +49,7 @@ import {
 import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
 import {
+    resolveFullOpenArAtRiskFromPolicyRows,
     resolveUncoveredExposureFromPolicyRows,
 } from "./termBreachResolver";
 
@@ -67,6 +80,123 @@ export type CustomerDashboardKpiCards = {
     topUpUsagePct?: number | null;
     effectiveLimit?: number | null;
     effectiveUsagePct?: number | null;
+    /**
+     * Trailing-window chronic over-limit (available CTP days).
+     * Null pct when daysAvailable === 0 (show “no data”, not 0%).
+     */
+    overLimitDays?: number;
+    overLimitDaysAvailable?: number;
+    overLimitPctDays?: number | null;
+    currentOverLimitStreakDays?: number;
+    currentOverLimitStreakStart?: string | null;
+    currentOverLimitStreakEnd?: string | null;
+    longestOverLimitStreakDays?: number;
+    longestOverLimitStreakStart?: string | null;
+    longestOverLimitStreakEnd?: string | null;
+    /** Trailing health momentum (KPI #5); null classification when suppressed. */
+    healthMomentumClassification?: HealthMomentumClassification | null;
+    healthMomentumSlope?: number | null;
+    healthMomentumDaysUsed?: number;
+    healthMomentumSuppressed?: boolean;
+    healthPeakValue?: number | null;
+    healthPeakDate?: string | null;
+    healthCurrentValue?: number | null;
+    healthCurrentDate?: string | null;
+    /** Day-over-day AR volatility (KPI #6); sigma as fraction (0.026 = 2.6%). */
+    arVolatilitySigmaPct?: number | null;
+    arVolatilityPairCount?: number;
+    arVolatilityMinPctChange?: number | null;
+    arVolatilityMinPctChangeDate?: string | null;
+    arVolatilityMaxPctChange?: number | null;
+    arVolatilityMaxPctChangeDate?: string | null;
+    arVolatilityExtremeMoveCount?: number;
+    /** Sparkline points: DoD % change by day (non-stale consecutive pairs). */
+    arVolatilityDailyPctChanges?: Array<{
+        snapshotDate: string;
+        pctChange: number;
+        extreme: boolean;
+    }>;
+    /** Flaggable extreme moves (±10% default). */
+    arVolatilityExtremeMoves?: Array<{
+        snapshotDate: string;
+        priorDate: string;
+        pctChange: number;
+    }>;
+    arNewActivityEventCount?: number;
+    /**
+     * Utilization overshoot magnitude (KPI #2). Null averages when no
+     * positive-effective-limit days (exclude null-limit customers — not 0).
+     */
+    avgOvershootPts?: number | null;
+    maxOvershootPts?: number | null;
+    maxOvershootDate?: string | null;
+    avgUsagePctPeriod?: number | null;
+    peakUsagePctPeriod?: number | null;
+    peakUsagePctDate?: string | null;
+    overshootDaysWithLimit?: number;
+    overshootDaysAvailable?: number;
+    overshootDailyPts?: Array<{ snapshotDate: string; overshootPts: number }>;
+    /**
+     * Limit-capped / compliant-exposure ceiling (KPI #3). Banner + dual chart
+     * only when `limitCapped` is true (≥~14 days + CV/growth thresholds).
+     */
+    limitCapped?: boolean;
+    limitCappedSuppressed?: boolean;
+    limitCappedCompliantCv?: number | null;
+    limitCappedTotalArCv?: number | null;
+    limitCappedTotalArGrowthPct?: number | null;
+    limitCappedCompliantGrowthPct?: number | null;
+    limitCappedNormalizedSeries?: Array<{
+        snapshotDate: string;
+        totalArNormalized: number;
+        compliantNormalized: number;
+    }>;
+    /** Carried-forward identical non-zero AR days (KPI #7). */
+    staleDayCount?: number;
+    staleDates?: string[];
+    /**
+     * Share of policy open AR on latest CTP snapshot (KPI #9 context line).
+     * Null when policy total AR ≤ 0 or no linked policy.
+     */
+    policyOpenArSharePct?: number | null;
+    policyOpenArSharePolicyId?: number | null;
+    policyOpenArSharePolicyNumber?: string | null;
+    policyOpenArShareAsOfDate?: string | null;
+    /**
+     * Limit-breach forecast (KPI #10) on trailing usage %. Primary = soonest
+     * projected threshold; status may be trending_away / suppressed / etc.
+     */
+    limitBreachForecastStatus?: LimitBreachForecastStatus | null;
+    limitBreachForecastThresholdPct?: number | null;
+    limitBreachForecastProjectedDate?: string | null;
+    limitBreachForecastDaysToThreshold?: number | null;
+    limitBreachForecastCurrentUsagePct?: number | null;
+    limitBreachForecastSlopePerDay?: number | null;
+    limitBreachForecastRSquared?: number | null;
+    limitBreachForecastSuppressed?: boolean;
+    /**
+     * Breach dilution vs resolution (KPI #11). Banner when classification is
+     * `diluted` or `resolved` (never-breached stays `na`).
+     */
+    breachDilutionClassification?: BreachDilutionClassification;
+    breachDilutionSuppressed?: boolean;
+    breachDilutionHealthRisePts?: number | null;
+    breachDilutionBreachFirst?: number | null;
+    breachDilutionBreachLast?: number | null;
+    breachDilutionBreachChangePct?: number | null;
+    breachDilutionArFirst?: number | null;
+    breachDilutionArLast?: number | null;
+    breachDilutionArGrowthPct?: number | null;
+    /**
+     * Breach clean-streak / open-breach badge (KPI #12).
+     * `none` = no breach on record (do not invent a clean streak).
+     */
+    breachStreakStatus?: BreachStreakStatus;
+    breachStreakDays?: number;
+    breachStreakStart?: string | null;
+    breachStreakEnd?: string | null;
+    breachEpisodeCount?: number;
+    breachHasHistory?: boolean;
 };
 
 export type { RiskExposurePolicySeries } from "./customerPolicyTrendService";
@@ -84,9 +214,11 @@ export type CustomerDashboardKpisResponse = {
  *
  * - **Health index:** `(compliantExposure / totalAr) × 100`, clamped 0–100; 100 when totalAr ≤ 0.
  *   compliantExposure = totalAr − atRiskExposure (at-risk capped at totalAr for the %).
- * - **At risk exposure:** Uncovered / excluded → totalAr; else Σ per open Due/Overdue invoice
+ * - **At risk exposure:** No linked policy / pending review → totalAr; else Σ per open Due/Overdue invoice
  *   `max(capacity_gap_i, terms_breach_i)` where terms_breach_i is full outstanding when any
- *   terms-breach flag is set, else 0.
+ *   terms-breach flag is set, else 0. Same inputs as portfolio credit-dashboard At Risk
+ *   (scoped policy link; invoice FX open AR; invoice gap/breach rows).
+ *   Other exclusions (Credit hold, Insurer declined, Other) use the per-invoice max, not full AR.
  * - **Capacity gap:** Per insurance policy, `CustomerPolicy.capacity_gap_amount` =
  *   max(0, open AR − effective limit). Per-invoice gaps are a live waterfall cache.
  * - **Terms breach:** Sum of outstanding on Due/Overdue breach invoices (same flags as terms report).
@@ -495,13 +627,8 @@ export async function getCustomerDashboardKpis(
             openArByPolicy.set(pid, ar);
         }
         // Customer-level open AR (not summed per CustomerPolicy history row).
+        // Same invoice FX map as portfolio credit dashboard (no denormalized fallback).
         totalAr = await resolveCustomerOpenArInAccountCurrency();
-        if (totalAr <= 0) {
-            totalAr = Math.max(
-                Number(customer?.total_due_amount ?? 0),
-                Number(customer?.total_overdue_amount ?? 0)
-            );
-        }
     }
 
     const capacityGapAmount = resolveCustomerCapacityGapFromPolicyRows(
@@ -513,6 +640,10 @@ export async function getCustomerDashboardKpis(
         policyRows,
         policyId
     );
+    const fullArAtRisk = resolveFullOpenArAtRiskFromPolicyRows(
+        policyRows,
+        policyId
+    );
 
     const flagBasedTermsBreach = await getCustomerTermsBreachOutstandingSum(
         accountId,
@@ -520,7 +651,7 @@ export async function getCustomerDashboardKpis(
         policyId != null ? { policyId } : undefined
     );
 
-    const termsBreachOutstanding = uncovered
+    const termsBreachOutstanding = fullArAtRisk
         ? totalAr
         : flagBasedTermsBreach;
 
@@ -531,7 +662,7 @@ export async function getCustomerDashboardKpis(
             : policyRows.find((row) => row.is_active) ?? policyRows[0];
     const isExcludedFromPolicy = scopedPolicyRow?.excluded_from_policy === true;
 
-    const atRiskInvoices = uncovered
+    const atRiskInvoices = fullArAtRisk
         ? []
         : await fetchCustomerAtRiskInvoiceInputs(
               accountId,
@@ -539,9 +670,10 @@ export async function getCustomerDashboardKpis(
               policyId != null ? { policyId } : undefined
           );
     const atRiskExposure = computeCustomerRiskExposure({
-        uncovered,
+        uncovered: fullArAtRisk,
         totalAr,
         invoices: atRiskInvoices,
+        capacityGapAmount: fullArAtRisk ? undefined : capacityGapAmount,
     });
 
     const uninsuredAmount = uncovered
@@ -627,19 +759,64 @@ export async function getCustomerDashboardKpis(
         },
         invoiceCount: 0,
     };
-    const [riskExposureByPolicy, termsBreachCounts] = await Promise.all([
-        getCustomerRiskExposureAmountTrendByPolicy(accountId, customerId, {
-            policyId,
-            days: options?.days ?? 90,
-        }),
-        uncovered
-            ? Promise.resolve(emptyTermsBreachCounts)
-            : getCustomerTermsBreachCountByReason(
-                  accountId,
-                  customerId,
-                  policyId
-              ),
-    ]);
+    const trailingDays = options?.days ?? 90;
+    const [
+        riskExposureByPolicy,
+        termsBreachCounts,
+        overLimitGap,
+        slopeVol,
+        overshootLimitCapped,
+        policyOpenArShare,
+        limitBreachForecast,
+        breachDilutionStreak,
+    ] = await Promise.all([
+            getCustomerRiskExposureAmountTrendByPolicy(accountId, customerId, {
+                policyId,
+                days: trailingDays,
+            }),
+            fullArAtRisk
+                ? Promise.resolve(emptyTermsBreachCounts)
+                : getCustomerTermsBreachCountByReason(
+                      accountId,
+                      customerId,
+                      policyId
+                  ),
+            fetchCustomerTrailingOverLimitGapMetrics({
+                accountId,
+                customerId,
+                policyId,
+                days: trailingDays,
+            }),
+            fetchCustomerTrailingStaleSlopeVolatilityMetrics({
+                accountId,
+                customerId,
+                policyId,
+                days: trailingDays,
+            }),
+            fetchCustomerTrailingOvershootLimitCappedMetrics({
+                accountId,
+                customerId,
+                policyId,
+                days: trailingDays,
+            }),
+            fetchCustomerShareOfPolicyOpenAr({
+                accountId,
+                customerId,
+                policyId,
+                days: trailingDays,
+            }),
+            fetchCustomerTrailingLimitBreachForecast({
+                accountId,
+                customerId,
+                policyId,
+            }),
+            fetchCustomerTrailingBreachDilutionStreakMetrics({
+                accountId,
+                customerId,
+                policyId,
+                days: trailingDays,
+            }),
+        ]);
     const rawTermsBreachReasonDistribution = termsBreachCounts.distribution;
     const termsBreachInvoiceCount = termsBreachCounts.invoiceCount;
     const termsBreachReasonDistribution = isExcludedFromPolicy
@@ -747,7 +924,7 @@ export async function getCustomerDashboardKpis(
             );
         capacityGapLimitCurrency = secondaryCurrency;
 
-        termsBreachOutstandingSecondary = uncovered
+        termsBreachOutstandingSecondary = fullArAtRisk
             ? openArSecondary
             : await getCustomerTermsBreachOutstandingSumByCurrency(
                   accountId,
@@ -756,7 +933,7 @@ export async function getCustomerDashboardKpis(
                   { policyId: policyId ?? undefined }
               );
 
-        const atRiskInvoicesSecondary = uncovered
+        const atRiskInvoicesSecondary = fullArAtRisk
             ? []
             : await fetchCustomerAtRiskInvoiceInputsByCurrency(
                   accountId,
@@ -765,9 +942,12 @@ export async function getCustomerDashboardKpis(
                   { policyId: policyId ?? undefined }
               );
         atRiskExposureSecondary = computeCustomerRiskExposure({
-            uncovered,
+            uncovered: fullArAtRisk,
             totalAr: openArSecondary,
             invoices: atRiskInvoicesSecondary,
+            capacityGapAmount: fullArAtRisk
+                ? undefined
+                : (capacityGapAmountSecondary ?? 0),
         });
 
         uninsuredAmountSecondary = uncovered ? openArSecondary : null;
@@ -799,6 +979,134 @@ export async function getCustomerDashboardKpis(
             topUpUsagePct,
             effectiveLimit,
             effectiveUsagePct,
+            overLimitDays: overLimitGap?.overLimitDayCount ?? 0,
+            overLimitDaysAvailable: overLimitGap?.daysAvailable ?? 0,
+            overLimitPctDays: overLimitGap?.pctDaysOverLimit ?? null,
+            currentOverLimitStreakDays:
+                overLimitGap?.currentOverLimitStreak.days ?? 0,
+            currentOverLimitStreakStart:
+                overLimitGap?.currentOverLimitStreak.start ?? null,
+            currentOverLimitStreakEnd:
+                overLimitGap?.currentOverLimitStreak.end ?? null,
+            longestOverLimitStreakDays:
+                overLimitGap?.longestOverLimitStreak.days ?? 0,
+            longestOverLimitStreakStart:
+                overLimitGap?.longestOverLimitStreak.start ?? null,
+            longestOverLimitStreakEnd:
+                overLimitGap?.longestOverLimitStreak.end ?? null,
+            healthMomentumClassification:
+                slopeVol?.healthMomentum.classification ?? null,
+            healthMomentumSlope: slopeVol?.healthMomentum.slope ?? null,
+            healthMomentumDaysUsed: slopeVol?.healthMomentum.daysUsed ?? 0,
+            healthMomentumSuppressed:
+                slopeVol?.healthMomentum.suppressed ?? true,
+            healthPeakValue: slopeVol?.healthMomentum.peakHealth ?? null,
+            healthPeakDate: slopeVol?.healthMomentum.peakDate ?? null,
+            healthCurrentValue: slopeVol?.healthMomentum.currentHealth ?? null,
+            healthCurrentDate: slopeVol?.healthMomentum.currentDate ?? null,
+            arVolatilitySigmaPct: slopeVol?.arVolatility.sigmaPct ?? null,
+            arVolatilityPairCount: slopeVol?.arVolatility.pairCount ?? 0,
+            arVolatilityMinPctChange:
+                slopeVol?.arVolatility.minPctChange ?? null,
+            arVolatilityMinPctChangeDate:
+                slopeVol?.arVolatility.minPctChangeDate ?? null,
+            arVolatilityMaxPctChange:
+                slopeVol?.arVolatility.maxPctChange ?? null,
+            arVolatilityMaxPctChangeDate:
+                slopeVol?.arVolatility.maxPctChangeDate ?? null,
+            arVolatilityExtremeMoveCount:
+                slopeVol?.arVolatility.extremeMoves.length ?? 0,
+            arVolatilityDailyPctChanges:
+                slopeVol?.arVolatility.dailyPctChanges.map((p) => ({
+                    snapshotDate: p.snapshotDate,
+                    pctChange: p.pctChange,
+                    extreme: p.extreme,
+                })) ?? [],
+            arVolatilityExtremeMoves:
+                slopeVol?.arVolatility.extremeMoves.map((p) => ({
+                    snapshotDate: p.snapshotDate,
+                    priorDate: p.priorDate,
+                    pctChange: p.pctChange,
+                })) ?? [],
+            arNewActivityEventCount:
+                slopeVol?.arVolatility.newActivityEvents.length ?? 0,
+            staleDayCount: slopeVol?.staleDayCount ?? 0,
+            staleDates: slopeVol?.staleDates ?? [],
+            avgOvershootPts: overshootLimitCapped?.avgOvershootPts ?? null,
+            maxOvershootPts: overshootLimitCapped?.maxOvershootPts ?? null,
+            maxOvershootDate: overshootLimitCapped?.maxOvershootDate ?? null,
+            avgUsagePctPeriod: overshootLimitCapped?.avgUsagePct ?? null,
+            peakUsagePctPeriod: overshootLimitCapped?.peakUsagePct ?? null,
+            peakUsagePctDate: overshootLimitCapped?.peakUsageDate ?? null,
+            overshootDaysWithLimit: overshootLimitCapped?.daysWithLimit ?? 0,
+            overshootDaysAvailable: overshootLimitCapped?.daysAvailable ?? 0,
+            overshootDailyPts:
+                overshootLimitCapped?.dailyOvershootPts.map((p) => ({
+                    snapshotDate: p.snapshotDate,
+                    overshootPts: p.overshootPts,
+                })) ?? [],
+            limitCapped: overshootLimitCapped?.limitCapped.limitCapped ?? false,
+            limitCappedSuppressed:
+                overshootLimitCapped?.limitCapped.suppressed ?? true,
+            limitCappedCompliantCv:
+                overshootLimitCapped?.limitCapped.compliantCv ?? null,
+            limitCappedTotalArCv:
+                overshootLimitCapped?.limitCapped.totalArCv ?? null,
+            limitCappedTotalArGrowthPct:
+                overshootLimitCapped?.limitCapped.totalArGrowthPct ?? null,
+            limitCappedCompliantGrowthPct:
+                overshootLimitCapped?.limitCapped.compliantGrowthPct ?? null,
+            limitCappedNormalizedSeries:
+                overshootLimitCapped?.limitCapped.normalizedSeries.map((p) => ({
+                    snapshotDate: p.snapshotDate,
+                    totalArNormalized: p.totalArNormalized,
+                    compliantNormalized: p.compliantNormalized,
+                })) ?? [],
+            policyOpenArSharePct: policyOpenArShare?.sharePct ?? null,
+            policyOpenArSharePolicyId: policyOpenArShare?.policyId ?? null,
+            policyOpenArSharePolicyNumber:
+                policyOpenArShare?.policyNumber ?? null,
+            policyOpenArShareAsOfDate: policyOpenArShare?.asOfDate ?? null,
+            limitBreachForecastStatus:
+                limitBreachForecast?.primary?.status ??
+                limitBreachForecast?.thresholds[0]?.status ??
+                null,
+            limitBreachForecastThresholdPct:
+                limitBreachForecast?.primary?.thresholdPct ?? null,
+            limitBreachForecastProjectedDate:
+                limitBreachForecast?.primary?.projectedDate ?? null,
+            limitBreachForecastDaysToThreshold:
+                limitBreachForecast?.primary?.daysToThreshold ?? null,
+            limitBreachForecastCurrentUsagePct:
+                limitBreachForecast?.currentUsagePct ?? null,
+            limitBreachForecastSlopePerDay:
+                limitBreachForecast?.slope ?? null,
+            limitBreachForecastRSquared:
+                limitBreachForecast?.rSquared ?? null,
+            limitBreachForecastSuppressed:
+                limitBreachForecast?.suppressed ?? true,
+            breachDilutionClassification:
+                breachDilutionStreak?.classification ?? "na",
+            breachDilutionSuppressed:
+                breachDilutionStreak?.suppressed ?? true,
+            breachDilutionHealthRisePts:
+                breachDilutionStreak?.healthRisePts ?? null,
+            breachDilutionBreachFirst:
+                breachDilutionStreak?.breachFirst ?? null,
+            breachDilutionBreachLast:
+                breachDilutionStreak?.breachLast ?? null,
+            breachDilutionBreachChangePct:
+                breachDilutionStreak?.breachChangePct ?? null,
+            breachDilutionArFirst: breachDilutionStreak?.arFirst ?? null,
+            breachDilutionArLast: breachDilutionStreak?.arLast ?? null,
+            breachDilutionArGrowthPct:
+                breachDilutionStreak?.arGrowthPct ?? null,
+            breachStreakStatus: breachDilutionStreak?.status ?? "none",
+            breachStreakDays: breachDilutionStreak?.streakDays ?? 0,
+            breachStreakStart: breachDilutionStreak?.streakStart ?? null,
+            breachStreakEnd: breachDilutionStreak?.streakEnd ?? null,
+            breachEpisodeCount: breachDilutionStreak?.episodeCount ?? 0,
+            breachHasHistory: breachDilutionStreak?.hasBreachHistory ?? false,
         },
         riskExposureByPolicy,
         termsBreachReasonDistribution,

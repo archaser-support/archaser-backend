@@ -13,6 +13,7 @@
  */
 import {
     applyMaturedDeferredPayments,
+    loadCustomerProgressLabels,
     type MaturityResult,
 } from "@archaser/billing-connector";
 import {
@@ -116,7 +117,15 @@ export type ArPostIngestProgress = {
     total: number;
     step?: ArPostIngestStep;
     customerId?: number;
-    detail?: { processed: number; total: number };
+    detail?: {
+        processed: number;
+        total: number;
+        /** Customer number / name for the row being processed. */
+        customerLabel?: string;
+        /** 1-based index when the orchestrator knows the customer order. */
+        customerIndex?: number;
+        customerTotal?: number;
+    };
 };
 
 export type ArPostIngestResult = {
@@ -312,7 +321,13 @@ export async function runArPostIngestForCustomers(
     const reportStepDetail = (
         step: ArPostIngestStep,
         customerId: number,
-        detail: { processed: number; total: number }
+        detail: {
+            processed: number;
+            total: number;
+            customerLabel?: string;
+            customerIndex?: number;
+            customerTotal?: number;
+        }
     ) => {
         options.onProgress?.({
             completed: progressCompleted,
@@ -325,14 +340,30 @@ export async function runArPostIngestForCustomers(
 
     // --- Credit-insurance-gated steps ---
     if (hasCreditInsurance && options.runReplay) {
+        const customerLabels = await loadCustomerProgressLabels(
+            prisma,
+            customerIds
+        );
+        const indexByCustomerId = new Map(
+            customerIds.map((id, index) => [id, index + 1] as const)
+        );
         for (const customerId of customerIds) {
+            const customerLabel = customerLabels.get(customerId);
+            const customerIndex = indexByCustomerId.get(customerId);
             try {
                 await deps.replayCustomer({
                     customerId,
                     accountId: options.accountId,
                     mepBreachStartDate: options.mepBreachStartDate,
                     onProgress: (detail) =>
-                        reportStepDetail("replay", customerId, detail),
+                        reportStepDetail("replay", customerId, {
+                            ...detail,
+                            ...(customerLabel ? { customerLabel } : {}),
+                            ...(customerIndex != null
+                                ? { customerIndex }
+                                : {}),
+                            customerTotal: customerIds.length,
+                        }),
                 });
             } catch (error) {
                 const message = errorMessage(error);
@@ -402,10 +433,26 @@ export async function runArPostIngestForCustomers(
 
     // --- Credit-insurance-gated: live refresh + as-of ---
     if (hasCreditInsurance && options.runLiveRefresh) {
+        const customerLabels = await loadCustomerProgressLabels(
+            prisma,
+            customerIds
+        );
+        const indexByCustomerId = new Map(
+            customerIds.map((id, index) => [id, index + 1] as const)
+        );
         await runWithConcurrency(
             customerIds,
             LIVE_REFRESH_CUSTOMER_CONCURRENCY,
             async (customerId) => {
+                const customerLabel = customerLabels.get(customerId);
+                const customerIndex = indexByCustomerId.get(customerId);
+                reportStepDetail("live_refresh", customerId, {
+                    processed: 0,
+                    total: 1,
+                    ...(customerLabel ? { customerLabel } : {}),
+                    ...(customerIndex != null ? { customerIndex } : {}),
+                    customerTotal: customerIds.length,
+                });
                 try {
                     await deps.liveRefreshCustomer(
                         customerId,

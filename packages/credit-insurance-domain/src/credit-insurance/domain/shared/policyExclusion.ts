@@ -61,6 +61,20 @@ export type NoPolicyExposureCardFields = UncoveredExposureFields & {
     openAr: number;
 };
 
+/**
+ * Uncovered inputs from a scoped CustomerPolicy link (dashboard enrich / KPI row).
+ * Prefer this over “any active linked policy” so portfolio and customer cards match.
+ */
+export function uncoveredExposureFieldsFromPolicyLink(args: {
+    insurancePolicyId: number | null | undefined;
+    exclusionReason: unknown;
+}): UncoveredExposureFields {
+    return {
+        hasLinkedPolicy: hasActiveLinkedPolicy(args.insurancePolicyId),
+        exclusionReason: args.exclusionReason,
+    };
+}
+
 /** No linked policy or any non-empty exclusion reason. */
 export function isUncoveredExposureCustomer(
     fields: UncoveredExposureFields
@@ -71,6 +85,21 @@ export function isUncoveredExposureCustomer(
     );
 }
 
+/**
+ * Full-open-AR at-risk / No Policy card membership (without the AR>0 gate):
+ * no linked policy, or pending-review exclusion only.
+ * Other exclusions (Credit hold, Insurer declined, Other) stay on the insured
+ * per-invoice max path so At Risk can reconcile with Cap Gap + Terms Breach.
+ */
+export function isFullOpenArAtRiskCustomer(
+    fields: UncoveredExposureFields
+): boolean {
+    return (
+        !fields.hasLinkedPolicy ||
+        isPendingReviewExclusion(fields.exclusionReason)
+    );
+}
+
 /** Card cohort: open AR > 0 and (no linked policy or pending-review exclusion only). */
 export function isNoPolicyExposureCardCustomer(
     fields: NoPolicyExposureCardFields
@@ -78,8 +107,5 @@ export function isNoPolicyExposureCardCustomer(
     if (fields.openAr <= 0) {
         return false;
     }
-    return (
-        !fields.hasLinkedPolicy ||
-        isPendingReviewExclusion(fields.exclusionReason)
-    );
+    return isFullOpenArAtRiskCustomer(fields);
 }

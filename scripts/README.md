@@ -54,6 +54,7 @@ Development environment setup and debugging scripts.
 - `debug-account-creation.js` - Debug account creation process
 - `dev-with-account-tests.sh` - Development with account tests
 - `dev-with-logout-tests.sh` - Development with logout tests
+- `update-rds-ip.sh` - Automatically update current public IP on AWS RDS security group
 
 ### 📁 utilities/
 

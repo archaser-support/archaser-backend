@@ -2,6 +2,7 @@ import type { ConnectorSyncRunSummary } from "../sync/connectorSyncRuntime";
 import { createMemorySyncHistoryStore } from "./memoryStore";
 import { mongooseSyncHistoryStore } from "./mongooseStore";
 import { applyPostIngestDrainProgressToEntityStats } from "./postIngestDrainEntityStats";
+import { notifyOnSyncFailure } from "../notify";
 import {
     defaultSinceDate,
     HEARTBEAT_INTERVAL_SECONDS,
@@ -131,6 +132,17 @@ export async function finalizeAwaitingPostIngestDrainExecutions(
         );
         if (finalized) {
             completed += 1;
+            // Fire-and-forget failure notification for deferred executions.
+            if (pendingStatus !== "SUCCESS") {
+                void notifyOnSyncFailure({
+                    accountId: execution.account_id,
+                    provider: execution.provider ?? "UNKNOWN",
+                    status: pendingStatus as "FAILED" | "PARTIAL" | "TIMEOUT",
+                    errorMessage: execution.pending_error_message ?? null,
+                    executionId: execution.execution_id,
+                    completedAt: new Date(),
+                }).catch(() => undefined);
+            }
         }
     }
     return completed;
@@ -144,6 +156,26 @@ export async function listExecutionsForAccount(
         since: options?.since ?? defaultSinceDate(),
         limit: options?.limit,
     });
+}
+
+/**
+ * Latest non-preview SUCCESS for a connector (Mongo history). Prefer
+ * `completed_at` as the incremental pull watermark.
+ */
+export async function findLastSuccessfulExecutionForConnector(
+    connectorId: number
+): Promise<SyncHistoryExecution | null> {
+    return store().findLastSuccessfulForConnector(connectorId);
+}
+
+/** Watermark date from a successful history row (`completed_at` preferred). */
+export function watermarkFromSuccessfulExecution(
+    execution: SyncHistoryExecution | null | undefined
+): Date | null {
+    if (!execution) {
+        return null;
+    }
+    return execution.completed_at ?? execution.started_at ?? null;
 }
 
 export async function listRunningSyncAccountIds(): Promise<number[]> {

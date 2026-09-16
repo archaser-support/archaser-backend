@@ -55,10 +55,13 @@ import {
     aggregatePortfolioTermsBreachFromInvoices,
 } from "./termBreachResolver";
 import {
+    isFullOpenArAtRiskCustomer,
     isNoPolicyExposureCardCustomer,
-    isUncoveredExposureCustomer,
+    uncoveredExposureFieldsFromPolicyLink,
 } from "./policyExclusion";
+import { refreshCapacityGapsForAtRiskDrift } from "./refreshCapacityGapsForAtRiskDrift";
 import type { CreditDashboardAccountSettings } from "./creditAsOfBackfillRunContext";
+import { fetchProjectedLimitBreachCustomers } from "./limitBreachForecastPeriod";
 
 const COLLECTION_LIVE: record_status[] = [record_status.Active, record_status.Inactive];
 const DEFAULT_REPORTING_WINDOW_DAYS = 14;
@@ -992,13 +995,14 @@ export type CreditDashboardSummary = {
      */
     compliantExposure: number;
     /**
-     * Sum of per-customer at-risk under the shared formula: uncovered → full AR;
-     * insured → Σ max(capacity_gap_i, terms_breach_i) per open invoice.
-     * Live portfolio has no policy max-cover residual on top of customer sums.
+     * Sum of per-customer at-risk: no-policy / pending-review → full AR;
+     * everyone else → Cap Gap + Terms − overlap (live), or invoice Σ max when as-of.
+     * Live portfolio refreshes drifted gaps before Cap Gap + At Risk reads.
+     * Portfolio total is the sum of customer at-risk only (no policy max-cover residual).
      */
     atRiskExposure: number;
     /**
-     * Sum of insured-customer at-risk (same per-invoice max formula) only.
+     * Sum of non–full-AR-cohort customer at-risk only.
      * Equals atRiskExposure minus withoutPolicy.totalAmount when without-policy
      * cohort is included in scope.
      */
@@ -1042,6 +1046,8 @@ export type CreditDashboardSummary = {
         totalAmount: number;
         thresholdPct: number;
         scoreWarnDays: number;
+        /** Distinct customers with a projected 150%/200% utilization crossing. */
+        projectedCustomerCount: number;
     };
     zeroLimitWarnings: {
         customerCount: number;
@@ -1253,6 +1259,17 @@ export async function getCreditDashboardSummary(
         accountSettings?: CreditDashboardAccountSettings;
         /** When true, skip insurancePolicy.findMany (alerts unused in daily snapshot upsert). */
         skipPolicyExpirationLoad?: boolean;
+        /**
+         * As-of terms overlay: skip recomputing reporting-late (CPT Generate /
+         * daily snapshot default). Omit / true when `asOfDate` is set unless
+         * explicitly false.
+         */
+        ignoreReportingBreach?: boolean;
+        /**
+         * When true, `asOfLines` already have terms flags overlaid (Generate
+         * day-level single overlay). Skip per-scope MEP/terms overlay.
+         */
+        asOfTermsFlagsApplied?: boolean;
     }
 ): Promise<CreditDashboardSummary> {
     const whereCust = customersScoped(accountId, policyId, businessUnitFilter);
@@ -1472,62 +1489,79 @@ export async function getCreditDashboardSummary(
         }),
     ]);
 
-    const { enrichCustomersWithPolicyScope, fetchCustomerIdsWithActiveLinkedPolicy } =
-        await import("./enrichCustomersWithActivePolicy");
+    const { enrichCustomersWithPolicyScope } = await import(
+        "./enrichCustomersWithActivePolicy"
+    );
     const customers = await enrichCustomersWithPolicyScope(
         customersRaw,
         policyId
     );
 
     const customerIds = customers.map((c) => c.id);
-    const activeLinkedPolicyCustomerIds =
-        await fetchCustomerIdsWithActiveLinkedPolicy(customerIds);
-    const customerHasActiveLinkedPolicy = (customerId: number): boolean =>
-        activeLinkedPolicyCustomerIds.has(customerId);
-    const [openArByCustomer, termsOutstandingByCustomer] =
-        asOfDate != null
-            ? await (async () => {
-                  const asOf = await import("./asOfOpenAr");
-                  const lines =
-                      asOfLines ??
-                      (await asOf.loadAsOfOpenInvoiceCandidates(
-                          accountId,
-                          asOfDate,
-                          { customerIds, policyId }
-                      ));
-                  return Promise.all([
-                      asOf.buildAsOfOpenReceivableByCustomerMapInAccountCurrencyFromLines(
-                          lines,
-                          accountCurrency,
-                          asOfDate,
-                          { customerIds, policyId }
-                      ),
-                      asOf.buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLines(
-                          lines,
-                          accountCurrency,
-                          asOfDate,
-                          {
-                              policyId,
-                              excludeCapacityGapInvoices: false,
-                              customerIds,
-                          }
-                      ),
-                  ]);
-              })()
-            : await Promise.all([
-                  fetchOpenReceivableByCustomerMapInAccountCurrency(
-                      accountId,
-                      accountCurrency,
-                      { customerIds, policyId }
-                  ),
-                  fetchTermsBreachOutstandingByCustomerInAccountCurrency(
-                      accountId,
-                      accountCurrency,
-                      policyId,
-                      false,
-                      businessUnitFilter
-                  ),
-              ]);
+
+    let preparedAsOfLines:
+        | import("./asOfOpenAr").AsOfOpenInvoiceLine[]
+        | undefined;
+    let openArByCustomer: Map<number, number>;
+    let termsOutstandingByCustomer: Map<number, number>;
+    if (asOfDate != null) {
+        const asOf = await import("./asOfOpenAr");
+        let lines =
+            asOfLines ??
+            (await asOf.loadAsOfOpenInvoiceCandidates(accountId, asOfDate, {
+                customerIds,
+                policyId,
+            }));
+        const ignoreReportingBreach =
+            options?.ignoreReportingBreach !== false;
+        if (options?.asOfTermsFlagsApplied === true) {
+            if (ignoreReportingBreach) {
+                lines = asOf.withReportingBreachIgnored(lines, true);
+            }
+        } else {
+            lines = await asOf.overlayAsOfTermsFlagsForAccountLines({
+                accountId,
+                asOfDate,
+                lines,
+                customers,
+                ignoreReportingBreach,
+            });
+        }
+        preparedAsOfLines = lines;
+        [openArByCustomer, termsOutstandingByCustomer] = await Promise.all([
+            asOf.buildAsOfOpenReceivableByCustomerMapInAccountCurrencyFromLines(
+                lines,
+                accountCurrency,
+                asOfDate,
+                { customerIds, policyId }
+            ),
+            asOf.buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLines(
+                lines,
+                accountCurrency,
+                asOfDate,
+                {
+                    policyId,
+                    excludeCapacityGapInvoices: false,
+                    customerIds,
+                }
+            ),
+        ]);
+    } else {
+        [openArByCustomer, termsOutstandingByCustomer] = await Promise.all([
+            fetchOpenReceivableByCustomerMapInAccountCurrency(
+                accountId,
+                accountCurrency,
+                { customerIds, policyId }
+            ),
+            fetchTermsBreachOutstandingByCustomerInAccountCurrency(
+                accountId,
+                accountCurrency,
+                policyId,
+                false,
+                businessUnitFilter
+            ),
+        ]);
+    }
 
     const openArForCustomer = (c: (typeof customers)[number]): number => {
         const fromInv = openArByCustomer.get(c.id);
@@ -1536,24 +1570,39 @@ export async function getCreditDashboardSummary(
         }
         return 0;
     };
+    const scopedUncoveredFields = (c: (typeof customers)[number]) =>
+        uncoveredExposureFieldsFromPolicyLink({
+            insurancePolicyId: c.policy_id,
+            exclusionReason: c.policy_exclusion_reason,
+        });
     const isNoPolicyExposureCohortCustomer = (
         c: (typeof customers)[number]
     ): boolean =>
         isNoPolicyExposureCardCustomer({
-            hasLinkedPolicy: customerHasActiveLinkedPolicy(c.id),
-            exclusionReason: c.policy_exclusion_reason,
+            ...scopedUncoveredFields(c),
             openAr: openArForCustomer(c),
         });
-    const isUncoveredExposureCohortCustomer = (
+    const isFullArAtRiskCohortCustomer = (
         c: (typeof customers)[number]
-    ): boolean =>
-        isUncoveredExposureCustomer({
-            hasLinkedPolicy: customerHasActiveLinkedPolicy(c.id),
-            exclusionReason: c.policy_exclusion_reason,
-        });
+    ): boolean => isFullOpenArAtRiskCustomer(scopedUncoveredFields(c));
     const dashboardCustomers = includeNoPolicyExposure
         ? customers
         : customers.filter((c) => !isNoPolicyExposureCohortCustomer(c));
+
+    if (asOfDate == null) {
+        const insuredIdsForGapRefresh = dashboardCustomers
+            .filter(
+                (c) =>
+                    !isFullArAtRiskCohortCustomer(c) &&
+                    openArForCustomer(c) > 0
+            )
+            .map((c) => c.id);
+        await refreshCapacityGapsForAtRiskDrift({
+            accountId,
+            customerIds: insuredIdsForGapRefresh,
+            policyId,
+        });
+    }
 
     let totalReceivables = 0;
     for (const c of dashboardCustomers) {
@@ -1773,6 +1822,17 @@ export async function getCreditDashboardSummary(
     );
     const capacityTotal = policyGapRollup.gapBaseTotal;
     const customerOverLimit = policyGapRollup.customerOverLimitCount;
+    const capacityGapByCustomerId = new Map<number, number>();
+    for (const [key, gap] of policyGapRollup.gapByCustomerPolicy) {
+        const customerId = Number(String(key).split(":")[0]);
+        if (!Number.isFinite(customerId)) {
+            continue;
+        }
+        capacityGapByCustomerId.set(
+            customerId,
+            (capacityGapByCustomerId.get(customerId) ?? 0) + Math.max(0, gap)
+        );
+    }
 
     const invRow = invAgg[0];
     let termsCount = invRow?.c ?? 0;
@@ -1791,7 +1851,7 @@ export async function getCreditDashboardSummary(
     };
 
     const insuredCustomerIdsForTermsBreach = dashboardCustomers
-        .filter((c) => !isUncoveredExposureCohortCustomer(c))
+        .filter((c) => !isFullArAtRiskCohortCustomer(c))
         .map((c) => c.id);
 
     if (insuredCustomerIdsForTermsBreach.length === 0) {
@@ -1804,6 +1864,58 @@ export async function getCreditDashboardSummary(
             outdatedDcl: 0,
             invoiceAfterPolicyEnd: 0,
         };
+    } else if (preparedAsOfLines && asOfDate) {
+        const asOf = await import("./asOfOpenAr");
+        const snapshotDay = asOfDate;
+        const insuredSet = new Set(insuredCustomerIdsForTermsBreach);
+        const asOfTermRows: Array<{
+            outstanding_debt: number | null;
+            customer_outstanding_debt: number | null;
+            amount: number | null;
+            reporting_breach: boolean;
+            ctv_payment_term: boolean;
+            ctv_customer_overdue_mep: boolean;
+            ctv_outdated_dcl: boolean;
+            ctv_invoice_after_policy_end: boolean;
+        }> = [];
+        for (const line of preparedAsOfLines) {
+            if (!insuredSet.has(line.customerId)) {
+                continue;
+            }
+            if (policyId != null && line.policyId !== policyId) {
+                continue;
+            }
+            if (
+                !line.reportingBreach &&
+                !line.ctvPaymentTerm &&
+                !line.ctvCustomerOverdueMep &&
+                !line.ctvOutdatedDcl &&
+                !line.ctvInvoiceAfterPolicyEnd
+            ) {
+                continue;
+            }
+            const computed = asOf.computeAsOfOpenInvoiceLine(line, snapshotDay);
+            if (!computed || computed.openAmount <= 0) {
+                continue;
+            }
+            if (Number(line.amount ?? 0) < 0) {
+                continue;
+            }
+            asOfTermRows.push({
+                outstanding_debt: computed.openAmount,
+                customer_outstanding_debt: computed.openCustomerAmount,
+                amount: computed.openAmount,
+                reporting_breach: line.reportingBreach,
+                ctv_payment_term: line.ctvPaymentTerm,
+                ctv_customer_overdue_mep: line.ctvCustomerOverdueMep,
+                ctv_outdated_dcl: line.ctvOutdatedDcl,
+                ctv_invoice_after_policy_end: line.ctvInvoiceAfterPolicyEnd,
+            });
+        }
+        const agg = aggregatePortfolioTermsBreachFromInvoices(asOfTermRows);
+        termsCount = agg.invoiceCount;
+        termsTotal = agg.totalAmount;
+        countByReason = agg.countByReason;
     } else if (
         insuredCustomerIdsForTermsBreach.length < dashboardCustomers.length ||
         !includeNoPolicyExposure
@@ -1876,7 +1988,7 @@ export async function getCreditDashboardSummary(
 
     const insuredCustomerIdsForAtRisk = dashboardCustomers
         .filter((c) => {
-            if (isUncoveredExposureCohortCustomer(c)) {
+            if (isFullArAtRiskCohortCustomer(c)) {
                 return false;
             }
             return openArForCustomer(c) > 0;
@@ -1888,18 +2000,30 @@ export async function getCreditDashboardSummary(
             ? await (async () => {
                   const asOf = await import("./asOfOpenAr");
                   let lines =
+                      preparedAsOfLines ??
                       asOfLines ??
                       (await asOf.loadAsOfOpenInvoiceCandidates(
                           accountId,
                           asOfDate,
                           { customerIds: insuredCustomerIdsForAtRisk, policyId }
                       ));
+                  if (preparedAsOfLines == null) {
+                      const ignoreReportingBreach =
+                          options?.ignoreReportingBreach !== false;
+                      lines = await asOf.overlayAsOfTermsFlagsForAccountLines({
+                          accountId,
+                          asOfDate,
+                          lines,
+                          customers: dashboardCustomers,
+                          ignoreReportingBreach,
+                      });
+                  }
                   const scopeByCustomerPolicy = new Map<
                       string,
                       import("./asOfOpenAr").AsOfCapacityGapWaterfallScope
                   >();
                   for (const c of dashboardCustomers) {
-                      if (isUncoveredExposureCohortCustomer(c)) {
+                      if (isFullArAtRiskCohortCustomer(c)) {
                           continue;
                       }
                       if (
@@ -1992,13 +2116,18 @@ export async function getCreditDashboardSummary(
         if (ar <= 0) {
             continue;
         }
-        const uncovered = isUncoveredExposureCohortCustomer(c);
+        const uncovered = isFullArAtRiskCohortCustomer(c);
+        const invoices = uncovered
+            ? []
+            : (atRiskInvoicesByCustomer.get(c.id) ?? []);
         const allocated = computeCustomerRiskExposure({
             uncovered,
             totalAr: ar,
-            invoices: uncovered
-                ? []
-                : (atRiskInvoicesByCustomer.get(c.id) ?? []),
+            invoices,
+            capacityGapAmount:
+                uncovered || asOfDate != null
+                    ? undefined
+                    : (capacityGapByCustomerId.get(c.id) ?? 0),
         });
         if (!uncovered) {
             policyRiskExposure += allocated;
@@ -2046,6 +2175,20 @@ export async function getCreditDashboardSummary(
             limitWarningIds.add(c.id);
         }
     }
+
+    const projectedRows = await fetchProjectedLimitBreachCustomers({
+        accountId,
+        policyId: policyId ?? undefined,
+        includeNoPolicyExposure: true,
+    });
+    const projectedCustomerIds = new Set(
+        projectedRows.map((r) => r.customerId)
+    );
+    // Include projected-only customers in the Limit Warnings unique count.
+    for (const id of projectedCustomerIds) {
+        limitWarningIds.add(id);
+    }
+
     let limitWarningTotalAr = 0;
     for (const c of dashboardCustomers) {
         if (limitWarningIds.has(c.id)) {
@@ -2115,6 +2258,7 @@ export async function getCreditDashboardSummary(
             totalAmount: limitWarningTotalAr,
             thresholdPct: limitWarnThresholdPct,
             scoreWarnDays: scoreValidityWarnDays,
+            projectedCustomerCount: projectedCustomerIds.size,
         },
         zeroLimitWarnings: {
             customerCount: zeroLimitWarningsCount,
@@ -2724,6 +2868,15 @@ export async function getPolicyRiskExposureReport(
         if (c.InsurancePolicy == null) {
             continue;
         }
+        const uncovered = isFullOpenArAtRiskCustomer(
+            uncoveredExposureFieldsFromPolicyLink({
+                insurancePolicyId: c.policy_id,
+                exclusionReason: c.policy_exclusion_reason,
+            })
+        );
+        if (uncovered) {
+            continue;
+        }
         const ar = openArFor(c);
         if (ar <= 0) {
             continue;
@@ -2734,6 +2887,7 @@ export async function getPolicyRiskExposureReport(
             uncovered: false,
             totalAr: ar,
             invoices: atRiskInvoicesByCustomer.get(c.id) ?? [],
+            capacityGapAmount: gap,
         });
         built.push({
             customerId: c.id,
@@ -2798,19 +2952,18 @@ export async function getNoPolicyExposureReport(
         fetchOpenReceivableByCustomerMap(accountId, options.policyId),
     ]);
 
-    const { enrichCustomersWithPolicyScope, fetchCustomerIdsWithActiveLinkedPolicy } =
-        await import("./enrichCustomersWithActivePolicy");
+    const { enrichCustomersWithPolicyScope } = await import(
+        "./enrichCustomersWithActivePolicy"
+    );
     const all = await enrichCustomersWithPolicyScope(allRaw, options.policyId);
-
-    const customerIds = all.map((c) => c.id);
-    const activeLinkedPolicyCustomerIds =
-        await fetchCustomerIdsWithActiveLinkedPolicy(customerIds);
 
     let list = all.filter((c) => {
         const ar = openArByCustomer.get(c.id) ?? 0;
         return isNoPolicyExposureCardCustomer({
-            hasLinkedPolicy: activeLinkedPolicyCustomerIds.has(c.id),
-            exclusionReason: c.policy_exclusion_reason,
+            ...uncoveredExposureFieldsFromPolicyLink({
+                insurancePolicyId: c.policy_id,
+                exclusionReason: c.policy_exclusion_reason,
+            }),
             openAr: ar,
         });
     });
@@ -3628,6 +3781,16 @@ export type LimitWarningRow = {
     limitExpiring: boolean;
     limitExpiresInDays: number | null;
     approvedLimitExpirationDate: string | null;
+    /**
+     * Bucket 1 KPI #10 — projected utilization crossing (distinct from actual
+     * near-limit / score / limit-expiry warnings).
+     */
+    projected?: boolean;
+    projectedThresholdPct?: number | null;
+    projectedDate?: string | null;
+    projectedDaysToThreshold?: number | null;
+    projectedCurrentUsagePct?: number | null;
+    projectedRSquared?: number | null;
 };
 
 type CustomerForLimitWarning = {
@@ -3735,6 +3898,12 @@ function buildLimitWarningRow(
         approvedLimitExpirationDate: c.approved_limit_expiration_date
             ? new Date(c.approved_limit_expiration_date).toISOString().slice(0, 10)
             : null,
+        projected: false,
+        projectedThresholdPct: null,
+        projectedDate: null,
+        projectedDaysToThreshold: null,
+        projectedCurrentUsagePct: null,
+        projectedRSquared: null,
     };
 }
 
@@ -3775,6 +3944,16 @@ function sortLimitWarningRows(
             }
             case "limitExpiresInDays": {
                 c = (a.limitExpiresInDays ?? Infinity) - (b.limitExpiresInDays ?? Infinity);
+                break;
+            }
+            case "projectedDate": {
+                c = (a.projectedDate || "").localeCompare(b.projectedDate || "");
+                break;
+            }
+            case "projectedDaysToThreshold": {
+                c =
+                    (a.projectedDaysToThreshold ?? Infinity) -
+                    (b.projectedDaysToThreshold ?? Infinity);
                 break;
             }
             default: {
@@ -3880,6 +4059,55 @@ export async function getLimitWarningReport(
         if (row) {
             built.push(row);
         }
+    }
+
+    const projectedRows = await fetchProjectedLimitBreachCustomers({
+        accountId,
+        policyId: options.policyId,
+        customerId: options.customerId,
+        includeNoPolicyExposure: options.includeNoPolicyExposure,
+    });
+    const byCustomerId = new Map(built.map((r) => [r.customerId, r]));
+    for (const forecast of projectedRows) {
+        const primary = forecast.primary;
+        if (primary == null || primary.status !== "projected") {
+            continue;
+        }
+        const existing = byCustomerId.get(forecast.customerId);
+        if (existing) {
+            existing.projected = true;
+            existing.projectedThresholdPct = primary.thresholdPct;
+            existing.projectedDate = primary.projectedDate;
+            existing.projectedDaysToThreshold = primary.daysToThreshold;
+            existing.projectedCurrentUsagePct = forecast.currentUsagePct;
+            existing.projectedRSquared = forecast.rSquared;
+            continue;
+        }
+        const projectedOnly: LimitWarningRow = {
+            customerId: forecast.customerId,
+            policyNumber: forecast.policyNumber,
+            customerName: forecast.customerName,
+            nearLimit: false,
+            nearLimitUtilizationPct: null,
+            scoreExpiring: false,
+            scoreExpiresInDays: null,
+            creditScoreInputDate: null,
+            approvedLimit: null,
+            limitType: null,
+            totalAR: 0,
+            currency: accountCur,
+            limitExpiring: false,
+            limitExpiresInDays: null,
+            approvedLimitExpirationDate: null,
+            projected: true,
+            projectedThresholdPct: primary.thresholdPct,
+            projectedDate: primary.projectedDate,
+            projectedDaysToThreshold: primary.daysToThreshold,
+            projectedCurrentUsagePct: forecast.currentUsagePct,
+            projectedRSquared: forecast.rSquared,
+        };
+        built.push(projectedOnly);
+        byCustomerId.set(forecast.customerId, projectedOnly);
     }
 
     const q = options.query?.trim();

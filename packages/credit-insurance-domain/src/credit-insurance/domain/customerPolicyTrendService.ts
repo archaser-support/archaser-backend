@@ -37,6 +37,7 @@ import {
 } from "./creditAsOfBackfillRunContext";
 import {
     batchUpsertCustomerPolicyTrendRows,
+    pruneInactiveCustomerPolicyTrendRows,
     type CustomerPolicyTrendUpsertRow,
 } from "./customerPolicyTrendBatchUpsert";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
@@ -65,7 +66,17 @@ const CPT_COMPUTE_CONCURRENCY = readEnvInt(
 export type RiskExposurePolicySeries = {
     policyId: number;
     policyLabel: string;
-    series: Array<{ snapshotDate: string; amount: number }>;
+    series: Array<{
+        snapshotDate: string;
+        /** As-of at-risk exposure (Σ max(gap, breach)). */
+        amount: number;
+        /** As-of open AR (usage_amount) from CustomerPolicyTrend. */
+        openArAmount: number;
+        /** As-of capacity gap from CustomerPolicyTrend. */
+        capacityGapAmount: number;
+        /** As-of terms breach outstanding from CustomerPolicyTrend. */
+        termsBreachAmount: number;
+    }>;
 };
 
 
@@ -1316,6 +1327,11 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         mepBreachStartDate?: Date | null;
         /** Preloaded static inputs for multi-day Generate / drain replay. */
         runContext?: CreditAsOfBackfillRunContext;
+        /**
+         * When true, `asOfLines` already have terms flags overlaid (shared
+         * Generate day-loop overlay on start and resume).
+         */
+        asOfTermsFlagsApplied?: boolean;
     }
 ): Promise<number> {
     const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
@@ -1332,6 +1348,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             policyId: options?.policyId,
             customerIds: options?.customerIds,
         }));
+
     const openArByCustomer = buildAsOfOpenReceivableByCustomerMapFromLines(
         ledgerLines,
         snapshotDate
@@ -1446,15 +1463,23 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             termsByCustomerAndPolicy.set(fallbackKey, terms);
         }
     }
-    ledgerLines = overlayAsOfTermsFlagsOnLines(
-        ledgerLines,
-        snapshotDate,
-        termsByCustomerAndPolicy,
-        {
-            ignoreReportingBreach: options?.ignoreReportingBreach === true,
-            mepBreachStartDate,
-        }
-    );
+    if (options?.asOfTermsFlagsApplied !== true) {
+        ledgerLines = overlayAsOfTermsFlagsOnLines(
+            ledgerLines,
+            snapshotDate,
+            termsByCustomerAndPolicy,
+            {
+                ignoreReportingBreach: options?.ignoreReportingBreach === true,
+                mepBreachStartDate,
+            }
+        );
+    } else if (options?.ignoreReportingBreach === true) {
+        ledgerLines = ledgerLines.map((line) =>
+            line.reportingBreach
+                ? { ...line, reportingBreach: false }
+                : line
+        );
+    }
 
     const waterfallScopeByCustomerPolicy = new Map<
         string,
@@ -1560,7 +1585,15 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         runContext.priorDayTrendCostByKey = nextPriorDayCache;
     }
 
-    return batchUpsertCustomerPolicyTrendRows(upsertRows);
+    const upserted = await batchUpsertCustomerPolicyTrendRows(upsertRows);
+    await pruneInactiveCustomerPolicyTrendRows({
+        accountId,
+        snapshotDate,
+        policyId: options?.policyId,
+        customerIds: options?.customerIds,
+    });
+
+    return upserted;
 }
 
 /**
@@ -1941,8 +1974,9 @@ export async function getCustomerPolicyPortfolioTrend(
 }
 
 /**
- * Per-policy risk exposure amount over time from {@link CustomerPolicyTrend} snapshots.
- * Amount at each point is the stored as-of `at_risk_exposure` for that day (Σ max(gap, breach)).
+ * Per-policy risk exposure components over time from {@link CustomerPolicyTrend}.
+ * `amount` = as-of `at_risk_exposure`; `capacityGapAmount` / `termsBreachAmount` =
+ * as-of gap and terms-breach outstanding for that policy assignment day.
  */
 export async function getCustomerRiskExposureAmountTrendByPolicy(
     accountId: number,
@@ -1960,6 +1994,9 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
         snapshot_date: Date;
         insurance_policy_id: number | null;
         at_risk_exposure: number;
+        usage_amount: number;
+        capacity_gap_amount: number;
+        terms_breach_amount: number;
         policy_number: string | null;
     };
 
@@ -1968,6 +2005,9 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
             t.snapshot_date,
             t.insurance_policy_id,
             t.at_risk_exposure,
+            t.usage_amount,
+            t.capacity_gap_amount,
+            t.terms_breach_amount,
             ip.policy_number
         FROM "CustomerPolicyTrend" t
         LEFT JOIN "InsurancePolicy" ip ON ip.id = t.insurance_policy_id
@@ -1988,9 +2028,15 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
         dateKeys.push(normalizeDateString(addUtcCalendarDays(fromDateUtc, i)));
     }
 
+    type DayPoint = {
+        amount: number;
+        openArAmount: number;
+        capacityGapAmount: number;
+        termsBreachAmount: number;
+    };
     const byPolicy = new Map<
         number,
-        { policyLabel: string; points: Map<string, number> }
+        { policyLabel: string; points: Map<string, DayPoint> }
     >();
 
     for (const row of rows) {
@@ -1999,6 +2045,15 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
             continue;
         }
         const amount = Math.max(0, Number(row.at_risk_exposure ?? 0));
+        const openArAmount = Math.max(0, Number(row.usage_amount ?? 0));
+        const capacityGapAmount = Math.max(
+            0,
+            Number(row.capacity_gap_amount ?? 0)
+        );
+        const termsBreachAmount = Math.max(
+            0,
+            Number(row.terms_breach_amount ?? 0)
+        );
         const dateStr = normalizeDateString(row.snapshot_date);
         const label =
             row.policy_number?.trim() || `Policy #${policyId}`;
@@ -2007,7 +2062,12 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
             bucket = { policyLabel: label, points: new Map() };
             byPolicy.set(policyId, bucket);
         }
-        bucket.points.set(dateStr, amount);
+        bucket.points.set(dateStr, {
+            amount,
+            openArAmount,
+            capacityGapAmount,
+            termsBreachAmount,
+        });
     }
 
     if (byPolicy.size === 0) {
@@ -2017,6 +2077,9 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
             series: dateKeys.map((snapshotDate) => ({
                 snapshotDate,
                 amount: 0,
+                openArAmount: 0,
+                capacityGapAmount: 0,
+                termsBreachAmount: 0,
             })),
         });
 
@@ -2063,9 +2126,15 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
     return Array.from(byPolicy.entries()).map(([policyId, bucket]) => ({
         policyId,
         policyLabel: bucket.policyLabel,
-        series: dateKeys.map((snapshotDate) => ({
-            snapshotDate,
-            amount: bucket.points.get(snapshotDate) ?? 0,
-        })),
+        series: dateKeys.map((snapshotDate) => {
+            const point = bucket.points.get(snapshotDate);
+            return {
+                snapshotDate,
+                amount: point?.amount ?? 0,
+                openArAmount: point?.openArAmount ?? 0,
+                capacityGapAmount: point?.capacityGapAmount ?? 0,
+                termsBreachAmount: point?.termsBreachAmount ?? 0,
+            };
+        }),
     }));
 }

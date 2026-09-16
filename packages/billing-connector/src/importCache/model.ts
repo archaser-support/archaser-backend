@@ -2,7 +2,7 @@ import mongoose, { Schema, type Document, type Model } from "mongoose";
 
 import {
     IMPORT_CACHE_TTL_SECONDS,
-    type ImportCacheEntityType,
+    type ImportCacheStorageType,
     type ImportCacheSyncMode,
 } from "./types";
 
@@ -10,7 +10,7 @@ export interface IConnectorImportEntityCacheDoc extends Document {
     account_id: number;
     connector_id: number;
     provider: string;
-    import_type: ImportCacheEntityType;
+    import_type: ImportCacheStorageType;
     sync_mode: ImportCacheSyncMode;
     cache_day: string;
     customer_scope: string;
@@ -35,7 +35,13 @@ const ConnectorImportEntityCacheSchema = new Schema(
         import_type: {
             type: String,
             required: true,
-            enum: ["Customer", "Contact", "Invoice", "Payment"],
+            enum: [
+                "Customer",
+                "Contact",
+                "Invoice",
+                "Payment",
+                "PendingInvoiceClose",
+            ],
         },
         sync_mode: {
             type: String,
@@ -69,12 +75,19 @@ ConnectorImportEntityCacheSchema.index(
     },
     { unique: true }
 );
-/** Listing today’s runs by mode + customer scope. */
+/** Listing runs for a day by mode + customer scope. */
 ConnectorImportEntityCacheSchema.index({
     account_id: 1,
     sync_mode: 1,
     cache_day: 1,
     customer_scope: 1,
+});
+/** Distinct cache_day listing within TTL (mode + scope). */
+ConnectorImportEntityCacheSchema.index({
+    account_id: 1,
+    sync_mode: 1,
+    customer_scope: 1,
+    cache_day: 1,
 });
 ConnectorImportEntityCacheSchema.index(
     { created_at: 1 },

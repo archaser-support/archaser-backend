@@ -3,12 +3,18 @@ export {
     IMPORT_CACHE_CUSTOMER_SCOPE_ALL,
     IMPORT_CACHE_ENTITY_TYPES,
     IMPORT_CACHE_MAX_CHUNK_BYTES,
+    IMPORT_CACHE_PENDING_INVOICE_CLOSE,
     IMPORT_CACHE_TTL_SECONDS,
+    PENDING_INVOICE_CLOSE_ROW_MARKER,
     type ImportCacheChunkMeta,
     type ImportCacheDocument,
+    type ImportCacheDaySummary,
     type ImportCacheEntityType,
     type ImportCacheKey,
+    type ImportCachePendingInvoiceCloseType,
+    type ImportCacheStorageType,
     type ImportCacheSyncMode,
+    type PendingInvoiceCloseTargets,
     type SameDayCacheRun,
     type SameDayCacheRunEntity,
     type SameDayCacheSummary,
@@ -24,22 +30,26 @@ export {
     rowsEnteringImport,
 } from "./cacheDay";
 export {
+    decodePendingInvoiceCloseRows,
+    findImportCacheDays,
     findSameDayCacheRuns,
     findSameDayCaches,
     loadEntityImportCache,
     loadEntityImportCacheDocuments,
     loadImportCachesForReplay,
+    loadPendingInvoiceCloseCache,
     loadSameDayImportCachesForReplay,
     resetImportCacheStoreForTests,
     saveEntityImportCache,
     saveEntityImportCacheOrThrow,
+    savePendingInvoiceCloseCacheOrThrow,
     trySaveEntityImportCache,
     useMemoryImportCacheStoreForTests,
     type LoadImportCachesForReplayResult,
     type LoadSameDayImportCachesResult,
 } from "./importCacheService";
 export { createMemoryImportCacheStore } from "./memoryStore";
-export type { ImportCacheStore } from "./store";
+export type { ImportCacheLoadKey, ImportCacheStore } from "./store";
 export {
     ensureImportCacheIndexes,
     resetImportCacheIndexesEnsuredForTests,

@@ -22,6 +22,7 @@
     "nodemailer": "9.0.6",
     "deepmerge-ts": "8.0.2",
     "postcss": "8.5.26",
+    "confbox": "0.2.2",
     "@nestjs/swagger": {
       "js-yaml": "5.4.1"
     }
@@ -58,7 +59,8 @@
     "format:check": "prettier --check .",
     "migrate:activity-keys": "npx tsx scripts/database/run-migration.ts",
     "migrate:activity-keys:dry": "npx tsx scripts/database/run-migration.ts --dry-run",
-    "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js"
+    "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js",
+    "update:rds-ip": "bash ./scripts/development/update-rds-ip.sh"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
