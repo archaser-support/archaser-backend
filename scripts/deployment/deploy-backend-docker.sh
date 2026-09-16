@@ -332,12 +332,14 @@ COMPOSE_MONITORING="$BACKEND_DIR/grafana/docker-compose.logging.yml"
 
 if [[ "$ENVIRONMENT" == "staging" ]]; then
     BACKEND_PROJECT="archaser-backend-staging"
+    MONITORING_PROJECT="archaser-monitoring-staging"
 elif [[ "$ENVIRONMENT" == "production" ]]; then
     BACKEND_PROJECT="archaser-backend-production"
+    MONITORING_PROJECT="archaser-monitoring-production"
 else
     BACKEND_PROJECT="archaser-backend"
+    MONITORING_PROJECT="archaser-monitoring"
 fi
-MONITORING_PROJECT="archaser-monitoring$PROJECT_SUFFIX"
 
 require_cmd docker
 require_cmd npm
