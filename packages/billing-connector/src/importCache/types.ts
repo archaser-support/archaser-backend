@@ -4,6 +4,19 @@ export type ImportCacheEntityType =
     | "Invoice"
     | "Payment";
 
+/**
+ * Internal cache kind for reconciled virtual-close IVNUMs queued during Payment
+ * transform (Helam debits are dropped from Payment rows but must survive replay).
+ * Not selectable in the Start cache UI.
+ */
+export const IMPORT_CACHE_PENDING_INVOICE_CLOSE = "PendingInvoiceClose" as const;
+export type ImportCachePendingInvoiceCloseType =
+    typeof IMPORT_CACHE_PENDING_INVOICE_CLOSE;
+
+export type ImportCacheStorageType =
+    | ImportCacheEntityType
+    | ImportCachePendingInvoiceCloseType;
+
 export type ImportCacheSyncMode = "BACKFILL" | "INCREMENTAL";
 
 /** Full-account runs use this sentinel so scoped runs never collide. */
@@ -24,10 +37,14 @@ export const IMPORT_CACHE_ENTITY_TYPES: ImportCacheEntityType[] = [
     "Payment",
 ];
 
+/** Marker on the single payload row stored under PendingInvoiceClose. */
+export const PENDING_INVOICE_CLOSE_ROW_MARKER =
+    "__archaser_pending_invoice_closes" as const;
+
 export interface ImportCacheKey {
     accountId: number;
     executionId: string;
-    importType: ImportCacheEntityType;
+    importType: ImportCacheStorageType;
     syncMode: ImportCacheSyncMode;
     cacheDay: string;
     customerScope: string;
@@ -39,11 +56,17 @@ export interface SaveEntityImportCacheInput extends ImportCacheKey {
     rows: Record<string, unknown>[];
 }
 
+export interface PendingInvoiceCloseTargets {
+    invoiceNumbers: string[];
+    /** ISO date strings keyed by invoice number. */
+    closeDates: Record<string, string>;
+}
+
 export interface ImportCacheChunkMeta {
     account_id: number;
     connector_id: number;
     provider: string;
-    import_type: ImportCacheEntityType;
+    import_type: ImportCacheStorageType;
     sync_mode: ImportCacheSyncMode;
     cache_day: string;
     customer_scope: string;
@@ -76,7 +99,7 @@ export interface SameDayCacheRunEntity {
     available: boolean;
 }
 
-/** One successful sync run’s backups for today (may be incomplete). */
+/** One successful sync run’s backups for a cache day (may be incomplete). */
 export interface SameDayCacheRun {
     execution_id: string;
     created_at: Date;
@@ -84,4 +107,10 @@ export interface SameDayCacheRun {
     cache_day: string;
     customer_scope: string;
     entities: SameDayCacheRunEntity[];
+}
+
+/** Calendar day with ≥1 selectable entity backup within TTL. */
+export interface ImportCacheDaySummary {
+    cache_day: string;
+    run_count: number;
 }

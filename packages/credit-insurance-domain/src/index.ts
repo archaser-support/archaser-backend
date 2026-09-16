@@ -59,7 +59,10 @@ export {
 // --- Worker / connector entry points (currently loaded dynamically; slice 04 switches them to these) ---
 export { syncCustomerInsuranceFields } from "./credit-insurance/domain/syncCustomerInsuranceFields";
 export {
+    refreshCtvSnapshotsForInvoiceIds,
     refreshInsuranceTargetDatesForInvoiceIds,
+    refreshTermsBreachFlagsForCustomer,
+    refreshTermsBreachFlagsForCustomers,
     sweepReportingBreachForOverdueInvoiceIds,
 } from "./credit-insurance/domain/syncInvoiceReportingBreach";
 export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/insurancePolicyStatusCron";
@@ -109,6 +112,12 @@ export {
     clearInvoicePaidToleranceCache,
     resolveInvoicePaidTolerance,
 } from "./credit-insurance/domain/resolveInvoicePaidTolerance";
+export {
+    INVOICE_PAID_TOLERANCE,
+    INVOICE_PAID_TOLERANCE_MAX,
+    INVOICE_PAID_TOLERANCE_MIN,
+    isWithinPaidTolerance,
+} from "./credit-insurance/domain/invoicePaidTolerance";
 
 // --- Reporting breach start date gate (imported pre-go-live history) ---
 export { isInvoiceInReportingBreachScope } from "./credit-insurance/domain/shared/reportingBreachScope";
@@ -148,12 +157,21 @@ export {
     asOfTermsScopeKey,
     buildAsOfAtRiskInvoiceInputsByCustomerInAccountCurrencyFromLines,
     buildAsOfAtRiskInvoiceInputsFromLines,
+    buildAsOfPolicyTermsByCustomerMap,
+    computeAsOfOpenInvoiceLine,
+    isCreatedInCustomerOverdueMep,
     loadAsOfOpenInvoiceCandidates,
+    oldestOverdueDueAtEachInvoiceIssueDate,
     overlayAsOfLiveCapacityGapWaterfallOnLines,
+    overlayAsOfTermsFlagsForAccountLines,
     overlayAsOfTermsFlagsOnLines,
+    wasAsOfInvoiceOpenAt,
+    isUtcCalendarToday,
     type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
     type AsOfPolicyTermsForBreach,
+    type CustomerOverdueMepMonthEnd,
+    type OldestOverdueAtIssue,
 } from "./credit-insurance/domain/asOfOpenAr";
 export {
     aggregateLedgerPaymentsOnOrBefore,
@@ -164,6 +182,7 @@ export {
     type AsOfOpenInvoiceLedger,
 } from "./credit-insurance/domain/asOfOpenArLedgerPreload";
 export {
+    buildAsOfTermsMapFromActiveCustomerPolicies,
     buildCreditAsOfBackfillRunContext,
     createMinimalCreditAsOfBackfillRunContext,
     deriveDashboardSnapshotScopes,
@@ -239,6 +258,214 @@ export {
     isPendingReviewExclusion,
     normalizePolicyExclusionReason,
 } from "./credit-insurance/domain/shared/policyExclusion";
+export {
+    addUtcDaysToYmd,
+    analyzeBooleanDaySeries,
+    areCalendarConsecutive,
+    detectStaleArRuns,
+    enumerateBooleanDayRuns,
+    longestBooleanStreakWindow,
+    longestExactValueStreak,
+    longestExactValueStreakWindow,
+    trailingLinearSlope,
+    utcDayPlusOne,
+    ymdToUtcDayNumber,
+    type BooleanDayRunEpisode,
+    type BooleanDaySeriesAnalysis,
+    type CtpArDayPoint,
+    type CtpBooleanDayPoint,
+    type CtpSnapshotDay,
+    type CtpValueDayPoint,
+    type ExactValueStreakWindow,
+    type StaleArDetectionResult,
+    type StaleArRun,
+    type StreakWindow,
+    type TrailingLinearSlopeOptions,
+    type TrailingLinearSlopeResult,
+} from "./credit-insurance/domain/shared/ctpDailySeries";
+export {
+    computeCustomerOverLimitGapMetrics,
+    isCapacityGapOverLimitDay,
+    summarizePortfolioOverLimitGap,
+    type CtpCapacityGapDayPoint,
+    type CustomerOverLimitGapMetrics,
+    type CustomerOverLimitGapRow,
+    type PortfolioOverLimitGapSummary,
+} from "./credit-insurance/domain/shared/ctpOverLimitGapMetrics";
+export {
+    fetchCapacityGapDaysPeriodCustomers,
+    fetchCapacityGapDaysPeriodSummary,
+    fetchCustomerTrailingOverLimitGapMetrics,
+    type FetchCapacityGapDaysPeriodOptions,
+} from "./credit-insurance/domain/capacityGapDaysPeriod";
+export {
+    AR_EXTREME_DOD_PCT_THRESHOLD,
+    HEALTH_SLOPE_DETERIORATING_THRESHOLD,
+    HEALTH_SLOPE_IMPROVING_THRESHOLD,
+    HEALTH_SLOPE_MIN_DAYS,
+    classifyHealthSlope,
+    computeArVolatility,
+    computeCustomerHealthSlopeVolatilityMetrics,
+    computeHealthMomentum,
+    resolveHealthPeakAndCurrent,
+    type ArDodChangePoint,
+    type ArNewActivityEvent,
+    type ArVolatilityOptions,
+    type ArVolatilityResult,
+    type CustomerHealthSlopeVolatilityMetrics,
+    type HealthMomentumClassification,
+    type HealthMomentumOptions,
+    type HealthMomentumResult,
+} from "./credit-insurance/domain/shared/ctpHealthSlopeVolatility";
+export {
+    fetchArExtremeMovesPeriodCustomers,
+    fetchCustomerTrailingStaleSlopeVolatilityMetrics,
+    fetchStaleSlopeVolatilityPeriodCustomers,
+    fetchStaleSlopeVolatilityPeriodSummary,
+    summarizePortfolioStaleSlopeVolatility,
+    type CustomerStaleSlopeVolatilityRow,
+    type FetchStaleSlopeVolatilityPeriodOptions,
+    type PortfolioStaleSlopeVolatilitySummary,
+} from "./credit-insurance/domain/staleSlopeVolatilityPeriod";
+export {
+    LIMIT_CAPPED_AR_CV_MIN,
+    LIMIT_CAPPED_AR_GROWTH_MIN,
+    LIMIT_CAPPED_COMPLIANT_CV_MAX,
+    LIMIT_CAPPED_MIN_DAYS,
+    computeCustomerOvershootLimitCappedMetrics,
+    computeUtilizationOvershootMetrics,
+    detectLimitCapped,
+    rankCustomersByOvershoot,
+    summarizePortfolioOvershoot,
+    utilizationOvershootPts,
+    type CtpLimitCappedDayPoint,
+    type CtpUtilizationDayPoint,
+    type CustomerOvershootLimitCappedMetrics,
+    type CustomerOvershootLimitCappedRow,
+    type LimitCappedDetectionResult,
+    type LimitCappedNormalizedPoint,
+    type LimitCappedThresholds,
+    type PortfolioOvershootSummary,
+    type UtilizationOvershootMetrics,
+} from "./credit-insurance/domain/shared/ctpOvershootLimitCappedMetrics";
+export {
+    fetchCustomerTrailingOvershootLimitCappedMetrics,
+    fetchLimitCappedPeriodCustomers,
+    fetchOvershootLimitCappedPeriodCustomers,
+    fetchOvershootLimitCappedPeriodSummary,
+    fetchOvershootRankingPeriodCustomers,
+    type FetchOvershootLimitCappedPeriodOptions,
+} from "./credit-insurance/domain/overshootLimitCappedPeriod";
+export {
+    NEGATIVE_COST_MIN_MAGNITUDE,
+    collectNegativeCostEntries,
+    resolveNegativeCostFlag,
+    summarizeCustomerNegativeCosts,
+    summarizePortfolioNegativeCosts,
+    type CustomerNegativeCostSummary,
+    type NegativeCostEntryInput,
+    type NegativeCostFlaggedEntry,
+    type NegativeCostThresholds,
+    type PortfolioNegativeCostSummary,
+} from "./credit-insurance/domain/shared/ctpNegativeCostMetrics";
+export {
+    fetchNegativeCostPeriod,
+    fetchNegativeCostPeriodCustomers,
+    fetchNegativeCostPeriodSummary,
+    type FetchNegativeCostPeriodOptions,
+    type NegativeCostPeriodResult,
+} from "./credit-insurance/domain/negativeCostPeriod";
+export {
+    RECONCILIATION_ABS_DELTA_EPSILON,
+    collectExposureReconciliationFailures,
+    evaluateExposureReconciliation,
+    summarizeCustomerExposureReconciliation,
+    summarizePortfolioExposureReconciliation,
+    type CustomerExposureReconciliationSummary,
+    type ExposureReconciliationFlaggedRow,
+    type ExposureReconciliationInput,
+    type PortfolioExposureReconciliationSummary,
+    type ReconciliationThresholds,
+} from "./credit-insurance/domain/shared/ctpExposureReconciliationMetrics";
+export {
+    fetchExposureReconciliationPeriod,
+    fetchExposureReconciliationPeriodCustomers,
+    fetchExposureReconciliationPeriodSummary,
+    type ExposureReconciliationPeriodResult,
+    type FetchExposureReconciliationPeriodOptions,
+} from "./credit-insurance/domain/exposureReconciliationPeriod";
+export {
+    CONCENTRATION_ALERT_TOP1_PCT,
+    computeCustomerShareOfPolicyOpenAr,
+    computePolicyConcentrationMetrics,
+    type PolicyConcentrationCustomerInput,
+    type PolicyConcentrationMetrics,
+    type PolicyConcentrationRankedCustomer,
+    type PolicyConcentrationThresholds,
+} from "./credit-insurance/domain/shared/ctpPolicyConcentrationMetrics";
+export {
+    fetchCustomerShareOfPolicyOpenAr,
+    fetchPolicyConcentrationRankingRows,
+    fetchPolicyConcentrationSnapshots,
+    type FetchPolicyConcentrationOptions,
+    type PolicyConcentrationSnapshotRow,
+} from "./credit-insurance/domain/policyConcentrationPeriod";
+export {
+    LIMIT_BREACH_FORECAST_MAX_HORIZON_DAYS,
+    LIMIT_BREACH_FORECAST_MIN_DAYS,
+    LIMIT_BREACH_FORECAST_R2_FLOOR,
+    LIMIT_BREACH_FORECAST_THRESHOLDS,
+    LIMIT_BREACH_FORECAST_TRAILING_DAYS,
+    computeLimitBreachForecast,
+    hasProjectedLimitBreach,
+    type LimitBreachForecastOptions,
+    type LimitBreachForecastResult,
+    type LimitBreachForecastStatus,
+    type LimitBreachThresholdForecast,
+} from "./credit-insurance/domain/shared/ctpLimitBreachForecastMetrics";
+export {
+    fetchCustomerTrailingLimitBreachForecast,
+    fetchLimitBreachForecastPeriodCustomers,
+    fetchProjectedLimitBreachCustomers,
+    type CustomerLimitBreachForecastRow,
+    type FetchLimitBreachForecastOptions,
+} from "./credit-insurance/domain/limitBreachForecastPeriod";
+export {
+    BREACH_DILUTION_AR_GROWTH_MIN,
+    BREACH_DILUTION_HEALTH_RISE_MIN_PTS,
+    BREACH_DILUTION_MIN_DAYS,
+    BREACH_PERSISTENT_MAX_DECLINE,
+    BREACH_RESOLVED_MIN_DECLINE,
+    classifyBreachDilution,
+    computeBreachStreakMetrics,
+    computeCustomerBreachDilutionStreakMetrics,
+    formatBreachEpisodesSummary,
+    isTermsBreachDay,
+    latestBreachEpisode,
+    mergeBreachDayPoints,
+    rankDilutedCustomers,
+    summarizePortfolioBreachDilutionStreak,
+    type BreachDilutionClassification,
+    type BreachDilutionMetrics,
+    type BreachDilutionThresholds,
+    type BreachEpisode,
+    type BreachStreakMetrics,
+    type BreachStreakStatus,
+    type CtpBreachDayPoint,
+    type CustomerBreachDilutionStreakMetrics,
+    type CustomerBreachDilutionStreakRow,
+    type PortfolioBreachDilutionStreakSummary,
+} from "./credit-insurance/domain/shared/ctpBreachDilutionStreakMetrics";
+export {
+    breachEpisodeReportFields,
+    fetchBreachDilutionStreakPeriodCustomers,
+    fetchBreachDilutionStreakPeriodSummary,
+    fetchBreachEpisodePeriodCustomers,
+    fetchCustomerTrailingBreachDilutionStreakMetrics,
+    fetchDilutedBreachPeriodCustomers,
+    type BreachDilutionStreakPeriodResult,
+    type FetchBreachDilutionStreakPeriodOptions,
+} from "./credit-insurance/domain/breachDilutionStreakPeriod";
 export {
     computeGapInBaseCurrency,
     freezeCustomerPolicyGapOnDeactivation,

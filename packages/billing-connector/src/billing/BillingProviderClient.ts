@@ -36,6 +36,11 @@ export interface PullOptions {
     preferredDateField?: string | null;
     /** Backfill window start — client adds `{dateField} ge …` after discovering columns. */
     createdOnOrAfter?: Date | null;
+    /**
+     * Override keyset `$orderby` field chain (must be unique left-to-right).
+     * Account extensions set this for custom ERP tables (e.g. IDG FNCDATE,FNCNUM,KLINE).
+     */
+    keysetOrderFields?: string[] | null;
 }
 
 export interface BillingProviderClient {

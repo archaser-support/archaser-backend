@@ -677,6 +677,18 @@ export class OperationsService {
                             customer_number: true,
                         },
                     },
+                    DisputeInvoice: {
+                        include: {
+                            Invoice: {
+                                select: {
+                                    id: true,
+                                    invoice_number: true,
+                                    amount: true,
+                                    outstanding_debt: true,
+                                },
+                            },
+                        },
+                    },
                 },
                 orderBy: { created_at: "desc" },
                 skip: (page - 1) * limit,
@@ -685,7 +697,22 @@ export class OperationsService {
             this.db.customerDispute.count({ where: where as never }),
         ]);
 
-        return serializeBigInt({ disputes, totalRecords, page, limit });
+        const mapped = disputes.map((dispute) => {
+            const invoices = (dispute.DisputeInvoice || [])
+                .map((row) => row.Invoice)
+                .filter((invoice): invoice is NonNullable<typeof invoice> =>
+                    Boolean(invoice)
+                );
+            const { DisputeInvoice: _di, ...rest } = dispute;
+            return { ...rest, invoices };
+        });
+
+        return serializeBigInt({
+            disputes: mapped,
+            totalRecords,
+            page,
+            limit,
+        });
     }
 
     private async getDispute(user: JwtPayload, id: number) {
@@ -719,6 +746,24 @@ export class OperationsService {
         delete data.customer_id;
         delete data.created_at;
         delete data.created_by;
+        delete data.comment;
+        delete data.dispute_comment;
+        delete data.user_comment;
+        delete data.assigned_user_id;
+        delete data.assignee;
+        if (body.comment != null || body.dispute_comment != null) {
+            data.resolution_comment =
+                body.resolution_comment ??
+                body.dispute_comment ??
+                body.comment ??
+                null;
+        }
+        if (
+            data.owner_id == null &&
+            (body.assigned_user_id != null || body.assignee != null)
+        ) {
+            data.owner_id = body.assigned_user_id ?? body.assignee ?? null;
+        }
 
         const updated = await this.db.customerDispute.update({
             where: { id },
@@ -742,6 +787,7 @@ export class OperationsService {
         const [disputeReasons, totalRecords] = await Promise.all([
             this.db.disputeReason.findMany({
                 where,
+                include: { DisputeReasonLanguage: true },
                 orderBy: { id: "asc" },
                 skip: (page - 1) * limit,
                 take: limit,
@@ -749,18 +795,33 @@ export class OperationsService {
             this.db.disputeReason.count({ where }),
         ]);
 
-        return serializeBigInt({ disputeReasons, totalRecords, page, limit });
+        return serializeBigInt({
+            disputeReasons: disputeReasons.map((reason) => ({
+                ...reason,
+                languageTemplates: reason.DisputeReasonLanguage,
+            })),
+            totalRecords,
+            page,
+            limit,
+        });
     }
 
     private async getDisputeReason(user: JwtPayload, id: number) {
         const accountId = await this.scope(user);
         const reason = await this.db.disputeReason.findFirst({
-            where: { id, OR: [{ account_id: accountId }, { master_template: true }] },
+            where: {
+                id,
+                OR: [{ account_id: accountId }, { master_template: true }],
+            },
+            include: { DisputeReasonLanguage: true },
         });
         if (!reason) {
             throw new NotFoundException({ error: "Dispute reason not found" });
         }
-        return serializeBigInt(reason);
+        return serializeBigInt({
+            ...reason,
+            languageTemplates: reason.DisputeReasonLanguage,
+        });
     }
 
     private async updateDisputeReason(
@@ -768,7 +829,8 @@ export class OperationsService {
         id: number,
         body: Record<string, unknown>
     ) {
-        const accountId = await this.scope(user);
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
         const existing = await this.db.disputeReason.findFirst({
             where: { id, account_id: accountId },
             select: { id: true },
@@ -779,17 +841,55 @@ export class OperationsService {
             });
         }
 
+        const languageTemplates = Array.isArray(body.languageTemplates)
+            ? (body.languageTemplates as Array<Record<string, unknown>>)
+            : Array.isArray(body.language_templates)
+              ? (body.language_templates as Array<Record<string, unknown>>)
+              : null;
+
         const data: Record<string, unknown> = { ...body };
         delete data.id;
         delete data.account_id;
         delete data.created_at;
         delete data.created_by;
+        delete data.languageTemplates;
+        delete data.language_templates;
+        delete data.DisputeReasonLanguage;
+        data.modified_by = userInfo.userId;
+        data.modified_at = new Date();
 
-        const updated = await this.db.disputeReason.update({
-            where: { id },
-            data: data as never,
+        const updated = await this.db.$transaction(async (tx) => {
+            await tx.disputeReason.update({
+                where: { id },
+                data: data as never,
+            });
+            if (languageTemplates) {
+                await tx.disputeReasonLanguage.deleteMany({
+                    where: { dispute_reason_id: id },
+                });
+                const rows = languageTemplates
+                    .filter((t) => t.language && t.name)
+                    .map((t) => ({
+                        dispute_reason_id: id,
+                        language: String(t.language),
+                        name: String(t.name),
+                        created_by: userInfo.userId,
+                        modified_by: userInfo.userId,
+                    }));
+                if (rows.length > 0) {
+                    await tx.disputeReasonLanguage.createMany({ data: rows });
+                }
+            }
+            return tx.disputeReason.findUnique({
+                where: { id },
+                include: { DisputeReasonLanguage: true },
+            });
         });
-        return serializeBigInt(updated);
+
+        return serializeBigInt({
+            ...updated,
+            languageTemplates: updated?.DisputeReasonLanguage,
+        });
     }
 
     private async createDisputeReason(

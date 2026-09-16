@@ -9,11 +9,17 @@ import {
     computeCustomerOverdueBlock,
     computeInvoiceInsuranceRowData,
     computeLimitExcessOverEffective,
+    isEligibleForCustomerMepOverdue,
     isNegativeInvoiceAmount,
     type CustomerAtRiskInvoiceInput,
 } from "./invoiceInsuranceFields";
 import { computeInvoiceLineOpenArInAccountCurrency } from "./openReceivableByCustomerCurrency";
 import { resolveInvoicePaidTolerance } from "./resolveInvoicePaidTolerance";
+import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
+import {
+    INVOICE_PAID_TOLERANCE,
+    isWithinPaidTolerance,
+} from "./invoicePaidTolerance";
 import { isInvoiceInMepBreachScope } from "./shared/mepBreachScope";
 
 /** Invoice statuses excluded from as-of open AR (cancelled / void book). */
@@ -38,34 +44,82 @@ export function preferAmountPair(pair: AsOfAmountPair): number {
     return Number(pair.customerAmount ?? 0);
 }
 
-/**
- * Residue below this is treated as closed. `InvoicePayment.amount` is float4, so
- * summing a full payment against a float8 invoice amount leaves cents-scale dust
- * (e.g. 13457.05 − 13457.0498046875) that would otherwise read as still open.
- * Mirrors `INVOICE_PAID_TOLERANCE` in @archaser/billing-connector, duplicated
- * because this package must stay a leaf (no @archaser imports).
- */
-export const ASOF_OPEN_AMOUNT_TOLERANCE = 0.2;
+/** @deprecated Prefer {@link INVOICE_PAID_TOLERANCE} — same shared default. */
+export const ASOF_OPEN_AMOUNT_TOLERANCE = INVOICE_PAID_TOLERANCE;
 
 /**
  * Payment-ledger open amount as of day D: original − payments on/before D.
- * Near-zero residue (both sides of tolerance) is treated as fully paid — same
- * two-sided rule as live credit-note paid detection — so open credit notes
- * (negative outstanding) stay negative and reduce customer / dashboard AR.
+ * Near-zero residue uses shared {@link isWithinPaidTolerance} (Billing Paid
+ * leftover / CPT as-of open AR).
  */
 export function computeAsOfOpenAmount(
     original: number,
     paymentsOnOrBeforeAsOf: number,
-    tolerance: number = ASOF_OPEN_AMOUNT_TOLERANCE
+    tolerance: number = INVOICE_PAID_TOLERANCE
 ): number {
     const open = Number(original) - Number(paymentsOnOrBeforeAsOf);
     if (!Number.isFinite(open)) {
         return 0;
     }
-    if (open >= -tolerance && open <= tolerance) {
+    if (isWithinPaidTolerance(open, tolerance)) {
         return 0;
     }
     return open;
+}
+
+/**
+ * Customer-currency as-of open (Billing Paid leftover band).
+ * Prefer customer amounts; fall back to document amounts when customer is unset.
+ */
+export function computeAsOfOpenCustomerAmount(
+    line: Pick<
+        AsOfOpenInvoiceLine,
+        | "amount"
+        | "customerAmount"
+        | "paymentsOnOrBeforeAsOf"
+        | "paymentsCustomerOnOrBeforeAsOf"
+        | "openAmountTolerance"
+    >
+): number {
+    const tolerance = line.openAmountTolerance ?? INVOICE_PAID_TOLERANCE;
+    const original =
+        Number(line.customerAmount ?? 0) || Number(line.amount ?? 0);
+    const paid =
+        Number(line.paymentsCustomerOnOrBeforeAsOf ?? 0) ||
+        Number(line.paymentsOnOrBeforeAsOf ?? 0);
+    return computeAsOfOpenAmount(original, paid, tolerance);
+}
+
+/**
+ * Account/document-side as-of open (portfolio AR currency path).
+ * When customer-currency leftover is within Paid tolerance, both sides are
+ * treated as closed — same decision Billing uses to stamp status Paid.
+ */
+export function computeAsOfOpenAccountAmount(
+    line: Pick<
+        AsOfOpenInvoiceLine,
+        | "amount"
+        | "customerAmount"
+        | "paymentsOnOrBeforeAsOf"
+        | "paymentsCustomerOnOrBeforeAsOf"
+        | "openAmountTolerance"
+    >
+): number {
+    const tolerance = line.openAmountTolerance ?? INVOICE_PAID_TOLERANCE;
+    if (computeAsOfOpenCustomerAmount(line) === 0) {
+        return 0;
+    }
+    return computeAsOfOpenAmount(
+        preferAmountPair({
+            amount: line.amount,
+            customerAmount: line.customerAmount,
+        }),
+        preferAmountPair({
+            amount: line.paymentsOnOrBeforeAsOf,
+            customerAmount: line.paymentsCustomerOnOrBeforeAsOf,
+        }),
+        tolerance
+    );
 }
 
 export type AsOfOpenStatus = "Due" | "Overdue";
@@ -83,6 +137,14 @@ export function classifyAsOfOpenStatus(
     const due = toUtcDayStart(dueDate);
     const asOf = toUtcDayStart(asOfDate);
     return due.getTime() < asOf.getTime() ? "Overdue" : "Due";
+}
+
+/** True when `date` falls on the same UTC calendar day as `now` (default: wall clock). */
+export function isUtcCalendarToday(
+    date: Date,
+    now: Date = new Date()
+): boolean {
+    return toUtcDayStart(date).getTime() === toUtcDayStart(now).getTime();
 }
 
 export function toUtcDayStart(date: Date): Date {
@@ -109,18 +171,24 @@ export type AsOfOpenInvoiceLine = {
     customerCurrency: string | null;
     paymentsOnOrBeforeAsOf: number;
     paymentsCustomerOnOrBeforeAsOf: number;
-    /** Latest payment on/before the snapshot load day; used to reconstruct open-at-creation. */
+    /**
+     * True last payment date on the invoice (any day). Used with
+     * {@link wasAsOfInvoiceOpenAt} when live status is Paid but the payment
+     * ledger as of the snapshot day is already zero — only then does a later
+     * payment date reopen history. Payment *sums* stay as-of the snapshot day.
+     */
     lastPaymentDate?: Date | null;
     /**
-     * Invoice row itself reports settled. Extension close paths (offset /
-     * reconciled virtual close) settle an invoice without payment rows that
-     * cover the account-side amount, so the ledger alone would keep it open
-     * forever.
+     * Invoice row itself reports settled *today*. Must not erase history: when
+     * payments on/before the snapshot day leave a non-zero open amount, the
+     * invoice was open on that day even if status is Paid now.
+     * Exception: when the as-of day is UTC today, live Paid wins so today's CPT
+     * tip matches live At Risk (future-dated payments already applied live).
      */
     liveClosed?: boolean;
     /**
-     * Residue threshold for Open invoices. Paid (`liveClosed`) ignores this and
-     * stays closed from the last payment day onward.
+     * Residue threshold for Open invoices. Also used when deciding whether a
+     * currently-Paid invoice still had open AR on the snapshot day.
      */
     openAmountTolerance?: number;
     reportingBreach: boolean;
@@ -342,12 +410,11 @@ export function overlayAsOfLiveCapacityGapWaterfallOnLines(
 
 /**
  * Whether `line` still had open AR on calendar day `atDate`.
- * Snapshot payment totals are as-of the load day; lastPaymentDate reconstructs
- * invoices that were later paid.
  *
- * A settled invoice is closed from its last payment day onward even when the
- * ledger cannot account for the full amount; with no payment rows at all there
- * is no close date to reconstruct, so it never counts as open.
+ * Prefer customer-currency Paid leftover (± tolerance). Payment sums are usually
+ * already as-of `atDate`; created-in-MEP may reuse lines loaded for a later
+ * snapshot day — then a zero residue with `lastPaymentDate` after `atDate`
+ * still means open on `atDate` (paid later).
  */
 export function wasAsOfInvoiceOpenAt(
     line: AsOfOpenInvoiceLine,
@@ -357,35 +424,38 @@ export function wasAsOfInvoiceOpenAt(
     if (toUtcDayStart(line.invoiceDate).getTime() > at.getTime()) {
         return false;
     }
-    if (line.liveClosed) {
-        return line.lastPaymentDate
-            ? toUtcDayStart(line.lastPaymentDate).getTime() > at.getTime()
-            : false;
-    }
-    const original = preferAmountPair({
-        amount: line.amount,
-        customerAmount: line.customerAmount,
-    });
-    const paidAsOfLoad = preferAmountPair({
-        amount: line.paymentsOnOrBeforeAsOf,
-        customerAmount: line.paymentsCustomerOnOrBeforeAsOf,
-    });
-    const openAsOfLoad = computeAsOfOpenAmount(
-        original,
-        paidAsOfLoad,
-        line.openAmountTolerance
-    );
-    if (openAsOfLoad !== 0) {
-        return true;
-    }
-    if (paidAsOfLoad <= 0) {
-        const tolerance = line.openAmountTolerance ?? ASOF_OPEN_AMOUNT_TOLERANCE;
-        return Math.abs(original) > tolerance;
-    }
-    if (!line.lastPaymentDate) {
+    // Today's CPT / as-of snapshot must match the live book. Future-dated ERP
+    // payments can already mark the invoice Paid while payment_date is still
+    // after today — do not reopen those on the "today" tip of the chart.
+    // Historical days keep the paid-later reopen rule below.
+    if (line.liveClosed && isUtcCalendarToday(at)) {
         return false;
     }
-    return toUtcDayStart(line.lastPaymentDate).getTime() > at.getTime();
+    const openCustomer = computeAsOfOpenCustomerAmount(line);
+    if (openCustomer !== 0) {
+        return true;
+    }
+    // Sums may include payments after `atDate` (MEP overlay on snapshot-loaded
+    // siblings). Closing payment after `atDate` ⇒ still open that day.
+    if (
+        line.lastPaymentDate &&
+        toUtcDayStart(line.lastPaymentDate).getTime() > at.getTime()
+    ) {
+        return true;
+    }
+    if (line.liveClosed) {
+        return false;
+    }
+    const original =
+        Number(line.customerAmount ?? 0) || Number(line.amount ?? 0);
+    const paidAsOfLoad =
+        Number(line.paymentsCustomerOnOrBeforeAsOf ?? 0) ||
+        Number(line.paymentsOnOrBeforeAsOf ?? 0);
+    if (paidAsOfLoad <= 0) {
+        const tolerance = line.openAmountTolerance ?? INVOICE_PAID_TOLERANCE;
+        return !isWithinPaidTolerance(original, tolerance);
+    }
+    return false;
 }
 
 /**
@@ -396,13 +466,20 @@ export function wasAsOfInvoiceOpenAt(
  * date from the candidate set, using the same shared predicate as the live
  * block computation so replay and live cannot disagree.
  */
+export type CustomerOverdueMepMonthEnd = {
+    mepCutoffDay?: number | null;
+    mepSubstituteExtraDays?: number | null;
+};
+
 export function asOfCustomerOverdueBlockAt(
     customerLines: AsOfOpenInvoiceLine[],
     atDate: Date,
     maxAllowedMep: number | null | undefined,
-    mepBreachStartDate?: Date | null
+    mepBreachStartDate?: Date | null,
+    monthEnd?: CustomerOverdueMepMonthEnd
 ): boolean {
     let oldestOverdueDue: Date | null = null;
+    let oldestOverdueIssueDate: Date | null = null;
     for (const line of customerLines) {
         if (!isInvoiceInMepBreachScope(line.invoiceDate, mepBreachStartDate)) {
             continue;
@@ -420,21 +497,306 @@ export function asOfCustomerOverdueBlockAt(
             continue;
         }
         const due = toUtcDayStart(line.dueDate);
-        if (!oldestOverdueDue || due.getTime() < oldestOverdueDue.getTime()) {
+        const issue = toUtcDayStart(line.invoiceDate);
+        if (
+            !oldestOverdueDue ||
+            due.getTime() < oldestOverdueDue.getTime() ||
+            (due.getTime() === oldestOverdueDue.getTime() &&
+                issue.getTime() < (oldestOverdueIssueDate?.getTime() ?? Infinity))
+        ) {
             oldestOverdueDue = due;
+            oldestOverdueIssueDate = issue;
         }
     }
     return computeCustomerOverdueBlock({
         oldestInvoiceOverdueDate: oldestOverdueDue,
         maxAllowedMepDays: maxAllowedMep,
         today: atDate,
+        oldestInvoiceIssueDate: oldestOverdueIssueDate,
+        mepCutoffDay: monthEnd?.mepCutoffDay,
+        mepSubstituteExtraDays: monthEnd?.mepSubstituteExtraDays,
     });
 }
 
 /**
+ * Created-in-MEP: invoice was issued while the customer overdue block was
+ * already on. Shared by CPT terms overlay and live CTV stamp
+ * ({@link resolveCreatedOverdueMepByInvoiceId}).
+ *
+ * Credit notes and out-of-scope issue dates are never flagged. Sibling lines
+ * must cover the customer's open book; payment sums may be loaded for a later
+ * cutoff — {@link wasAsOfInvoiceOpenAt} uses `lastPaymentDate` for pay-later.
+ */
+export function isCreatedInCustomerOverdueMep(args: {
+    invoiceDate: Date;
+    amount: number | null | undefined;
+    siblingLines: AsOfOpenInvoiceLine[];
+    maxAllowedMep: number | null | undefined;
+    mepBreachStartDate?: Date | null;
+    monthEnd?: CustomerOverdueMepMonthEnd;
+}): boolean {
+    if (args.maxAllowedMep == null) {
+        return false;
+    }
+    if (!isEligibleForCustomerMepOverdue(args.amount)) {
+        return false;
+    }
+    if (
+        !isInvoiceInMepBreachScope(
+            args.invoiceDate,
+            args.mepBreachStartDate
+        )
+    ) {
+        return false;
+    }
+    return asOfCustomerOverdueBlockAt(
+        args.siblingLines,
+        args.invoiceDate,
+        args.maxAllowedMep,
+        args.mepBreachStartDate,
+        args.monthEnd
+    );
+}
+
+/**
+ * Exclusive upper bound on calendar-day `T` for which
+ * {@link wasAsOfInvoiceOpenAt} is true (assuming `invoiceDate <= T`).
+ * `null` means never open for any such `T`.
+ */
+function resolveAsOfOpenUntilExclusiveMs(
+    line: AsOfOpenInvoiceLine
+): number | null {
+    const openCustomer = computeAsOfOpenCustomerAmount(line);
+    if (openCustomer !== 0) {
+        return Number.POSITIVE_INFINITY;
+    }
+    if (line.lastPaymentDate) {
+        return toUtcDayStart(line.lastPaymentDate).getTime();
+    }
+    if (line.liveClosed) {
+        return null;
+    }
+    const original =
+        Number(line.customerAmount ?? 0) || Number(line.amount ?? 0);
+    const paidAsOfLoad =
+        Number(line.paymentsCustomerOnOrBeforeAsOf ?? 0) ||
+        Number(line.paymentsOnOrBeforeAsOf ?? 0);
+    if (paidAsOfLoad <= 0) {
+        const tolerance = line.openAmountTolerance ?? INVOICE_PAID_TOLERANCE;
+        if (!isWithinPaidTolerance(original, tolerance)) {
+            return Number.POSITIVE_INFINITY;
+        }
+    }
+    return null;
+}
+
+const MS_PER_UTC_DAY = 86_400_000;
+
+/**
+ * Oldest overdue sibling open on an invoice's issue date (due + that sibling's
+ * issue date for the Extra Days cutoff gate). Same selection
+ * {@link asOfCustomerOverdueBlockAt} uses before applying max MEP / Extra Days.
+ *
+ * Chronological sweep: O(C log C) activate/deactivate instead of O(C²) sibling
+ * rescans (CPT Generate bottleneck when one customer has hundreds of invoices).
+ */
+export type OldestOverdueAtIssue = {
+    dueDate: Date;
+    invoiceDate: Date;
+};
+
+export function oldestOverdueDueAtEachInvoiceIssueDate(
+    customerLines: AsOfOpenInvoiceLine[],
+    mepBreachStartDate?: Date | null
+): Map<number, OldestOverdueAtIssue | null> {
+    type Cand = {
+        invoiceId: number;
+        activateMs: number;
+        deactivateMs: number;
+        dueDateMs: number;
+        dueDate: Date;
+        invoiceDateMs: number;
+        invoiceDate: Date;
+    };
+    const cands: Cand[] = [];
+    for (const line of customerLines) {
+        if (!isEligibleForCustomerMepOverdue(line.amount)) {
+            continue;
+        }
+        if (
+            !isInvoiceInMepBreachScope(line.invoiceDate, mepBreachStartDate)
+        ) {
+            continue;
+        }
+        if (!line.dueDate) {
+            continue;
+        }
+        const openUntilMs = resolveAsOfOpenUntilExclusiveMs(line);
+        if (openUntilMs == null) {
+            continue;
+        }
+        const invoiceDate = toUtcDayStart(line.invoiceDate);
+        const invoiceDateMs = invoiceDate.getTime();
+        const dueDate = toUtcDayStart(line.dueDate);
+        const dueDateMs = dueDate.getTime();
+        // Overdue when dueDate < T ⇒ first active UTC day is the day after due.
+        const activateMs = Math.max(
+            invoiceDateMs,
+            dueDateMs + MS_PER_UTC_DAY
+        );
+        if (!(activateMs < openUntilMs)) {
+            continue;
+        }
+        cands.push({
+            invoiceId: line.invoiceId,
+            activateMs,
+            deactivateMs: openUntilMs,
+            dueDateMs,
+            dueDate,
+            invoiceDateMs,
+            invoiceDate,
+        });
+    }
+
+    type Query = { invoiceId: number; tMs: number };
+    const queries: Query[] = customerLines.map((line) => ({
+        invoiceId: line.invoiceId,
+        tMs: toUtcDayStart(line.invoiceDate).getTime(),
+    }));
+    queries.sort(
+        (a, b) => a.tMs - b.tMs || a.invoiceId - b.invoiceId
+    );
+
+    const byActivate = cands
+        .slice()
+        .sort((a, b) => a.activateMs - b.activateMs);
+    const byDeactivate = cands
+        .slice()
+        .sort((a, b) => a.deactivateMs - b.deactivateMs);
+
+    type DueBucket = {
+        count: number;
+        dueDate: Date;
+        byInvoiceId: Map<number, Date>;
+    };
+    const dueMeta = new Map<number, DueBucket>();
+    let cachedMin: OldestOverdueAtIssue | null = null;
+    let cachedMinDueMs: number | null = null;
+
+    function pickMinInvoiceDate(
+        byInvoiceId: Map<number, Date>
+    ): Date | null {
+        let best: Date | null = null;
+        for (const invoiceDate of byInvoiceId.values()) {
+            if (!best || invoiceDate.getTime() < best.getTime()) {
+                best = invoiceDate;
+            }
+        }
+        return best;
+    }
+
+    function recomputeMin(): void {
+        cachedMinDueMs = null;
+        cachedMin = null;
+        for (const [ms, meta] of dueMeta) {
+            if (meta.count <= 0) {
+                continue;
+            }
+            if (cachedMinDueMs == null || ms < cachedMinDueMs) {
+                const invoiceDate = pickMinInvoiceDate(meta.byInvoiceId);
+                if (!invoiceDate) {
+                    continue;
+                }
+                cachedMinDueMs = ms;
+                cachedMin = { dueDate: meta.dueDate, invoiceDate };
+            }
+        }
+    }
+
+    function addCand(cand: Cand): void {
+        const prev = dueMeta.get(cand.dueDateMs);
+        if (prev) {
+            prev.count += 1;
+            prev.byInvoiceId.set(cand.invoiceId, cand.invoiceDate);
+        } else {
+            dueMeta.set(cand.dueDateMs, {
+                count: 1,
+                dueDate: cand.dueDate,
+                byInvoiceId: new Map([[cand.invoiceId, cand.invoiceDate]]),
+            });
+        }
+        if (cachedMinDueMs == null || cand.dueDateMs < cachedMinDueMs) {
+            cachedMinDueMs = cand.dueDateMs;
+            cachedMin = {
+                dueDate: cand.dueDate,
+                invoiceDate: cand.invoiceDate,
+            };
+        } else if (cachedMinDueMs === cand.dueDateMs) {
+            if (
+                !cachedMin ||
+                cand.invoiceDateMs < cachedMin.invoiceDate.getTime()
+            ) {
+                cachedMin = {
+                    dueDate: cand.dueDate,
+                    invoiceDate: cand.invoiceDate,
+                };
+            }
+        }
+    }
+
+    function removeCand(cand: Cand): void {
+        const prev = dueMeta.get(cand.dueDateMs);
+        if (!prev) {
+            return;
+        }
+        prev.count -= 1;
+        prev.byInvoiceId.delete(cand.invoiceId);
+        if (prev.count <= 0) {
+            dueMeta.delete(cand.dueDateMs);
+            if (cachedMinDueMs === cand.dueDateMs) {
+                recomputeMin();
+            }
+        } else if (cachedMinDueMs === cand.dueDateMs) {
+            const invoiceDate = pickMinInvoiceDate(prev.byInvoiceId);
+            cachedMin = invoiceDate
+                ? { dueDate: prev.dueDate, invoiceDate }
+                : null;
+            if (!cachedMin) {
+                recomputeMin();
+            }
+        }
+    }
+
+    let activateIndex = 0;
+    let deactivateIndex = 0;
+    const oldestByInvoiceId = new Map<number, OldestOverdueAtIssue | null>();
+
+    for (const query of queries) {
+        const tMs = query.tMs;
+        while (
+            activateIndex < byActivate.length &&
+            byActivate[activateIndex]!.activateMs <= tMs
+        ) {
+            addCand(byActivate[activateIndex]!);
+            activateIndex += 1;
+        }
+        while (
+            deactivateIndex < byDeactivate.length &&
+            byDeactivate[deactivateIndex]!.deactivateMs <= tMs
+        ) {
+            removeCand(byDeactivate[deactivateIndex]!);
+            deactivateIndex += 1;
+        }
+        oldestByInvoiceId.set(query.invoiceId, cachedMin);
+    }
+
+    return oldestByInvoiceId;
+}
+
+/**
  * Recompute terms-breach flags for an as-of-open invoice from policy terms and
- * the snapshot calendar day. MEP is created-in-violation: true when the
- * customer overdue block was already on at this invoice's issue date.
+ * the snapshot calendar day. MEP is created-in-violation via
+ * {@link isCreatedInCustomerOverdueMep}.
  */
 export function overlayAsOfTermsFlagsOnLine(
     line: AsOfOpenInvoiceLine,
@@ -446,6 +808,11 @@ export function overlayAsOfTermsFlagsOnLine(
         ignoreReportingBreach?: boolean;
         /** Account's MEP breach start date; null / omitted means no gate. */
         mepBreachStartDate?: Date | null;
+        /**
+         * When set (batch overlay), skip the O(siblings) MEP scan and use this
+         * precomputed oldest overdue (due + issue date) at the line's issue date.
+         */
+        oldestOverdueAtIssue?: OldestOverdueAtIssue | null;
     }
 ): AsOfOpenInvoiceLine {
     const asOfStatus = classifyAsOfOpenStatus(line.dueDate, asOfDate);
@@ -470,18 +837,41 @@ export function overlayAsOfTermsFlagsOnLine(
         },
         today: asOfDate,
     });
-    const siblingLines = options?.siblingLines ?? [line];
-    const ctvCustomerOverdueMep =
-        isInvoiceInMepBreachScope(
-            line.invoiceDate,
-            options?.mepBreachStartDate
-        ) &&
-        asOfCustomerOverdueBlockAt(
+    const monthEnd: CustomerOverdueMepMonthEnd = {
+        mepCutoffDay: terms.mepCutoffDay,
+        mepSubstituteExtraDays: terms.mepSubstituteExtraDays,
+    };
+    let ctvCustomerOverdueMep: boolean;
+    if (options && "oldestOverdueAtIssue" in options) {
+        ctvCustomerOverdueMep =
+            terms.maxAllowedMep == null ||
+            !isEligibleForCustomerMepOverdue(line.amount) ||
+            !isInvoiceInMepBreachScope(
+                line.invoiceDate,
+                options.mepBreachStartDate
+            )
+                ? false
+                : computeCustomerOverdueBlock({
+                      oldestInvoiceOverdueDate:
+                          options.oldestOverdueAtIssue?.dueDate ?? null,
+                      maxAllowedMepDays: terms.maxAllowedMep,
+                      today: line.invoiceDate,
+                      oldestInvoiceIssueDate:
+                          options.oldestOverdueAtIssue?.invoiceDate ?? null,
+                      mepCutoffDay: monthEnd.mepCutoffDay,
+                      mepSubstituteExtraDays: monthEnd.mepSubstituteExtraDays,
+                  });
+    } else {
+        const siblingLines = options?.siblingLines ?? [line];
+        ctvCustomerOverdueMep = isCreatedInCustomerOverdueMep({
+            invoiceDate: line.invoiceDate,
+            amount: line.amount,
             siblingLines,
-            line.invoiceDate,
-            terms.maxAllowedMep,
-            options?.mepBreachStartDate
-        );
+            maxAllowedMep: terms.maxAllowedMep,
+            mepBreachStartDate: options?.mepBreachStartDate,
+            monthEnd,
+        });
+    }
 
     return {
         ...line,
@@ -515,6 +905,21 @@ export function overlayAsOfTermsFlagsOnLines(
         bucket.push(line);
         linesByCustomer.set(line.customerId, bucket);
     }
+
+    const oldestOverdueAtIssueByInvoiceId = new Map<
+        number,
+        OldestOverdueAtIssue | null
+    >();
+    for (const customerLines of linesByCustomer.values()) {
+        const oldestByInvoice = oldestOverdueDueAtEachInvoiceIssueDate(
+            customerLines,
+            options?.mepBreachStartDate
+        );
+        for (const [invoiceId, oldest] of oldestByInvoice) {
+            oldestOverdueAtIssueByInvoiceId.set(invoiceId, oldest);
+        }
+    }
+
     return lines.map((line) => {
         const exact = termsByCustomerAndPolicy.get(
             `${line.customerId}:${line.policyId ?? "none"}`
@@ -530,9 +935,10 @@ export function overlayAsOfTermsFlagsOnLines(
             return line;
         }
         return overlayAsOfTermsFlagsOnLine(line, asOfDate, terms, {
-            siblingLines: linesByCustomer.get(line.customerId) ?? [line],
             ignoreReportingBreach: options?.ignoreReportingBreach,
             mepBreachStartDate: options?.mepBreachStartDate,
+            oldestOverdueAtIssue:
+                oldestOverdueAtIssueByInvoiceId.get(line.invoiceId) ?? null,
         });
     });
 }
@@ -555,6 +961,95 @@ export function asOfTermsScopeKey(
     return `${customerId}:${policyId ?? "none"}`;
 }
 
+/**
+ * Build the terms map CPT Generate / dashboard as-of overlay both need from
+ * enriched customer + active policy rows.
+ */
+export function buildAsOfPolicyTermsByCustomerMap(
+    customers: Array<{
+        id: number;
+        policy_id?: number | null;
+        max_payment_term?: number | null;
+        max_allowed_mep?: number | null;
+        reporting_days?: number | null;
+        mep_cutoff_day?: number | null;
+        mep_substitute_extra_days?: number | null;
+        reporting_cutoff_day?: number | null;
+        reporting_substitute_extra_days?: number | null;
+        payment_term_cutoff_day?: number | null;
+        payment_term_substitute_day?: number | null;
+        InsurancePolicy?: { end_date: Date | null } | null;
+    }>
+): Map<string, AsOfPolicyTermsForBreach> {
+    const termsByCustomerAndPolicy = new Map<string, AsOfPolicyTermsForBreach>();
+    for (const customer of customers) {
+        const terms: AsOfPolicyTermsForBreach = {
+            maxPaymentTerm: customer.max_payment_term ?? null,
+            maxAllowedMep: customer.max_allowed_mep ?? null,
+            reportingDays: customer.reporting_days ?? null,
+            mepCutoffDay: customer.mep_cutoff_day ?? null,
+            mepSubstituteExtraDays: customer.mep_substitute_extra_days ?? null,
+            reportingCutoffDay: customer.reporting_cutoff_day ?? null,
+            reportingSubstituteExtraDays:
+                customer.reporting_substitute_extra_days ?? null,
+            paymentTermCutoffDay: customer.payment_term_cutoff_day ?? null,
+            paymentTermSubstituteDay:
+                customer.payment_term_substitute_day ?? null,
+            policyEndDate: customer.InsurancePolicy?.end_date ?? null,
+        };
+        termsByCustomerAndPolicy.set(
+            asOfTermsScopeKey(customer.id, customer.policy_id ?? null),
+            terms
+        );
+        const fallbackKey = asOfTermsScopeKey(customer.id, null);
+        if (!termsByCustomerAndPolicy.has(fallbackKey)) {
+            termsByCustomerAndPolicy.set(fallbackKey, terms);
+        }
+    }
+    return termsByCustomerAndPolicy;
+}
+
+/**
+ * Apply created-in-MEP / payment-term / after-policy-end overlay used by CPT
+ * Generate and dashboard as-of summary.
+ */
+export async function overlayAsOfTermsFlagsForAccountLines(args: {
+    accountId: number;
+    asOfDate: Date;
+    lines: AsOfOpenInvoiceLine[];
+    customers: Array<{
+        id: number;
+        policy_id?: number | null;
+        max_payment_term?: number | null;
+        max_allowed_mep?: number | null;
+        reporting_days?: number | null;
+        mep_cutoff_day?: number | null;
+        mep_substitute_extra_days?: number | null;
+        reporting_cutoff_day?: number | null;
+        reporting_substitute_extra_days?: number | null;
+        payment_term_cutoff_day?: number | null;
+        payment_term_substitute_day?: number | null;
+        InsurancePolicy?: { end_date: Date | null } | null;
+    }>;
+    ignoreReportingBreach?: boolean;
+    mepBreachStartDate?: Date | null;
+    dbClient?: DbClient;
+}): Promise<AsOfOpenInvoiceLine[]> {
+    const mepBreachStartDate =
+        args.mepBreachStartDate !== undefined
+            ? args.mepBreachStartDate
+            : await resolveMepBreachStartDate(args.accountId, args.dbClient);
+    return overlayAsOfTermsFlagsOnLines(
+        args.lines,
+        args.asOfDate,
+        buildAsOfPolicyTermsByCustomerMap(args.customers),
+        {
+            ignoreReportingBreach: args.ignoreReportingBreach === true,
+            mepBreachStartDate,
+        }
+    );
+}
+
 export type AsOfOpenInvoiceComputed = AsOfOpenInvoiceLine & {
     openAmount: number;
     openCustomerAmount: number;
@@ -568,29 +1063,16 @@ export function computeAsOfOpenInvoiceLine(
     if (line.liveClosed && !wasAsOfInvoiceOpenAt(line, asOfDate)) {
         return null;
     }
-    const tolerance = line.openAmountTolerance ?? ASOF_OPEN_AMOUNT_TOLERANCE;
-    const openAmount = computeAsOfOpenAmount(
-        preferAmountPair({
-            amount: line.amount,
-            customerAmount: line.customerAmount,
-        }),
-        preferAmountPair({
-            amount: line.paymentsOnOrBeforeAsOf,
-            customerAmount: line.paymentsCustomerOnOrBeforeAsOf,
-        }),
-        tolerance
-    );
-    // Zero after tolerance = closed. Non-zero includes open credit notes
-    // (negative), matching live Due/Overdue outstanding_debt.
+    const openCustomerAmount = computeAsOfOpenCustomerAmount(line);
+    // Billing Paid leftover is customer-currency ± tolerance. Within band →
+    // closed for CPT AR, MEP overdue-block, and health (ignore doc-currency dust).
+    if (openCustomerAmount === 0) {
+        return null;
+    }
+    const openAmount = computeAsOfOpenAccountAmount(line);
     if (openAmount === 0) {
         return null;
     }
-    const openCustomerAmount = computeAsOfOpenAmount(
-        Number(line.customerAmount ?? 0) || Number(line.amount ?? 0),
-        Number(line.paymentsCustomerOnOrBeforeAsOf ?? 0) ||
-            Number(line.paymentsOnOrBeforeAsOf ?? 0),
-        tolerance
-    );
     return {
         ...line,
         openAmount,
@@ -717,13 +1199,25 @@ export async function loadAsOfOpenInvoiceCandidates(
         INNER JOIN "Customer" c ON c.id = i.customer_id
         LEFT JOIN LATERAL (
             SELECT
-                SUM(COALESCE(ip.amount, 0))::float AS paid_amount,
-                SUM(COALESCE(ip.customer_amount, 0))::float AS paid_customer_amount,
+                SUM(
+                    CASE
+                        WHEN ip.payment_date < ${dayAfter}
+                        THEN COALESCE(ip.amount, 0)
+                        ELSE 0
+                    END
+                )::float AS paid_amount,
+                SUM(
+                    CASE
+                        WHEN ip.payment_date < ${dayAfter}
+                        THEN COALESCE(ip.customer_amount, 0)
+                        ELSE 0
+                    END
+                )::float AS paid_customer_amount,
+                -- True last payment (any day); paid_* sums stay as-of snapshot.
                 MAX(ip.payment_date) AS last_payment_date
             FROM "InvoicePayment" ip
             WHERE ip.invoice_id = i.id
               AND ip.account_id = ${accountId}
-              AND ip.payment_date < ${dayAfter}
         ) p ON true
         WHERE i.account_id = ${accountId}
           AND c.account_id = ${accountId}

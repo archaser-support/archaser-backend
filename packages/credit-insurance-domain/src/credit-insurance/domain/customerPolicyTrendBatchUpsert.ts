@@ -165,6 +165,37 @@ function rowToValuesSql(row: CustomerPolicyTrendUpsertRow): Prisma.Sql {
     )`;
 }
 
+/**
+ * Remove CPT rows for a snapshot day whose CustomerPolicy is no longer active
+ * (e.g. after version-push left stale rows under a different customer_policy_id).
+ * Scope mirrors sync filters so partial Generate runs do not wipe other cohorts.
+ */
+export async function pruneInactiveCustomerPolicyTrendRows(args: {
+    accountId: number;
+    snapshotDate: Date;
+    policyId?: number;
+    customerIds?: number[];
+    dbClient?: DbClient;
+}): Promise<number> {
+    const db = args.dbClient ?? defaultPrisma;
+    return db.$executeRaw`
+        DELETE FROM "CustomerPolicyTrend" t
+        USING "CustomerPolicy" cp
+        WHERE t.customer_policy_id = cp.id
+          AND cp.is_active = false
+          AND t.account_id = ${args.accountId}
+          AND t.snapshot_date = ${args.snapshotDate}::date
+          AND (
+            ${args.policyId ?? null}::int IS NULL
+            OR t.insurance_policy_id = ${args.policyId ?? null}
+          )
+          AND (
+            ${args.customerIds == null}::boolean
+            OR t.customer_id = ANY(${args.customerIds ?? []}::int[])
+          )
+    `;
+}
+
 export async function batchUpsertCustomerPolicyTrendRows(
     rows: CustomerPolicyTrendUpsertRow[],
     options?: {

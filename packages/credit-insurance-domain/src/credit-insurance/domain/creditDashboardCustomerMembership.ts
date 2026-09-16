@@ -17,8 +17,21 @@ import {
     getTopUpCoverReport,
     getTopUpExpiringReport,
 } from "./creditInsuranceTopUpDashboardService";
+import { fetchExposureReconciliationPeriodCustomers } from "./exposureReconciliationPeriod";
+import { fetchNegativeCostPeriodCustomers } from "./negativeCostPeriod";
+import {
+    fetchLimitCappedPeriodCustomers,
+    fetchOvershootRankingPeriodCustomers,
+} from "./overshootLimitCappedPeriod";
+import { fetchArExtremeMovesPeriodCustomers } from "./staleSlopeVolatilityPeriod";
 import { fetchUtilizationBinCptCustomers } from "./utilizationBinReport";
 import { isUtilizationDistributionBinKey } from "./utilizationDistributionBins";
+import { fetchPolicyConcentrationRankingRows } from "./policyConcentrationPeriod";
+import { fetchProjectedLimitBreachCustomers } from "./limitBreachForecastPeriod";
+import {
+    fetchBreachEpisodePeriodCustomers,
+    fetchDilutedBreachPeriodCustomers,
+} from "./breachDilutionStreakPeriod";
 
 /** Cap for ID materialization; credit cohorts are customer-scoped, not unbounded. */
 const MEMBERSHIP_TAKE = 100_000;
@@ -31,18 +44,30 @@ export type CreditCustomerMembershipType =
     | "no_policy_exposure"
     | "top_up"
     | "top_up_expiring"
-    | "utilization_bin";
+    | "utilization_bin"
+    | "ar_extreme_moves"
+    | "utilization_overshoot"
+    | "limit_capped"
+    | "negative_daily_cost"
+    | "exposure_reconciliation"
+    | "policy_concentration"
+    | "limit_breach_forecast"
+    | "breach_dilution"
+    | "breach_episodes";
 
 export interface CreditCustomerMembershipOptions {
     policyId?: number;
     customerId?: number;
-    /** Only for no_policy_exposure / utilization_bin; default true. */
+    /** Only for no_policy_exposure / utilization_bin / ar_extreme_moves / utilization_overshoot / limit_capped / negative_daily_cost / exposure_reconciliation / policy_concentration / limit_breach_forecast / breach_dilution / breach_episodes; default true. */
     includeNoPolicyExposure?: boolean;
     /** Only for top_up_expiring; default 30. */
     withinDays?: number;
     /** Only for utilization_bin. */
     utilizationBin?: string;
-    /** Only for utilization_bin; YYYY-MM-DD. */
+    /** Inclusive YYYY-MM-DD range for utilization_bin / ar_extreme_moves / utilization_overshoot / limit_capped / negative_daily_cost / exposure_reconciliation / policy_concentration / breach_dilution / breach_episodes. */
+    fromDate?: string;
+    toDate?: string;
+    /** @deprecated Prefer fromDate/toDate. Single-day snapshot for utilization_bin. */
     asOfDate?: string;
 }
 
@@ -151,10 +176,13 @@ export async function resolveCreditCustomerMembershipIds(
         }
         case "utilization_bin": {
             const bin = options.utilizationBin;
-            const asOfDate = options.asOfDate;
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
             if (
                 bin == null ||
-                asOfDate == null ||
+                fromDate == null ||
+                toDate == null ||
                 !isUtilizationDistributionBinKey(bin)
             ) {
                 return [];
@@ -162,7 +190,155 @@ export async function resolveCreditCustomerMembershipIds(
             const rows = await fetchUtilizationBinCptCustomers({
                 accountId,
                 bin,
-                asOfDate,
+                fromDate,
+                toDate,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
+            return rows.map((r) => r.customerId);
+        }
+        case "ar_extreme_moves": {
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
+            if (fromDate == null || toDate == null) {
+                return [];
+            }
+            const rows = await fetchArExtremeMovesPeriodCustomers({
+                accountId,
+                fromDate,
+                toDate,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
+            return rows.map((r) => r.customerId);
+        }
+        case "utilization_overshoot": {
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
+            if (fromDate == null || toDate == null) {
+                return [];
+            }
+            const rows = await fetchOvershootRankingPeriodCustomers({
+                accountId,
+                fromDate,
+                toDate,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
+            return rows.map((r) => r.customerId);
+        }
+        case "limit_capped": {
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
+            if (fromDate == null || toDate == null) {
+                return [];
+            }
+            const rows = await fetchLimitCappedPeriodCustomers({
+                accountId,
+                fromDate,
+                toDate,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
+            return rows.map((r) => r.customerId);
+        }
+        case "negative_daily_cost": {
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
+            if (fromDate == null || toDate == null) {
+                return [];
+            }
+            const rows = await fetchNegativeCostPeriodCustomers({
+                accountId,
+                fromDate,
+                toDate,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
+            return rows.map((r) => r.customerId);
+        }
+        case "exposure_reconciliation": {
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
+            if (fromDate == null || toDate == null) {
+                return [];
+            }
+            const rows = await fetchExposureReconciliationPeriodCustomers({
+                accountId,
+                fromDate,
+                toDate,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
+            return rows.map((r) => r.customerId);
+        }
+        case "policy_concentration": {
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
+            if (fromDate == null || toDate == null) {
+                return [];
+            }
+            const rows = await fetchPolicyConcentrationRankingRows({
+                accountId,
+                fromDate,
+                toDate,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
+            // Unique customers (a customer may appear on one policy ranking).
+            return [...new Set(rows.map((r) => r.customerId))];
+        }
+        case "limit_breach_forecast": {
+            const rows = await fetchProjectedLimitBreachCustomers({
+                accountId,
+                toDate: options.toDate || options.asOfDate || undefined,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
+            return rows.map((r) => r.customerId);
+        }
+        case "breach_dilution": {
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
+            if (fromDate == null || toDate == null) {
+                return [];
+            }
+            const rows = await fetchDilutedBreachPeriodCustomers({
+                accountId,
+                fromDate,
+                toDate,
+                policyId: options.policyId,
+                customerId: options.customerId,
+                includeNoPolicyExposure: options.includeNoPolicyExposure,
+            });
+            return rows.map((r) => r.customerId);
+        }
+        case "breach_episodes": {
+            const fromDate =
+                options.fromDate || options.asOfDate || undefined;
+            const toDate = options.toDate || options.asOfDate || fromDate;
+            if (fromDate == null || toDate == null) {
+                return [];
+            }
+            const rows = await fetchBreachEpisodePeriodCustomers({
+                accountId,
+                fromDate,
+                toDate,
                 policyId: options.policyId,
                 customerId: options.customerId,
                 includeNoPolicyExposure: options.includeNoPolicyExposure,

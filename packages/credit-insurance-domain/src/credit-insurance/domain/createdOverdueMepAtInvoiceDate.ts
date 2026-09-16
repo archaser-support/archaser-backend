@@ -1,13 +1,20 @@
 import { type DbClient, prisma } from "../domain-db";
 
 import {
-    asOfCustomerOverdueBlockAt,
+    oldestOverdueDueAtEachInvoiceIssueDate,
     loadAsOfOpenInvoiceCandidates,
     type AsOfOpenInvoiceLine,
+    type CustomerOverdueMepMonthEnd,
 } from "./asOfOpenAr";
-import { isEligibleForCustomerMepOverdue } from "./invoiceInsuranceFields";
+import {
+    computeCustomerOverdueBlock,
+    isEligibleForCustomerMepOverdue,
+} from "./invoiceInsuranceFields";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
-import { filterInvoicesInMepBreachScope } from "./shared/mepBreachScope";
+import {
+    filterInvoicesInMepBreachScope,
+    isInvoiceInMepBreachScope,
+} from "./shared/mepBreachScope";
 
 export type InvoiceForCreatedOverdueMep = {
     id: number;
@@ -20,10 +27,11 @@ export type InvoiceForCreatedOverdueMep = {
  * invoice using the payment ledger, so the answer is the block state on the
  * invoice's own issue date rather than the wall-clock `Customer.overdue_block`.
  *
- * Credit notes are excluded, matching {@link isEligibleForCustomerMepOverdue}.
- * Invoices outside the account's MEP breach scope are never flagged, and are
- * also dropped from the candidate ledger so a legacy line cannot block a
- * newer invoice.
+ * Flag math matches CPT overlay: {@link oldestOverdueDueAtEachInvoiceIssueDate}
+ * + {@link computeCustomerOverdueBlock} (O(C log C) sweep, not per-invoice
+ * sibling rescans). Credit notes are excluded up front to skip the ledger load
+ * when nothing eligible remains; out-of-scope lines are dropped from siblings
+ * so a legacy invoice cannot block a newer one.
  */
 export async function resolveCreatedOverdueMepByInvoiceId(args: {
     accountId: number;
@@ -32,6 +40,7 @@ export async function resolveCreatedOverdueMepByInvoiceId(args: {
     maxAllowedMep: number | null | undefined;
     /** Pass an already-resolved value to skip the per-account connector read. */
     mepBreachStartDate?: Date | null;
+    monthEnd?: CustomerOverdueMepMonthEnd;
     db?: DbClient;
 }): Promise<Map<number, boolean>> {
     const result = new Map<number, boolean>();
@@ -78,14 +87,31 @@ export async function resolveCreatedOverdueMepByInvoiceId(args: {
         (line) => line.invoiceDate
     );
 
+    const oldestByInvoiceId = oldestOverdueDueAtEachInvoiceIssueDate(
+        lines,
+        mepBreachStartDate
+    );
+
     for (const invoice of eligible) {
+        if (
+            !isInvoiceInMepBreachScope(
+                invoice.invoice_date,
+                mepBreachStartDate
+            )
+        ) {
+            continue;
+        }
+        const oldest = oldestByInvoiceId.get(invoice.id) ?? null;
         result.set(
             invoice.id,
-            asOfCustomerOverdueBlockAt(
-                lines,
-                invoice.invoice_date,
-                args.maxAllowedMep
-            )
+            computeCustomerOverdueBlock({
+                oldestInvoiceOverdueDate: oldest?.dueDate ?? null,
+                maxAllowedMepDays: args.maxAllowedMep,
+                today: invoice.invoice_date,
+                oldestInvoiceIssueDate: oldest?.invoiceDate ?? null,
+                mepCutoffDay: args.monthEnd?.mepCutoffDay,
+                mepSubstituteExtraDays: args.monthEnd?.mepSubstituteExtraDays,
+            })
         );
     }
     return result;
@@ -98,6 +124,7 @@ export async function resolveCreatedOverdueMepForInvoice(args: {
     maxAllowedMep: number | null | undefined;
     /** Pass an already-resolved value to skip the per-account connector read. */
     mepBreachStartDate?: Date | null;
+    monthEnd?: CustomerOverdueMepMonthEnd;
     db?: DbClient;
 }): Promise<boolean> {
     const byId = await resolveCreatedOverdueMepByInvoiceId({
@@ -106,6 +133,7 @@ export async function resolveCreatedOverdueMepForInvoice(args: {
         invoices: [args.invoice],
         maxAllowedMep: args.maxAllowedMep,
         mepBreachStartDate: args.mepBreachStartDate,
+        monthEnd: args.monthEnd,
         db: args.db,
     });
     return byId.get(args.invoice.id) ?? false;

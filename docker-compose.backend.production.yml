@@ -38,7 +38,8 @@ services:
       CONNECTORS_SERVICE_URL: http://connectors:3005
       REPORTS_SERVICE_URL: http://reports:3006
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
-      CONNECTION_LIMIT_API: "10"
+      # Leave headroom for metrics updater + backfill + UI (RDS budget: sum of all Nest pools).
+      CONNECTION_LIMIT_API: "25"
       ENABLE_LOKI_LOGGING: "true"
       LOKI_HOST: http://host.docker.internal:3100
     volumes:

@@ -1,4 +1,10 @@
+import type { PrismaClient } from "@prisma/client";
+
 import type { TailStepState } from "./connectorSyncRuntime";
+import {
+    buildCustomerScopedTailDetail,
+    loadCustomerProgressLabels,
+} from "./customerScopedTailProgress";
 
 export type ProcessOverdueCustomersFn = (
     customerIds: number[]
@@ -16,6 +22,8 @@ export async function runProcessOverdueTailStep(params: {
     setTailStep: (state: TailStepState) => void;
     onProcessOverdueCustomers: ProcessOverdueCustomersFn;
     log: (message: string) => void;
+    /** When set, progress detail shows customer_number + position. */
+    prisma?: Pick<PrismaClient, "customer">;
 }): Promise<void> {
     const customerIds = Array.from(
         new Set(params.customerIds.filter(Number.isFinite))
@@ -24,51 +32,68 @@ export async function runProcessOverdueTailStep(params: {
         return;
     }
 
+    const customerTotal = customerIds.length;
+    const labels = params.prisma
+        ? await loadCustomerProgressLabels(params.prisma, customerIds)
+        : new Map<number, string>();
+
+    const detailFor = (customerId: number, customerIndex: number) =>
+        buildCustomerScopedTailDetail({
+            step: "process_overdue",
+            customerId,
+            customerLabel: labels.get(customerId) ?? undefined,
+            customerIndex,
+            customerTotal,
+        });
+
     params.setTailStep({
         status: "running",
         processed: 0,
-        total: customerIds.length,
-        detail: {
-            step: "process_overdue",
-            processed: 0,
-            total: customerIds.length,
-        },
+        total: customerTotal,
+        detail: detailFor(customerIds[0]!, 1),
     });
     params.log(
-        `Process Overdue starting for ${customerIds.length} customer(s)…`
+        `Process Overdue starting for ${customerTotal} customer(s)…`
     );
     try {
-        const total = customerIds.length;
-        for (let i = 0; i < total; i += PROCESS_OVERDUE_PROGRESS_CHUNK) {
+        for (
+            let i = 0;
+            i < customerTotal;
+            i += PROCESS_OVERDUE_PROGRESS_CHUNK
+        ) {
             const chunk = customerIds.slice(
                 i,
                 i + PROCESS_OVERDUE_PROGRESS_CHUNK
             );
+            const inFlightId = chunk[0]!;
+            params.setTailStep({
+                status: "running",
+                processed: i,
+                total: customerTotal,
+                detail: detailFor(inFlightId, i + 1),
+            });
             await params.onProcessOverdueCustomers(chunk);
-            const processed = Math.min(i + chunk.length, total);
+            const processed = Math.min(i + chunk.length, customerTotal);
+            const lastId = chunk[chunk.length - 1]!;
             params.setTailStep({
                 status: "running",
                 processed,
-                total,
-                detail: {
-                    step: "process_overdue",
-                    processed,
-                    total,
-                },
+                total: customerTotal,
+                detail: detailFor(lastId, processed),
             });
         }
         params.setTailStep({
             status: "done",
-            processed: customerIds.length,
-            total: customerIds.length,
+            processed: customerTotal,
+            total: customerTotal,
             detail: {
                 step: "process_overdue",
-                processed: customerIds.length,
-                total: customerIds.length,
+                processed: customerTotal,
+                total: customerTotal,
             },
         });
         params.log(
-            `Process Overdue finished for ${customerIds.length} customer(s)`
+            `Process Overdue finished for ${customerTotal} customer(s)`
         );
     } catch (error) {
         const message =
@@ -79,7 +104,7 @@ export async function runProcessOverdueTailStep(params: {
         params.setTailStep({
             status: "failed",
             processed: 0,
-            total: customerIds.length,
+            total: customerTotal,
             error: message,
         });
     }

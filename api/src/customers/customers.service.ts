@@ -25,6 +25,7 @@ import {
     applyCustomerNameUpdate,
     buildCustomerUncheckedUpdateData,
 } from "./customer-update.mapper";
+import { SystemEmailService } from "../email/system-email.service";
 
 export type CustomersListQuery = {
     page?: string;
@@ -194,7 +195,8 @@ export class CustomersService {
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService,
-        private readonly customerPolicy: CustomerPolicyService
+        private readonly customerPolicy: CustomerPolicyService,
+        private readonly systemEmail: SystemEmailService
     ) {
         // Header AR resolution reaches into the credit-insurance domain, whose FX
         // lookup reads the module-level client rather than one we pass in.
@@ -771,6 +773,25 @@ export class CustomersService {
         });
     }
 
+    private static readonly OPEN_DISPUTE_STATUSES = [
+        "New",
+        "Under_Review",
+        "Awaiting_Update",
+    ] as const;
+
+    private mapDisputeForClient<
+        T extends {
+            DisputeInvoice?: Array<{ Invoice: Record<string, unknown> | null }>;
+        },
+    >(dispute: T) {
+        const invoices = (dispute.DisputeInvoice || [])
+            .map((row) => row.Invoice)
+            .filter((invoice): invoice is Record<string, unknown> =>
+                Boolean(invoice)
+            );
+        return { ...dispute, invoices };
+    }
+
     async listDisputes(user: JwtPayload, id: number) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
         await this.assertCustomerInAccount(userInfo, id);
@@ -795,7 +816,48 @@ export class CustomersService {
             orderBy: { created_at: "desc" },
         });
 
-        return serializeBigInt({ disputes, totalRecords: disputes.length });
+        const mapped = disputes.map((d) => this.mapDisputeForClient(d));
+        return serializeBigInt({
+            disputes: mapped,
+            totalRecords: mapped.length,
+        });
+    }
+
+    async listOpenDisputes(user: JwtPayload, id: number) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        await this.assertCustomerInAccount(userInfo, id);
+
+        const disputes = await this.db.customerDispute.findMany({
+            where: {
+                customer_id: id,
+                dispute_status: {
+                    in: [...CustomersService.OPEN_DISPUTE_STATUSES],
+                },
+            },
+            include: {
+                DisputeReason: true,
+                DisputeInvoice: {
+                    include: {
+                        Invoice: {
+                            select: {
+                                id: true,
+                                invoice_number: true,
+                                amount: true,
+                                outstanding_debt: true,
+                                due_date: true,
+                            },
+                        },
+                    },
+                },
+            },
+            orderBy: { created_at: "desc" },
+        });
+
+        const mapped = disputes.map((d) => this.mapDisputeForClient(d));
+        return serializeBigInt({
+            disputes: mapped,
+            hasUnresolvedDisputes: mapped.length > 0,
+        });
     }
 
     async listPolicies(user: JwtPayload, id: number) {
@@ -1112,6 +1174,19 @@ export class CustomersService {
             });
         }
 
+        const notes =
+            optionalTrimmed(body.notes) ??
+            optionalTrimmed(body.comment) ??
+            optionalTrimmed(body.content) ??
+            "";
+
+        const activityType =
+            callOutcome === "generic_comment"
+                ? "Internal"
+                : callOutcome === "promise_to_pay"
+                  ? "Promise_to_pay"
+                  : "Call";
+
         const contactInput = (body.contact || null) as {
             id?: unknown;
             name?: unknown;
@@ -1232,11 +1307,11 @@ export class CustomersService {
                 data: {
                     customer_id: id,
                     account_id: accountId,
-                    type: "Call",
+                    type: activityType,
                     status: "COMPLETED",
                     title: `{{activities.fields.${CALL_OUTCOME_TITLE_KEYS[callOutcome]}}}`,
                     title_params: titleParams,
-                    content: (body.notes as string) || "",
+                    content: notes,
                     call_outcome: callOutcome,
                     contact_id: contact?.id ?? null,
                     collection_period_id: collectionPeriod?.id ?? null,
@@ -1265,7 +1340,7 @@ export class CustomersService {
                         customer_id: id,
                         dispute_reason_id: disputeReasonId,
                         dispute_status: "Under_Review",
-                        customer_comment: (body.notes as string) || "",
+                        customer_comment: notes,
                         customer_collection_period_id:
                             collectionPeriod?.id ?? null,
                         invoices_in_dispute: disputeInvoices
@@ -1303,7 +1378,7 @@ export class CustomersService {
                             disputeId: String(dispute.id),
                             disputeReason: reason?.name ?? "",
                         },
-                        content: (body.notes as string) || "",
+                        content: notes,
                         contact_id: contact?.id ?? null,
                         collection_period_id: collectionPeriod?.id ?? null,
                         schedule_time: now,
@@ -1381,19 +1456,72 @@ export class CustomersService {
             throw new BadRequestException({ error: "Email body is required" });
         }
 
-        const activity = await this.db.activity.create({
-            data: {
+        const contacts = await this.db.contact.findMany({
+            where: {
+                id: {
+                    in: contactIds
+                        .map((cid) => Number(cid))
+                        .filter((cid) => Number.isFinite(cid)),
+                },
                 customer_id: id,
-                account_id: accountId,
-                type: "Email",
-                status: "SENT",
-                title: subject,
-                content: emailBody,
-                schedule_time: new Date(),
-                actual_delivery_time: new Date(),
-                created_by: effectiveUserId,
-            } as never,
+            },
+            select: { id: true, email: true },
         });
+        if (contacts.length === 0) {
+            throw new BadRequestException({
+                error: "No valid contacts found for this customer",
+            });
+        }
+
+        const now = new Date();
+        const activity = await this.db.$transaction(async (tx) => {
+            const created = await tx.activity.create({
+                data: {
+                    customer_id: id,
+                    account_id: accountId,
+                    type: "Email",
+                    status: "SENT",
+                    title: subject.trim(),
+                    content: emailBody.trim(),
+                    schedule_time: now,
+                    actual_delivery_time: now,
+                    created_by: effectiveUserId,
+                } as never,
+            });
+
+            await tx.activityContact.createMany({
+                data: contacts.map((contact) => ({
+                    activity_id: created.id,
+                    contact_id: contact.id,
+                    communication_channel: "Email",
+                    status: "Sent",
+                    sent_at: now,
+                    created_by: effectiveUserId,
+                })) as never,
+            });
+
+            return created;
+        });
+
+        for (const contact of contacts) {
+            if (!contact.email?.trim()) {
+                continue;
+            }
+            try {
+                await this.systemEmail.sendHtmlEmail({
+                    toEmail: contact.email.trim(),
+                    subject: subject.trim(),
+                    html: emailBody.trim(),
+                    logContext: {
+                        accountId,
+                        userId: effectiveUserId,
+                    },
+                });
+            } catch {
+                // Activity + ActivityContact already persisted; delivery
+                // failures should not roll back the user-visible send record.
+            }
+        }
 
         return serializeBigInt({
             ok: true,
@@ -1409,7 +1537,8 @@ export class CustomersService {
         body: Record<string, unknown>
     ) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
-        await this.assertCustomerInAccount(userInfo, id);
+        const { accountId, effectiveUserId } =
+            await this.assertCustomerInAccount(userInfo, id);
 
         const dispute = await this.db.customerDispute.findFirst({
             where: { id: disputeId, customer_id: id },
@@ -1418,23 +1547,47 @@ export class CustomersService {
             throw new NotFoundException({ error: "Dispute not found" });
         }
 
+        const resolutionComment =
+            body.resolution_comment ??
+            body.dispute_comment ??
+            body.comment ??
+            null;
+
         const data: Record<string, unknown> = {};
         switch (op) {
             case "resolve":
             case "resolve-dispute":
                 data.dispute_status = "Resolved";
                 data.dispute_resolution = body.dispute_resolution || "Accepted";
-                data.resolution_comment = body.resolution_comment ?? null;
+                data.resolution_comment = resolutionComment;
                 data.closed_at = new Date();
                 break;
+            case "update-resolution":
+                data.dispute_resolution = body.dispute_resolution || "Accepted";
+                data.resolution_comment = resolutionComment;
+                break;
             case "cancel":
+            case "cancel-dispute":
                 data.dispute_status = "Cancelled";
-                data.resolution_comment = body.resolution_comment ?? null;
+                if (body.dispute_resolution != null) {
+                    data.dispute_resolution = body.dispute_resolution;
+                }
+                data.resolution_comment = resolutionComment;
                 data.closed_at = new Date();
                 break;
             case "assign":
             case "assign-user":
-                data.owner_id = body.owner_id ?? body.userId ?? null;
+                data.owner_id =
+                    body.owner_id ??
+                    body.assigned_user_id ??
+                    body.assignee ??
+                    body.userId ??
+                    null;
+                break;
+            case "update-status":
+                if (body.dispute_status != null) {
+                    data.dispute_status = body.dispute_status;
+                }
                 break;
             default: {
                 const allowed = { ...body };
@@ -1442,6 +1595,30 @@ export class CustomersService {
                 delete allowed.customer_id;
                 delete allowed.created_at;
                 delete allowed.created_by;
+                delete allowed.comment;
+                delete allowed.dispute_comment;
+                delete allowed.user_comment;
+                delete allowed.assigned_user_id;
+                delete allowed.assignee;
+                if (
+                    body.comment != null ||
+                    body.dispute_comment != null ||
+                    body.resolution_comment != null
+                ) {
+                    allowed.resolution_comment = resolutionComment;
+                }
+                if (
+                    allowed.owner_id == null &&
+                    (body.assigned_user_id != null ||
+                        body.assignee != null ||
+                        body.userId != null)
+                ) {
+                    allowed.owner_id =
+                        body.assigned_user_id ??
+                        body.assignee ??
+                        body.userId ??
+                        null;
+                }
                 Object.assign(data, allowed);
             }
         }
@@ -1450,6 +1627,42 @@ export class CustomersService {
             where: { id: disputeId },
             data: data as never,
         });
+
+        const userComment =
+            typeof body.user_comment === "string"
+                ? body.user_comment.trim()
+                : "";
+        if (
+            (op === "assign" || op === "assign-user") &&
+            userComment.length > 0
+        ) {
+            const period = await this.db.customerCollectionPeriod.findFirst({
+                where: {
+                    customer_id: id,
+                    period_end_date: null,
+                },
+                select: { id: true },
+                orderBy: { id: "desc" },
+            });
+            await this.db.activity.create({
+                data: {
+                    customer_id: id,
+                    account_id: accountId,
+                    type: "Internal",
+                    status: "COMPLETED",
+                    title: "Dispute assigned",
+                    content: userComment,
+                    schedule_time: new Date(),
+                    collection_period_id:
+                        dispute.customer_collection_period_id ??
+                        period?.id ??
+                        null,
+                    created_by: effectiveUserId,
+                    modified_by: effectiveUserId,
+                    system_generated: false,
+                } as never,
+            });
+        }
 
         return serializeBigInt(updated);
     }
@@ -1664,7 +1877,7 @@ export class CustomersService {
                 customer_id: customerId,
                 account_id: accountId,
                 type: "Internal",
-                status: "Completed",
+                status: "COMPLETED",
                 title: "Comment",
                 content: trimmed,
                 schedule_time: new Date(),

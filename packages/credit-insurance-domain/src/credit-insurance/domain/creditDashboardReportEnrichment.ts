@@ -11,8 +11,8 @@ import { resolveAccountDisplayLanguage } from "./reportExecutionVirtualFields-st
 import { getCustomerPolicyRow } from "./reportCustomerPolicyFields-stub";
 import { computeCustomerRiskExposure } from "./invoiceInsuranceFields";
 import {
-    hasActiveLinkedPolicy,
-    isUncoveredExposureCustomer,
+    isFullOpenArAtRiskCustomer,
+    uncoveredExposureFieldsFromPolicyLink,
 } from "./shared/policyExclusion";
 
 import {
@@ -21,7 +21,18 @@ import {
     type LimitWarningRow,
 } from "./creditInsuranceDashboardService";
 import { getTopUpExpiringReport } from "./creditInsuranceTopUpDashboardService";
+import { fetchExposureReconciliationPeriodCustomers } from "./exposureReconciliationPeriod";
+import { fetchNegativeCostPeriodCustomers } from "./negativeCostPeriod";
+import { fetchOvershootLimitCappedPeriodCustomers } from "./overshootLimitCappedPeriod";
+import { fetchStaleSlopeVolatilityPeriodCustomers } from "./staleSlopeVolatilityPeriod";
 import { fetchAsOfUtilizationByCustomerIds } from "./utilizationBinReport";
+import { fetchPolicyConcentrationRankingRows } from "./policyConcentrationPeriod";
+import { fetchLimitBreachForecastPeriodCustomers } from "./limitBreachForecastPeriod";
+import {
+    breachEpisodeReportFields,
+    fetchBreachDilutionStreakPeriodCustomers,
+} from "./breachDilutionStreakPeriod";
+import type { CustomerBreachDilutionStreakRow } from "./shared/ctpBreachDilutionStreakMetrics";
 
 const CLOSED_INVOICE_STATUS: invoice_status[] = [
     InvoiceStatus.Paid,
@@ -43,7 +54,149 @@ export const CREDIT_DASHBOARD_ENRICHED_CUSTOMER_FIELDS = new Set([
     "top_up_days_left",
     "as_of_utilization_pct",
     "as_of_usage_amount",
+    "period_days_available",
+    "period_ar_volatility_sigma_pct",
+    "period_ar_extreme_move_count",
+    "period_ar_worst_extreme_pct",
+    "period_ar_worst_extreme_date",
+    "period_stale_day_count",
+    "period_health_slope",
+    "period_health_momentum",
+    "period_avg_overshoot_pts",
+    "period_max_overshoot_pts",
+    "period_max_overshoot_date",
+    "period_avg_usage_pct",
+    "period_peak_usage_pct",
+    "period_peak_usage_date",
+    "period_overshoot_days_with_limit",
+    "period_days_above_limit",
+    "period_longest_above_limit_days",
+    "period_limit_capped",
+    "period_limit_capped_ar_growth_pct",
+    "period_limit_capped_compliant_growth_pct",
+    "period_limit_capped_compliant_cv",
+    "period_limit_capped_ar_cv",
+    "period_negative_cost_entry_count",
+    "period_negative_cost_sum",
+    "period_worst_negative_cost_amount",
+    "period_worst_negative_cost_date",
+    "period_recon_fail_count",
+    "period_recon_max_abs_delta",
+    "period_recon_worst_delta_date",
+    "period_at_risk_exceeds_total_count",
+    "period_at_risk_exceeds_total_max",
+    "period_policy_ar_share_pct",
+    "period_policy_open_ar",
+    "period_policy_top1_share_pct",
+    "period_policy_top3_share_pct",
+    "period_concentration_alert",
+    "period_concentration_as_of_date",
+    "period_forecast_status",
+    "period_projected_threshold_pct",
+    "period_projected_date",
+    "period_projected_days_to_threshold",
+    "period_projected_current_usage_pct",
+    "period_projected_r_squared",
+    "period_breach_dilution_classification",
+    "period_breach_dilution_ar_growth_pct",
+    "period_breach_dilution_breach_first",
+    "period_breach_dilution_breach_last",
+    "period_breach_dilution_breach_change_pct",
+    "period_breach_dilution_health_rise_pts",
+    "period_breach_status",
+    "period_breach_streak_days",
+    "period_breach_episode_count",
+    "period_breach_episodes_summary",
+    "period_breach_last_episode_start",
+    "period_breach_last_episode_end",
+    "period_breach_last_episode_ongoing",
+    "period_breach_last_episode_days",
+    "period_breach_last_episode_peak",
+    "period_longest_breach_streak_days",
 ]);
+
+const PERIOD_SLOPE_VOL_FIELDS = [
+    "period_ar_volatility_sigma_pct",
+    "period_ar_extreme_move_count",
+    "period_ar_worst_extreme_pct",
+    "period_ar_worst_extreme_date",
+    "period_stale_day_count",
+    "period_health_slope",
+    "period_health_momentum",
+] as const;
+
+const PERIOD_OVERSHOOT_FIELDS = [
+    "period_avg_overshoot_pts",
+    "period_max_overshoot_pts",
+    "period_max_overshoot_date",
+    "period_avg_usage_pct",
+    "period_peak_usage_pct",
+    "period_peak_usage_date",
+    "period_overshoot_days_with_limit",
+    "period_days_above_limit",
+    "period_longest_above_limit_days",
+    "period_days_available",
+    "period_limit_capped",
+    "period_limit_capped_ar_growth_pct",
+    "period_limit_capped_compliant_growth_pct",
+    "period_limit_capped_compliant_cv",
+    "period_limit_capped_ar_cv",
+] as const;
+
+const PERIOD_NEGATIVE_COST_FIELDS = [
+    "period_negative_cost_entry_count",
+    "period_negative_cost_sum",
+    "period_worst_negative_cost_amount",
+    "period_worst_negative_cost_date",
+] as const;
+
+const PERIOD_RECONCILIATION_FIELDS = [
+    "period_recon_fail_count",
+    "period_recon_max_abs_delta",
+    "period_recon_worst_delta_date",
+    "period_at_risk_exceeds_total_count",
+    "period_at_risk_exceeds_total_max",
+] as const;
+
+const PERIOD_CONCENTRATION_FIELDS = [
+    "period_policy_ar_share_pct",
+    "period_policy_open_ar",
+    "period_policy_top1_share_pct",
+    "period_policy_top3_share_pct",
+    "period_concentration_alert",
+    "period_concentration_as_of_date",
+] as const;
+
+const PERIOD_FORECAST_FIELDS = [
+    "period_forecast_status",
+    "period_projected_threshold_pct",
+    "period_projected_date",
+    "period_projected_days_to_threshold",
+    "period_projected_current_usage_pct",
+    "period_projected_r_squared",
+] as const;
+
+const PERIOD_BREACH_DILUTION_FIELDS = [
+    "period_breach_dilution_classification",
+    "period_breach_dilution_ar_growth_pct",
+    "period_breach_dilution_breach_first",
+    "period_breach_dilution_breach_last",
+    "period_breach_dilution_breach_change_pct",
+    "period_breach_dilution_health_rise_pts",
+] as const;
+
+const PERIOD_BREACH_EPISODE_FIELDS = [
+    "period_breach_status",
+    "period_breach_streak_days",
+    "period_breach_episode_count",
+    "period_breach_episodes_summary",
+    "period_breach_last_episode_start",
+    "period_breach_last_episode_end",
+    "period_breach_last_episode_ongoing",
+    "period_breach_last_episode_days",
+    "period_breach_last_episode_peak",
+    "period_longest_breach_streak_days",
+] as const;
 
 export function isCreditDashboardEnrichedCustomerField(
     field: string
@@ -181,11 +334,15 @@ const LIMIT_WARNING_LABELS = {
         scoreExp: (days: number) => `Credit score validity in ${days}d`,
         limitExp: (days: number) =>
             `Approved limit expires in ${days} day(s)`,
+        projected: (threshold: number, date: string) =>
+            `Projected: reach ${threshold}% by ${date}`,
     },
     he: {
         nearLimit: (pct: number) => `${pct}% ממסגרת מאושרת`,
         scoreExp: (days: number) => `תוקף ציון אשראי בעוד ${days} ימים`,
         limitExp: (days: number) => `תוקף המסגרת יפוג בעוד ${days} ימים`,
+        projected: (threshold: number, date: string) =>
+            `תחזית: להגיע ל־${threshold}% עד ${date}`,
     },
 } as const;
 
@@ -198,6 +355,9 @@ export function formatLimitWarningSummary(
         | "scoreExpiresInDays"
         | "limitExpiring"
         | "limitExpiresInDays"
+        | "projected"
+        | "projectedThresholdPct"
+        | "projectedDate"
     >,
     accountLanguage?: string | null
 ): string {
@@ -206,6 +366,15 @@ export function formatLimitWarningSummary(
     const labels =
         LIMIT_WARNING_LABELS[language] ?? LIMIT_WARNING_LABELS.en;
     const parts: string[] = [];
+    if (
+        row.projected &&
+        row.projectedThresholdPct != null &&
+        row.projectedDate
+    ) {
+        parts.push(
+            labels.projected(row.projectedThresholdPct, row.projectedDate)
+        );
+    }
     if (row.nearLimit && row.nearLimitUtilizationPct != null) {
         parts.push(labels.nearLimit(row.nearLimitUtilizationPct));
     }
@@ -224,8 +393,13 @@ export interface CreditDashboardEnrichmentOptions {
     accountLanguage?: string | null;
     requestedFields: string[];
     limitWarningByCustomerId?: Map<number, LimitWarningRow>;
-    /** YYYY-MM-DD; required when as_of_* fields are requested. */
+    /** YYYY-MM-DD; required when as_of_* fields are requested (single-day or range end). */
     asOfDate?: string;
+    /** When set with toDate (or asOfDate), averages utilization over the range. */
+    fromDate?: string;
+    toDate?: string;
+    /** Align period gap/over-limit series with membership toggle; default true. */
+    includeNoPolicyExposure?: boolean;
 }
 
 export async function enrichCreditDashboardCustomerRows(
@@ -251,6 +425,32 @@ export async function enrichCreditDashboardCustomerRows(
     const needsWarningSummary = fields.has("limit_warning_summary");
     const needsAsOfUtilization =
         fields.has("as_of_utilization_pct") || fields.has("as_of_usage_amount");
+    const needsPeriodSlopeVol = PERIOD_SLOPE_VOL_FIELDS.some((f) =>
+        fields.has(f)
+    );
+    const needsPeriodOvershoot = PERIOD_OVERSHOOT_FIELDS.some((f) =>
+        fields.has(f)
+    );
+    const needsPeriodNegativeCost = PERIOD_NEGATIVE_COST_FIELDS.some((f) =>
+        fields.has(f)
+    );
+    const needsPeriodReconciliation = PERIOD_RECONCILIATION_FIELDS.some((f) =>
+        fields.has(f)
+    );
+    const needsPeriodConcentration = PERIOD_CONCENTRATION_FIELDS.some((f) =>
+        fields.has(f)
+    );
+    const needsPeriodForecast = PERIOD_FORECAST_FIELDS.some((f) =>
+        fields.has(f)
+    );
+    const needsPeriodBreachDilution = PERIOD_BREACH_DILUTION_FIELDS.some((f) =>
+        fields.has(f)
+    );
+    const needsPeriodBreachEpisodes = PERIOD_BREACH_EPISODE_FIELDS.some((f) =>
+        fields.has(f)
+    );
+    const needsPeriodBreachDilutionStreak =
+        needsPeriodBreachDilution || needsPeriodBreachEpisodes;
 
     const [
         openArByCustomer,
@@ -258,6 +458,13 @@ export async function enrichCreditDashboardCustomerRows(
         termsOutstandingByCustomer,
         atRiskInvoicesByCustomer,
         asOfByCustomer,
+        periodSlopeVolByCustomer,
+        periodOvershootByCustomer,
+        periodNegativeCostByCustomer,
+        periodReconByCustomer,
+        periodConcentrationByCustomer,
+        periodForecastByCustomer,
+        periodBreachDilutionStreakByCustomer,
     ] = await Promise.all([
         needsOpenAr || needsPolicyRisk
             ? fetchOpenReceivableByCustomerMap(
@@ -285,10 +492,12 @@ export async function enrichCreditDashboardCustomerRows(
                   customerIds,
               })
             : Promise.resolve(new Map()),
-        needsAsOfUtilization && options.asOfDate
+        needsAsOfUtilization && (options.fromDate || options.asOfDate)
             ? fetchAsOfUtilizationByCustomerIds({
                   accountId: options.accountId,
-                  asOfDate: options.asOfDate,
+                  asOfDate: options.asOfDate || options.toDate || options.fromDate!,
+                  fromDate: options.fromDate,
+                  toDate: options.toDate || options.asOfDate,
                   customerIds,
                   policyId: options.policyId,
               }).catch(() => {
@@ -304,6 +513,190 @@ export async function enrichCreditDashboardCustomerRows(
                       { utilizationPct: number; usageAmount: number }
                   >()
               ),
+        needsPeriodSlopeVol && (options.fromDate || options.asOfDate)
+            ? fetchStaleSlopeVolatilityPeriodCustomers({
+                  accountId: options.accountId,
+                  fromDate:
+                      options.fromDate ||
+                      options.asOfDate ||
+                      options.toDate ||
+                      "",
+                  toDate:
+                      options.toDate ||
+                      options.asOfDate ||
+                      options.fromDate ||
+                      "",
+                  policyId: options.policyId,
+                  scopedCustomerIds: customerIds,
+                  includeNoPolicyExposure:
+                      options.includeNoPolicyExposure !== false,
+              })
+                  .then((periodRows) => {
+                      const map = new Map(
+                          periodRows.map((r) => [r.customerId, r] as const)
+                      );
+                      return map;
+                  })
+                  .catch(() => new Map())
+            : Promise.resolve(new Map()),
+        needsPeriodOvershoot && (options.fromDate || options.asOfDate)
+            ? fetchOvershootLimitCappedPeriodCustomers({
+                  accountId: options.accountId,
+                  fromDate:
+                      options.fromDate ||
+                      options.asOfDate ||
+                      options.toDate ||
+                      "",
+                  toDate:
+                      options.toDate ||
+                      options.asOfDate ||
+                      options.fromDate ||
+                      "",
+                  policyId: options.policyId,
+                  scopedCustomerIds: customerIds,
+                  includeNoPolicyExposure:
+                      options.includeNoPolicyExposure !== false,
+              })
+                  .then((periodRows) => {
+                      const map = new Map(
+                          periodRows.map((r) => [r.customerId, r] as const)
+                      );
+                      return map;
+                  })
+                  .catch(() => new Map())
+            : Promise.resolve(new Map()),
+        needsPeriodNegativeCost && (options.fromDate || options.asOfDate)
+            ? fetchNegativeCostPeriodCustomers({
+                  accountId: options.accountId,
+                  fromDate:
+                      options.fromDate ||
+                      options.asOfDate ||
+                      options.toDate ||
+                      "",
+                  toDate:
+                      options.toDate ||
+                      options.asOfDate ||
+                      options.fromDate ||
+                      "",
+                  policyId: options.policyId,
+                  scopedCustomerIds: customerIds,
+                  includeNoPolicyExposure:
+                      options.includeNoPolicyExposure !== false,
+              })
+                  .then((periodRows) => {
+                      const map = new Map(
+                          periodRows.map((r) => [r.customerId, r] as const)
+                      );
+                      return map;
+                  })
+                  .catch(() => new Map())
+            : Promise.resolve(new Map()),
+        needsPeriodReconciliation && (options.fromDate || options.asOfDate)
+            ? fetchExposureReconciliationPeriodCustomers({
+                  accountId: options.accountId,
+                  fromDate:
+                      options.fromDate ||
+                      options.asOfDate ||
+                      options.toDate ||
+                      "",
+                  toDate:
+                      options.toDate ||
+                      options.asOfDate ||
+                      options.fromDate ||
+                      "",
+                  policyId: options.policyId,
+                  scopedCustomerIds: customerIds,
+                  includeNoPolicyExposure:
+                      options.includeNoPolicyExposure !== false,
+              })
+                  .then((periodRows) => {
+                      const map = new Map(
+                          periodRows.map((r) => [r.customerId, r] as const)
+                      );
+                      return map;
+                  })
+                  .catch(() => new Map())
+            : Promise.resolve(new Map()),
+        needsPeriodConcentration && (options.fromDate || options.asOfDate)
+            ? fetchPolicyConcentrationRankingRows({
+                  accountId: options.accountId,
+                  fromDate:
+                      options.fromDate ||
+                      options.asOfDate ||
+                      options.toDate ||
+                      "",
+                  toDate:
+                      options.toDate ||
+                      options.asOfDate ||
+                      options.fromDate ||
+                      "",
+                  policyId: options.policyId,
+                  scopedCustomerIds: customerIds,
+                  includeNoPolicyExposure:
+                      options.includeNoPolicyExposure !== false,
+              })
+                  .then((periodRows) => {
+                      // One row per customer — if multi-policy, keep highest share.
+                      const map = new Map<number, (typeof periodRows)[number]>();
+                      for (const r of periodRows) {
+                          const prev = map.get(r.customerId);
+                          if (
+                              prev == null ||
+                              r.sharePct > prev.sharePct
+                          ) {
+                              map.set(r.customerId, r);
+                          }
+                      }
+                      return map;
+                  })
+                  .catch(() => new Map())
+            : Promise.resolve(new Map()),
+        needsPeriodForecast
+            ? fetchLimitBreachForecastPeriodCustomers({
+                  accountId: options.accountId,
+                  toDate:
+                      options.toDate ||
+                      options.asOfDate ||
+                      undefined,
+                  policyId: options.policyId,
+                  scopedCustomerIds: customerIds,
+                  includeNoPolicyExposure:
+                      options.includeNoPolicyExposure !== false,
+              })
+                  .then((periodRows) => {
+                      const map = new Map(
+                          periodRows.map((r) => [r.customerId, r] as const)
+                      );
+                      return map;
+                  })
+                  .catch(() => new Map())
+            : Promise.resolve(new Map()),
+        needsPeriodBreachDilutionStreak && (options.fromDate || options.asOfDate)
+            ? fetchBreachDilutionStreakPeriodCustomers({
+                  accountId: options.accountId,
+                  fromDate:
+                      options.fromDate ||
+                      options.asOfDate ||
+                      options.toDate ||
+                      "",
+                  toDate:
+                      options.toDate ||
+                      options.asOfDate ||
+                      options.fromDate ||
+                      "",
+                  policyId: options.policyId,
+                  scopedCustomerIds: customerIds,
+                  includeNoPolicyExposure:
+                      options.includeNoPolicyExposure !== false,
+              })
+                  .then((periodRows) => {
+                      const map = new Map(
+                          periodRows.map((r) => [r.customerId, r] as const)
+                      );
+                      return map;
+                  })
+                  .catch(() => new Map<number, CustomerBreachDilutionStreakRow>())
+            : Promise.resolve(new Map<number, CustomerBreachDilutionStreakRow>()),
     ]);
 
     return rows.map((row) => {
@@ -325,16 +718,25 @@ export async function enrichCreditDashboardCustomerRows(
         if (needsPolicyRisk) {
             const ar = openArByCustomer.get(customerId) ?? 0;
             const policy = getCustomerPolicyRow(row);
-            const uncovered = isUncoveredExposureCustomer({
-                hasLinkedPolicy: hasActiveLinkedPolicy(
-                    policy?.insurance_policy_id as number | null | undefined
-                ),
-                exclusionReason: policy?.policy_exclusion_reason ?? null,
-            });
+            const uncovered = isFullOpenArAtRiskCustomer(
+                uncoveredExposureFieldsFromPolicyLink({
+                    insurancePolicyId:
+                        policy?.insurance_policy_id as number | null | undefined,
+                    exclusionReason: policy?.policy_exclusion_reason ?? null,
+                })
+            );
+            const gapCard = Math.max(
+                0,
+                Number(
+                    (policy as { capacity_gap_amount?: number | null } | null)
+                        ?.capacity_gap_amount ?? 0
+                )
+            );
             const invoiceAllocated = computeCustomerRiskExposure({
                 uncovered: false,
                 totalAr: ar,
                 invoices: atRiskInvoicesByCustomer.get(customerId) ?? [],
+                capacityGapAmount: gapCard,
             });
             if (fields.has("policy_risk_allocated")) {
                 enriched.policy_risk_allocated = invoiceAllocated;
@@ -359,6 +761,314 @@ export async function enrichCreditDashboardCustomerRows(
             }
             if (fields.has("as_of_usage_amount")) {
                 enriched.as_of_usage_amount = asOf?.usageAmount ?? null;
+            }
+        }
+        if (needsPeriodSlopeVol) {
+            const period = periodSlopeVolByCustomer.get(customerId);
+            if (fields.has("period_ar_volatility_sigma_pct")) {
+                enriched.period_ar_volatility_sigma_pct =
+                    period?.arVolatility.sigmaPct != null
+                        ? period.arVolatility.sigmaPct * 100
+                        : null;
+            }
+            if (fields.has("period_ar_extreme_move_count")) {
+                enriched.period_ar_extreme_move_count =
+                    period?.extremeMoveCount ?? 0;
+            }
+            if (fields.has("period_ar_worst_extreme_pct")) {
+                enriched.period_ar_worst_extreme_pct =
+                    period?.worstExtremePctChange != null
+                        ? period.worstExtremePctChange * 100
+                        : null;
+            }
+            if (fields.has("period_ar_worst_extreme_date")) {
+                enriched.period_ar_worst_extreme_date =
+                    period?.worstExtremeDate ?? null;
+            }
+            if (fields.has("period_stale_day_count")) {
+                enriched.period_stale_day_count = period?.staleDayCount ?? 0;
+            }
+            if (fields.has("period_health_slope")) {
+                enriched.period_health_slope =
+                    period?.healthMomentum.slope ?? null;
+            }
+            if (fields.has("period_health_momentum")) {
+                enriched.period_health_momentum =
+                    period?.healthMomentum.classification ?? null;
+            }
+        }
+        if (needsPeriodOvershoot) {
+            const period = periodOvershootByCustomer.get(customerId);
+            if (fields.has("period_avg_overshoot_pts")) {
+                enriched.period_avg_overshoot_pts =
+                    period?.avgOvershootPts ?? null;
+            }
+            if (fields.has("period_max_overshoot_pts")) {
+                enriched.period_max_overshoot_pts =
+                    period?.maxOvershootPts ?? null;
+            }
+            if (fields.has("period_max_overshoot_date")) {
+                enriched.period_max_overshoot_date =
+                    period?.maxOvershootDate ?? null;
+            }
+            if (fields.has("period_avg_usage_pct")) {
+                enriched.period_avg_usage_pct = period?.avgUsagePct ?? null;
+            }
+            if (fields.has("period_peak_usage_pct")) {
+                enriched.period_peak_usage_pct = period?.peakUsagePct ?? null;
+            }
+            if (fields.has("period_peak_usage_date")) {
+                enriched.period_peak_usage_date = period?.peakUsageDate ?? null;
+            }
+            if (fields.has("period_overshoot_days_with_limit")) {
+                enriched.period_overshoot_days_with_limit =
+                    period?.daysWithLimit ?? 0;
+            }
+            if (fields.has("period_days_above_limit")) {
+                enriched.period_days_above_limit =
+                    period?.daysAboveLimit ?? 0;
+            }
+            if (fields.has("period_longest_above_limit_days")) {
+                enriched.period_longest_above_limit_days =
+                    period?.longestAboveLimitStreak.days ?? 0;
+            }
+            if (fields.has("period_days_available")) {
+                enriched.period_days_available = period?.daysAvailable ?? 0;
+            }
+            if (fields.has("period_limit_capped")) {
+                enriched.period_limit_capped =
+                    period?.limitCapped.limitCapped ?? false;
+            }
+            if (fields.has("period_limit_capped_ar_growth_pct")) {
+                enriched.period_limit_capped_ar_growth_pct =
+                    period?.limitCapped.totalArGrowthPct != null
+                        ? period.limitCapped.totalArGrowthPct * 100
+                        : null;
+            }
+            if (fields.has("period_limit_capped_compliant_growth_pct")) {
+                enriched.period_limit_capped_compliant_growth_pct =
+                    period?.limitCapped.compliantGrowthPct != null
+                        ? period.limitCapped.compliantGrowthPct * 100
+                        : null;
+            }
+            if (fields.has("period_limit_capped_compliant_cv")) {
+                enriched.period_limit_capped_compliant_cv =
+                    period?.limitCapped.compliantCv != null
+                        ? period.limitCapped.compliantCv * 100
+                        : null;
+            }
+            if (fields.has("period_limit_capped_ar_cv")) {
+                enriched.period_limit_capped_ar_cv =
+                    period?.limitCapped.totalArCv != null
+                        ? period.limitCapped.totalArCv * 100
+                        : null;
+            }
+        }
+        if (needsPeriodNegativeCost) {
+            const period = periodNegativeCostByCustomer.get(customerId);
+            if (fields.has("period_negative_cost_entry_count")) {
+                enriched.period_negative_cost_entry_count =
+                    period?.negativeEntryCount ?? 0;
+            }
+            if (fields.has("period_negative_cost_sum")) {
+                enriched.period_negative_cost_sum =
+                    period?.negativeEntrySum ?? 0;
+            }
+            if (fields.has("period_worst_negative_cost_amount")) {
+                enriched.period_worst_negative_cost_amount =
+                    period?.worstNegativeAmount ?? null;
+            }
+            if (fields.has("period_worst_negative_cost_date")) {
+                enriched.period_worst_negative_cost_date =
+                    period?.worstNegativeDate ?? null;
+            }
+        }
+        if (needsPeriodReconciliation) {
+            const period = periodReconByCustomer.get(customerId);
+            if (fields.has("period_recon_fail_count")) {
+                enriched.period_recon_fail_count =
+                    period?.failingRowCount ?? 0;
+            }
+            if (fields.has("period_recon_max_abs_delta")) {
+                enriched.period_recon_max_abs_delta =
+                    period?.maxAbsDelta ?? null;
+            }
+            if (fields.has("period_recon_worst_delta_date")) {
+                enriched.period_recon_worst_delta_date =
+                    period?.worstDeltaDate ?? null;
+            }
+            if (fields.has("period_at_risk_exceeds_total_count")) {
+                enriched.period_at_risk_exceeds_total_count =
+                    period?.atRiskExceedsTotalRowCount ?? 0;
+            }
+            if (fields.has("period_at_risk_exceeds_total_max")) {
+                enriched.period_at_risk_exceeds_total_max =
+                    period?.maxAtRiskExcess ?? null;
+            }
+        }
+        if (needsPeriodConcentration) {
+            const period = periodConcentrationByCustomer.get(customerId);
+            if (fields.has("period_policy_ar_share_pct")) {
+                enriched.period_policy_ar_share_pct =
+                    period?.sharePct ?? null;
+            }
+            if (fields.has("period_policy_open_ar")) {
+                enriched.period_policy_open_ar = period?.openAr ?? null;
+            }
+            if (fields.has("period_policy_top1_share_pct")) {
+                enriched.period_policy_top1_share_pct =
+                    period?.top1SharePct ?? null;
+            }
+            if (fields.has("period_policy_top3_share_pct")) {
+                enriched.period_policy_top3_share_pct =
+                    period?.top3SharePct ?? null;
+            }
+            if (fields.has("period_concentration_alert")) {
+                enriched.period_concentration_alert =
+                    period?.concentrationAlert ?? false;
+            }
+            if (fields.has("period_concentration_as_of_date")) {
+                enriched.period_concentration_as_of_date =
+                    period?.asOfDate ?? null;
+            }
+        }
+        if (needsPeriodForecast) {
+            const period = periodForecastByCustomer.get(customerId);
+            const primary = period?.primary;
+            if (fields.has("period_forecast_status")) {
+                enriched.period_forecast_status =
+                    primary?.status ??
+                    period?.thresholds.find(
+                        (t: { status: string }) => t.status === "trending_away"
+                    )?.status ??
+                    (period?.suppressed ? "suppressed" : null);
+            }
+            if (fields.has("period_projected_threshold_pct")) {
+                enriched.period_projected_threshold_pct =
+                    primary?.thresholdPct ?? null;
+            }
+            if (fields.has("period_projected_date")) {
+                enriched.period_projected_date =
+                    primary?.projectedDate ?? null;
+            }
+            if (fields.has("period_projected_days_to_threshold")) {
+                enriched.period_projected_days_to_threshold =
+                    primary?.daysToThreshold ?? null;
+            }
+            if (fields.has("period_projected_current_usage_pct")) {
+                enriched.period_projected_current_usage_pct =
+                    period?.currentUsagePct ?? null;
+            }
+            if (fields.has("period_projected_r_squared")) {
+                enriched.period_projected_r_squared =
+                    period?.rSquared ?? null;
+            }
+        }
+        if (needsPeriodBreachDilutionStreak) {
+            const period = periodBreachDilutionStreakByCustomer.get(customerId);
+            if (needsPeriodBreachDilution) {
+                if (fields.has("period_breach_dilution_classification")) {
+                    enriched.period_breach_dilution_classification =
+                        period?.classification ?? null;
+                }
+                if (fields.has("period_breach_dilution_ar_growth_pct")) {
+                    enriched.period_breach_dilution_ar_growth_pct =
+                        period?.arGrowthPct != null
+                            ? period.arGrowthPct * 100
+                            : null;
+                }
+                if (fields.has("period_breach_dilution_breach_first")) {
+                    enriched.period_breach_dilution_breach_first =
+                        period?.breachFirst ?? null;
+                }
+                if (fields.has("period_breach_dilution_breach_last")) {
+                    enriched.period_breach_dilution_breach_last =
+                        period?.breachLast ?? null;
+                }
+                if (fields.has("period_breach_dilution_breach_change_pct")) {
+                    enriched.period_breach_dilution_breach_change_pct =
+                        period?.breachChangePct != null
+                            ? period.breachChangePct * 100
+                            : null;
+                }
+                if (fields.has("period_breach_dilution_health_rise_pts")) {
+                    enriched.period_breach_dilution_health_rise_pts =
+                        period?.healthRisePts ?? null;
+                }
+            }
+            if (needsPeriodBreachEpisodes && period != null) {
+                const episodeFields = breachEpisodeReportFields(period);
+                if (fields.has("period_breach_status")) {
+                    enriched.period_breach_status =
+                        episodeFields.period_breach_status;
+                }
+                if (fields.has("period_breach_streak_days")) {
+                    enriched.period_breach_streak_days =
+                        episodeFields.period_breach_streak_days;
+                }
+                if (fields.has("period_breach_episode_count")) {
+                    enriched.period_breach_episode_count =
+                        episodeFields.period_breach_episode_count;
+                }
+                if (fields.has("period_breach_episodes_summary")) {
+                    enriched.period_breach_episodes_summary =
+                        episodeFields.period_breach_episodes_summary;
+                }
+                if (fields.has("period_breach_last_episode_start")) {
+                    enriched.period_breach_last_episode_start =
+                        episodeFields.period_breach_last_episode_start;
+                }
+                if (fields.has("period_breach_last_episode_end")) {
+                    enriched.period_breach_last_episode_end =
+                        episodeFields.period_breach_last_episode_end;
+                }
+                if (fields.has("period_breach_last_episode_ongoing")) {
+                    enriched.period_breach_last_episode_ongoing =
+                        episodeFields.period_breach_last_episode_ongoing;
+                }
+                if (fields.has("period_breach_last_episode_days")) {
+                    enriched.period_breach_last_episode_days =
+                        episodeFields.period_breach_last_episode_days;
+                }
+                if (fields.has("period_breach_last_episode_peak")) {
+                    enriched.period_breach_last_episode_peak =
+                        episodeFields.period_breach_last_episode_peak;
+                }
+                if (fields.has("period_longest_breach_streak_days")) {
+                    enriched.period_longest_breach_streak_days =
+                        episodeFields.period_longest_breach_streak_days;
+                }
+            } else if (needsPeriodBreachEpisodes) {
+                if (fields.has("period_breach_status")) {
+                    enriched.period_breach_status = "none";
+                }
+                if (fields.has("period_breach_streak_days")) {
+                    enriched.period_breach_streak_days = 0;
+                }
+                if (fields.has("period_breach_episode_count")) {
+                    enriched.period_breach_episode_count = 0;
+                }
+                if (fields.has("period_breach_episodes_summary")) {
+                    enriched.period_breach_episodes_summary = "";
+                }
+                if (fields.has("period_breach_last_episode_start")) {
+                    enriched.period_breach_last_episode_start = null;
+                }
+                if (fields.has("period_breach_last_episode_end")) {
+                    enriched.period_breach_last_episode_end = null;
+                }
+                if (fields.has("period_breach_last_episode_ongoing")) {
+                    enriched.period_breach_last_episode_ongoing = false;
+                }
+                if (fields.has("period_breach_last_episode_days")) {
+                    enriched.period_breach_last_episode_days = null;
+                }
+                if (fields.has("period_breach_last_episode_peak")) {
+                    enriched.period_breach_last_episode_peak = null;
+                }
+                if (fields.has("period_longest_breach_streak_days")) {
+                    enriched.period_longest_breach_streak_days = 0;
+                }
             }
         }
 
@@ -455,6 +1165,7 @@ const ENRICHED_IN_MEMORY_SORT_FIELDS = new Set([
     "top_up_resolved_amount",
     "as_of_utilization_pct",
     "as_of_usage_amount",
+    "period_days_available",
 ]);
 
 export function isCreditDashboardEnrichedSortField(

@@ -1,11 +1,16 @@
 import type { Invoice, InvoicePayment, Prisma, PrismaClient } from "@prisma/client";
 import {
+    bindCreditInsurancePrisma,
+    refreshTermsBreachFlagsForCustomers,
+} from "@archaser/credit-insurance-domain";
+import {
     INVOICE_PAID_TOLERANCE,
     isWithinPaidTolerance,
     resolveInvoicePaidTolerance,
 } from "./invoicePaidTolerance";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
+import { shrinkOrDeleteVirtualPaymentsForInvoiceIds } from "../payment/virtualPaymentTrim";
 
 export type LinkDeferredPaymentAndRecalcResult = {
     invoicePayment: InvoicePayment;
@@ -402,6 +407,7 @@ export async function recalculateInvoicesFromLinkedPayments(
             select: {
                 id: true,
                 account_id: true,
+                customer_id: true,
                 net_amount: true,
                 customer_net_amount: true,
                 custom_code1: true,
@@ -464,32 +470,56 @@ export async function recalculateInvoicesFromLinkedPayments(
         )
     );
 
+    const writeTotal = recalcRows.length;
     if (!options?.onProgress) {
         await bulkWriteInvoicePaidRecalcRows(
             prisma as unknown as PrismaClient,
             recalcRows,
             modifiedAt
         );
-        return;
+    } else {
+        options.onProgress({ processed: 0, total: writeTotal });
+        for (
+            let offset = 0;
+            offset < recalcRows.length;
+            offset += RECALC_PROGRESS_CHUNK
+        ) {
+            const chunk = recalcRows.slice(offset, offset + RECALC_PROGRESS_CHUNK);
+            await bulkWriteInvoicePaidRecalcRows(
+                prisma as unknown as PrismaClient,
+                chunk,
+                modifiedAt
+            );
+            options.onProgress({
+                processed: Math.min(offset + chunk.length, writeTotal),
+                total: writeTotal,
+            });
+        }
     }
 
-    options.onProgress({ processed: 0, total: recalcRows.length });
-    for (
-        let offset = 0;
-        offset < recalcRows.length;
-        offset += RECALC_PROGRESS_CHUNK
-    ) {
-        const chunk = recalcRows.slice(offset, offset + RECALC_PROGRESS_CHUNK);
-        await bulkWriteInvoicePaidRecalcRows(
-            prisma as unknown as PrismaClient,
-            chunk,
-            modifiedAt
-        );
-        options.onProgress({
-            processed: Math.min(offset + chunk.length, recalcRows.length),
-            total: recalcRows.length,
-        });
-    }
+    // Ledger residue changed — restamp open-invoice created-in-MEP / terms CTV
+    // so Health Index does not keep stale flags after payment link / Paid close.
+    bindCreditInsurancePrisma(prisma as PrismaClient);
+    const customerIds = Array.from(
+        new Set(
+            invoices
+                .map((invoice) => invoice.customer_id)
+                .filter((id): id is number => id != null)
+        )
+    );
+    // CTV restamp often dominates wall time after paid writes; keep the
+    // link-payments bar moving instead of freezing at recalc 100%.
+    await refreshTermsBreachFlagsForCustomers(customerIds, undefined, {
+        onProgress: options?.onProgress
+            ? ({ processed, total }) => {
+                  const ctvTotal = Math.max(1, total);
+                  options.onProgress!({
+                      processed: writeTotal + processed,
+                      total: writeTotal + ctvTotal,
+                  });
+              }
+            : undefined,
+    });
 }
 
 /**
@@ -548,6 +578,16 @@ export async function linkDeferredPaymentsAndRecalcBatch(
     for (const row of pending) {
         targets.set(row.invoiceId, recalcOptions ?? {});
     }
+
+    // Cash may land after a recon virtual fill (e.g. AR replay early-link).
+    // Shrink/delete surplus virtuals before paid recalc — never create here.
+    await shrinkOrDeleteVirtualPaymentsForInvoiceIds(
+        prisma,
+        accountId,
+        [...targets.keys()],
+        { paidTolerance: recalcOptions?.paidTolerance }
+    );
+
     await recalculateInvoicesFromLinkedPayments(prisma, targets);
 
     return {

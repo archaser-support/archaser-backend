@@ -168,6 +168,16 @@ export class ActivitiesController {
         return this.activities.updateTemplate(user, id, body, operation);
     }
 
+    @Delete("templates/:id/delete")
+    @HttpCode(204)
+    @ApiOperation({ summary: "Delete activity template (FE /delete alias)" })
+    async deleteTemplateAlias(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        await this.activities.deleteTemplate(user, id);
+    }
+
     @Delete("templates/:id")
     @HttpCode(204)
     @ApiOperation({ summary: "Delete activity template" })

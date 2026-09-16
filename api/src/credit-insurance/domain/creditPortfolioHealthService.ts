@@ -4,14 +4,30 @@ import {
     computeCreditDashboardHealthIndex,
     computeTopUpDailyCostAggregate,
     creditInsurancePrisma as prisma,
+    detectStaleArRuns,
+    fetchCapacityGapDaysPeriodSummary,
+    fetchBreachDilutionStreakPeriodSummary,
+    fetchExposureReconciliationPeriodSummary,
+    fetchNegativeCostPeriodSummary,
+    fetchOvershootLimitCappedPeriodSummary,
+    fetchPolicyConcentrationSnapshots,
+    fetchStaleSlopeVolatilityPeriodCustomers,
+    summarizePortfolioStaleSlopeVolatility,
     isActiveTopUp,
     isPendingReviewExclusion,
+    longestExactValueStreakWindow,
     normalizePolicyExclusionReason,
     type TermsBreachByReasonSnapshotKey,
     UTILIZATION_DISTRIBUTION_BIN_KEYS,
     assignUtilizationDistributionBin,
     type UtilizationDistributionBinKey,
+    type HealthMomentumClassification,
 } from "@archaser/credit-insurance-domain";
+import {
+    computeAssessmentYearMultiplier,
+    sumAnnualCreditAssessmentCost,
+    sumIdleNamedAnnualCreditAssessment,
+} from "./annualCreditAssessmentFee";
 import { parsePortfolioHealthDateRange } from "./shared/portfolioHealthDateRange";
 import {
     computePortfolioRangeCost,
@@ -41,11 +57,13 @@ export type CanonicalNoCoverageReasonKey =
  */
 export type NoCoverageReasonKey = CanonicalNoCoverageReasonKey | string;
 
-export type ExactValueStreakWindow = {
-    days: number;
-    start: string | null;
-    end: string | null;
-};
+/** Shared streak helpers — re-exported for existing Portfolio Health callers. */
+export {
+    longestExactValueStreak,
+    type ExactValueStreakWindow,
+} from "@archaser/credit-insurance-domain";
+export { longestExactValueStreakWindow };
+
 
 export type PortfolioHealthSeriesMetrics = {
     averageHealthPct: number;
@@ -64,6 +82,8 @@ export type PortfolioHealthDailyPoint = {
     compliantExposure: number;
     atRiskExposure: number;
     healthIndex: number;
+    /** True when portfolio total AR was carried forward (identical non-zero). */
+    isStaleCarriedForward?: boolean;
 };
 
 export type PortfolioHealthMonthlyPoint = {
@@ -80,6 +100,80 @@ export type PortfolioHealthSection = {
     dailyB: PortfolioHealthDailyPoint[];
     monthlyA: PortfolioHealthMonthlyPoint[];
     monthlyB: PortfolioHealthMonthlyPoint[];
+    /** Chronic over-limit + capacity-gap-days (Bucket 1 KPIs #1 / #4). */
+    overLimitGap: PortfolioOverLimitGapSection | null;
+    /** Health slope, AR volatility, stale snapshots (Bucket 1 KPIs #5 / #6 / #7). */
+    staleSlopeVolatility: PortfolioStaleSlopeVolatilitySection | null;
+    /** AR / exposure reconciliation (Bucket 1 KPI #13). */
+    exposureReconciliation: PortfolioExposureReconciliationSection | null;
+    /** Breach dilution + clean-streak (Bucket 1 KPIs #11 / #12). */
+    breachDilutionStreak: PortfolioBreachDilutionStreakSection | null;
+};
+
+export type PortfolioNegativeCostPreviewEntry = {
+    customerId: number;
+    customerName: string;
+    snapshotDate: string;
+    amount: number;
+};
+
+export type PortfolioNegativeCostSection = {
+    negativeEntryCount: number;
+    negativeEntrySum: number;
+    customersAffected: number;
+    minMagnitude: number;
+    /** Top flagged rows by magnitude (most negative first). */
+    previewEntries: PortfolioNegativeCostPreviewEntry[];
+    accountCurrency: string;
+};
+
+export type PortfolioExposureReconciliationSection = {
+    failingRowCount: number;
+    maxAbsDelta: number | null;
+    customersAffected: number;
+    atRiskExceedsTotalRowCount: number;
+    atRiskExceedsTotalCustomers: number;
+    maxAtRiskExcess: number | null;
+    epsilon: number;
+    accountCurrency: string;
+};
+
+export type PortfolioOverLimitGapSection = {
+    customersWithData: number;
+    longestStreakDays: number;
+    longestStreakStart: string | null;
+    longestStreakEnd: string | null;
+    longestStreakCustomerId: number | null;
+    longestStreakCustomerName: string | null;
+    accountCurrency: string;
+};
+
+export type PortfolioStaleSlopeVolatilitySection = {
+    staleCarriedForwardDayCount: number;
+    customersWithStaleDays: number;
+    customersWithExtremeMoves: number;
+    customersWithData: number;
+    portfolioHealthSlope: number | null;
+    portfolioHealthClassification: HealthMomentumClassification | null;
+    portfolioHealthSlopeSuppressed: boolean;
+    portfolioHealthDaysUsed: number;
+    portfolioPeakHealth: number | null;
+    portfolioPeakDate: string | null;
+    portfolioCurrentHealth: number | null;
+    portfolioCurrentDate: string | null;
+    avgCustomerArSigmaPct: number | null;
+    accountCurrency: string;
+};
+
+export type PortfolioBreachDilutionStreakSection = {
+    customersWithData: number;
+    dilutedCustomerCount: number;
+    resolvedCustomerCount: number;
+    customersWithBreachHistory: number;
+    customersCurrentlyInBreach: number;
+    customersBreachFree: number;
+    customersNeverBreached: number;
+    accountCurrency: string;
 };
 
 export type PortfolioNoCoverageDailyPoint = {
@@ -147,9 +241,45 @@ export type PortfolioUtilizationDailyPoint = {
 export type PortfolioUtilizationTopCustomer = {
     customerId: number;
     customerName: string;
+    /** Mean daily usage_amount over available snapshot days in the range. */
     usageAmount: number;
-    /** Coverage/utilization % vs effective limit; null when limit ≤ 0. */
+    /** Mean daily total_receivables (open AR) over available snapshot days. */
+    openAr: number;
+    /**
+     * Mean daily effective utilization % over days with a positive effective
+     * limit; null when no such day exists.
+     */
     utilizationPct: number | null;
+};
+
+/** Per-customer utilization overshoot ranking (Bucket 1 KPI #2). */
+export type PortfolioUtilizationOvershootCustomer = {
+    customerId: number;
+    customerName: string;
+    avgOvershootPts: number;
+    maxOvershootPts: number | null;
+    maxOvershootDate: string | null;
+    avgUsagePct: number | null;
+    peakUsagePct: number | null;
+    peakUsageDate: string | null;
+    daysWithLimit: number;
+    daysAvailable: number;
+    /** Available days with utilization strictly above 100%. */
+    daysAboveLimit: number;
+    /** Longest consecutive available-day streak above 100%. */
+    longestAboveLimitDays: number;
+    limitCapped: boolean;
+};
+
+export type PortfolioUtilizationOvershootSection = {
+    customersWithData: number;
+    avgOvershootPts: number | null;
+    topAvgOvershootPts: number | null;
+    topAvgOvershootCustomerId: number | null;
+    topAvgOvershootCustomerName: string | null;
+    limitCappedCustomerCount: number;
+    /** Ranked by avg overshoot DESC (null-limit customers excluded). */
+    ranking: PortfolioUtilizationOvershootCustomer[];
 };
 
 export type PortfolioUtilizationDistributionBin = {
@@ -160,6 +290,36 @@ export type PortfolioUtilizationDistributionBin = {
     usageAmount: number;
     /** Share of total usage_amount among included customers (sums ~100%). */
     usagePct: number;
+};
+
+/** Per-customer share on a policy as-of snapshot (Bucket 1 KPI #9). */
+export type PortfolioPolicyConcentrationCustomer = {
+    customerId: number;
+    customerName: string;
+    openAr: number;
+    sharePct: number;
+};
+
+export type PortfolioPolicyConcentrationCard = {
+    policyId: number;
+    policyNumber: string | null;
+    asOfDate: string;
+    customerCount: number;
+    customersWithOpenAr: number;
+    totalOpenAr: number;
+    top1SharePct: number | null;
+    top3SharePct: number | null;
+    top1CustomerId: number | null;
+    top1CustomerName: string | null;
+    alertEligible: boolean;
+    concentrationAlert: boolean;
+    ranking: PortfolioPolicyConcentrationCustomer[];
+};
+
+export type PortfolioConcentrationSection = {
+    asOfDate: string | null;
+    alertPolicyCount: number;
+    policies: PortfolioPolicyConcentrationCard[];
 };
 
 export type PortfolioUtilizationSection = {
@@ -199,8 +359,37 @@ export type PortfolioUtilizationSection = {
     accountCurrency: string;
     /** Daily portfolio / DCL / Named utilization for the Utilization chart. */
     daily: PortfolioUtilizationDailyPoint[];
-    /** Snapshot day used for top customers and distribution; null when none. */
+    /** Snapshot day kept for API compatibility; distribution/top customers use the full range. */
     asOfDate: string | null;
+    /** Utilization overshoot ranking + limit-capped count (Bucket 1 #2 / #3). */
+    overshoot: PortfolioUtilizationOvershootSection | null;
+    /** Policy concentration on latest snapshot (Bucket 1 #9). */
+    concentration: PortfolioConcentrationSection | null;
+    /**
+     * Named customers with no positive open AR on any Named day in the range,
+     * including named customers with no daily open-AR snapshot in the range.
+     * DCL excluded.
+     */
+    idleNamedCustomerCount: number;
+    /**
+     * Distinct Named customers: CPT named anytime in the range, plus current
+     * NamedPolicy roster customers on those policies (same set as Costs
+     * assessment denominator; Σ of per-policy distinct counts).
+     */
+    namedCustomerCountInRange: number;
+    /**
+     * Idle named share of named-in-range (0–100). 0 when denominator is 0.
+     */
+    idleNamedCustomerPct: number;
+    /**
+     * Σ over policies of (current fee × idle named count × year multiplier).
+     * Null fee → $0; count/ratio still populate.
+     */
+    idleNamedAnnualCreditAssessmentCost: number;
+    /**
+     * `max(1, ceil(inclusiveDaysInRange / 365))` — same as Costs assessment.
+     */
+    yearMultiplier: number;
 };
 
 export type PortfolioCostDailyPoint = {
@@ -213,9 +402,15 @@ export type PortfolioCostDailyPoint = {
 
 export type PortfolioCostMonthlyPoint = {
     month: string;
+    /** Insurance premium for the month (Actual Sales + Limit day-slices). */
+    insuranceCost: number;
+    /** Registration markup on insurance premiums (not top-ups). */
+    registrationFeeCost: number;
+    /** Amortized top-up premiums for the month. */
+    topUpCost: number;
     /**
-     * Calendar-month range cost (Actual Sales + Limit day-slices + top-up
-     * amortization), clipped to the selected from/to window.
+     * Calendar-month range cost (insurance + registration + top-ups),
+     * clipped to the selected from/to window.
      */
     totalCost: number;
 };
@@ -223,7 +418,8 @@ export type PortfolioCostMonthlyPoint = {
 export type PortfolioCostsSection = {
     /**
      * Range Policy cost = Actual Sales (issued × cost %) + Limit
-     * ((limit × cost %) / 100 / 365 per day) + amortized top-ups.
+     * ((limit × cost %) / 100 / 365 per day) + registration markup on those
+     * insurance premiums + amortized top-ups.
      */
     periodCost: number;
     /**
@@ -249,6 +445,23 @@ export type PortfolioCostsSection = {
     approvedAverageAr: number;
     /** Always null until a policy-level deductible field exists. */
     deductiblePct: null;
+    /** Anomalous negative daily-cost visibility (Bucket 1 KPI #8). */
+    negativeCost: PortfolioNegativeCostSection | null;
+    /**
+     * Σ over policies of (current Annual Credit Assessment Fee × distinct
+     * Named customers named anytime in range × year multiplier). Standalone
+     * from Policy cost / monthly / effective cost. Null fee → $0.
+     */
+    annualCreditAssessmentCost: number;
+    /**
+     * Sum of per-policy distinct Named customers named anytime in the range
+     * (denominator / tooltip for assessment cost).
+     */
+    namedCustomerCountInRange: number;
+    /**
+     * `max(1, ceil(inclusiveDaysInRange / 365))` — shared with Utilization.
+     */
+    yearMultiplier: number;
 };
 
 export type CreditPortfolioHealthResponse = {
@@ -320,12 +533,6 @@ function normalizeDateString(value: Date): string {
     return value.toISOString().slice(0, 10);
 }
 
-function utcDayPlusOne(ymd: string): string {
-    const d = new Date(`${ymd}T12:00:00.000Z`);
-    d.setUTCDate(d.getUTCDate() + 1);
-    return d.toISOString().slice(0, 10);
-}
-
 /** Latest snapshot YYYY-MM-DD on or before `rangeToYmd`, or null. */
 export function latestSnapshotYmdOnOrBefore(
     snapshotYmds: string[],
@@ -345,65 +552,6 @@ export function isInsurerDeclinedReason(reason: unknown): boolean {
         return false;
     }
     return String(reason).trim().toLowerCase() === INSURER_DECLINED_REASON.toLowerCase();
-}
-
-/**
- * Calendar-consecutive longest run of days whose value equals `target`.
- * Returns length plus inclusive start/end dates. When multiple equal-length
- * streaks exist, picks the most recent (later end date). Reusable for trough
- * and peak (pass min or max as `target`).
- */
-export function longestExactValueStreakWindow(
-    points: Array<{ snapshotDate: string; value: number }>,
-    target: number
-): ExactValueStreakWindow {
-    if (points.length === 0) {
-        return { days: 0, start: null, end: null };
-    }
-    const sorted = [...points].sort((a, b) =>
-        a.snapshotDate.localeCompare(b.snapshotDate)
-    );
-    let bestDays = 0;
-    let bestStart: string | null = null;
-    let bestEnd: string | null = null;
-    let current = 0;
-    let currentStart: string | null = null;
-    let prevDate: string | null = null;
-
-    for (const point of sorted) {
-        if (point.value !== target) {
-            current = 0;
-            currentStart = null;
-            prevDate = point.snapshotDate;
-            continue;
-        }
-        const continuesCalendarDay =
-            current > 0 &&
-            prevDate != null &&
-            utcDayPlusOne(prevDate) === point.snapshotDate;
-        if (continuesCalendarDay) {
-            current += 1;
-        } else {
-            current = 1;
-            currentStart = point.snapshotDate;
-        }
-        // Longer wins; equal length → most recent (ASC scan, so >= takes later).
-        if (current >= bestDays) {
-            bestDays = current;
-            bestStart = currentStart;
-            bestEnd = point.snapshotDate;
-        }
-        prevDate = point.snapshotDate;
-    }
-    return { days: bestDays, start: bestStart, end: bestEnd };
-}
-
-/** Calendar-consecutive longest run of days whose value equals `target`. */
-export function longestExactValueStreak(
-    points: Array<{ snapshotDate: string; value: number }>,
-    target: number
-): number {
-    return longestExactValueStreakWindow(points, target).days;
 }
 
 export function buildDailyHealthPoint(input: {
@@ -556,7 +704,11 @@ export function buildDualDailyHealthSeries(
 
 export function buildPortfolioHealthSection(
     dailyA: PortfolioHealthDailyPoint[],
-    dailyB: PortfolioHealthDailyPoint[]
+    dailyB: PortfolioHealthDailyPoint[],
+    overLimitGap: PortfolioOverLimitGapSection | null = null,
+    staleSlopeVolatility: PortfolioStaleSlopeVolatilitySection | null = null,
+    exposureReconciliation: PortfolioExposureReconciliationSection | null = null,
+    breachDilutionStreak: PortfolioBreachDilutionStreakSection | null = null
 ): PortfolioHealthSection {
     return {
         seriesA: computePortfolioHealthSeriesMetrics(dailyA),
@@ -565,6 +717,10 @@ export function buildPortfolioHealthSection(
         dailyB,
         monthlyA: aggregateDailyHealthToMonthly(dailyA),
         monthlyB: aggregateDailyHealthToMonthly(dailyB),
+        overLimitGap,
+        staleSlopeVolatility,
+        exposureReconciliation,
+        breachDilutionStreak,
     };
 }
 
@@ -1108,9 +1264,15 @@ export function computeUtilizationPeriodMetrics(
 }
 
 export function emptyUtilizationSection(
-    accountCurrency = "USD"
+    accountCurrency = "USD",
+    options?: {
+        daysInRange?: number;
+    }
 ): PortfolioUtilizationSection {
     const currency = accountCurrency.trim().toUpperCase() || "USD";
+    const yearMultiplier = computeAssessmentYearMultiplier(
+        options?.daysInRange ?? 1
+    );
     return {
         averageUtilizationPct: 0,
         pctDaysAbove100: 0,
@@ -1144,6 +1306,13 @@ export function emptyUtilizationSection(
         accountCurrency: currency,
         daily: [],
         asOfDate: null,
+        overshoot: null,
+        concentration: null,
+        idleNamedCustomerCount: 0,
+        namedCustomerCountInRange: 0,
+        idleNamedCustomerPct: 0,
+        idleNamedAnnualCreditAssessmentCost: 0,
+        yearMultiplier,
     };
 }
 
@@ -1159,6 +1328,13 @@ export function buildUtilizationSection(input: {
     periodCustomersWithTopUp: number;
     asOfDate?: string | null;
     accountCurrency?: string;
+    overshoot?: PortfolioUtilizationOvershootSection | null;
+    concentration?: PortfolioConcentrationSection | null;
+    idleNamedCustomerCount?: number;
+    namedCustomerCountInRange?: number;
+    idleNamedCustomerPct?: number;
+    idleNamedAnnualCreditAssessmentCost?: number;
+    yearMultiplier?: number;
 }): PortfolioUtilizationSection {
     const period = computeUtilizationPeriodMetrics(input.daily);
     const footprints = computeDclVsNamedFootprints(input.daily);
@@ -1202,6 +1378,28 @@ export function buildUtilizationSection(input: {
             a.snapshotDate.localeCompare(b.snapshotDate)
         ),
         asOfDate: input.asOfDate ?? null,
+        overshoot: input.overshoot ?? null,
+        concentration: input.concentration ?? null,
+        idleNamedCustomerCount: Number.isFinite(input.idleNamedCustomerCount)
+            ? Math.max(0, input.idleNamedCustomerCount as number)
+            : 0,
+        namedCustomerCountInRange: Number.isFinite(
+            input.namedCustomerCountInRange
+        )
+            ? Math.max(0, input.namedCustomerCountInRange as number)
+            : 0,
+        idleNamedCustomerPct: Number.isFinite(input.idleNamedCustomerPct)
+            ? Math.max(0, input.idleNamedCustomerPct as number)
+            : 0,
+        idleNamedAnnualCreditAssessmentCost: Number.isFinite(
+            input.idleNamedAnnualCreditAssessmentCost
+        )
+            ? Math.max(0, input.idleNamedAnnualCreditAssessmentCost as number)
+            : 0,
+        yearMultiplier:
+            input.yearMultiplier != null && Number.isFinite(input.yearMultiplier)
+                ? Math.max(1, Math.floor(input.yearMultiplier))
+                : 1,
     };
 }
 
@@ -1231,9 +1429,43 @@ export function computeAverageCompliantExposure(
     );
 }
 
-export function emptyCostsSection(
+export function emptyNegativeCostSection(
     accountCurrency = "USD"
+): PortfolioNegativeCostSection {
+    return {
+        negativeEntryCount: 0,
+        negativeEntrySum: 0,
+        customersAffected: 0,
+        minMagnitude: 1,
+        previewEntries: [],
+        accountCurrency,
+    };
+}
+
+export function emptyExposureReconciliationSection(
+    accountCurrency = "USD"
+): PortfolioExposureReconciliationSection {
+    return {
+        failingRowCount: 0,
+        maxAbsDelta: null,
+        customersAffected: 0,
+        atRiskExceedsTotalRowCount: 0,
+        atRiskExceedsTotalCustomers: 0,
+        maxAtRiskExcess: null,
+        epsilon: 1,
+        accountCurrency,
+    };
+}
+
+export function emptyCostsSection(
+    accountCurrency = "USD",
+    options?: {
+        daysInRange?: number;
+    }
 ): PortfolioCostsSection {
+    const yearMultiplier = computeAssessmentYearMultiplier(
+        options?.daysInRange ?? 1
+    );
     return {
         periodCost: 0,
         daily: [],
@@ -1248,6 +1480,10 @@ export function emptyCostsSection(
         approvedArSharePct: 0,
         approvedAverageAr: 0,
         deductiblePct: null,
+        negativeCost: emptyNegativeCostSection(accountCurrency),
+        annualCreditAssessmentCost: 0,
+        namedCustomerCountInRange: 0,
+        yearMultiplier,
     };
 }
 
@@ -1264,6 +1500,10 @@ export function buildCostsSection(input: {
         namedUtilizationPct: number | null;
     }>;
     accountCurrency: string;
+    negativeCost?: PortfolioNegativeCostSection | null;
+    annualCreditAssessmentCost?: number;
+    namedCustomerCountInRange?: number;
+    yearMultiplier?: number;
 }): PortfolioCostsSection {
     const averageCompliantExposure = computeAverageCompliantExposure(
         input.dailyHealth
@@ -1274,6 +1514,10 @@ export function buildCostsSection(input: {
     const monthly = [...input.monthly].sort((a, b) =>
         a.month.localeCompare(b.month)
     );
+    const yearMultiplier =
+        input.yearMultiplier != null && Number.isFinite(input.yearMultiplier)
+            ? Math.max(1, Math.floor(input.yearMultiplier))
+            : 1;
 
     return {
         periodCost: input.periodCost,
@@ -1292,6 +1536,19 @@ export function buildCostsSection(input: {
         approvedArSharePct: footprints.approvedArSharePct,
         approvedAverageAr: footprints.approvedAverageAr,
         deductiblePct: null,
+        negativeCost:
+            input.negativeCost ?? emptyNegativeCostSection(currency),
+        annualCreditAssessmentCost: Number.isFinite(
+            input.annualCreditAssessmentCost
+        )
+            ? Math.max(0, input.annualCreditAssessmentCost as number)
+            : 0,
+        namedCustomerCountInRange: Number.isFinite(
+            input.namedCustomerCountInRange
+        )
+            ? Math.max(0, input.namedCustomerCountInRange as number)
+            : 0,
+        yearMultiplier,
     };
 }
 
@@ -1775,9 +2032,9 @@ type CptUtilizationDayRow = {
 type CptTopCustomerRow = {
     customer_id: number;
     usage_amount: number | string;
-    effective_usage_pct: number | string | null;
-    effective_approved_limit: number | string | null;
-    approved_limit: number | string | null;
+    open_ar: number | string;
+    /** Mean daily effective utilization % (null when no positive-limit day). */
+    average_utilization_pct: number | string | null;
     person_name: string | null;
     company_name: string | null;
 };
@@ -1799,6 +2056,7 @@ type CptCostInputRow = {
     outdated_dcl: boolean;
     cost_calculation_method: cost_calculation_method | null;
     cost_percent: number | string | null;
+    registration_fee_percent: number | string | null;
     policy_exclusion_reason: string | null;
 };
 
@@ -1871,6 +2129,7 @@ async function fetchPortfolioRangeCostInputs(
             t.outdated_dcl,
             t.cost_calculation_method,
             t.cost_percent,
+            t.registration_fee_percent,
             t.policy_exclusion_reason
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${accountId}
@@ -1970,6 +2229,9 @@ async function fetchPortfolioRangeCostInputs(
             approvedLimit: optionalFiniteNumber(row.approved_limit),
             costCalculationMethod: row.cost_calculation_method,
             costPercent: optionalFiniteNumber(row.cost_percent),
+            registrationFeePercent: optionalFiniteNumber(
+                row.registration_fee_percent
+            ),
             excludedFromPolicy: row.excluded_from_policy,
             outdatedDcl: row.outdated_dcl,
             policyExclusionReason: row.policy_exclusion_reason,
@@ -2284,31 +2546,44 @@ async function fetchPeriodTopUpUniques(
 async function fetchCptTopUtilizationCustomers(
     accountId: number,
     options: {
-        asOfDateUtc: Date;
+        fromDateUtc: Date;
+        toDateUtc: Date;
         policyId?: number;
         scopedCustomerIds: number[] | null;
         includeNoPolicyExposure: boolean;
         limit?: number;
     }
 ): Promise<PortfolioUtilizationTopCustomer[]> {
+    /** Ranked by mean daily open AR (`total_receivables`) DESC. */
     const pendingReviewLiteral = "pending review";
     const topN = options.limit ?? 10;
 
     const rows = await prisma.$queryRaw<CptTopCustomerRow[]>`
         SELECT
             t.customer_id,
-            t.usage_amount,
-            t.effective_usage_pct,
-            t.effective_approved_limit,
-            t.approved_limit,
-            p.full_name AS person_name,
-            co.name AS company_name
+            AVG(COALESCE(t.usage_amount, 0))::float8 AS usage_amount,
+            AVG(COALESCE(t.total_receivables, 0))::float8 AS open_ar,
+            AVG(
+                CASE
+                    WHEN COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
+                    THEN COALESCE(
+                        t.effective_usage_pct,
+                        (COALESCE(t.usage_amount, 0)
+                            / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8)
+                            * 100
+                    )
+                    ELSE NULL
+                END
+            )::float8 AS average_utilization_pct,
+            MAX(p.full_name) AS person_name,
+            MAX(co.name) AS company_name
         FROM "CustomerPolicyTrend" t
         INNER JOIN "Customer" c ON c.id = t.customer_id
         LEFT JOIN "Person" p ON p.id = c.person_id
         LEFT JOIN "Company" co ON co.id = c.company_id
         WHERE t.account_id = ${accountId}
-          AND t.snapshot_date = ${options.asOfDateUtc}::date
+          AND t.snapshot_date >= ${options.fromDateUtc}::date
+          AND t.snapshot_date <= ${options.toDateUtc}::date
           AND (
             ${options.policyId ?? null}::int IS NULL
             OR t.insurance_policy_id = ${options.policyId ?? null}
@@ -2322,35 +2597,33 @@ async function fetchCptTopUtilizationCustomers(
             OR COALESCE(t.total_receivables, 0) <= 0
             OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, ''))) IS DISTINCT FROM ${pendingReviewLiteral}
           )
+        GROUP BY t.customer_id
         ORDER BY
-            t.usage_amount DESC,
-            COALESCE(
-                t.effective_usage_pct,
+            AVG(COALESCE(t.total_receivables, 0)) DESC,
+            AVG(COALESCE(t.usage_amount, 0)) DESC,
+            AVG(
                 CASE
                     WHEN COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
-                    THEN (t.usage_amount / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8) * 100
-                    ELSE 0
+                    THEN COALESCE(
+                        t.effective_usage_pct,
+                        (COALESCE(t.usage_amount, 0)
+                            / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8)
+                            * 100
+                    )
+                    ELSE NULL
                 END
-            ) DESC,
+            ) DESC NULLS LAST,
             t.customer_id ASC
         LIMIT ${topN}
     `;
 
     return rows.map((row) => {
         const usageAmount = toNumber(row.usage_amount);
-        const effectiveLimit = toNumber(
-            row.effective_approved_limit ?? row.approved_limit
-        );
-        const storedPct =
-            row.effective_usage_pct == null
-                ? null
-                : toNumber(row.effective_usage_pct);
+        const openAr = toNumber(row.open_ar);
         const utilizationPct =
-            storedPct != null
-                ? storedPct
-                : effectiveLimit > 0
-                  ? (100 * usageAmount) / effectiveLimit
-                  : null;
+            row.average_utilization_pct == null
+                ? null
+                : toNumber(row.average_utilization_pct);
         const customerName =
             row.company_name?.trim() ||
             row.person_name?.trim() ||
@@ -2359,6 +2632,7 @@ async function fetchCptTopUtilizationCustomers(
             customerId: row.customer_id,
             customerName,
             usageAmount,
+            openAr,
             utilizationPct,
         };
     });
@@ -2367,7 +2641,8 @@ async function fetchCptTopUtilizationCustomers(
 async function fetchCptUtilizationDistribution(
     accountId: number,
     options: {
-        asOfDateUtc: Date;
+        fromDateUtc: Date;
+        toDateUtc: Date;
         policyId?: number;
         scopedCustomerIds: number[] | null;
         includeNoPolicyExposure: boolean;
@@ -2378,14 +2653,19 @@ async function fetchCptUtilizationDistribution(
     const rows = await prisma.$queryRaw<CptDistributionRow[]>`
         SELECT
             t.customer_id,
-            COALESCE(t.usage_amount, 0)::float8 AS usage_amount,
-            CASE
-                WHEN t.effective_usage_pct IS NOT NULL THEN t.effective_usage_pct
-                ELSE (t.usage_amount / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8) * 100
-            END AS utilization_pct
+            AVG(COALESCE(t.usage_amount, 0))::float8 AS usage_amount,
+            AVG(
+                COALESCE(
+                    t.effective_usage_pct,
+                    (COALESCE(t.usage_amount, 0)
+                        / COALESCE(t.effective_approved_limit, t.approved_limit, 0)::float8)
+                        * 100
+                )
+            )::float8 AS utilization_pct
         FROM "CustomerPolicyTrend" t
         WHERE t.account_id = ${accountId}
-          AND t.snapshot_date = ${options.asOfDateUtc}::date
+          AND t.snapshot_date >= ${options.fromDateUtc}::date
+          AND t.snapshot_date <= ${options.toDateUtc}::date
           AND t.insurance_policy_id IS NOT NULL
           AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
           AND COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
@@ -2402,11 +2682,125 @@ async function fetchCptUtilizationDistribution(
             OR COALESCE(t.total_receivables, 0) <= 0
             OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, ''))) IS DISTINCT FROM ${pendingReviewLiteral}
           )
+        GROUP BY t.customer_id
+    `;
+
+    return rows
+        .map((row) => ({
+            utilizationPct: toNumber(row.utilization_pct),
+            usageAmount: toNumber(row.usage_amount),
+        }))
+        .filter((row) => Number.isFinite(row.utilizationPct));
+}
+
+type NamedInRangeAssessmentRow = {
+    insurance_policy_id: number;
+    named_customer_count: number | string;
+    idle_named_customer_count: number | string;
+    annual_credit_assessment_fee: number | string | null;
+};
+
+/**
+ * Per-policy distinct Named customers for assessment:
+ * - CPT Named anytime in the range, plus
+ * - current NamedPolicy roster customers (even with no CPT / daily open AR
+ *   in the range).
+ * Idle = no positive open AR on any Named CPT day in the range (missing CPT
+ * counts as idle). Fee is the policy's current live Annual Credit Assessment Fee.
+ */
+async function fetchNamedInRangeAssessmentByPolicy(
+    accountId: number,
+    options: {
+        fromDateUtc: Date;
+        toDateUtc: Date;
+        policyId?: number;
+        scopedCustomerIds: number[] | null;
+        includeNoPolicyExposure: boolean;
+    }
+): Promise<
+    Array<{
+        insurancePolicyId: number;
+        namedCustomerCount: number;
+        idleNamedCustomerCount: number;
+        fee: number | null;
+    }>
+> {
+    const pendingReviewLiteral = "pending review";
+    const namedLiteral = "Named";
+
+    const rows = await prisma.$queryRaw<NamedInRangeAssessmentRow[]>`
+        WITH cpt_named AS (
+            SELECT
+                t.insurance_policy_id,
+                t.customer_id,
+                MAX(COALESCE(t.total_receivables, 0)::float8) AS max_open_ar
+            FROM "CustomerPolicyTrend" t
+            WHERE t.account_id = ${accountId}
+              AND t.snapshot_date >= ${options.fromDateUtc}::date
+              AND t.snapshot_date <= ${options.toDateUtc}::date
+              AND t.insurance_policy_id IS NOT NULL
+              AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
+              AND t.limit_type::text = ${namedLiteral}
+              AND (
+                ${options.policyId ?? null}::int IS NULL
+                OR t.insurance_policy_id = ${options.policyId ?? null}
+              )
+              AND (
+                ${options.scopedCustomerIds == null}::boolean
+                OR t.customer_id = ANY(${options.scopedCustomerIds ?? []}::int[])
+              )
+              AND (
+                ${options.includeNoPolicyExposure}::boolean
+                OR COALESCE(t.total_receivables, 0) <= 0
+                OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, ''))) IS DISTINCT FROM ${pendingReviewLiteral}
+              )
+            GROUP BY t.insurance_policy_id, t.customer_id
+        ),
+        named_policy_roster AS (
+            SELECT DISTINCT
+                np.insurance_policy_id,
+                c.id AS customer_id
+            FROM "NamedPolicy" np
+            INNER JOIN "InsurancePolicy" p ON p.id = np.insurance_policy_id
+            INNER JOIN "Customer" c
+                ON c.account_id = p.account_id
+               AND c.customer_number = np.customer_number
+            WHERE p.account_id = ${accountId}
+              AND (
+                ${options.policyId ?? null}::int IS NULL
+                OR np.insurance_policy_id = ${options.policyId ?? null}
+              )
+              AND (
+                ${options.scopedCustomerIds == null}::boolean
+                OR c.id = ANY(${options.scopedCustomerIds ?? []}::int[])
+              )
+        ),
+        all_named AS (
+            SELECT insurance_policy_id, customer_id FROM cpt_named
+            UNION
+            SELECT insurance_policy_id, customer_id FROM named_policy_roster
+        )
+        SELECT
+            a.insurance_policy_id,
+            COUNT(*)::float8 AS named_customer_count,
+            COUNT(*) FILTER (
+                WHERE COALESCE(cpt.max_open_ar, 0) <= 0
+            )::float8 AS idle_named_customer_count,
+            MAX(p.annual_credit_assessment_fee)::float8
+                AS annual_credit_assessment_fee
+        FROM all_named a
+        INNER JOIN "InsurancePolicy" p ON p.id = a.insurance_policy_id
+        LEFT JOIN cpt_named cpt
+            ON cpt.insurance_policy_id = a.insurance_policy_id
+           AND cpt.customer_id = a.customer_id
+        GROUP BY a.insurance_policy_id
     `;
 
     return rows.map((row) => ({
-        utilizationPct: toNumber(row.utilization_pct),
-        usageAmount: toNumber(row.usage_amount),
+        insurancePolicyId: row.insurance_policy_id,
+        namedCustomerCount: toNumber(row.named_customer_count),
+        idleNamedCustomerCount: toNumber(row.idle_named_customer_count),
+        fee: optionalFiniteNumber(row.annual_credit_assessment_fee),
     }));
 }
 
@@ -2434,10 +2828,31 @@ export async function getCreditPortfolioHealth(
             to: parsed.to,
             daysAvailable: 0,
             daysInRange: parsed.daysInRange,
-            portfolioHealth: buildPortfolioHealthSection([], []),
+            portfolioHealth: buildPortfolioHealthSection([], [], {
+                customersWithData: 0,
+                longestStreakDays: 0,
+                longestStreakStart: null,
+                longestStreakEnd: null,
+                longestStreakCustomerId: null,
+                longestStreakCustomerName: null,
+                accountCurrency,
+            }, null, emptyExposureReconciliationSection(accountCurrency), {
+                customersWithData: 0,
+                dilutedCustomerCount: 0,
+                resolvedCustomerCount: 0,
+                customersWithBreachHistory: 0,
+                customersCurrentlyInBreach: 0,
+                customersBreachFree: 0,
+                customersNeverBreached: 0,
+                accountCurrency,
+            }),
             noCoverage: buildNoCoverageSection([], accountCurrency),
-            utilization: emptyUtilizationSection(accountCurrency),
-            costs: emptyCostsSection(accountCurrency),
+            utilization: emptyUtilizationSection(accountCurrency, {
+                daysInRange: parsed.daysInRange,
+            }),
+            costs: emptyCostsSection(accountCurrency, {
+                daysInRange: parsed.daysInRange,
+            }),
         };
     }
 
@@ -2459,6 +2874,7 @@ export async function getCreditPortfolioHealth(
         rangeCostInputs,
         withoutPolicyByDate,
         periodTopUps,
+        namedAssessmentByPolicy,
     ] = await Promise.all([
         fetchAccountCurrency(accountId),
         fetchCptDailyHealthAggregates(accountId, cptScope),
@@ -2485,28 +2901,91 @@ export async function getCreditPortfolioHealth(
             policyId: query.policyId,
             scopedCustomerIds,
         }),
+        fetchNamedInRangeAssessmentByPolicy(accountId, cptScope),
     ]);
 
     const snapshotYmds = cptRows.map((row) =>
         normalizeDateString(row.snapshot_date)
     );
     const asOfDate = latestSnapshotYmdOnOrBefore(snapshotYmds, parsed.to);
-    const asOfScope = {
-        asOfDateUtc:
-            asOfDate != null
-                ? startOfUtcDayFromYmd(asOfDate)
-                : parsed.toDateUtc,
+    const periodScope = {
+        fromDateUtc: parsed.fromDateUtc,
+        toDateUtc: parsed.toDateUtc,
         policyId: query.policyId,
         scopedCustomerIds,
         includeNoPolicyExposure: query.includeNoPolicyExposure,
     };
-    const [topCustomers, distributionCustomers] =
-        asOfDate != null
-            ? await Promise.all([
-                  fetchCptTopUtilizationCustomers(accountId, asOfScope),
-                  fetchCptUtilizationDistribution(accountId, asOfScope),
-              ])
-            : [[], []];
+    const [
+        topCustomers,
+        distributionCustomers,
+        overLimitGapPeriod,
+        slopeVolRows,
+        overshootPeriod,
+        negativeCostPeriod,
+        exposureReconPeriod,
+        concentrationSnapshots,
+        breachDilutionPeriod,
+    ] = await Promise.all([
+        fetchCptTopUtilizationCustomers(accountId, periodScope),
+        fetchCptUtilizationDistribution(accountId, periodScope),
+        fetchCapacityGapDaysPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchStaleSlopeVolatilityPeriodCustomers({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchOvershootLimitCappedPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchNegativeCostPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchExposureReconciliationPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchPolicyConcentrationSnapshots({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+            asOfDate: asOfDate ?? undefined,
+        }),
+        fetchBreachDilutionStreakPeriodSummary({
+            accountId,
+            fromDate: parsed.from,
+            toDate: parsed.to,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+    ]);
 
     const withoutPolicyAmountByDate = new Map<string, number>();
     withoutPolicyByDate.forEach((value, date) => {
@@ -2527,6 +3006,32 @@ export async function getCreditPortfolioHealth(
         query.includeNoPolicyExposure
     );
 
+    const slopeVolSummary = summarizePortfolioStaleSlopeVolatility(
+        slopeVolRows,
+        dailyA.map((d) => ({
+            snapshotDate: d.snapshotDate,
+            healthIndex: d.healthIndex,
+            totalReceivables: d.totalReceivables,
+        }))
+    );
+
+    const portfolioStale = detectStaleArRuns(
+        dailyA.map((d) => ({
+            snapshotDate: d.snapshotDate,
+            totalReceivables: d.totalReceivables,
+        }))
+    );
+    for (const point of dailyA) {
+        point.isStaleCarriedForward = portfolioStale.excludeSet.has(
+            point.snapshotDate
+        );
+    }
+    for (const point of dailyB) {
+        point.isStaleCarriedForward = portfolioStale.excludeSet.has(
+            point.snapshotDate
+        );
+    }
+
     const noCoverageDaily = buildNoCoverageDailyPoints({
         cohortRows: noCoverageRows,
         reasonRows,
@@ -2535,7 +3040,26 @@ export async function getCreditPortfolioHealth(
         includeNoPolicyExposure: query.includeNoPolicyExposure,
     });
 
-    const portfolioHealth = buildPortfolioHealthSection(dailyA, dailyB);
+    const portfolioHealth = buildPortfolioHealthSection(
+        dailyA,
+        dailyB,
+        {
+            ...overLimitGapPeriod.summary,
+            accountCurrency,
+        },
+        {
+            ...slopeVolSummary,
+            accountCurrency,
+        },
+        {
+            ...exposureReconPeriod.summary,
+            accountCurrency,
+        },
+        {
+            ...breachDilutionPeriod.summary,
+            accountCurrency,
+        }
+    );
     const utilizationDaily = buildUtilizationDailyPoints(utilizationRows);
     const rangeCost = computePortfolioRangeCost({
         dayRows: rangeCostInputs.dayRows,
@@ -2543,6 +3067,13 @@ export async function getCreditPortfolioHealth(
         topUpSlices: rangeCostInputs.topUpSlices,
         policyId: query.policyId,
     });
+
+    const yearMultiplier = computeAssessmentYearMultiplier(parsed.daysInRange);
+    const assessmentByPolicy = namedAssessmentByPolicy.map((row) => ({
+        fee: row.fee,
+        namedCustomerCount: row.namedCustomerCount,
+        idleNamedCustomerCount: row.idleNamedCustomerCount,
+    }));
 
     return {
         from: parsed.from,
@@ -2560,6 +3091,63 @@ export async function getCreditPortfolioHealth(
             periodCustomersWithTopUp: periodTopUps.periodCustomersWithTopUp,
             asOfDate,
             accountCurrency,
+            overshoot: {
+                customersWithData: overshootPeriod.summary.customersWithData,
+                avgOvershootPts: overshootPeriod.summary.avgOvershootPts,
+                topAvgOvershootPts: overshootPeriod.summary.topAvgOvershootPts,
+                topAvgOvershootCustomerId:
+                    overshootPeriod.summary.topAvgOvershootCustomerId,
+                topAvgOvershootCustomerName:
+                    overshootPeriod.summary.topAvgOvershootCustomerName,
+                limitCappedCustomerCount:
+                    overshootPeriod.summary.limitCappedCustomerCount,
+                ranking: overshootPeriod.overshootRanking.map((r) => ({
+                    customerId: r.customerId,
+                    customerName: r.customerName,
+                    avgOvershootPts: r.avgOvershootPts ?? 0,
+                    maxOvershootPts: r.maxOvershootPts,
+                    maxOvershootDate: r.maxOvershootDate,
+                    avgUsagePct: r.avgUsagePct,
+                    peakUsagePct: r.peakUsagePct,
+                    peakUsageDate: r.peakUsageDate,
+                    daysWithLimit: r.daysWithLimit,
+                    daysAvailable: r.daysAvailable,
+                    daysAboveLimit: r.daysAboveLimit,
+                    longestAboveLimitDays: r.longestAboveLimitStreak.days,
+                    limitCapped: r.limitCapped.limitCapped,
+                })),
+            },
+            concentration: {
+                asOfDate:
+                    concentrationSnapshots[0]?.asOfDate ?? asOfDate ?? null,
+                alertPolicyCount: concentrationSnapshots.filter(
+                    (p) => p.concentrationAlert
+                ).length,
+                policies: concentrationSnapshots.map((p) => ({
+                    policyId: p.policyId,
+                    policyNumber: p.policyNumber,
+                    asOfDate: p.asOfDate,
+                    customerCount: p.customerCount,
+                    customersWithOpenAr: p.customersWithOpenAr,
+                    totalOpenAr: p.totalOpenAr,
+                    top1SharePct: p.top1SharePct,
+                    top3SharePct: p.top3SharePct,
+                    top1CustomerId: p.top1CustomerId,
+                    top1CustomerName: p.top1CustomerName,
+                    alertEligible: p.alertEligible,
+                    concentrationAlert: p.concentrationAlert,
+                    ranking: p.ranking.map((c) => ({
+                        customerId: c.customerId,
+                        customerName: c.customerName,
+                        openAr: c.openAr,
+                        sharePct: c.sharePct,
+                    })),
+                })),
+            },
+            ...sumIdleNamedAnnualCreditAssessment(
+                assessmentByPolicy,
+                yearMultiplier
+            ),
         }),
         costs: buildCostsSection({
             periodCost: rangeCost.periodCost,
@@ -2567,6 +3155,28 @@ export async function getCreditPortfolioHealth(
             dailyHealth: dailyA,
             footprintDaily: utilizationDaily,
             accountCurrency,
+            negativeCost: {
+                negativeEntryCount:
+                    negativeCostPeriod.summary.negativeEntryCount,
+                negativeEntrySum: negativeCostPeriod.summary.negativeEntrySum,
+                customersAffected:
+                    negativeCostPeriod.summary.customersAffected,
+                minMagnitude: negativeCostPeriod.summary.minMagnitude,
+                previewEntries: negativeCostPeriod.previewEntries.map((e) => ({
+                    customerId: e.customerId,
+                    customerName: e.customerName,
+                    snapshotDate: e.snapshotDate,
+                    amount: e.amount,
+                })),
+                accountCurrency,
+            },
+            ...sumAnnualCreditAssessmentCost(
+                assessmentByPolicy.map((row) => ({
+                    fee: row.fee,
+                    namedCustomerCount: row.namedCustomerCount,
+                })),
+                yearMultiplier
+            ),
         }),
     };
 }

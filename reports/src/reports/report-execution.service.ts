@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     ForbiddenException,
     Injectable,
     NotFoundException,
@@ -13,7 +14,6 @@ import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import { ExecuteReportDto, ReportFilterDto } from "./dto/execute-report.dto";
 import {
-    CONTEXT_PRIMARY_TABLE,
     CREDIT_DASHBOARD_CONTEXTS,
     DASHBOARD_REPORT_CONTEXTS,
     ENTITY_LIST_REPORT_CONTEXTS,
@@ -22,6 +22,7 @@ import {
     MODEL_NAME_MAP,
     OPERATION_DASHBOARD_CONTEXTS,
     RELATION_FROM_PRIMARY,
+    resolveReportPrimaryTable,
 } from "./report.constants";
 import {
     bindCreditInsurancePrisma,
@@ -53,6 +54,11 @@ import {
     mergeAndWhere,
     splitFiltersByTable,
 } from "./report-filter.util";
+import {
+    applyFormulaFiltersToRows,
+    findFormulaFilterGuardFailure,
+    partitionFiltersByFormulaTarget,
+} from "./report-formula-filter.util";
 import {
     buildAccountScopeWhere,
     nestBusinessUnitScopeWhere,
@@ -86,9 +92,20 @@ import {
     formatReportDate,
     formatReportDateTime,
 } from "./report-datetime.util";
+import {
+    applyGroupingAndAggregation,
+    buildCountAggregationTotals,
+    compareSortValues,
+    coerceToNumber,
+    detectOneToManyRelationTable,
+    getLegacyFieldOutputKey,
+    reportNeedsGroupedExecution,
+} from "./report-grouping.util";
 
 type ReportConfig = {
     tables?: string[];
+    /** Explicit report grain; context override still wins at execute time. */
+    primaryTable?: string;
     fields?: Array<{
         table: string;
         field: string;
@@ -105,6 +122,7 @@ type PrismaWhere = Record<string, unknown>;
 type ExecuteReportResult = {
     data: Record<string, unknown>[];
     totalRecords: number;
+    aggregationTotals?: Record<string, number>;
     formulaWarnings?: FormulaWarningSummary[];
 };
 
@@ -139,10 +157,11 @@ export class ReportExecutionService {
             (report.report_config || {}) as ReportConfig,
             REPORT_METADATA.tables
         );
-        const primaryTable =
-            CONTEXT_PRIMARY_TABLE[report.context || ""] ||
-            config.tables?.[0] ||
-            "Customer";
+        const primaryTable = resolveReportPrimaryTable({
+            context: report.context,
+            primaryTable: config.primaryTable,
+            tables: config.tables,
+        });
         const modelKey = MODEL_NAME_MAP[primaryTable];
         if (!modelKey) {
             throw new ForbiddenException(
@@ -198,6 +217,9 @@ export class ReportExecutionService {
         let creditDashboardPolicyId: number | undefined;
         let creditDashboardWithinDays: number | undefined;
         let creditDashboardAsOfDate: string | undefined;
+        let creditDashboardFromDate: string | undefined;
+        let creditDashboardToDate: string | undefined;
+        let creditDashboardIncludeNoPolicyExposure: boolean | undefined;
         let creditCustomerMembershipType:
             | "capacity"
             | "policy_risk"
@@ -207,6 +229,15 @@ export class ReportExecutionService {
             | "top_up"
             | "top_up_expiring"
             | "utilization_bin"
+            | "ar_extreme_moves"
+            | "utilization_overshoot"
+            | "limit_capped"
+            | "negative_daily_cost"
+            | "exposure_reconciliation"
+            | "policy_concentration"
+            | "limit_breach_forecast"
+            | "breach_dilution"
+            | "breach_episodes"
             | null
             | undefined;
         if (report.context === "dashboard_credit_customers") {
@@ -219,6 +250,10 @@ export class ReportExecutionService {
             creditDashboardPolicyId = prepared.policyId;
             creditDashboardWithinDays = prepared.withinDays;
             creditDashboardAsOfDate = prepared.asOfDate;
+            creditDashboardFromDate = prepared.fromDate;
+            creditDashboardToDate = prepared.toDate;
+            creditDashboardIncludeNoPolicyExposure =
+                prepared.includeNoPolicyExposure;
             creditCustomerMembershipType = prepared.membershipType;
         } else if (report.context === "dashboard_credit_invoices") {
             const prepared = await prepareDashboardCreditInvoiceMarkers(
@@ -236,8 +271,24 @@ export class ReportExecutionService {
             body,
             { skipSelectedUserId: skipSelectedUserOnActivity }
         );
+        const normalizedFilters = this.normalizeFilters(filters, primaryTable);
+        const formulaFilterGuard = findFormulaFilterGuardFailure({
+            filters: normalizedFilters,
+            formulas: config.formulas,
+            grouping: config.grouping,
+            fields: config.fields,
+        });
+        if (formulaFilterGuard) {
+            throw new BadRequestException({
+                message: formulaFilterGuard.message,
+                errorCode: formulaFilterGuard.errorCode,
+            });
+        }
+        const { databaseFilters, formulaFilters } =
+            partitionFiltersByFormulaTarget(normalizedFilters);
+        const hasFormulaFilters = formulaFilters.length > 0;
         const { primary: filterPrimary, nested } = splitFiltersByTable(
-            this.normalizeFilters(filters, primaryTable),
+            databaseFilters,
             primaryTable
         );
 
@@ -270,8 +321,19 @@ export class ReportExecutionService {
             creditInvoiceExtras
         );
 
-        const fields = (config.fields || []).filter((f) => !f.aggregation);
+        const allFields = config.fields || [];
+        // Aggregated columns must still contribute their source scalars to the
+        // Prisma select (e.g. Invoice.amount for Invoice.amount__SUM).
+        const fields = allFields;
+        const nonAggregatedFields = allFields.filter((f) => !f.aggregation);
         const select = this.buildSelect(primaryTable, fields);
+        this.applyNestedRelationSelectFilters(
+            primaryTable,
+            select,
+            nested,
+            relationMap
+        );
+        const needsGroupedExecution = reportNeedsGroupedExecution(config);
 
         const reportUniqueName = (report as { unique_name?: string | null })
             .unique_name;
@@ -288,8 +350,8 @@ export class ReportExecutionService {
             ).toString();
             const topUpResult = await fetchTopUpExpiringReportAsCustomerRows({
                 accountId,
-                page,
-                limit,
+                page: hasFormulaFilters ? 1 : page,
+                limit: hasFormulaFilters ? 100_000 : limit,
                 search: body.search,
                 sortField: body.sortField || config.sorting?.[0]?.field,
                 sortDirection:
@@ -304,7 +366,7 @@ export class ReportExecutionService {
                 this.formatRow(
                     row,
                     primaryTable,
-                    fields,
+                    nonAggregatedFields,
                     locale,
                     creditDashboardPolicyId,
                     timezone,
@@ -315,9 +377,19 @@ export class ReportExecutionService {
                 locale,
                 metadataTables: REPORT_METADATA.tables,
             });
+            let topUpRows = formulaResult.rows;
+            let topUpTotal = topUpResult.total;
+            if (hasFormulaFilters) {
+                topUpRows = applyFormulaFiltersToRows(
+                    topUpRows,
+                    formulaFilters
+                );
+                topUpTotal = topUpRows.length;
+                topUpRows = topUpRows.slice(skip, skip + limit);
+            }
             return serializeBigInt({
-                data: formulaResult.rows,
-                totalRecords: topUpResult.total,
+                data: topUpRows,
+                totalRecords: topUpTotal,
                 ...(formulaResult.warnings.length
                     ? { formulaWarnings: formulaResult.warnings }
                     : {}),
@@ -361,8 +433,13 @@ export class ReportExecutionService {
         const needsInMemorySort =
             needsCreditDashboardInMemorySort ||
             needsComputedFormattedSort ||
-            needsPolicyBackedFormattedSort;
+            needsPolicyBackedFormattedSort ||
+            needsGroupedExecution;
+        // Formula filters require compute → filter → paginate on the full
+        // database-filtered set (correct totals; not "filter current page").
+        const needsFullFetch = needsInMemorySort || hasFormulaFilters;
 
+        // In-memory sorts cannot use SQL orderBy; formula-filter full fetch still can.
         const orderBy = needsInMemorySort
             ? []
             : this.buildOrderBy(
@@ -374,15 +451,17 @@ export class ReportExecutionService {
 
         const findArgs: Record<string, unknown> = {
             where,
-            skip: needsInMemorySort ? undefined : skip,
-            take: needsInMemorySort ? undefined : limit,
+            skip: needsFullFetch ? undefined : skip,
+            take: needsFullFetch ? undefined : limit,
             orderBy: orderBy.length ? orderBy : undefined,
             select,
         };
 
         let [rows, totalRecords] = await Promise.all([
             delegate.findMany(findArgs),
-            delegate.count({ where }),
+            needsFullFetch
+                ? Promise.resolve(0)
+                : delegate.count({ where }),
         ]);
 
         // Open AR / related metrics are not Prisma columns — always enrich when
@@ -431,40 +510,103 @@ export class ReportExecutionService {
                 requestedFields: requestedCustomerFields,
                 limitWarningByCustomerId,
                 asOfDate: creditDashboardAsOfDate,
+                fromDate: creditDashboardFromDate,
+                toDate: creditDashboardToDate,
+                includeNoPolicyExposure:
+                    creditDashboardIncludeNoPolicyExposure,
             });
         }
 
-        if (needsCreditDashboardInMemorySort && effectiveSortField) {
+        // Credit dashboard enriched sort: when formula filters are also present,
+        // sort the full set here but defer pagination until after formula filters.
+        // Grouped execution sorts after aggregation instead.
+        if (
+            needsCreditDashboardInMemorySort &&
+            effectiveSortField &&
+            !needsGroupedExecution
+        ) {
             rows = sortCreditDashboardEnrichedRows(
                 rows,
                 effectiveSortField,
                 effectiveSortDirection
             );
-            totalRecords = rows.length;
-            rows = rows.slice(skip, skip + limit);
+            if (!hasFormulaFilters) {
+                totalRecords = rows.length;
+                rows = rows.slice(skip, skip + limit);
+            }
         }
 
         const locale = body.locale || "en-US";
         const language = body.language || user.language || undefined;
         const timezone = body.timezone;
-        const data = rows.map((row) =>
-            this.formatRow(
-                row,
-                primaryTable,
-                fields,
-                locale,
-                creditDashboardPolicyId,
-                timezone,
-                language
-            )
-        );
+        const accountCurrency = "USD";
+
+        const data = needsGroupedExecution
+            ? this.expandRowsForGrouping(
+                  rows,
+                  primaryTable,
+                  allFields,
+                  config,
+                  locale,
+                  creditDashboardPolicyId,
+                  timezone,
+                  language
+              )
+            : rows.map((row) =>
+                  this.formatRow(
+                      row,
+                      primaryTable,
+                      nonAggregatedFields,
+                      locale,
+                      creditDashboardPolicyId,
+                      timezone,
+                      language
+                  )
+              );
         const formulaResult = applyFormulasToRows(data, config, {
             locale,
             metadataTables: REPORT_METADATA.tables,
+            accountCurrency,
         });
 
         let resultRows = formulaResult.rows;
-        if (needsComputedFormattedSort && computedSortTarget) {
+        let aggregationTotals: Record<string, number> | undefined;
+
+        // Formula filters are rejected when grouping is configured (guard above).
+        if (hasFormulaFilters) {
+            resultRows = applyFormulaFiltersToRows(
+                resultRows,
+                formulaFilters
+            );
+        }
+
+        if (needsGroupedExecution) {
+            resultRows = applyGroupingAndAggregation(resultRows, config, {
+                locale,
+                accountCurrency,
+            });
+            aggregationTotals = buildCountAggregationTotals(
+                resultRows,
+                allFields
+            );
+            if (effectiveSortField) {
+                const isAsc =
+                    String(effectiveSortDirection).toLowerCase() !== "desc";
+                resultRows = [...resultRows].sort((a, b) =>
+                    compareSortValues(
+                        a[effectiveSortField],
+                        b[effectiveSortField],
+                        isAsc
+                    )
+                );
+            }
+            totalRecords = resultRows.length;
+            resultRows = resultRows.slice(skip, skip + limit);
+        } else if (
+            needsComputedFormattedSort &&
+            computedSortTarget &&
+            !needsCreditDashboardInMemorySort
+        ) {
             resultRows = sortFormattedReportRows(
                 resultRows,
                 computedSortTarget.outputKey,
@@ -472,7 +614,11 @@ export class ReportExecutionService {
             );
             totalRecords = resultRows.length;
             resultRows = resultRows.slice(skip, skip + limit);
-        } else if (needsPolicyBackedFormattedSort && policyBackedSortLeaf) {
+        } else if (
+            needsPolicyBackedFormattedSort &&
+            policyBackedSortLeaf &&
+            !needsCreditDashboardInMemorySort
+        ) {
             const match = fields.find(
                 (f) =>
                     f.table === "Customer" &&
@@ -491,11 +637,15 @@ export class ReportExecutionService {
             );
             totalRecords = resultRows.length;
             resultRows = resultRows.slice(skip, skip + limit);
+        } else if (hasFormulaFilters) {
+            totalRecords = resultRows.length;
+            resultRows = resultRows.slice(skip, skip + limit);
         }
 
         return serializeBigInt({
             data: resultRows,
             totalRecords,
+            ...(aggregationTotals ? { aggregationTotals } : {}),
             ...(formulaResult.warnings.length
                 ? { formulaWarnings: formulaResult.warnings }
                 : {}),
@@ -716,6 +866,9 @@ export class ReportExecutionService {
         const select: Record<string, unknown> = { id: true };
         const relationMap = RELATION_FROM_PRIMARY[primaryTable] || {};
 
+        // To-many joins (Customer→Invoice, Contact, …) load one sample row
+        // so nested scalars display without exploding the primary grain.
+        // Matches CustomerCollectionPeriod / CustomerPolicy sample patterns.
         const ensureRelSelect = (
             rel: string
         ): Record<string, unknown> => {
@@ -726,11 +879,34 @@ export class ReportExecutionService {
                 existing !== null &&
                 "select" in (existing as object)
             ) {
-                return (existing as { select: Record<string, unknown> })
+                if (isPrismaListRelation(primaryTable, rel)) {
+                    const existingObj = existing as {
+                        select: Record<string, unknown>;
+                        take?: number;
+                        orderBy?: unknown;
+                    };
+                    if (existingObj.take == null) {
+                        select[rel] = {
+                            ...existingObj,
+                            take: 1,
+                            orderBy:
+                                existingObj.orderBy ?? { id: "asc" as const },
+                        };
+                    }
+                }
+                return (select[rel] as { select: Record<string, unknown> })
                     .select;
             }
             const nested: Record<string, unknown> = { id: true };
-            select[rel] = { select: nested };
+            if (isPrismaListRelation(primaryTable, rel)) {
+                select[rel] = {
+                    take: 1,
+                    orderBy: { id: "asc" as const },
+                    select: nested,
+                };
+            } else {
+                select[rel] = { select: nested };
+            }
             return nested;
         };
 
@@ -1325,6 +1501,163 @@ export class ReportExecutionService {
         return (dir) => ({ id: dir });
     }
 
+    /**
+     * When list relations are selected for aggregation (e.g. Customer.Invoice),
+     * push the same nested filters used in `where.some` into the relation
+     * `select.where` so only matching related rows are loaded and counted.
+     */
+    private applyNestedRelationSelectFilters(
+        primaryTable: string,
+        select: Record<string, unknown>,
+        nested: Record<string, PrismaWhere>,
+        relationMap: Record<string, string>
+    ): void {
+        for (const [table, where] of Object.entries(nested)) {
+            const rel = relationMap[table];
+            if (!rel || !where || typeof where !== "object") {
+                continue;
+            }
+            if (!isPrismaListRelation(primaryTable, rel)) {
+                continue;
+            }
+            const existing = select[rel];
+            if (
+                !existing ||
+                typeof existing !== "object" ||
+                existing === null ||
+                !("select" in (existing as object))
+            ) {
+                continue;
+            }
+            select[rel] = {
+                ...(existing as Record<string, unknown>),
+                where,
+            };
+        }
+    }
+
+    /**
+     * Expand primary rows into one formatted row per related to-many record so
+     * grouping can SUM/COUNT child values (Monthly Report Invoice COUNT/SUM).
+     */
+    private expandRowsForGrouping(
+        rows: Record<string, unknown>[],
+        primaryTable: string,
+        fields: Array<{
+            table: string;
+            field: string;
+            alias?: string;
+            aggregation?: string;
+        }>,
+        config: ReportConfig,
+        locale: string,
+        scopedPolicyId?: number,
+        timezone?: string,
+        language?: string
+    ): Record<string, unknown>[] {
+        const relationMap = RELATION_FROM_PRIMARY[primaryTable] || {};
+        const oneToMany = detectOneToManyRelationTable(
+            primaryTable,
+            fields,
+            relationMap,
+            rows[0]
+        );
+        const nonAggregatedFields = fields.filter((f) => !f.aggregation);
+        const aggregatedFields = fields.filter((f) => !!f.aggregation);
+
+        if (!oneToMany) {
+            return rows.map((row) => {
+                const formatted = this.formatRow(
+                    row,
+                    primaryTable,
+                    nonAggregatedFields,
+                    locale,
+                    scopedPolicyId,
+                    timezone,
+                    language
+                );
+                for (const field of aggregatedFields) {
+                    if (field.table !== primaryTable) {
+                        continue;
+                    }
+                    const raw = coerceToNumber(row[field.field]);
+                    const outputKey = getFieldOutputKey(field);
+                    const legacyKey = getLegacyFieldOutputKey(field);
+                    formatted[legacyKey] = raw;
+                    formatted[outputKey] = raw;
+                }
+                return formatted;
+            });
+        }
+
+        const formattedRows: Record<string, unknown>[] = [];
+        for (const row of rows) {
+            const relatedRaw = row[oneToMany.relationName];
+            const relatedList = Array.isArray(relatedRaw)
+                ? relatedRaw
+                : relatedRaw
+                  ? [relatedRaw]
+                  : [];
+
+            if (relatedList.length === 0) {
+                const formatted = this.formatRow(
+                    row,
+                    primaryTable,
+                    nonAggregatedFields,
+                    locale,
+                    scopedPolicyId,
+                    timezone,
+                    language
+                );
+                for (const field of aggregatedFields) {
+                    if (field.table !== oneToMany.table) {
+                        continue;
+                    }
+                    const outputKey = getFieldOutputKey(field);
+                    const legacyKey = getLegacyFieldOutputKey(field);
+                    formatted[legacyKey] = null;
+                    formatted[outputKey] = null;
+                }
+                formattedRows.push(formatted);
+                continue;
+            }
+
+            for (const relatedRecord of relatedList) {
+                const related = relatedRecord as Record<string, unknown>;
+                // Present the to-many child as a singular object so formatRow
+                // can read nested scalars (extractFieldValue uses nested?.[field]).
+                const merged: Record<string, unknown> = {
+                    ...row,
+                    [oneToMany.relationName]: related,
+                };
+                const formatted = this.formatRow(
+                    merged,
+                    primaryTable,
+                    nonAggregatedFields,
+                    locale,
+                    scopedPolicyId,
+                    timezone,
+                    language
+                );
+                for (const field of aggregatedFields) {
+                    if (field.table !== oneToMany.table) {
+                        continue;
+                    }
+                    const raw = coerceToNumber(related[field.field]);
+                    const outputKey = getFieldOutputKey(field);
+                    const legacyKey = getLegacyFieldOutputKey(field);
+                    formatted[legacyKey] = raw;
+                    formatted[outputKey] = raw;
+                }
+                if (related.id != null) {
+                    formatted.id = `${row.id ?? "row"}-${related.id}`;
+                }
+                formattedRows.push(formatted);
+            }
+        }
+        return formattedRows;
+    }
+
     private formatRow(
         row: Record<string, unknown>,
         primaryTable: string,
@@ -1545,7 +1878,7 @@ export class ReportExecutionService {
             if (f.field.includes(".")) {
                 const [relTable, ...rest] = f.field.split(".");
                 const rel = relationMap[relTable] || relTable;
-                const nested = row[rel] as Record<string, unknown> | null;
+                const nested = this.unwrapRelationSample(row[rel]);
                 if (relTable === "Customer" && rest.join(".") === "name") {
                     return nested
                         ? this.extractCustomerName(nested)
@@ -1556,9 +1889,7 @@ export class ReportExecutionService {
             return row[f.field];
         }
         const rel = relationMap[f.table];
-        const nested = rel
-            ? (row[rel] as Record<string, unknown> | null)
-            : null;
+        const nested = rel ? this.unwrapRelationSample(row[rel]) : null;
         if (
             primaryTable === "CustomerBanks" &&
             f.table === "Country" &&
@@ -1586,7 +1917,30 @@ export class ReportExecutionService {
         if (f.field.includes(".")) {
             return this.getNestedValue(nested, f.field) ?? null;
         }
-        return nested?.[f.field];
+        return nested?.[f.field] ?? null;
+    }
+
+    /**
+     * Prisma list relations return arrays; sample-row selects use take:1.
+     * Unwrap to the first related object (or null) for scalar extraction.
+     */
+    private unwrapRelationSample(
+        value: unknown
+    ): Record<string, unknown> | null {
+        if (value == null) {
+            return null;
+        }
+        if (Array.isArray(value)) {
+            const first = value[0];
+            if (first != null && typeof first === "object") {
+                return first as Record<string, unknown>;
+            }
+            return null;
+        }
+        if (typeof value === "object") {
+            return value as Record<string, unknown>;
+        }
+        return null;
     }
 
     private applyAuditUserSelect(
@@ -1654,7 +2008,14 @@ export class ReportExecutionService {
             if (acc == null || typeof acc !== "object") {
                 return null;
             }
-            return (acc as Record<string, unknown>)[part];
+            // List-relation hops arrive as arrays; use the sample first row.
+            const obj = Array.isArray(acc)
+                ? (acc[0] as Record<string, unknown> | undefined)
+                : (acc as Record<string, unknown>);
+            if (obj == null || typeof obj !== "object") {
+                return null;
+            }
+            return obj[part];
         }, value);
     }
 

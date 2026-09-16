@@ -77,6 +77,15 @@ export class CustomersController {
         return this.customers.listActivities(user, id, query);
     }
 
+    @Get(":id/disputes/get-open")
+    @ApiOperation({ summary: "Open customer disputes (Nest-native)" })
+    async openDisputes(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        return this.customers.listOpenDisputes(user, id);
+    }
+
     @Get(":id/disputes")
     @ApiOperation({ summary: "Customer disputes list (Nest-native)" })
     async disputes(

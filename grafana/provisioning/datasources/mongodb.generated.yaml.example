@@ -1,0 +1,6 @@
+# Checked-in template. start-*.sh overwrites mongodb.generated.yaml from MONGODB_URI.
+apiVersion: 1
+deleteDatasources:
+  - name: MongoDB
+    orgId: 1
+datasources: []

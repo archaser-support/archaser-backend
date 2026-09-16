@@ -10,13 +10,17 @@ import {
     getCreditDashboardSummary,
 } from "./creditInsuranceDashboardService";
 import {
+    buildAsOfTermsMapFromActiveCustomerPolicies,
     deriveDashboardSnapshotScopes,
     type CreditAsOfBackfillRunContext,
     type CreditDashboardAccountSettings,
 } from "./creditAsOfBackfillRunContext";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
 import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron";
-import { withReportingBreachIgnored } from "./asOfOpenAr";
+import {
+    withReportingBreachIgnored,
+    overlayAsOfTermsFlagsOnLines,
+} from "./asOfOpenAr";
 import {
     batchUpsertCreditDashboardDailySnapshotRows,
     type CreditDashboardDailySnapshotUpsertRow,
@@ -182,6 +186,10 @@ async function processDashboardSnapshotsForAccount(
         businessUnitIds?: number[];
         hasTopUpPolicies?: boolean;
         dashboardAccountSettings?: CreditDashboardAccountSettings;
+        /** Generate/drain: overlay terms once for all scopes (avoids N× MEP cost). */
+        runContext?: CreditAsOfBackfillRunContext;
+        /** When true, day-loop (start or resume) already overlaid terms flags. */
+        asOfTermsFlagsApplied?: boolean;
     }
 ): Promise<number> {
     const loadedLines =
@@ -189,10 +197,30 @@ async function processDashboardSnapshotsForAccount(
         (await (
             await import("./asOfOpenAr")
         ).loadAsOfOpenInvoiceCandidates(accountId, snapshotDate));
-    const asOfLines = withReportingBreachIgnored(
+    let asOfLines = withReportingBreachIgnored(
         loadedLines,
         ignoreReportingBreach === true
     );
+    let asOfTermsFlagsApplied = options?.asOfTermsFlagsApplied === true;
+    const runContext = options?.runContext;
+    if (
+        !asOfTermsFlagsApplied &&
+        runContext?.activeCustomerPolicies &&
+        runContext.activeCustomerPolicies.length > 0
+    ) {
+        asOfLines = overlayAsOfTermsFlagsOnLines(
+            asOfLines,
+            snapshotDate,
+            buildAsOfTermsMapFromActiveCustomerPolicies(
+                runContext.activeCustomerPolicies
+            ),
+            {
+                ignoreReportingBreach: ignoreReportingBreach === true,
+                mepBreachStartDate: runContext.mepBreachStartDate,
+            }
+        );
+        asOfTermsFlagsApplied = true;
+    }
 
     const businessUnitIds =
         options?.businessUnitIds ??
@@ -205,9 +233,11 @@ async function processDashboardSnapshotsForAccount(
     const summaryOptions = {
         asOfDate: snapshotDate,
         asOfLines,
+        asOfTermsFlagsApplied,
         hasTopUpPolicies: options?.hasTopUpPolicies,
         accountSettings: options?.dashboardAccountSettings,
         skipPolicyExpirationLoad: options?.dashboardAccountSettings != null,
+        ignoreReportingBreach: ignoreReportingBreach === true,
     };
 
     const computed = await mapWithConcurrency(
@@ -341,6 +371,11 @@ export async function takeCreditDashboardDailySnapshotsForAccount(
         ignoreReportingBreach?: boolean;
         /** Preloaded static inputs for multi-day Generate / drain replay. */
         runContext?: CreditAsOfBackfillRunContext;
+        /**
+         * When true, `asOfLines` already have terms flags (shared day-loop
+         * overlay on Generate start and resume).
+         */
+        asOfTermsFlagsApplied?: boolean;
     }
 ): Promise<{ scopesProcessed: number }> {
     const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
@@ -359,8 +394,12 @@ export async function takeCreditDashboardDailySnapshotsForAccount(
                   businessUnitIds: runContext.businessUnitIds,
                   hasTopUpPolicies: runContext.hasTopUpPolicies,
                   dashboardAccountSettings: runContext.dashboardAccountSettings,
+                  runContext,
+                  asOfTermsFlagsApplied: options?.asOfTermsFlagsApplied === true,
               }
-            : undefined
+            : options?.asOfTermsFlagsApplied === true
+              ? { asOfTermsFlagsApplied: true }
+              : undefined
     );
     return { scopesProcessed };
 }

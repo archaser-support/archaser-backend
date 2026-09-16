@@ -28,6 +28,8 @@ export type PortfolioRangeCostDayRow = {
     approvedLimit: number | null;
     costCalculationMethod: cost_calculation_method | null;
     costPercent: number | null;
+    /** As-of history registration %; null/missing → registration markup 0. */
+    registrationFeePercent: number | null;
     excludedFromPolicy: boolean;
     outdatedDcl: boolean;
     policyExclusionReason: string | null;
@@ -48,12 +50,21 @@ export type PortfolioRangeCostTopUpSlice = {
 
 export type PortfolioRangeCostMonthlyPoint = {
     month: string;
+    insuranceCost: number;
+    registrationFeeCost: number;
+    topUpCost: number;
     totalCost: number;
 };
 
 export type PortfolioRangeCostResult = {
     periodCost: number;
     monthly: PortfolioRangeCostMonthlyPoint[];
+};
+
+type MonthCostComponents = {
+    insuranceCost: number;
+    registrationFeeCost: number;
+    topUpCost: number;
 };
 
 /**
@@ -106,16 +117,51 @@ export function computeActualSalesInvoiceCostSlice(input: {
     return (input.amount * input.costPercent) / 100;
 }
 
+/**
+ * Registration markup on an insurance premium:
+ * insurancePremium × registrationFeePercent / 100.
+ * Null/non-finite registration % → 0 (no master-policy fallback).
+ */
+export function computeRegistrationFeeCostSlice(input: {
+    insurancePremium: number;
+    registrationFeePercent: number | null;
+}): number {
+    if (
+        !Number.isFinite(input.insurancePremium) ||
+        input.insurancePremium === 0
+    ) {
+        return 0;
+    }
+    if (
+        input.registrationFeePercent == null ||
+        !Number.isFinite(input.registrationFeePercent)
+    ) {
+        return 0;
+    }
+    return (input.insurancePremium * input.registrationFeePercent) / 100;
+}
+
+function emptyMonthComponents(): MonthCostComponents {
+    return {
+        insuranceCost: 0,
+        registrationFeeCost: 0,
+        topUpCost: 0,
+    };
+}
+
 function addToMonthBucket(
-    buckets: Map<string, number>,
+    buckets: Map<string, MonthCostComponents>,
     ymd: string,
+    component: keyof MonthCostComponents,
     amount: number
 ): void {
     if (!Number.isFinite(amount) || amount === 0) {
         return;
     }
     const month = ymd.slice(0, 7);
-    buckets.set(month, (buckets.get(month) ?? 0) + amount);
+    const bucket = buckets.get(month) ?? emptyMonthComponents();
+    bucket[component] += amount;
+    buckets.set(month, bucket);
 }
 
 function dayKey(customerId: number, snapshotDate: string): string {
@@ -124,7 +170,8 @@ function dayKey(customerId: number, snapshotDate: string): string {
 
 /**
  * Period + monthly portfolio range cost from Limit day-slices, Actual Sales
- * invoices, and amortized top-up day slices (approved customers only).
+ * invoices, registration markup on insurance premiums, and amortized top-up
+ * day slices (approved customers only).
  */
 export function computePortfolioRangeCost(input: {
     dayRows: PortfolioRangeCostDayRow[];
@@ -133,7 +180,7 @@ export function computePortfolioRangeCost(input: {
     /** When set, only invoices with matching `policyId` contribute. */
     policyId?: number;
 }): PortfolioRangeCostResult {
-    const monthBuckets = new Map<string, number>();
+    const monthBuckets = new Map<string, MonthCostComponents>();
     let periodCost = 0;
 
     const dayByCustomerDate = new Map<string, PortfolioRangeCostDayRow>();
@@ -156,8 +203,23 @@ export function computePortfolioRangeCost(input: {
             outdatedDcl: row.outdatedDcl,
         });
         if (limitCost !== 0) {
-            periodCost += limitCost;
-            addToMonthBucket(monthBuckets, row.snapshotDate, limitCost);
+            const registrationCost = computeRegistrationFeeCostSlice({
+                insurancePremium: limitCost,
+                registrationFeePercent: row.registrationFeePercent,
+            });
+            periodCost += limitCost + registrationCost;
+            addToMonthBucket(
+                monthBuckets,
+                row.snapshotDate,
+                "insuranceCost",
+                limitCost
+            );
+            addToMonthBucket(
+                monthBuckets,
+                row.snapshotDate,
+                "registrationFeeCost",
+                registrationCost
+            );
         }
     }
 
@@ -199,8 +261,23 @@ export function computePortfolioRangeCost(input: {
             costCalculationMethod: dayRow.costCalculationMethod,
         });
         if (salesCost !== 0) {
-            periodCost += salesCost;
-            addToMonthBucket(monthBuckets, invoice.invoiceDate, salesCost);
+            const registrationCost = computeRegistrationFeeCostSlice({
+                insurancePremium: salesCost,
+                registrationFeePercent: dayRow.registrationFeePercent,
+            });
+            periodCost += salesCost + registrationCost;
+            addToMonthBucket(
+                monthBuckets,
+                invoice.invoiceDate,
+                "insuranceCost",
+                salesCost
+            );
+            addToMonthBucket(
+                monthBuckets,
+                invoice.invoiceDate,
+                "registrationFeeCost",
+                registrationCost
+            );
         }
     }
 
@@ -209,12 +286,29 @@ export function computePortfolioRangeCost(input: {
             continue;
         }
         periodCost += slice.amount;
-        addToMonthBucket(monthBuckets, slice.snapshotDate, slice.amount);
+        addToMonthBucket(
+            monthBuckets,
+            slice.snapshotDate,
+            "topUpCost",
+            slice.amount
+        );
     }
 
     const monthly = Array.from(monthBuckets.entries())
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([month, totalCost]) => ({ month, totalCost }));
+        .map(([month, components]) => {
+            const totalCost =
+                components.insuranceCost +
+                components.registrationFeeCost +
+                components.topUpCost;
+            return {
+                month,
+                insuranceCost: components.insuranceCost,
+                registrationFeeCost: components.registrationFeeCost,
+                topUpCost: components.topUpCost,
+                totalCost,
+            };
+        });
 
     return { periodCost, monthly };
 }

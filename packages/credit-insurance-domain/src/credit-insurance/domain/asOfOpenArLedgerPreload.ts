@@ -215,7 +215,8 @@ export type LedgerPaymentAggregate = {
     lastPaymentDate: Date | null;
 };
 
-/** Sum payments strictly before `dayAfterExclusive` (same cutoff as per-day SQL). */
+/** Sum payments strictly before `dayAfterExclusive` (same cutoff as per-day SQL).
+ * `lastPaymentDate` is the true max payment date on the invoice (any day). */
 export function aggregateLedgerPaymentsOnOrBefore(
     payments: AsOfLedgerPaymentRow[] | undefined,
     dayAfterExclusive: Date
@@ -228,17 +229,18 @@ export function aggregateLedgerPaymentsOnOrBefore(
     }
     const cutoff = dayAfterExclusive.getTime();
     for (const payment of payments) {
-        if (payment.paymentDate.getTime() >= cutoff) {
+        const payTime = payment.paymentDate.getTime();
+        if (
+            !lastPaymentDate ||
+            payTime > lastPaymentDate.getTime()
+        ) {
+            lastPaymentDate = payment.paymentDate;
+        }
+        if (payTime >= cutoff) {
             continue;
         }
         paidAmount += Number(payment.amount ?? 0);
         paidCustomerAmount += Number(payment.customerAmount ?? 0);
-        if (
-            !lastPaymentDate ||
-            payment.paymentDate.getTime() > lastPaymentDate.getTime()
-        ) {
-            lastPaymentDate = payment.paymentDate;
-        }
     }
     return { paidAmount, paidCustomerAmount, lastPaymentDate };
 }
