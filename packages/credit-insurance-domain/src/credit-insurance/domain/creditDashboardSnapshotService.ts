@@ -20,6 +20,7 @@ import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron
 import {
     withReportingBreachIgnored,
     overlayAsOfTermsFlagsOnLines,
+    isUtcCalendarToday,
 } from "./asOfOpenAr";
 import {
     batchUpsertCreditDashboardDailySnapshotRows,
@@ -197,13 +198,21 @@ async function processDashboardSnapshotsForAccount(
         (await (
             await import("./asOfOpenAr")
         ).loadAsOfOpenInvoiceCandidates(accountId, snapshotDate));
+    const ignoreReportingBreachEffective =
+        !isUtcCalendarToday(snapshotDate) && ignoreReportingBreach === true;
     let asOfLines = withReportingBreachIgnored(
         loadedLines,
-        ignoreReportingBreach === true
+        ignoreReportingBreachEffective
     );
     let asOfTermsFlagsApplied = options?.asOfTermsFlagsApplied === true;
     const runContext = options?.runContext;
-    if (
+    /**
+     * Today: keep live Invoice CTV on ledger lines (no as-of MEP overlay) so the
+     * tip matches live Credit Dashboard cards.
+     */
+    if (isUtcCalendarToday(snapshotDate)) {
+        asOfTermsFlagsApplied = true;
+    } else if (
         !asOfTermsFlagsApplied &&
         runContext?.activeCustomerPolicies &&
         runContext.activeCustomerPolicies.length > 0
@@ -215,7 +224,7 @@ async function processDashboardSnapshotsForAccount(
                 runContext.activeCustomerPolicies
             ),
             {
-                ignoreReportingBreach: ignoreReportingBreach === true,
+                ignoreReportingBreach: ignoreReportingBreachEffective,
                 mepBreachStartDate: runContext.mepBreachStartDate,
             }
         );
@@ -237,7 +246,7 @@ async function processDashboardSnapshotsForAccount(
         hasTopUpPolicies: options?.hasTopUpPolicies,
         accountSettings: options?.dashboardAccountSettings,
         skipPolicyExpirationLoad: options?.dashboardAccountSettings != null,
-        ignoreReportingBreach: ignoreReportingBreach === true,
+        ignoreReportingBreach: ignoreReportingBreachEffective,
     };
 
     const computed = await mapWithConcurrency(
