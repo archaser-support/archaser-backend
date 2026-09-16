@@ -1671,6 +1671,82 @@ export class CustomersService {
             }
         }
 
+        const userName = await this.actingUserName(effectiveUserId);
+        const userComment =
+            typeof body.user_comment === "string"
+                ? body.user_comment.trim()
+                : "";
+        const commentText =
+            typeof resolutionComment === "string"
+                ? resolutionComment.trim()
+                : "";
+        const resolutionValue =
+            (typeof data.dispute_resolution === "string"
+                ? data.dispute_resolution
+                : null) ||
+            (typeof body.dispute_resolution === "string"
+                ? body.dispute_resolution
+                : null) ||
+            dispute.dispute_resolution ||
+            "Accepted";
+        const resolutionI18n = `{{disputes.values.status_${String(resolutionValue).toLowerCase()}}}`;
+
+        const disputeActivityContent = (
+            statusI18n: string,
+            includeComment: boolean
+        ): string => {
+            const rows = [
+                `<span class="activity-label-primary">{{disputes.fields.resolution}}:</span> <span class="activity-value">${resolutionI18n}</span>`,
+            ];
+            if (includeComment && commentText) {
+                rows.push(
+                    `<span class="activity-label-primary">{{activities.fields.resolution_comment}}:</span> <span class="activity-value">${commentText.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`
+                );
+            }
+            rows.push(
+                `<span class="activity-label-primary">{{disputes.fields.status}}:</span> <span class="activity-value">${statusI18n}</span>`
+            );
+            return `\n                ${rows.join("\n            <br>\n                ")}\n            `;
+        };
+
+        let activityTitle: string | null = null;
+        const activityTitleParams: Record<string, unknown> = {
+            userId: effectiveUserId,
+            ...(userName ? { userName } : {}),
+            disputeId: String(disputeId),
+        };
+        let activityContent: string | null = null;
+
+        if (op === "resolve" || op === "resolve-dispute") {
+            activityTitle = "{{disputes.fields.resolved}}";
+            activityTitleParams.resolution = resolutionI18n;
+            activityContent = disputeActivityContent(
+                "{{disputes.values.dispute_status_resolved}}",
+                true
+            );
+        } else if (op === "update-resolution") {
+            activityTitle = "{{disputes.fields.resolution_updated}}";
+            activityTitleParams.resolution = resolutionI18n;
+            activityContent = disputeActivityContent(
+                "{{disputes.values.dispute_status_awaiting_update}}",
+                true
+            );
+        } else if (op === "cancel" || op === "cancel-dispute") {
+            activityTitle = "{{disputes.fields.cancelled}}";
+            activityContent = disputeActivityContent(
+                "{{disputes.values.dispute_status_cancelled}}",
+                true
+            );
+        } else if (
+            (op === "assign" || op === "assign-user") &&
+            userComment.length > 0
+        ) {
+            activityTitle = "{{disputes.fields.assigned}}";
+            activityTitleParams.assigneeId =
+                data.owner_id ?? dispute.owner_id ?? null;
+            activityContent = userComment;
+        }
+
         const updated = await this.db.$transaction(async (tx) => {
             const next = await tx.customerDispute.update({
                 where: { id: disputeId },
@@ -1693,44 +1769,40 @@ export class CustomersService {
                 });
             }
 
+            if (activityTitle) {
+                const period =
+                    dispute.customer_collection_period_id != null
+                        ? { id: dispute.customer_collection_period_id }
+                        : await tx.customerCollectionPeriod.findFirst({
+                              where: {
+                                  customer_id: id,
+                                  period_end_date: null,
+                              },
+                              select: { id: true },
+                              orderBy: { id: "desc" },
+                          });
+                const now = new Date();
+                await tx.activity.create({
+                    data: {
+                        customer_id: id,
+                        account_id: accountId,
+                        type: "Dispute",
+                        status: "COMPLETED",
+                        title: activityTitle,
+                        title_params: activityTitleParams,
+                        content: activityContent,
+                        collection_period_id: period?.id ?? null,
+                        schedule_time: now,
+                        actual_delivery_time: now,
+                        created_by: effectiveUserId,
+                        modified_by: effectiveUserId,
+                        system_generated: false,
+                    } as never,
+                });
+            }
+
             return next;
         });
-
-        const userComment =
-            typeof body.user_comment === "string"
-                ? body.user_comment.trim()
-                : "";
-        if (
-            (op === "assign" || op === "assign-user") &&
-            userComment.length > 0
-        ) {
-            const period = await this.db.customerCollectionPeriod.findFirst({
-                where: {
-                    customer_id: id,
-                    period_end_date: null,
-                },
-                select: { id: true },
-                orderBy: { id: "desc" },
-            });
-            await this.db.activity.create({
-                data: {
-                    customer_id: id,
-                    account_id: accountId,
-                    type: "Internal",
-                    status: "COMPLETED",
-                    title: "Dispute assigned",
-                    content: userComment,
-                    schedule_time: new Date(),
-                    collection_period_id:
-                        dispute.customer_collection_period_id ??
-                        period?.id ??
-                        null,
-                    created_by: effectiveUserId,
-                    modified_by: effectiveUserId,
-                    system_generated: false,
-                } as never,
-            });
-        }
 
         return serializeBigInt(updated);
     }
