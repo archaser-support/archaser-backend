@@ -13,6 +13,7 @@ import type { AsOfOpenInvoiceLine } from "./asOfOpenAr";
 import {
     overlayAsOfTermsFlagsOnLines,
     withReportingBreachIgnored,
+    isUtcCalendarToday,
 } from "./asOfOpenAr";
 import {
     buildAsOfTermsMapFromActiveCustomerPolicies,
@@ -349,7 +350,12 @@ async function dispatchRunner(accountId: number): Promise<void> {
             return;
         }
     }
-    void runCreditAsOfBackfillJob(accountId).catch(() => {});
+    void runCreditAsOfBackfillJob(accountId).catch((error) => {
+        console.error("[CreditAsOfBackfill] inline runner failed", {
+            accountId,
+            errorMessage: error instanceof Error ? error.message : String(error),
+        });
+    });
 }
 
 async function resolveWriters(
@@ -514,7 +520,14 @@ export async function runCreditAsOfBackfillJob(
             try {
                 let asOfLines = await loadAsOfLines(accountId, day);
                 let asOfTermsFlagsApplied = false;
-                if (sharedTermsByCustomerAndPolicy) {
+                /**
+                 * Today: keep live Invoice CTV (skip as-of MEP overlay) so tip
+                 * matches live cards. Mark applied so writers do not re-overlay.
+                 */
+                if (isUtcCalendarToday(day)) {
+                    // Keep live reporting-breach + CTV; do not strip RB for today.
+                    asOfTermsFlagsApplied = true;
+                } else if (sharedTermsByCustomerAndPolicy) {
                     asOfLines = overlayAsOfTermsFlagsOnLines(
                         withReportingBreachIgnored(
                             asOfLines,
@@ -535,7 +548,9 @@ export async function runCreditAsOfBackfillJob(
                     {
                         snapshotDate: day,
                         asOfLines,
-                        ignoreReportingBreach,
+                        ignoreReportingBreach: isUtcCalendarToday(day)
+                            ? false
+                            : ignoreReportingBreach,
                         mepBreachStartDate: runContext.mepBreachStartDate,
                         runContext,
                         asOfTermsFlagsApplied,
@@ -547,7 +562,9 @@ export async function runCreditAsOfBackfillJob(
                     {
                         snapshotDate: day,
                         asOfLines,
-                        ignoreReportingBreach,
+                        ignoreReportingBreach: isUtcCalendarToday(day)
+                            ? false
+                            : ignoreReportingBreach,
                         runContext,
                         asOfTermsFlagsApplied,
                     }
