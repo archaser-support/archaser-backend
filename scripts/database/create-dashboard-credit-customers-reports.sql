@@ -45,6 +45,7 @@ SELECT
             {"table": "Customer", "field": "InsurancePolicy.policy_number"},
             {"table": "Customer", "field": "name"},
             {"table": "Customer", "field": "open_receivable_amount"},
+            {"table": "Customer", "field": "approved_limit_currency"},
             {"table": "Customer", "field": "days_overdue"},
             {"table": "Customer", "field": "open_invoice_count"}
         ],
@@ -87,6 +88,7 @@ SELECT
             {"table": "Customer", "field": "approved_limit"},
             {"table": "Customer", "field": "limit_type"},
             {"table": "Customer", "field": "open_receivable_amount"},
+            {"table": "Customer", "field": "approved_limit_currency"},
             {"table": "Customer", "field": "open_invoice_count"},
             {"table": "Customer", "field": "capacity_gap_amount"}
         ],
@@ -127,6 +129,7 @@ SELECT
             {"table": "Customer", "field": "InsurancePolicy.policy_number"},
             {"table": "Customer", "field": "name"},
             {"table": "Customer", "field": "open_receivable_amount"},
+            {"table": "Customer", "field": "approved_limit_currency"},
             {"table": "Customer", "field": "capacity_gap_amount"},
             {"table": "Customer", "field": "terms_breach_outstanding"},
             {"table": "Customer", "field": "policy_risk_allocated"}
@@ -170,6 +173,7 @@ SELECT
             {"table": "Customer", "field": "name"},
             {"table": "Customer", "field": "limit_warning_summary"},
             {"table": "Customer", "field": "approved_limit"},
+            {"table": "Customer", "field": "approved_limit_currency"},
             {"table": "Customer", "field": "limit_type"},
             {"table": "Customer", "field": "credit_score_input_date"},
             {"table": "Customer", "field": "approved_limit_expiration_date"},
@@ -213,6 +217,7 @@ SELECT
             {"table": "Customer", "field": "name"},
             {"table": "Customer", "field": "zero_limit_date"},
             {"table": "Customer", "field": "open_receivable_amount"},
+            {"table": "Customer", "field": "approved_limit_currency"},
             {"table": "Customer", "field": "open_invoice_count"}
         ],
         "filters": [],
@@ -253,6 +258,7 @@ SELECT
             {"table": "Customer", "field": "name"},
             {"table": "Customer", "field": "customer_number"},
             {"table": "Customer", "field": "open_receivable_amount"},
+            {"table": "Customer", "field": "approved_limit_currency"},
             {"table": "Customer", "field": "policy_exclusion_reason"}
         ],
         "filters": [],
@@ -294,7 +300,8 @@ SELECT
             {"table": "Customer", "field": "approved_limit"},
             {"table": "Customer", "field": "top_up_total"},
             {"table": "Customer", "field": "effective_approved_limit"},
-            {"table": "Customer", "field": "open_receivable_amount"}
+            {"table": "Customer", "field": "open_receivable_amount"},
+            {"table": "Customer", "field": "approved_limit_currency"}
         ],
         "filters": [],
         "sorting": [{"field": "top_up_total", "direction": "DESC"}],
@@ -335,6 +342,7 @@ SELECT
             {"table": "Customer", "field": "top_up_type"},
             {"table": "Customer", "field": "top_up_value"},
             {"table": "Customer", "field": "top_up_resolved_amount"},
+            {"table": "Customer", "field": "approved_limit_currency"},
             {"table": "Customer", "field": "top_up_end_date"},
             {"table": "Customer", "field": "top_up_days_left"}
         ],
