@@ -5,7 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 NETWORK_NAME="${BACKEND_DOCKER_NETWORK_PRODUCTION:-archaser-backend-production_default}"
-docker network create "$NETWORK_NAME" 2>/dev/null || true
+# Do not `docker network create` here — an unlabeled network breaks
+# `docker compose --project-name archaser-backend-production up` (missing
+# com.docker.compose.network=default). Nest deploy owns creating this network;
+# monitoring joins it as external.
+if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
+  echo "ERROR: backend network '$NETWORK_NAME' is missing."
+  echo "Deploy the Nest production stack first (scripts/deployment/deploy-backend-docker.sh --env production),"
+  echo "then re-run this script."
+  exit 1
+fi
 
 ENV_FILE="../.env"
 if [[ -f "../.env.production" ]]; then
