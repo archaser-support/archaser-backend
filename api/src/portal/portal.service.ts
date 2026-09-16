@@ -446,7 +446,14 @@ export class PortalService {
             resolveDbLanguage(customer.language)
         );
         const disputes = await this.db.customerDispute.findMany({
-            where: { customer_id: customer.id },
+            where: {
+                customer_id: customer.id,
+                // Portal visitors only need open disputes; resolved/cancelled
+                // clutter the list and imply action is still needed.
+                dispute_status: {
+                    notIn: ["Resolved", "Cancelled"],
+                },
+            },
             orderBy: { created_at: "desc" },
             include: {
                 DisputeReason: {
