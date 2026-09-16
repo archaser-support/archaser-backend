@@ -9,6 +9,10 @@ import {
     AccessUserInfo,
 } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
+import {
+    applyCollectionPeriodCategoryChange,
+    revertCategoryAfterLastDisputeClosed,
+} from "../common/collection-period-category.util";
 import { serializeBigInt } from "../common/serialize-bigint";
 import {
     bindCreditInsurancePrisma,
@@ -16,6 +20,7 @@ import {
     ensureCustomerCapacityGapStored,
     resolveCustomerHeaderOpenArAmounts,
 } from "@archaser/credit-insurance-domain";
+import { createPromiseToPayScheduledActivities } from "@archaser/cron-jobs";
 import { DatabaseService } from "../database/database.service";
 import {
     CustomerPolicyService,
@@ -1117,7 +1122,11 @@ export class CustomersService {
     private async openCollectionPeriod(customerId: number) {
         return this.db.customerCollectionPeriod.findFirst({
             where: { customer_id: customerId, period_end_date: null },
-            select: { id: true, promise_to_pay_count: true },
+            select: {
+                id: true,
+                promise_to_pay_count: true,
+                current_category: true,
+            },
             orderBy: { id: "desc" },
         });
     }
@@ -1411,10 +1420,43 @@ export class CustomersService {
                     where: { id: collectionPeriod.id },
                     data: periodUpdate as never,
                 });
+                if (callOutcome === "open_dispute") {
+                    await applyCollectionPeriodCategoryChange(tx as never, {
+                        collectionPeriodId: collectionPeriod.id,
+                        customerId: id,
+                        accountId,
+                        currentCategory: collectionPeriod.current_category,
+                        nextCategory: "Dispute",
+                        userId: effectiveUserId,
+                        isManual: false,
+                    });
+                } else if (callOutcome === "promise_to_pay") {
+                    await applyCollectionPeriodCategoryChange(tx as never, {
+                        collectionPeriodId: collectionPeriod.id,
+                        customerId: id,
+                        accountId,
+                        currentCategory: collectionPeriod.current_category,
+                        nextCategory: "Promise_to_pay",
+                        userId: effectiveUserId,
+                        isManual: false,
+                    });
+                }
             }
 
             return { activity, disputeId: dispute?.id ?? null };
         });
+
+        if (callOutcome === "promise_to_pay" && collectionPeriod?.id) {
+            try {
+                await createPromiseToPayScheduledActivities(this.db as never, {
+                    collectionPeriodId: collectionPeriod.id,
+                    userId: effectiveUserId,
+                });
+            } catch {
+                // Category + logged call already persisted; scheduling failure
+                // should not roll back the user-visible promise.
+            }
+        }
 
         return serializeBigInt({
             ok: true,
@@ -1623,9 +1665,29 @@ export class CustomersService {
             }
         }
 
-        const updated = await this.db.customerDispute.update({
-            where: { id: disputeId },
-            data: data as never,
+        const updated = await this.db.$transaction(async (tx) => {
+            const next = await tx.customerDispute.update({
+                where: { id: disputeId },
+                data: data as never,
+            });
+
+            if (
+                op === "resolve" ||
+                op === "resolve-dispute" ||
+                op === "cancel" ||
+                op === "cancel-dispute" ||
+                data.dispute_status === "Resolved" ||
+                data.dispute_status === "Cancelled"
+            ) {
+                await revertCategoryAfterLastDisputeClosed(tx as never, {
+                    customerId: id,
+                    accountId,
+                    userId: effectiveUserId,
+                    excludeDisputeId: disputeId,
+                });
+            }
+
+            return next;
         });
 
         const userComment =
