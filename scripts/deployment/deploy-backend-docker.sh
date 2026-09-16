@@ -16,7 +16,7 @@ Usage:
 Options:
   --env <name>         Required. One of: staging, production
   --app-dir <path>     Backend checkout on EC2
-                       (default: /home/ubuntu/api for staging, /home/ubuntu/production for production)
+                       (default: /home/ubuntu/api — staging and production share one checkout)
   --skip-install       Skip npm ci
   --skip-build         Skip backend workspace builds
   --skip-git-pull      Skip git fetch + reset to origin (use if you already synced)
@@ -327,14 +327,13 @@ fi
 if [[ -z "$APP_DIR" ]]; then
     if [[ -f "$(pwd)/docker-compose.backend.$ENVIRONMENT.yml" || -f "$(pwd)/backend/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
         APP_DIR="$(pwd)"
-    elif [[ "$ENVIRONMENT" == "staging" ]]; then
-        APP_DIR="/home/ubuntu/api"
     else
-        APP_DIR="/home/ubuntu/production"
+        # Staging and production share one EC2 git checkout; --env selects compose/env.
+        APP_DIR="/home/ubuntu/api"
     fi
 fi
 
-# Split-repo checkout (staging EC2: /home/ubuntu/api) or nested backend/ under a parent root.
+# Split-repo checkout (EC2: /home/ubuntu/api) or nested backend/ under a parent root.
 if [[ -f "$APP_DIR/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
     ROOT_DIR="$APP_DIR"
     BACKEND_DIR="$APP_DIR"
