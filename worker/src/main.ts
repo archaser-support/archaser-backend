@@ -30,6 +30,9 @@ import {
     createBillingConnectorMetricsSinkFromProm,
     finalizeAwaitingPostIngestDrainExecutions,
     registerArPostIngestOrchestrator,
+    registerCustomerBalancesFinal,
+    assertCustomerRollupHostLoadable,
+    loadRecalculateCustomerAmountsModule,
     setDefaultBillingConnectorMetricsSink,
     touchAwaitingPostIngestDrainProgress,
 } from "@archaser/billing-connector";
@@ -118,6 +121,18 @@ class WorkerRuntimeService implements OnModuleDestroy {
         registerArPostIngestOrchestrator((options) =>
             runArPostIngestForCustomers(options)
         );
+        // Customer due/overdue rollups: refuse sync work if api/dist/customers
+        // (or CUSTOMERS_DOMAIN_ROOT) cannot load. Register the compiled module
+        // so virtual closes and cash payments share the same entry.
+        assertCustomerRollupHostLoadable();
+        const rollupMod = loadRecalculateCustomerAmountsModule();
+        registerCustomerBalancesFinal(async (customerIds, prisma, options) => {
+            await rollupMod.recalculateCustomerAmounts(
+                customerIds,
+                prisma,
+                options
+            );
+        });
         collectDefaultMetrics({
             register: this.register,
             prefix: "archaser_worker_",

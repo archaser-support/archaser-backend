@@ -18,6 +18,13 @@ export {
 export { computeCustomerOverdueMetrics } from "./computeCustomerOverdueMetrics";
 export { closeZeroOutstandingDebtInvoices } from "./closeZeroOutstandingDebtInvoices";
 export { fixClosedCollectionData } from "./fixClosedCollectionData";
+export {
+    findStaleRollupMismatches,
+    reconcileStaleCustomerRollups,
+    RECONCILE_STALE_ROLLUPS_BATCH_SIZE,
+    type StaleRollupMismatch,
+    type FindStaleRollupMismatchesOptions,
+} from "./reconcileStaleCustomerRollups";
 export { checkInforuSmsStatus } from "./inforuSmsStatusCheck";
 export {
     applyActivityContactDelivery,
