@@ -1,6 +1,6 @@
 # 02 — Roles catalog and strip `import_*` / drop `has_file_import`
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** [01-schema-admin-demo-toggle](01-schema-admin-demo-toggle.md)
 **User stories:** 10, 11, 14, 15, 16
@@ -18,10 +18,10 @@ No hard API environment check that rejects import endpoints — catalog + strip 
 
 ## Acceptance criteria
 
-- [ ] Roles UI/catalog: `import_*` visible only on staging with Demo ON
-- [ ] Role save outside staging or Demo OFF strips `import_*`
-- [ ] No remaining `has_file_import` in schema or application code
-- [ ] Demo ON after OFF shows import keys in catalog but empty grants until re-checked
+- [x] Roles UI/catalog: `import_*` visible only on staging with Demo ON
+- [x] Role save outside staging or Demo OFF strips `import_*`
+- [x] No remaining `has_file_import` in schema or application code
+- [x] Demo ON after OFF shows import keys in catalog but empty grants until re-checked
 
 ## How to test
 

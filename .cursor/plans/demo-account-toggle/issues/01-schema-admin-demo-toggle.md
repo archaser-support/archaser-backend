@@ -1,6 +1,6 @@
 # 01 — Schema, staging policy, Demo admin toggle
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1, 2, 3, 4, 12, 13, 16
@@ -18,12 +18,12 @@ English and Hebrew strings for any new Demo label/help text.
 
 ## Acceptance criteria
 
-- [ ] `is_demo` exists, defaults false, existing rows remain false
-- [ ] Staging + Archaser admin can toggle Demo; others cannot; toggle hidden outside staging
-- [ ] File Import admin switch removed
-- [ ] Saving Demo OFF strips that account’s `import_*` role grants immediately; Demo ON does not restore them
-- [ ] Outside staging, `is_demo` does not mute mail or change behavior yet (gate helpers return “allow outreach”)
-- [ ] English and Hebrew locale keys for new UI copy
+- [x] `is_demo` exists, defaults false, existing rows remain false
+- [x] Staging + Archaser admin can toggle Demo; others cannot; toggle hidden outside staging
+- [x] File Import admin switch removed
+- [x] Saving Demo OFF strips that account’s `import_*` role grants immediately; Demo ON does not restore them
+- [x] Outside staging, `is_demo` does not mute mail or change behavior yet (gate helpers return “allow outreach”)
+- [x] English and Hebrew locale keys for new UI copy
 
 ## How to test
 
@@ -32,3 +32,8 @@ English and Hebrew strings for any new Demo label/help text.
 3. On local/production build: Demo toggle not shown.
 4. Turn Demo ON then OFF on staging: roles for that account lose any `import_*` grants without opening the roles screen.
 5. Confirm DB: new accounts get `is_demo = false`.
+
+## Notes (implementation)
+
+- `has_file_import` column left for slice 02 (roles catalog / full removal); admin UI no longer writes it.
+- Shared helpers: `@archaser/cron-jobs` `isStagingDeploy`, `accountAllowsCustomerOutreach`, `accountAllowsImportCatalog`.

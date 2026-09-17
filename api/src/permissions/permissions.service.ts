@@ -3,6 +3,7 @@ import {
     ForbiddenException,
     Injectable,
 } from "@nestjs/common";
+import { accountAllowsImportCatalog } from "@archaser/cron-jobs";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { DatabaseService } from "../database/database.service";
@@ -201,7 +202,7 @@ export class PermissionsService {
             select: {
                 has_collection: true,
                 has_credit_insurance: true,
-                has_file_import: true,
+                is_demo: true,
             } as never,
         });
 
@@ -211,9 +212,9 @@ export class PermissionsService {
         const isCreditOnlyAccount =
             (account as { has_collection?: boolean } | null)
                 ?.has_collection === false && hasCreditInsurance;
-        const hasFileImport =
-            (account as { has_file_import?: boolean } | null)
-                ?.has_file_import !== false;
+        const allowsImportCatalog = accountAllowsImportCatalog(
+            (account as { is_demo?: boolean } | null)?.is_demo === true
+        );
 
         if (account && !hasCreditInsurance) {
             const creditOnly = new Set([
@@ -227,7 +228,7 @@ export class PermissionsService {
             );
         }
 
-        if (account && !hasFileImport) {
+        if (!allowsImportCatalog) {
             const importKeys = new Set(
                 ALL_PERMISSION_KEYS.filter((k) => k.startsWith("import_"))
             );
@@ -458,9 +459,14 @@ export class PermissionsService {
         const allPermissions = this.getAllPermissionKeys();
         const catalog = await this.getFilteredPermissionCatalog(accountId);
         const matrixKeys = new Set(catalog.permissions);
+        const allowsImportCatalog = ALL_PERMISSION_KEYS.some(
+            (key) => key.startsWith("import_") && matrixKeys.has(key)
+        );
 
-        // Keep grants for keys hidden by product flags (e.g. import_* when
-        // has_file_import is off) so turning a flag back on restores them.
+        // Keep grants for keys hidden by product flags (e.g. credit perms when
+        // credit insurance is off) so turning a flag back on restores them.
+        // import_* is excluded: outside staging / Demo OFF we strip them and
+        // do not restore when Demo turns ON again.
         const existingRows = await this.db.rolePermission.findMany({
             where: {
                 account_id: accountId,
@@ -472,12 +478,20 @@ export class PermissionsService {
             .map((r) => r.permission_key)
             .filter(
                 (key) =>
-                    !matrixKeys.has(key) && allPermissions.includes(key)
+                    !matrixKeys.has(key) &&
+                    allPermissions.includes(key) &&
+                    (allowsImportCatalog || !key.startsWith("import_"))
             );
 
         permissionsToSave = Array.from(
             new Set([...permissionsToSave, ...preservedHidden])
         );
+
+        if (!allowsImportCatalog) {
+            permissionsToSave = permissionsToSave.filter(
+                (key) => !key.startsWith("import_")
+            );
+        }
 
         await this.db.$transaction(async (tx) => {
             await tx.rolePermission.deleteMany({
