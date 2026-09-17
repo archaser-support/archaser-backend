@@ -250,8 +250,25 @@ export async function fetchOpenReceivableForCustomerByCurrency(
     return Number(rows[0]?.ar ?? 0);
 }
 
-export type CustomerHeaderOpenArAmounts = {
+export type CustomerHeaderCurrencyBuckets = {
+    customer_due_amount1: number;
+    customer_due_currency1: string | null;
+    customer_due_amount2: number;
+    customer_due_currency2: string | null;
+    customer_overdue_amount1: number;
+    customer_overdue_currency1: string | null;
+    customer_overdue_amount2: number;
+    customer_overdue_currency2: string | null;
+};
+
+export type CustomerHeaderOpenArAmounts = CustomerHeaderCurrencyBuckets & {
     total_ar: number;
+    /** Live Due rollup when open invoices exist; else denormalized. */
+    total_due_amount: number;
+    /** Live Overdue rollup when open invoices exist; else denormalized. */
+    total_overdue_amount: number;
+    no_of_due_invoices: number;
+    number_of_overdue_invoices: number;
     total_ar_secondary: number | null;
     credit_insurance_secondary_currency: string | null;
 };
@@ -259,11 +276,196 @@ export type CustomerHeaderOpenArAmounts = {
 export type CustomerHeaderOpenArCustomer = CustomerInvoiceCurrencyBuckets & {
     total_due_amount?: number | null;
     total_overdue_amount?: number | null;
+    no_of_due_invoices?: number | null;
+    number_of_overdue_invoices?: number | null;
 };
 
+function bucketsFromCustomer(
+    customer: CustomerHeaderOpenArCustomer
+): CustomerHeaderCurrencyBuckets {
+    return {
+        customer_due_amount1: Number(customer.customer_due_amount1 ?? 0),
+        customer_due_currency1: customer.customer_due_currency1 ?? null,
+        customer_due_amount2: Number(customer.customer_due_amount2 ?? 0),
+        customer_due_currency2: customer.customer_due_currency2 ?? null,
+        customer_overdue_amount1: Number(customer.customer_overdue_amount1 ?? 0),
+        customer_overdue_currency1: customer.customer_overdue_currency1 ?? null,
+        customer_overdue_amount2: Number(customer.customer_overdue_amount2 ?? 0),
+        customer_overdue_currency2: customer.customer_overdue_currency2 ?? null,
+    };
+}
+
 /**
- * Customer GET header open AR: FX-aware primary (account currency) and live
- * invoice-currency secondary with denormalized bucket fallback.
+ * Due currency slots: prefer customer-currency outstanding, positive only, largest first.
+ * Matches {@link calculateDueAmountsForCustomers} slot rules.
+ */
+function buildDueCurrencyBuckets(
+    byCurrency: Map<string, { account: number; customer: number }>
+): Pick<
+    CustomerHeaderCurrencyBuckets,
+    | "customer_due_amount1"
+    | "customer_due_currency1"
+    | "customer_due_amount2"
+    | "customer_due_currency2"
+> {
+    const currencyAmounts = Array.from(byCurrency.entries())
+        .map(([currency, sums]) => ({
+            currency,
+            amount: sums.customer !== 0 ? sums.customer : sums.account,
+        }))
+        .filter((g) => g.currency && g.amount > 0)
+        .sort((a, b) => b.amount - a.amount);
+
+    return {
+        customer_due_amount1: currencyAmounts[0]?.amount ?? 0,
+        customer_due_currency1: currencyAmounts[0]?.currency ?? null,
+        customer_due_amount2: currencyAmounts[1]?.amount ?? 0,
+        customer_due_currency2: currencyAmounts[1]?.currency ?? null,
+    };
+}
+
+/**
+ * Overdue currency slots: customer-currency outstanding, alphabetical currency order.
+ * Matches {@link calculateOutstandingAmountsForCustomers} slot rules.
+ */
+function buildOverdueCurrencyBuckets(
+    byCurrency: Map<string, number>
+): Pick<
+    CustomerHeaderCurrencyBuckets,
+    | "customer_overdue_amount1"
+    | "customer_overdue_currency1"
+    | "customer_overdue_amount2"
+    | "customer_overdue_currency2"
+> {
+    const sorted = Array.from(byCurrency.entries())
+        .filter(([currency]) => !!currency)
+        .sort(([a], [b]) => a.localeCompare(b));
+
+    return {
+        customer_overdue_currency1: sorted[0]?.[0] ?? null,
+        customer_overdue_amount1: sorted[0]?.[1] ?? 0,
+        customer_overdue_currency2: sorted[1]?.[0] ?? null,
+        customer_overdue_amount2: sorted[1]?.[1] ?? 0,
+    };
+}
+
+/**
+ * Live Due / Overdue / Total AR for one customer in account currency, plus invoice
+ * counts and dual-currency buckets for the header cards.
+ * Same FX rules as {@link fetchOpenReceivableByCustomerMapInAccountCurrency};
+ * Total AR is always Due + Overdue from this split so header cards cannot diverge.
+ */
+export async function fetchCustomerHeaderOpenArSplitInAccountCurrency(
+    accountId: number,
+    customerId: number,
+    accountCurrency: string,
+    dbClient: DbClient = defaultPrisma
+): Promise<{
+    total_due_amount: number;
+    total_overdue_amount: number;
+    total_ar: number;
+    no_of_due_invoices: number;
+    number_of_overdue_invoices: number;
+    invoiceCount: number;
+} & CustomerHeaderCurrencyBuckets> {
+    const accountCur = accountCurrency.trim().toUpperCase();
+    const invoices = await dbClient.invoice.findMany({
+        where: {
+            account_id: accountId,
+            customer_id: customerId,
+            status: { in: ["Due", "Overdue"] },
+            Customer: {
+                account_id: accountId,
+                collection_status: { in: ["Active", "Inactive"] },
+            },
+        },
+        select: {
+            status: true,
+            outstanding_debt: true,
+            customer_outstanding_debt: true,
+            amount: true,
+            customer_currency: true,
+        },
+    });
+
+    let total_due_amount = 0;
+    let total_overdue_amount = 0;
+    let no_of_due_invoices = 0;
+    let number_of_overdue_invoices = 0;
+    const dueByCurrency = new Map<string, { account: number; customer: number }>();
+    const overdueByCurrency = new Map<string, number>();
+
+    for (const inv of invoices) {
+        const custCurrency = inv.customer_currency?.trim().toUpperCase() ?? "";
+        const accountOd = Number(inv.outstanding_debt ?? 0);
+        const customerOd = Number(inv.customer_outstanding_debt ?? 0);
+        const hasAccountOutstanding =
+            inv.outstanding_debt != null && inv.outstanding_debt !== 0;
+        let converted: number | null | undefined;
+        if (
+            !hasAccountOutstanding &&
+            custCurrency &&
+            custCurrency !== accountCur
+        ) {
+            const amount = inv.amount != null ? Number(inv.amount) : 0;
+            const val = customerOd !== 0 ? customerOd : amount;
+            converted = await convertAmountToCurrencyLatestRate(
+                custCurrency,
+                accountCur,
+                val
+            );
+        }
+        const line = computeInvoiceLineOpenArInAccountCurrency(
+            inv,
+            accountCur,
+            converted
+        );
+
+        if (inv.status === "Overdue") {
+            total_overdue_amount += line;
+            number_of_overdue_invoices += 1;
+            if (custCurrency) {
+                overdueByCurrency.set(
+                    custCurrency,
+                    (overdueByCurrency.get(custCurrency) ?? 0) + customerOd
+                );
+            }
+            continue;
+        }
+
+        // Due rollup excludes zero-balance rows (same as recalculateCustomerAmounts).
+        if (accountOd === 0 && customerOd === 0) {
+            continue;
+        }
+        total_due_amount += line;
+        no_of_due_invoices += 1;
+        if (custCurrency) {
+            const existing = dueByCurrency.get(custCurrency) ?? {
+                account: 0,
+                customer: 0,
+            };
+            existing.account += accountOd;
+            existing.customer += customerOd;
+            dueByCurrency.set(custCurrency, existing);
+        }
+    }
+
+    return {
+        total_due_amount,
+        total_overdue_amount,
+        total_ar: total_due_amount + total_overdue_amount,
+        no_of_due_invoices,
+        number_of_overdue_invoices,
+        invoiceCount: invoices.length,
+        ...buildDueCurrencyBuckets(dueByCurrency),
+        ...buildOverdueCurrencyBuckets(overdueByCurrency),
+    };
+}
+
+/**
+ * Customer GET header open AR: one live Due/Overdue split (same FX rules) so the
+ * three header cards always agree — amounts, invoice counts, and dual-currency
+ * buckets. Denormalized rollups are used only when there are no open invoices.
  */
 export async function resolveCustomerHeaderOpenArAmounts(
     params: {
@@ -276,20 +478,47 @@ export async function resolveCustomerHeaderOpenArAmounts(
 ): Promise<CustomerHeaderOpenArAmounts> {
     const { accountId, customerId, accountCurrency, customer, dbClient } =
         params;
+    const denormalizedDue = Number(customer.total_due_amount ?? 0);
+    const denormalizedOverdue = Number(customer.total_overdue_amount ?? 0);
     const denormalizedTotalAr = computeCustomerTotalAr(customer).toNumber();
+    const denormalizedBuckets = bucketsFromCustomer(customer);
     const acct = accountCurrency?.trim();
 
+    let total_due_amount = denormalizedDue;
+    let total_overdue_amount = denormalizedOverdue;
     let total_ar = denormalizedTotalAr;
+    let no_of_due_invoices = Number(customer.no_of_due_invoices ?? 0);
+    let number_of_overdue_invoices = Number(
+        customer.number_of_overdue_invoices ?? 0
+    );
+    let buckets = denormalizedBuckets;
+
     if (acct) {
-        const liveByCustomer =
-            await fetchOpenReceivableByCustomerMapInAccountCurrency(
-                accountId,
-                acct,
-                { customerIds: [customerId], dbClient }
-            );
-        const livePrimary = liveByCustomer.get(customerId) ?? 0;
-        if (livePrimary > 0) {
-            total_ar = livePrimary;
+        const live = await fetchCustomerHeaderOpenArSplitInAccountCurrency(
+            accountId,
+            customerId,
+            acct,
+            dbClient ?? defaultPrisma
+        );
+        // Prefer the live split whenever open invoices exist so Due/Overdue/Total AR
+        // share one source. Empty result keeps denormalized rollups (stale-safe
+        // fallback when the customer has no Due/Overdue rows yet).
+        if (live.invoiceCount > 0) {
+            total_due_amount = live.total_due_amount;
+            total_overdue_amount = live.total_overdue_amount;
+            total_ar = live.total_ar;
+            no_of_due_invoices = live.no_of_due_invoices;
+            number_of_overdue_invoices = live.number_of_overdue_invoices;
+            buckets = {
+                customer_due_amount1: live.customer_due_amount1,
+                customer_due_currency1: live.customer_due_currency1,
+                customer_due_amount2: live.customer_due_amount2,
+                customer_due_currency2: live.customer_due_currency2,
+                customer_overdue_amount1: live.customer_overdue_amount1,
+                customer_overdue_currency1: live.customer_overdue_currency1,
+                customer_overdue_amount2: live.customer_overdue_amount2,
+                customer_overdue_currency2: live.customer_overdue_currency2,
+            };
         }
     }
 
@@ -298,7 +527,7 @@ export async function resolveCustomerHeaderOpenArAmounts(
 
     if (acct) {
         const secondaryCurrency = resolveCustomerCreditInsuranceSecondaryCurrency(
-            customer,
+            buckets,
             acct
         );
         if (secondaryCurrency) {
@@ -314,7 +543,7 @@ export async function resolveCustomerHeaderOpenArAmounts(
                 liveSecondary > 0
                     ? liveSecondary
                     : resolveCustomerTotalArSecondaryFromInvoiceBuckets(
-                          customer,
+                          buckets,
                           secondaryCurrency
                       );
             if (total_ar_secondary == null) {
@@ -325,6 +554,11 @@ export async function resolveCustomerHeaderOpenArAmounts(
 
     return {
         total_ar,
+        total_due_amount,
+        total_overdue_amount,
+        no_of_due_invoices,
+        number_of_overdue_invoices,
+        ...buckets,
         total_ar_secondary,
         credit_insurance_secondary_currency,
     };
