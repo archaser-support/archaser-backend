@@ -1,6 +1,6 @@
 # 03 — Customer outreach gate (email / SMS / WhatsApp)
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-schema-admin-demo-toggle](01-schema-admin-demo-toggle.md)
 **User stories:** 5, 6, 7, 8, 9, 17, 18
@@ -20,11 +20,11 @@ English and Hebrew for user-visible toast/reason copy.
 
 ## Acceptance criteria
 
-- [ ] Staging Demo OFF blocks debtor/contact Email/SMS/WhatsApp; activity shows not-sent + reason; manual send shows toast
-- [ ] Staging Demo ON sends customer outreach normally
-- [ ] Staff/ops mail still sends when Demo OFF
-- [ ] Non-staging ignores `is_demo` for outreach
-- [ ] EN + HE strings for new user-facing messages
+- [x] Staging Demo OFF blocks debtor/contact Email/SMS/WhatsApp; activity shows not-sent + reason; manual send shows toast
+- [x] Staging Demo ON sends customer outreach normally
+- [x] Staff/ops mail still sends when Demo OFF
+- [x] Non-staging ignores `is_demo` for outreach
+- [x] EN + HE strings for new user-facing messages
 
 ## How to test
 
