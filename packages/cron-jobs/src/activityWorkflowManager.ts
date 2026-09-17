@@ -11,6 +11,10 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { sendViaVendor } from "@archaser/sms-send";
+import {
+    DEMO_DISABLED_OUTREACH_REASON,
+    accountAllowsCustomerOutreach,
+} from "./demoAccountPolicy";
 import { selectPragmaticChannel } from "./communication/selectPragmaticChannel";
 import { handleActivityEmailSendFailure } from "./email/activityEmailSendFailure";
 import { resolveAccountEmailSender } from "./email/accountSender";
@@ -216,6 +220,7 @@ async function sendDueActivities(
                     sms_from_name: true,
                     sms_fallback_enabled: true,
                     intelligent_channel_selection_enabled: true,
+                    is_demo: true,
                 },
             },
             ActivitiesSequence: {
@@ -313,6 +318,50 @@ async function processActivity(
                 status: "SENT",
                 modified_at: new Date(),
             },
+        });
+        return;
+    }
+
+    // Staging Demo OFF: skip SMTP/SMS vendors; mark contacts Failed with
+    // a stable reason so timelines stay visible without delivery.
+    if (
+        !accountAllowsCustomerOutreach(activity.Account?.is_demo === true)
+    ) {
+        const now = new Date();
+        await prisma.$transaction(async (tx) => {
+            await tx.activity.update({
+                where: { id: activity.id },
+                data: {
+                    status: "FAILED",
+                    modified_at: now,
+                },
+            });
+            await Promise.all(
+                pendingContacts.map((ac: { id: number }) =>
+                    tx.activityContact.update({
+                        where: { id: ac.id },
+                        data: {
+                            status: "Failed",
+                            failure_reason: DEMO_DISABLED_OUTREACH_REASON,
+                            failed_at: now,
+                            modified_at: now,
+                        },
+                    })
+                )
+            );
+        });
+
+        const channel = String(activity.type || "");
+        if (channel === "SMS") {
+            stats.smsFailed += pendingContacts.length;
+        } else {
+            stats.emailFailed += pendingContacts.length;
+        }
+        jobLog("activityWorkflowManager", "info", "demo outreach blocked", {
+            activityId: activity.id,
+            accountId: activity.Account?.id,
+            contacts: pendingContacts.length,
+            reason: DEMO_DISABLED_OUTREACH_REASON,
         });
         return;
     }
