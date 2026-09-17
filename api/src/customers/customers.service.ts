@@ -520,10 +520,10 @@ export class CustomersService {
         // tab decides the customer has no linked policy.
         const { CustomerPolicy: customerPolicies, ...rest } = customer;
 
-        // `total_ar` is derived, not stored: live open Due/Overdue receivables in
-        // account currency, falling back to the denormalized due + overdue rollups.
-        // The header's Total AR card reads it straight off this payload, so without
-        // it the card renders 0 even when the customer has open invoices.
+        // Header Due / Overdue / Total AR share one live invoice split (account
+        // currency + FX), including invoice counts and dual-currency buckets.
+        // Falls back to denormalized rollups only when there are no open
+        // Due/Overdue rows — so the three cards cannot disagree.
         const account = await this.db.account.findUnique({
             where: { id: accountId },
             select: { currency: true, has_credit_insurance: true },
