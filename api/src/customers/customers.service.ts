@@ -524,8 +524,8 @@ export class CustomersService {
 
         // Header Due / Overdue / Total AR share one live invoice split (account
         // currency + FX), including invoice counts and dual-currency buckets.
-        // Falls back to denormalized rollups only when there are no open
-        // Due/Overdue rows — so the three cards cannot disagree.
+        // Empty live open set ⇒ zero (not denormalized rollups). Denormalized
+        // fallback only when live cannot run (e.g. missing account currency).
         const account = await this.db.account.findUnique({
             where: { id: accountId },
             select: { currency: true, has_credit_insurance: true },

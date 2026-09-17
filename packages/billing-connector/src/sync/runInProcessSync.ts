@@ -59,7 +59,10 @@ import {
     STAGED_ENTITY_ORDER,
     type ImportBatchFn,
 } from "./stagedExtensionSync";
-import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
+import {
+    assertCustomerRollupHostLoadable,
+    recalculateCustomerAmountsViaHost,
+} from "../customers/recalculateCustomerAmountsHost";
 import {
     type ArPostIngestHostFn,
     type ConnectorPostIngestDeferOptions,
@@ -246,9 +249,9 @@ async function finalizeLegacyCustomerBalances(
         | undefined,
     log: (message: string) => void,
     setStep?: (key: TailStepKey, state: TailStepState) => void
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
     if (customerIds.size === 0) {
-        return;
+        return { ok: true };
     }
     const ids = Array.from(customerIds);
     const total = ids.length;
@@ -302,17 +305,20 @@ async function finalizeLegacyCustomerBalances(
                 total,
             },
         });
+        return { ok: true };
     } catch (error) {
         const message =
             error instanceof Error
                 ? error.message
                 : "Customer amount recalculation failed";
         log(`Customer amount recalculation failed: ${message}`);
+        // Keep stats + return failure — never soft-complete SUCCESS after this.
         setStep?.(BALANCES_ENTITY_STATS_KEY, {
             status: "failed",
             total,
             error: message,
         });
+        return { ok: false, error: message };
     }
 }
 
@@ -473,6 +479,11 @@ async function runInProcessSyncBody(
         dryRun = false,
         onLog,
     } = options;
+    // Fail before Payment / pending closes when rollup refresh cannot load.
+    // Nest injects onCustomerBalancesFinal; worker/connectors rely on host load.
+    if (!options.onCustomerBalancesFinal) {
+        assertCustomerRollupHostLoadable();
+    }
     const stats = emptyStats();
     let activeStep: string | null = null;
     let activeStepDetail: string | null = null;
@@ -1625,7 +1636,7 @@ async function runInProcessSyncBody(
             });
         }
 
-        await finalizeLegacyCustomerBalances(
+        const balances = await finalizeLegacyCustomerBalances(
             arAffectedCustomerIds,
             prisma,
             options.onCustomerBalancesFinal,
@@ -1643,8 +1654,16 @@ async function runInProcessSyncBody(
             `Synced via ${trigger}: imported ${imported} rows (${stats.importErrors} errors)`
         );
 
+        const importOk = stats.importErrors === 0;
+        const ok = importOk && balances.ok;
+        const error = !balances.ok
+            ? balances.error
+            : stats.importErrors > 0
+              ? `${stats.importErrors} import error(s)`
+              : undefined;
+
         return {
-            ok: stats.importErrors === 0,
+            ok,
             postIngestDeferred: false,
             accountId,
             provider: connector.provider,
@@ -1652,10 +1671,7 @@ async function runInProcessSyncBody(
             extension_key: null,
             dry_run: false,
             message: `Synced via ${trigger}: imported ${imported} rows (${stats.importErrors} errors)`,
-            error:
-                stats.importErrors > 0
-                    ? `${stats.importErrors} import error(s)`
-                    : undefined,
+            error,
         };
     } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";

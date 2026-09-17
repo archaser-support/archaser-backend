@@ -23,6 +23,7 @@ export const EXPECTED_CRON_JOB_NAMES = [
     "Insurance Policy Trend Daily Snapshot",
     "Compute Gap In Base Currency",
     "Sync Billing Connectors",
+    "Reconcile Stale Customer Rollups",
 ] as const;
 
 export type ExpectedCronJobName = (typeof EXPECTED_CRON_JOB_NAMES)[number];
