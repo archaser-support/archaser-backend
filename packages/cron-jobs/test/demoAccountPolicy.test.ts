@@ -22,7 +22,7 @@ describe("demoAccountPolicy", () => {
         }
     }
 
-    it("treats local development as not staging and allows outreach", () => {
+    it("treats local development like staging and gates on is_demo", () => {
         setEnv({
             NODE_ENV: "development",
             SERVICE_NAME: undefined,
@@ -31,10 +31,25 @@ describe("demoAccountPolicy", () => {
             NEXT_PUBLIC_BASE_URL: undefined,
             PORT: undefined,
         });
-        expect(isStagingDeploy()).toBe(false);
-        expect(accountAllowsCustomerOutreach(false)).toBe(true);
+        expect(isStagingDeploy()).toBe(true);
+        expect(accountAllowsCustomerOutreach(false)).toBe(false);
+        expect(accountAllowsCustomerOutreach(true)).toBe(true);
         expect(accountAllowsImportCatalog(false)).toBe(false);
-        expect(accountAllowsImportCatalog(true)).toBe(false);
+        expect(accountAllowsImportCatalog(true)).toBe(true);
+    });
+
+    it("treats localhost URLs as Demo-gated even when NODE_ENV=production", () => {
+        setEnv({
+            NODE_ENV: "production",
+            SERVICE_NAME: "archaser-core",
+            NEST_PUBLIC_URL: undefined,
+            NEXTAUTH_URL: "http://localhost:3000",
+            NEXT_PUBLIC_BASE_URL: undefined,
+            PORT: "3002",
+        });
+        expect(isStagingDeploy()).toBe(true);
+        expect(accountAllowsCustomerOutreach(false)).toBe(false);
+        expect(accountAllowsImportCatalog(true)).toBe(true);
     });
 
     it("treats api.staging host as staging and gates on is_demo", () => {
