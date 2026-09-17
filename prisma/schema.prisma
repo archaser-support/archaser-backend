@@ -69,8 +69,8 @@ model Account {
   sso_providers                          String?                         @db.VarChar(100)
   has_collection                         Boolean                         @default(true)
   has_credit_insurance                   Boolean                         @default(false)
-  /// When false, File Import is hidden from nav, Import page, and role matrix (UI-only).
-  has_file_import                        Boolean                         @default(true)
+  /// Staging-only Demo account: unlocks customer outreach and import_* catalog when true.
+  is_demo                                Boolean                         @default(false)
   enable_customer_checkpoints            Boolean                         @default(false)
   /// AR coverage percentage threshold to include a customer in limit warnings (e.g. 95).
   credit_limit_warning_threshold_pct     Int?                            @db.SmallInt
