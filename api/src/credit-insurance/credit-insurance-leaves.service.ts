@@ -519,9 +519,6 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
                 to,
                 {
                     requestedBy: user.sub ?? user.email ?? null,
-                    skipReportingBreach: this.parseSkipReportingBreach(
-                        body.skipReportingBreach
-                    ),
                 }
             );
             return serializeBigInt(status);
@@ -567,13 +564,5 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
         }
         const [y, m, d] = s.split("-").map(Number);
         return new Date(Date.UTC(y!, m! - 1, d!));
-    }
-
-    /** Omitted / invalid → true (Generate default: ignore reporting-late). */
-    private parseSkipReportingBreach(raw: unknown): boolean {
-        if (raw === false || raw === "false" || raw === 0 || raw === "0") {
-            return false;
-        }
-        return true;
     }
 }

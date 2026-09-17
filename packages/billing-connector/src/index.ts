@@ -421,7 +421,6 @@ export {
 export {
     importMappedEntityBatch,
     extractMaxUpdatedAt,
-    shouldSkipReportingBreachOnConnectorWrite,
     type EntityImportBatchOptions,
     type EntityImportBatchResult,
     type EntityImportRowResult,

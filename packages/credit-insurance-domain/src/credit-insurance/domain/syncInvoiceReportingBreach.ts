@@ -11,7 +11,9 @@ import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import {
     resolveReportingBreachStartDate,
     resolveReportingBreachStartDatesForAccounts,
+    clearReportingBreachStartDateCache,
 } from "./resolveReportingBreachStartDate";
+import { isInvoiceInReportingBreachScope } from "./shared/reportingBreachScope";
 import {
     computeCreatedTermsViolationSnapshot,
     computeInsuranceTargetDates,
@@ -127,13 +129,17 @@ export async function clearReportingBreachWhenReportedForInvoiceIds(
 /**
  * Cron / batch: set reporting_breach to true using {@link shouldSetReportingBreach}
  * (Due/Overdue, target reporting date &lt; today, no actual_reporting_date). Only promotes false → true.
+ * Accounts with no reporting_breach_start_date are skipped (fail closed) and listed in the result.
  */
 export async function sweepReportingBreachForOverdueInvoiceIds(
     invoiceIds: number[],
     db: DbClient = prisma
-): Promise<number> {
+): Promise<{
+    promoted: number;
+    skippedMissingStartDateAccountIds: number[];
+}> {
     if (invoiceIds.length === 0) {
-        return 0;
+        return { promoted: 0, skippedMissingStartDateAccountIds: [] };
     }
     const today = new Date();
 
@@ -163,9 +169,20 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             db
         );
 
+    const skippedMissingStartDateAccountIds = new Set<number>();
     const toSetTrue: Array<{ id: number; value: boolean }> = [];
     for (const inv of invoices) {
         if (!inv.target_reporting_date) {
+            continue;
+        }
+        const startDate =
+            inv.account_id != null
+                ? startDateByAccountId.get(inv.account_id) ?? null
+                : null;
+        if (startDate == null) {
+            if (inv.account_id != null) {
+                skippedMissingStartDateAccountIds.add(inv.account_id);
+            }
             continue;
         }
         const should = shouldSetReportingBreach(
@@ -176,10 +193,7 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             inv.amount,
             {
                 invoiceDate: inv.invoice_date,
-                reportingBreachStartDate:
-                    inv.account_id != null
-                        ? startDateByAccountId.get(inv.account_id) ?? null
-                        : null,
+                reportingBreachStartDate: startDate,
             }
         );
         if (should) {
@@ -187,7 +201,105 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
         }
     }
     await bulkUpdateInvoiceBooleanByValue(db, "reporting_breach", toSetTrue);
-    return toSetTrue.length;
+    return {
+        promoted: toSetTrue.length,
+        skippedMissingStartDateAccountIds: [
+            ...skippedMissingStartDateAccountIds,
+        ].sort((a, b) => a - b),
+    };
+}
+
+/**
+ * Full account recompute of Invoice.reporting_breach after the start date changes.
+ * Sets and clears flags: out-of-scope / reported → false; Due/Overdue that should
+ * breach → true; Paid/Cancelled that remain in scope keep an existing true flag.
+ */
+export async function recomputeReportingBreachForAccount(
+    accountId: number,
+    db: DbClient = prisma
+): Promise<{ updated: number }> {
+    clearReportingBreachStartDateCache(accountId);
+    const startDate = await resolveReportingBreachStartDate(accountId, db);
+    const today = new Date();
+    const chunkSize = 2000;
+    let lastId = 0;
+    let updated = 0;
+
+    for (;;) {
+        const invoices = await db.invoice.findMany({
+            where: {
+                account_id: accountId,
+                id: { gt: lastId },
+                OR: [
+                    { reporting_breach: true },
+                    {
+                        status: { in: ["Due", "Overdue"] },
+                        actual_reporting_date: null,
+                        target_reporting_date: { not: null },
+                    },
+                ],
+            },
+            select: {
+                id: true,
+                invoice_date: true,
+                status: true,
+                amount: true,
+                target_reporting_date: true,
+                actual_reporting_date: true,
+                reporting_breach: true,
+            },
+            orderBy: { id: "asc" },
+            take: chunkSize,
+        });
+
+        if (invoices.length === 0) {
+            break;
+        }
+
+        lastId = invoices[invoices.length - 1]!.id;
+
+        const writes: Array<{ id: number; value: boolean }> = [];
+        for (const inv of invoices) {
+            const inScope = isInvoiceInReportingBreachScope(
+                inv.invoice_date,
+                startDate
+            );
+            let desired: boolean;
+            if (!inScope || inv.actual_reporting_date) {
+                desired = false;
+            } else if (inv.status === "Due" || inv.status === "Overdue") {
+                desired = shouldSetReportingBreach(
+                    inv.status,
+                    inv.target_reporting_date,
+                    inv.actual_reporting_date,
+                    today,
+                    inv.amount,
+                    {
+                        invoiceDate: inv.invoice_date,
+                        reportingBreachStartDate: startDate,
+                    }
+                );
+            } else {
+                // Paid/Cancelled (etc.): keep historical true only while still in scope.
+                desired = inv.reporting_breach === true;
+            }
+
+            if (desired !== inv.reporting_breach) {
+                writes.push({ id: inv.id, value: desired });
+            }
+        }
+
+        if (writes.length > 0) {
+            await bulkUpdateInvoiceBooleanByValue(db, "reporting_breach", writes);
+            updated += writes.length;
+        }
+
+        if (invoices.length < chunkSize) {
+            break;
+        }
+    }
+
+    return { updated };
 }
 
 /**

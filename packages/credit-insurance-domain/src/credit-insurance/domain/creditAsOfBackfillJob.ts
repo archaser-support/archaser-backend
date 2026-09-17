@@ -12,7 +12,6 @@ import {
 import type { AsOfOpenInvoiceLine } from "./asOfOpenAr";
 import {
     overlayAsOfTermsFlagsOnLines,
-    withReportingBreachIgnored,
     isUtcCalendarToday,
 } from "./asOfOpenAr";
 import {
@@ -25,6 +24,7 @@ import {
 import { takeCreditDashboardDailySnapshotsForAccount } from "./creditDashboardSnapshotService";
 import { syncCustomerPolicyTrendSnapshotForAccount, seedPriorDayTrendCostCacheForReplay } from "./customerPolicyTrendService";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
+import { resolveReportingBreachStartDate } from "./resolveReportingBreachStartDate";
 
 type PrismaClientLike = PrismaClient | DbClient;
 
@@ -51,7 +51,6 @@ export type CreditAsOfBackfillJobView = {
     requestedBy: string | null;
     startedAt: string | null;
     updatedAt: string | null;
-    skipReportingBreach: boolean;
     avgSecondsPerDay: number | null;
     estimatedSecondsRemaining: number | null;
     /** Pending CreditAsOfRewriteQueue window only; null when processing/done/missing. */
@@ -68,7 +67,6 @@ type JobRow = {
     days_done: number;
     last_error: string | null;
     requested_by: string | null;
-    skip_reporting_breach: boolean;
     started_at: Date | null;
     updated_at: Date;
 };
@@ -195,7 +193,6 @@ function jobView(
             requestedBy: null,
             startedAt: null,
             updatedAt: null,
-            skipReportingBreach: true,
             avgSecondsPerDay: null,
             estimatedSecondsRemaining: null,
             pendingRewrite,
@@ -213,7 +210,6 @@ function jobView(
         requestedBy: row.requested_by,
         startedAt: row.started_at?.toISOString() ?? null,
         updatedAt: row.updated_at?.toISOString() ?? null,
-        skipReportingBreach: row.skip_reporting_breach !== false,
         avgSecondsPerDay: estimates.avgSecondsPerDay,
         estimatedSecondsRemaining: estimates.estimatedSecondsRemaining,
         pendingRewrite,
@@ -235,7 +231,6 @@ async function loadJob(
             days_done,
             last_error,
             requested_by,
-            skip_reporting_breach,
             started_at,
             updated_at
         FROM "CreditAsOfBackfillJob"
@@ -422,13 +417,20 @@ export async function runCreditAsOfBackfillJob(
          */
         const useOptimizedReplayPath = options?.loadAsOfLines == null;
         if (!useOptimizedReplayPath) {
-            const mepBreachStartDate = await resolveMepBreachStartDate(
-                accountId,
-                db
-            );
+            const [mepBreachStartDate, reportingBreachStartDate] =
+                await Promise.all([
+                    resolveMepBreachStartDate(accountId, db),
+                    resolveReportingBreachStartDate(accountId, db),
+                ]);
+            if (reportingBreachStartDate == null) {
+                throw new Error(
+                    "reporting_breach_start_date is required before generating portfolio health snapshots"
+                );
+            }
             runContext = createMinimalCreditAsOfBackfillRunContext(
                 accountId,
-                mepBreachStartDate
+                mepBreachStartDate,
+                reportingBreachStartDate
             );
         } else {
             runContext = await buildCreditAsOfBackfillRunContext(accountId, {
@@ -436,6 +438,11 @@ export async function runCreditAsOfBackfillJob(
                 replayFromDate: job.from_date,
                 replayToDate: job.to_date,
             });
+            if (runContext.reportingBreachStartDate == null) {
+                throw new Error(
+                    "reporting_breach_start_date is required before generating portfolio health snapshots"
+                );
+            }
             runContext = await ensureCapacityGapsForBackfillRun(runContext, {
                 dbClient: db,
             });
@@ -467,7 +474,7 @@ export async function runCreditAsOfBackfillJob(
                 deriveAsOfOpenInvoiceCandidatesFromLedger(ledger, asOfDate);
         }
 
-        const ignoreReportingBreach = job.skip_reporting_breach !== false;
+        const ignoreReportingBreach = false;
         const sharedTermsByCustomerAndPolicy =
             useOptimizedReplayPath &&
             runContext.activeCustomerPolicies.length > 0
@@ -529,15 +536,14 @@ export async function runCreditAsOfBackfillJob(
                     asOfTermsFlagsApplied = true;
                 } else if (sharedTermsByCustomerAndPolicy) {
                     asOfLines = overlayAsOfTermsFlagsOnLines(
-                        withReportingBreachIgnored(
-                            asOfLines,
-                            ignoreReportingBreach
-                        ),
+                        asOfLines,
                         day,
                         sharedTermsByCustomerAndPolicy,
                         {
                             ignoreReportingBreach,
                             mepBreachStartDate: runContext.mepBreachStartDate,
+                            reportingBreachStartDate:
+                                runContext.reportingBreachStartDate,
                         }
                     );
                     asOfTermsFlagsApplied = true;
@@ -548,9 +554,7 @@ export async function runCreditAsOfBackfillJob(
                     {
                         snapshotDate: day,
                         asOfLines,
-                        ignoreReportingBreach: isUtcCalendarToday(day)
-                            ? false
-                            : ignoreReportingBreach,
+                        ignoreReportingBreach: false,
                         mepBreachStartDate: runContext.mepBreachStartDate,
                         runContext,
                         asOfTermsFlagsApplied,
@@ -562,9 +566,7 @@ export async function runCreditAsOfBackfillJob(
                     {
                         snapshotDate: day,
                         asOfLines,
-                        ignoreReportingBreach: isUtcCalendarToday(day)
-                            ? false
-                            : ignoreReportingBreach,
+                        ignoreReportingBreach: false,
                         runContext,
                         asOfTermsFlagsApplied,
                     }
@@ -613,7 +615,6 @@ export async function startCreditAsOfBackfillJob(
     toDate: Date,
     options?: {
         requestedBy?: string | null;
-        skipReportingBreach?: boolean;
         dbClient?: PrismaClientLike;
         writers?: Partial<BackfillWriters>;
         loadAsOfLines?: LoadAsOfLines;
@@ -626,9 +627,17 @@ export async function startCreditAsOfBackfillJob(
     if (to.getTime() < from.getTime()) {
         throw new Error("to_date must be on or after from_date");
     }
+    const reportingBreachStartDate = await resolveReportingBreachStartDate(
+        accountId,
+        db
+    );
+    if (reportingBreachStartDate == null) {
+        throw new Error(
+            "reporting_breach_start_date is required before generating portfolio health snapshots"
+        );
+    }
     const now = new Date();
     const daysTotal = countInclusiveUtcDays(from, to);
-    const skipReportingBreach = options?.skipReportingBreach !== false;
     const existing = await loadJob(accountId, db);
     // Only an in-flight run blocks Generate. Stop leaves status `paused` —
     // Generate must be allowed to start a fresh range (Retry resumes checkpoint).
@@ -649,7 +658,6 @@ export async function startCreditAsOfBackfillJob(
             days_done,
             last_error,
             requested_by,
-            skip_reporting_breach,
             started_at,
             created_at,
             updated_at
@@ -663,7 +671,6 @@ export async function startCreditAsOfBackfillJob(
             0,
             NULL,
             ${options?.requestedBy ?? null},
-            ${skipReportingBreach},
             ${now},
             ${now},
             ${now}
@@ -677,7 +684,6 @@ export async function startCreditAsOfBackfillJob(
             days_done = 0,
             last_error = NULL,
             requested_by = EXCLUDED.requested_by,
-            skip_reporting_breach = EXCLUDED.skip_reporting_breach,
             started_at = EXCLUDED.started_at,
             updated_at = EXCLUDED.updated_at
     `;
