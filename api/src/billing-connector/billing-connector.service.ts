@@ -97,7 +97,7 @@ import {
     resolveBackfillStartDateChange,
     resolveIncludeOlderOpenInvoicesChange,
     resolveMepBreachStartDateChange,
-    resolveSkipReportingBreachOnBackfillChange,
+    resolveReportingBreachStartDateChange,
 } from "./billing-connector-backfill-options";
 import { pickAccountLastSyncDate } from "./account-last-sync-date";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
@@ -113,7 +113,9 @@ import {
 import {
     bindCreditInsurancePrisma,
     clearInvoicePaidToleranceCache,
+    clearReportingBreachStartDateCache,
     enqueueRewriteForImport,
+    recomputeReportingBreachForAccount,
 } from "@archaser/credit-insurance-domain";
 
 const ADMIN_ACCOUNT_ID = 10013;
@@ -435,8 +437,8 @@ export class BillingConnectorApiService {
         backfill_start_date?: Date | null;
         time_zone?: string | null;
         mep_breach_start_date?: Date | null;
+        reporting_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
-        skip_reporting_breach_on_backfill?: boolean;
         invoice_paid_tolerance?: number;
         pull_filters?: unknown;
         entity_sets?: unknown;
@@ -504,10 +506,11 @@ export class BillingConnectorApiService {
             mep_breach_start_date: formatBackfillStartDateForApi(
                 connector.mep_breach_start_date
             ),
+            reporting_breach_start_date: formatBackfillStartDateForApi(
+                connector.reporting_breach_start_date
+            ),
             include_older_open_invoices:
                 connector.include_older_open_invoices ?? true,
-            skip_reporting_breach_on_backfill:
-                connector.skip_reporting_breach_on_backfill ?? false,
             invoice_paid_tolerance: connector.invoice_paid_tolerance ?? 0.2,
             pull_filters: pullFilterFields.pull_filters,
             effective_pull_filters: pullFilterFields.effective_pull_filters,
@@ -770,6 +773,32 @@ export class BillingConnectorApiService {
                 code: mepBreachStartDateChange.code,
             });
         }
+        let reportingBreachStartDateChange;
+        try {
+            reportingBreachStartDateChange = resolveReportingBreachStartDateChange({
+                existingStartDate: existing?.reporting_breach_start_date,
+                nextInput:
+                    body.reporting_breach_start_date === undefined
+                        ? undefined
+                        : (body.reporting_breach_start_date as string | null),
+                requireOnOmit: !existing,
+            });
+        } catch (error: unknown) {
+            const err = error as { code?: string; message?: string };
+            if (err?.code === "INVALID_REPORTING_BREACH_START_DATE") {
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid reporting_breach_start_date",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (!reportingBreachStartDateChange.ok) {
+            throw new BadRequestException({
+                error: reportingBreachStartDateChange.message,
+                code: reportingBreachStartDateChange.code,
+            });
+        }
         const includeOlderChange = resolveIncludeOlderOpenInvoicesChange({
             backfillStartedAt: existing?.backfill_started_at,
             existingValue: existing?.include_older_open_invoices,
@@ -784,31 +813,18 @@ export class BillingConnectorApiService {
                 code: includeOlderChange.code,
             });
         }
-        const skipBreachChange = resolveSkipReportingBreachOnBackfillChange({
-            backfillStartedAt: existing?.backfill_started_at,
-            existingValue: existing?.skip_reporting_breach_on_backfill,
-            nextInput:
-                body.skip_reporting_breach_on_backfill === undefined
-                    ? undefined
-                    : Boolean(body.skip_reporting_breach_on_backfill),
-        });
-        if (!skipBreachChange.ok) {
-            throw new ConflictException({
-                error: skipBreachChange.message,
-                code: skipBreachChange.code,
-            });
-        }
         if (startDateChange.value !== undefined) {
             data.backfill_start_date = startDateChange.value;
         }
         if (mepBreachStartDateChange.value !== undefined) {
             data.mep_breach_start_date = mepBreachStartDateChange.value;
         }
+        if (reportingBreachStartDateChange.value !== undefined) {
+            data.reporting_breach_start_date =
+                reportingBreachStartDateChange.value;
+        }
         if (includeOlderChange.value !== undefined) {
             data.include_older_open_invoices = includeOlderChange.value;
-        }
-        if (skipBreachChange.value !== undefined) {
-            data.skip_reporting_breach_on_backfill = skipBreachChange.value;
         }
         if (body.invoice_paid_tolerance !== undefined) {
             try {
@@ -956,10 +972,6 @@ export class BillingConnectorApiService {
                           includeOlderChange.value !== undefined
                               ? includeOlderChange.value
                               : true,
-                      skip_reporting_breach_on_backfill:
-                          skipBreachChange.value !== undefined
-                              ? skipBreachChange.value
-                              : false,
                       ...(nextEntitySets
                           ? {
                                 entity_sets:
@@ -979,8 +991,30 @@ export class BillingConnectorApiService {
         if (data.invoice_paid_tolerance !== undefined) {
             clearInvoicePaidToleranceCache(accountId);
         }
+        const reportingBreachRecomputeStarted =
+            reportingBreachStartDateChange.changed === true;
+        if (reportingBreachRecomputeStarted) {
+            clearReportingBreachStartDateCache(accountId);
+            bindCreditInsurancePrisma(this.db as never);
+            void recomputeReportingBreachForAccount(
+                accountId,
+                this.db as never
+            ).catch((error: unknown) => {
+                console.error(
+                    "[billing-connector] reporting breach recompute failed",
+                    {
+                        accountId,
+                        message:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                    }
+                );
+            });
+        }
         return serializeBigInt({
             config: await this.toPublicConfig(connector),
+            reporting_breach_recompute_started: reportingBreachRecomputeStarted,
         });
     }
 
@@ -1314,10 +1348,11 @@ export class BillingConnectorApiService {
                 mep_breach_start_date: formatBackfillStartDateForApi(
                     connector.mep_breach_start_date
                 ),
+                reporting_breach_start_date: formatBackfillStartDateForApi(
+                    connector.reporting_breach_start_date
+                ),
                 include_older_open_invoices:
                     connector.include_older_open_invoices ?? true,
-                skip_reporting_breach_on_backfill:
-                    connector.skip_reporting_breach_on_backfill ?? false,
             },
             cutover_summary: null,
         };

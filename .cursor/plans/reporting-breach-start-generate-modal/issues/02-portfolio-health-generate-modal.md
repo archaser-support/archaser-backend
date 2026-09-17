@@ -1,6 +1,6 @@
 # 02 — Portfolio Health Generate modal
 
-**Status:** ready-for-agent  
+**Status:** done  
 **Priority:** normal  
 **Blocked by:** [01-reporting-breach-start-date](01-reporting-breach-start-date.md)  
 **User stories:** 17–27, 28  

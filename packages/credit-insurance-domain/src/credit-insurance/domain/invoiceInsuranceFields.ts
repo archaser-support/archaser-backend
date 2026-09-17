@@ -285,10 +285,9 @@ export function isEligibleForCustomerMepOverdue(
  * Negative-amount invoices (credit notes) never promote reporting breach.
  *
  * Invoices issued before the account's reporting-breach start date are out of
- * scope, mirroring the MEP gate: their reporting filings predate the backfill
- * window, so a missing actual_reporting_date is an import gap and not a breach.
- * Callers that know both dates pass `scope`; omitting it keeps the ungated
- * behavior.
+ * scope. When `scope` is passed, a missing start date fails closed (never
+ * promote). Omitting `scope` keeps ungated evaluation for callers that do not
+ * yet resolve the account gate.
  */
 export function shouldSetReportingBreach(
     status: invoice_status,
@@ -305,9 +304,10 @@ export function shouldSetReportingBreach(
         return false;
     }
     if (
+        scope != null &&
         !isInvoiceInReportingBreachScope(
-            scope?.invoiceDate ?? null,
-            scope?.reportingBreachStartDate ?? null
+            scope.invoiceDate ?? null,
+            scope.reportingBreachStartDate ?? null
         )
     ) {
         return false;

@@ -15,7 +15,6 @@ import { clearBillingConnectorAuthFailures } from "../services/billingConnectorA
 import {
     extractMaxUpdatedAt,
     importMappedEntityBatch,
-    shouldSkipReportingBreachOnConnectorWrite,
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "../import/entityImporter";
@@ -620,11 +619,6 @@ async function runInProcessSyncBody(
                 ? connector.extension_key.trim() || null
                 : null;
 
-        const skipReportingBreach = shouldSkipReportingBreachOnConnectorWrite({
-            syncMode: options.mode === "incremental" ? "INCREMENTAL" : "BACKFILL",
-            skipReportingBreachOnBackfill:
-                connector.skip_reporting_breach_on_backfill === true,
-        });
         const enabled = enabledEntitiesFromConnector(
             connector.enabled_entities
         );
@@ -1073,7 +1067,6 @@ async function runInProcessSyncBody(
                 windows,
                 dryRun,
                 userId,
-                skipReportingBreach,
                 importBatch,
                 onLog,
                 onProgress: (liveStats, meta) => {
@@ -1333,7 +1326,6 @@ async function runInProcessSyncBody(
                                 null,
                                 userId,
                                 {
-                                    skipReportingBreach,
                                     onLog,
                                     shouldCancel: () =>
                                         isCancelRequested(options),
@@ -1472,7 +1464,7 @@ async function runInProcessSyncBody(
                     accountId,
                     mapping.mapping,
                     userId,
-                    { skipReportingBreach, onLog, shouldCancel: () => isCancelRequested(options) }
+                    { onLog, shouldCancel: () => isCancelRequested(options) }
                 );
                 (stats as unknown as Record<string, number>)[importedKey] =
                     importResult.success;
