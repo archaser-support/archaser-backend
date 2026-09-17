@@ -226,6 +226,7 @@ async function processDashboardSnapshotsForAccount(
             {
                 ignoreReportingBreach: ignoreReportingBreachEffective,
                 mepBreachStartDate: runContext.mepBreachStartDate,
+                reportingBreachStartDate: runContext.reportingBreachStartDate,
             }
         );
         asOfTermsFlagsApplied = true;

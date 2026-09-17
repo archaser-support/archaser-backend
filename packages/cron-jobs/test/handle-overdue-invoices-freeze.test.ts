@@ -10,7 +10,10 @@ jest.mock("@archaser/credit-insurance-domain", () => ({
     bindCreditInsurancePrisma: jest.fn(),
     sweepReportingBreachForOverdueInvoiceIds: jest
         .fn()
-        .mockResolvedValue(0),
+        .mockResolvedValue({
+            promoted: 0,
+            skippedMissingStartDateAccountIds: [],
+        }),
     syncCustomerInsuranceFields: jest.fn().mockResolvedValue(undefined),
 }));
 

@@ -114,7 +114,6 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
     windows: ExtensionSyncWindow[];
     dryRun?: boolean;
     userId?: string;
-    skipReportingBreach?: boolean;
     importBatch?: ImportBatchFn;
     onLog?: (message: string) => void;
     /** Live pulled/imported counts for GET /sync-runs polling. */
@@ -936,8 +935,6 @@ export async function runStagedExtensionSync(
                             null,
                             options.userId,
                             {
-                                skipReportingBreach:
-                                    options.skipReportingBreach === true,
                                 skipDeferredPaymentMaturity:
                                     entityType === "Invoice",
                                 onLog: options.onLog,
@@ -1583,8 +1580,6 @@ export async function runStagedExtensionSync(
                             null,
                             options.userId,
                             {
-                                skipReportingBreach:
-                                    options.skipReportingBreach === true,
                                 skipDeferredPaymentMaturity:
                                     entityType === "Invoice",
                                 onLog: options.onLog,
