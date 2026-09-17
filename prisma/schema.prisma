@@ -2623,17 +2623,10 @@ enum ConnectorSyncMode {
   INCREMENTAL
 }
 
-enum BillingConnectorStatus {
-  Active
-  Disabled
-  Error
-}
-
 model BillingConnector {
   id                                Int                     @id @default(autoincrement())
   account_id                        Int                     @unique
   provider                          BillingProvider         @default(PRIORITY)
-  status                            BillingConnectorStatus  @default(Disabled)
   base_url                          String?                 @db.VarChar(500)
   auth_type                         ConnectorAuthType       @default(API_KEY)
   credentials_encrypted             String?                 @db.Text
@@ -2685,7 +2678,6 @@ model BillingConnector {
   ConnectorSyncState                ConnectorSyncState[]
 
   @@index([account_id], map: "idx_billing_connector_account_id")
-  @@index([status], map: "idx_billing_connector_status")
 }
 
 model ConnectorFieldMapping {

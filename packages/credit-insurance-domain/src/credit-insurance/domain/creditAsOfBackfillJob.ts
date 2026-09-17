@@ -5,11 +5,15 @@ import {
     deriveAsOfOpenInvoiceCandidatesFromLedger,
     loadAsOfOpenInvoiceLedgerRange,
 } from "./asOfOpenArLedgerPreload";
-import { resolveRewriteDrainStart } from "./asOfRewriteQueue";
+import {
+    getPendingAsOfRewriteWindow,
+    resolveRewriteDrainStart,
+} from "./asOfRewriteQueue";
 import type { AsOfOpenInvoiceLine } from "./asOfOpenAr";
 import {
     overlayAsOfTermsFlagsOnLines,
     withReportingBreachIgnored,
+    isUtcCalendarToday,
 } from "./asOfOpenAr";
 import {
     buildAsOfTermsMapFromActiveCustomerPolicies,
@@ -31,6 +35,11 @@ export type CreditAsOfBackfillStatus =
     | "failed"
     | "complete";
 
+export type PendingRewriteWindowView = {
+    from: string;
+    to: string;
+};
+
 export type CreditAsOfBackfillJobView = {
     status: CreditAsOfBackfillStatus;
     fromDate: string | null;
@@ -45,6 +54,8 @@ export type CreditAsOfBackfillJobView = {
     skipReportingBreach: boolean;
     avgSecondsPerDay: number | null;
     estimatedSecondsRemaining: number | null;
+    /** Pending CreditAsOfRewriteQueue window only; null when processing/done/missing. */
+    pendingRewrite: PendingRewriteWindowView | null;
 };
 
 type JobRow = {
@@ -168,7 +179,10 @@ function computeRunEstimates(row: JobRow): {
     };
 }
 
-function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
+function jobView(
+    row: JobRow | null,
+    pendingRewrite: PendingRewriteWindowView | null = null
+): CreditAsOfBackfillJobView {
     if (!row) {
         return {
             status: "idle",
@@ -184,6 +198,7 @@ function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
             skipReportingBreach: true,
             avgSecondsPerDay: null,
             estimatedSecondsRemaining: null,
+            pendingRewrite,
         };
     }
     const estimates = computeRunEstimates(row);
@@ -201,6 +216,7 @@ function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
         skipReportingBreach: row.skip_reporting_breach !== false,
         avgSecondsPerDay: estimates.avgSecondsPerDay,
         estimatedSecondsRemaining: estimates.estimatedSecondsRemaining,
+        pendingRewrite,
     };
 }
 
@@ -241,12 +257,30 @@ export async function listRunningCreditAsOfBackfillAccountIds(
     return rows.map((row) => Number(row.account_id));
 }
 
+async function loadPendingRewriteView(
+    accountId: number,
+    db: PrismaClientLike
+): Promise<PendingRewriteWindowView | null> {
+    const pending = await getPendingAsOfRewriteWindow(accountId, db);
+    if (!pending) {
+        return null;
+    }
+    return {
+        from: toYmd(pending.fromDate)!,
+        to: toYmd(pending.toDate)!,
+    };
+}
+
 export async function getCreditAsOfBackfillJobStatus(
     accountId: number,
     options?: { dbClient?: PrismaClientLike }
 ): Promise<CreditAsOfBackfillJobView> {
     const db = options?.dbClient ?? defaultPrisma;
-    return jobView(await loadJob(accountId, db));
+    const [job, pendingRewrite] = await Promise.all([
+        loadJob(accountId, db),
+        loadPendingRewriteView(accountId, db),
+    ]);
+    return jobView(job, pendingRewrite);
 }
 
 export class CreditAsOfBackfillConflictError extends Error {
@@ -316,7 +350,12 @@ async function dispatchRunner(accountId: number): Promise<void> {
             return;
         }
     }
-    void runCreditAsOfBackfillJob(accountId).catch(() => {});
+    void runCreditAsOfBackfillJob(accountId).catch((error) => {
+        console.error("[CreditAsOfBackfill] inline runner failed", {
+            accountId,
+            errorMessage: error instanceof Error ? error.message : String(error),
+        });
+    });
 }
 
 async function resolveWriters(
@@ -481,7 +520,14 @@ export async function runCreditAsOfBackfillJob(
             try {
                 let asOfLines = await loadAsOfLines(accountId, day);
                 let asOfTermsFlagsApplied = false;
-                if (sharedTermsByCustomerAndPolicy) {
+                /**
+                 * Today: keep live Invoice CTV (skip as-of MEP overlay) so tip
+                 * matches live cards. Mark applied so writers do not re-overlay.
+                 */
+                if (isUtcCalendarToday(day)) {
+                    // Keep live reporting-breach + CTV; do not strip RB for today.
+                    asOfTermsFlagsApplied = true;
+                } else if (sharedTermsByCustomerAndPolicy) {
                     asOfLines = overlayAsOfTermsFlagsOnLines(
                         withReportingBreachIgnored(
                             asOfLines,
@@ -502,7 +548,9 @@ export async function runCreditAsOfBackfillJob(
                     {
                         snapshotDate: day,
                         asOfLines,
-                        ignoreReportingBreach,
+                        ignoreReportingBreach: isUtcCalendarToday(day)
+                            ? false
+                            : ignoreReportingBreach,
                         mepBreachStartDate: runContext.mepBreachStartDate,
                         runContext,
                         asOfTermsFlagsApplied,
@@ -514,7 +562,9 @@ export async function runCreditAsOfBackfillJob(
                     {
                         snapshotDate: day,
                         asOfLines,
-                        ignoreReportingBreach,
+                        ignoreReportingBreach: isUtcCalendarToday(day)
+                            ? false
+                            : ignoreReportingBreach,
                         runContext,
                         asOfTermsFlagsApplied,
                     }
@@ -652,7 +702,7 @@ export async function pauseCreditAsOfBackfillJob(
     const now = new Date();
     const existing = await loadJob(accountId, db);
     if (!existing || existing.status !== "running") {
-        return jobView(existing);
+        return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
     }
     await db.$executeRaw`
         UPDATE "CreditAsOfBackfillJob"

@@ -770,7 +770,7 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                 try {
                     const connectorsInError = await this.db.billingConnector.groupBy({
                         by: ["provider"],
-                        where: { status: "Error" },
+                        where: { consecutive_auth_failures: { gte: 3 } },
                         _count: { id: true },
                     });
                     const errorByProvider = new Map(
@@ -791,7 +791,6 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                                 BillingConnector: {
                                     sync_mode: "BACKFILL",
                                     sync_enabled: true,
-                                    status: "Active",
                                 },
                             },
                             select: {
@@ -822,7 +821,6 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                     const staleIncremental = await this.db.billingConnector.count({
                         where: {
                             sync_enabled: true,
-                            status: "Active",
                             sync_mode: "INCREMENTAL",
                             OR: [
                                 {

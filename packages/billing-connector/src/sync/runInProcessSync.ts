@@ -11,6 +11,7 @@ import { PriorityProviderClient } from "../priority/PriorityProviderClient";
 import { testPriorityConnection } from "../priority/PriorityClient";
 import { assertPriorityProvider } from "../provider";
 import { decryptCredentials } from "../utils/billingConnectorCrypto";
+import { clearBillingConnectorAuthFailures } from "../services/billingConnectorAuthCircuitBreaker";
 import {
     extractMaxUpdatedAt,
     importMappedEntityBatch,
@@ -941,6 +942,10 @@ async function runInProcessSyncBody(
                     error: connectionResult.error,
                 };
             }
+            await clearBillingConnectorAuthFailures({
+                prisma,
+                connectorId: connector.id,
+            });
             log("Connection test passed");
         } else if (allEntitiesFromCache) {
             log("Skipping ERP connection test (all enabled entities from import cache)");

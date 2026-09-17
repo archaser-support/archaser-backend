@@ -5,6 +5,7 @@ import {
     Logger,
     NotFoundException,
 } from "@nestjs/common";
+import { appendIntIdStringContainsOr } from "@archaser/database";
 import * as bcrypt from "bcryptjs";
 import { randomBytes, randomUUID } from "crypto";
 import { AccessScopeService } from "../auth/access-scope.service";
@@ -346,9 +347,8 @@ export class AccountAdminEntitiesService {
                     },
                 },
             ];
-            if (/^\d+$/.test(searchTerm)) {
-                or.push({ id: parseInt(searchTerm, 10) });
-            }
+            // Int id has no Prisma `contains` — treat decimal form as string.
+            await appendIntIdStringContainsOr(or, this.db, "Account", searchTerm);
             where.OR = or;
         }
 
