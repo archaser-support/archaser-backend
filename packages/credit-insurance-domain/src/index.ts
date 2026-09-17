@@ -244,7 +244,10 @@ export {
     getNamedPolicyTrend,
 } from "./credit-insurance/domain/insurancePolicyTrendService";
 export { loadEffectiveInsuranceForCustomers } from "./credit-insurance/domain/loadEffectiveInsuranceForCustomers";
-export { resolveCustomerHeaderOpenArAmounts } from "./credit-insurance/domain/openReceivableByCustomerCurrency";
+export {
+    fetchCustomerHeaderOpenArSplitInAccountCurrency,
+    resolveCustomerHeaderOpenArAmounts,
+} from "./credit-insurance/domain/openReceivableByCustomerCurrency";
 export {
     isActiveTopUp,
     resolveEffectiveApprovedLimit,
