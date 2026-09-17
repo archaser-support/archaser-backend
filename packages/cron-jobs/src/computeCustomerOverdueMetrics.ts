@@ -7,6 +7,7 @@ import {
 } from "@archaser/credit-insurance-domain";
 
 import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
+import { jobLog } from "./logging/jobLog";
 
 const CUSTOMER_CHUNK = 2000;
 const INVOICE_REPORTING_BREACH_CHUNK = 2000;
@@ -48,6 +49,7 @@ export async function computeCustomerOverdueMetrics(
     summary: {
         customersSynced: number;
         reportingBreachesPromoted: number;
+        reportingBreachAccountsSkippedMissingStartDate: number;
         limitExpirationsProcessed: number;
         policiesDeactivated: number;
         policiesPrematureDeactivated: number;
@@ -74,6 +76,7 @@ export async function computeCustomerOverdueMetrics(
     let customersSynced = 0;
     let limitExpirationsProcessed = 0;
     let reportingBreachesPromoted = 0;
+    const skippedMissingStartDateAccountIds = new Set<number>();
     let lastCustomerId = 0;
     let iteration = 0;
 
@@ -140,11 +143,29 @@ export async function computeCustomerOverdueMetrics(
         }
         lastInvoiceId = lastId;
 
-        reportingBreachesPromoted +=
-            await sweepReportingBreachForOverdueInvoiceIds(
-                invoiceBatch.map((row) => row.id),
-                prisma
-            );
+        const sweepResult = await sweepReportingBreachForOverdueInvoiceIds(
+            invoiceBatch.map((row) => row.id),
+            prisma
+        );
+        reportingBreachesPromoted += sweepResult.promoted;
+        for (const accountId of sweepResult.skippedMissingStartDateAccountIds) {
+            skippedMissingStartDateAccountIds.add(accountId);
+        }
+    }
+
+    if (skippedMissingStartDateAccountIds.size > 0) {
+        const skippedIds = [...skippedMissingStartDateAccountIds].sort(
+            (a, b) => a - b
+        );
+        jobLog(
+            "computeCustomerOverdueMetrics",
+            "warn",
+            "Skipped reporting-breach sweep for accounts missing reporting_breach_start_date",
+            {
+                skippedCount: skippedIds.length,
+                accountIds: skippedIds,
+            }
+        );
     }
 
     const todayUtc = startOfTodayUtc();
@@ -226,6 +247,8 @@ export async function computeCustomerOverdueMetrics(
     const summary = {
         customersSynced,
         reportingBreachesPromoted,
+        reportingBreachAccountsSkippedMissingStartDate:
+            skippedMissingStartDateAccountIds.size,
         limitExpirationsProcessed,
         ...policyStatus,
         iterations: iteration,

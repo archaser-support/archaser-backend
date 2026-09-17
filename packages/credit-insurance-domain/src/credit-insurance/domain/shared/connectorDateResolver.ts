@@ -22,7 +22,10 @@ const CACHE_TTL_MS = 60_000;
 
 type CacheEntry = { value: Date | null; expiresAt: number };
 
-type ConnectorDateColumn = "mep_breach_start_date" | "backfill_start_date";
+type ConnectorDateColumn =
+    | "mep_breach_start_date"
+    | "backfill_start_date"
+    | "reporting_breach_start_date";
 
 export interface ConnectorDateResolver {
     resolve(

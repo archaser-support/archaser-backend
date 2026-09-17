@@ -149,7 +149,6 @@ async function main(): Promise<void> {
             toDate,
             {
                 requestedBy: "rewrite-at-risk-snapshots-as-of",
-                skipReportingBreach: true,
                 dbClient: prisma,
                 runInline: true,
             }
