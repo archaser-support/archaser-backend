@@ -102,6 +102,11 @@ export {
 export { createCategoryChangeActivity } from "./activities/createCategoryChangeActivity";
 export { createPromiseToPayScheduledActivities } from "./activities/createPromiseToPayScheduledActivities";
 export {
+    getRawTemplateContent,
+    processTemplateContent,
+    type ProcessTemplateContentArgs,
+} from "./templates/processTemplateContent";
+export {
     beginCronFrozenAccountGuard,
     partitionByFrozenAccount,
     type CronFrozenAccountGuard,
