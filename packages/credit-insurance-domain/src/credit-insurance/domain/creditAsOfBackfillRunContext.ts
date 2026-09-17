@@ -4,6 +4,7 @@ import { type DbClient, prisma as defaultPrisma } from "../domain-db";
 
 import { resolveInvoicePaidTolerance } from "./resolveInvoicePaidTolerance";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
+import { resolveReportingBreachStartDate } from "./resolveReportingBreachStartDate";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
 import {
     isActiveTopUp,
@@ -190,6 +191,7 @@ export type CreditAsOfBackfillRunContext = {
     invoicePaidTolerance: number | null;
     hasTopUpPolicies: boolean;
     mepBreachStartDate: Date | null;
+    reportingBreachStartDate: Date | null;
     activeCustomerPolicies: ActiveCustomerPolicyForTrendSync[];
     insurancePolicies: CachedInsurancePolicy[];
     businessUnitIds: number[];
@@ -455,10 +457,11 @@ export function deriveDashboardSnapshotScopes(
     return scopes;
 }
 
-/** Lightweight context for injected loaders/writers (tests); only MEP date is resolved. */
+/** Lightweight context for injected loaders/writers (tests); gate dates are resolved. */
 export function createMinimalCreditAsOfBackfillRunContext(
     accountId: number,
-    mepBreachStartDate: Date | null
+    mepBreachStartDate: Date | null,
+    reportingBreachStartDate: Date | null = null
 ): CreditAsOfBackfillRunContext {
     return {
         accountId,
@@ -466,6 +469,7 @@ export function createMinimalCreditAsOfBackfillRunContext(
         invoicePaidTolerance: null,
         hasTopUpPolicies: false,
         mepBreachStartDate,
+        reportingBreachStartDate,
         activeCustomerPolicies: [],
         insurancePolicies: [],
         businessUnitIds: [],
@@ -480,6 +484,7 @@ export async function buildCreditAsOfBackfillRunContext(
         customerIds?: number[];
         policyId?: number;
         mepBreachStartDate?: Date | null;
+        reportingBreachStartDate?: Date | null;
         invoicePaidTolerance?: number;
         replayFromDate?: Date;
         replayToDate?: Date;
@@ -493,6 +498,7 @@ export async function buildCreditAsOfBackfillRunContext(
         businessUnitIds,
         accountHasTopUp,
         mepBreachStartDate,
+        reportingBreachStartDate,
         invoicePaidTolerance,
     ] = await Promise.all([
         db.account.findUnique({
@@ -516,6 +522,9 @@ export async function buildCreditAsOfBackfillRunContext(
         options?.mepBreachStartDate !== undefined
             ? Promise.resolve(options.mepBreachStartDate)
             : resolveMepBreachStartDate(accountId, db),
+        options?.reportingBreachStartDate !== undefined
+            ? Promise.resolve(options.reportingBreachStartDate)
+            : resolveReportingBreachStartDate(accountId, db),
         options?.invoicePaidTolerance !== undefined
             ? Promise.resolve(options.invoicePaidTolerance)
             : resolveInvoicePaidTolerance(accountId, db),
@@ -549,6 +558,7 @@ export async function buildCreditAsOfBackfillRunContext(
         invoicePaidTolerance,
         hasTopUpPolicies: accountHasTopUp,
         mepBreachStartDate,
+        reportingBreachStartDate,
         activeCustomerPolicies,
         insurancePolicies,
         businessUnitIds,

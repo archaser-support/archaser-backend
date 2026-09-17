@@ -102,8 +102,8 @@ export interface ConnectorSyncRunSummary {
     cutover_options?: {
         backfill_start_date: string | null;
         mep_breach_start_date?: string | null;
+        reporting_breach_start_date?: string | null;
         include_older_open_invoices: boolean;
-        skip_reporting_breach_on_backfill: boolean;
     } | null;
     cutover_summary?: string | null;
 }

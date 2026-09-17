@@ -28,7 +28,6 @@ if (!process.env.CUSTOMERS_DOMAIN_ROOT) {
 
 const {
     importMappedEntityBatch,
-    shouldSkipReportingBreachOnConnectorWrite,
 } = require('./../../packages/billing-connector/dist/import/entityImporter');
 const {
     applyMaturedDeferredPayments,
@@ -196,12 +195,6 @@ async function main() {
         process.exitCode = 1;
         return;
     }
-    // These are historical documents, so mirror how a backfill would have written them.
-    const skipReportingBreach = shouldSkipReportingBreachOnConnectorWrite({
-        syncMode: 'BACKFILL',
-        skipReportingBreachOnBackfill: connector.skip_reporting_breach_on_backfill === true,
-    });
-
     const customerFilter = `${CUSTOMER_NUMBER_FIELD} eq ${quoteOData(customer.customer_number)}`;
     const invoiceFilter = args.allForCustomer
         ? andFilters(
@@ -223,7 +216,6 @@ async function main() {
         extensionKey: extensionKey || 'none',
         invoiceEntitySet: entitySets.Invoice ?? null,
         paymentEntitySet: entitySets.Payment ?? null,
-        skipReportingBreach,
         widePaymentFilter: args.widePaymentFilter,
         invoiceCount: args.allForCustomer ? 'all (CUSTNAME filter)' : args.invoiceNumbers.length,
         allForCustomer: args.allForCustomer,
@@ -392,7 +384,6 @@ async function main() {
         null,
         args.userId,
         {
-            skipReportingBreach,
             skipDeferredPaymentMaturity: true,
             extension,
             onLog: (message) => console.log(`${LOG} [invoice] ${message}`),
@@ -418,7 +409,6 @@ async function main() {
             null,
             args.userId,
             {
-                skipReportingBreach,
                 extension,
                 onLog: (message) => console.log(`${LOG} [payment] ${message}`),
             }

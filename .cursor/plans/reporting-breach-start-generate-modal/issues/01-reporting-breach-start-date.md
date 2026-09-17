@@ -1,6 +1,6 @@
 # 01 — Reporting breach start date + flag cleanup
 
-**Status:** ready-for-agent  
+**Status:** done  
 **Priority:** high  
 **Blocked by:** —  
 **User stories:** 1–16, 28–31  
