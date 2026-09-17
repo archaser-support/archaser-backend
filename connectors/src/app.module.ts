@@ -8,14 +8,17 @@ import {
     type OnModuleInit,
 } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import { registerArPostIngestOrchestrator } from "@archaser/billing-connector";
+import {
+    createBillingConnectorMetricsSinkFromProm,
+    registerArPostIngestOrchestrator,
+    registerCustomerBalancesFinal,
+    assertCustomerRollupHostLoadable,
+    loadRecalculateCustomerAmountsModule,
+    setDefaultBillingConnectorMetricsSink,
+} from "@archaser/billing-connector";
 import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
 import { collectDefaultMetrics, Registry } from "prom-client";
 import type { Response } from "express";
-import {
-    createBillingConnectorMetricsSinkFromProm,
-    setDefaultBillingConnectorMetricsSink,
-} from "@archaser/billing-connector";
 import { AuthModule } from "./auth/auth.module";
 import { DatabaseModule } from "./database/database.module";
 import { AccountsDomainModule } from "./accounts/accounts.module";
@@ -97,10 +100,22 @@ export class AppModule implements OnModuleInit {
      * `runArPostIngestViaHost`, which calls the registered orchestrator.
      * Without this the fallback would log "orchestrator is not registered"
      * and post-ingest AR refresh would silently stop in this process.
+     *
+     * Same for customer rollups: assert load at boot and register so
+     * onCustomerBalancesFinal fallback uses a known-good module entry.
      */
     onModuleInit(): void {
         registerArPostIngestOrchestrator((options) =>
             runArPostIngestForCustomers(options)
         );
+        assertCustomerRollupHostLoadable();
+        const rollupMod = loadRecalculateCustomerAmountsModule();
+        registerCustomerBalancesFinal(async (customerIds, prisma, options) => {
+            await rollupMod.recalculateCustomerAmounts(
+                customerIds,
+                prisma,
+                options
+            );
+        });
     }
 }

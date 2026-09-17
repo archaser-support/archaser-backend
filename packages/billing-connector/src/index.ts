@@ -153,6 +153,19 @@ export {
 } from "./sync/runInProcessSync";
 
 export {
+    assertCustomerRollupHostLoadable,
+    isCustomerBalancesFinalRegistered,
+    loadRecalculateCustomerAmountsModule,
+    recalculateCustomerAmountsViaHost,
+    registerCustomerBalancesFinal,
+    resetCustomerBalancesFinalForTests,
+    resolveCustomersDomainRoot,
+    type CustomerBalancesFinalFn,
+    type RecalculateCustomerAmountsHostOptions,
+    type RecalculateCustomerAmountsModule,
+} from "./customers/recalculateCustomerAmountsHost";
+
+export {
     CLEAR_BEFORE_IMPORT_BATCH_SIZE,
     CLEAR_BEFORE_IMPORT_ENTITIES,
     clearBeforeImport,
