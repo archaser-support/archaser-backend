@@ -51,7 +51,6 @@ export async function syncInvoiceReportingBreach(
         select: {
             id: true,
             account_id: true,
-            invoice_date: true,
             status: true,
             amount: true,
             target_reporting_date: true,
@@ -86,7 +85,6 @@ export async function syncInvoiceReportingBreach(
         today,
         inv.amount,
         {
-            invoiceDate: inv.invoice_date,
             reportingBreachStartDate: await resolveReportingBreachStartDate(
                 inv.account_id,
                 db
@@ -155,7 +153,6 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
         select: {
             id: true,
             account_id: true,
-            invoice_date: true,
             status: true,
             amount: true,
             target_reporting_date: true,
@@ -192,7 +189,6 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             today,
             inv.amount,
             {
-                invoiceDate: inv.invoice_date,
                 reportingBreachStartDate: startDate,
             }
         );
@@ -241,7 +237,6 @@ export async function recomputeReportingBreachForAccount(
             },
             select: {
                 id: true,
-                invoice_date: true,
                 status: true,
                 amount: true,
                 target_reporting_date: true,
@@ -261,7 +256,7 @@ export async function recomputeReportingBreachForAccount(
         const writes: Array<{ id: number; value: boolean }> = [];
         for (const inv of invoices) {
             const inScope = isInvoiceInReportingBreachScope(
-                inv.invoice_date,
+                inv.target_reporting_date,
                 startDate
             );
             let desired: boolean;
@@ -275,7 +270,6 @@ export async function recomputeReportingBreachForAccount(
                     today,
                     inv.amount,
                     {
-                        invoiceDate: inv.invoice_date,
                         reportingBreachStartDate: startDate,
                     }
                 );
