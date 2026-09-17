@@ -5,6 +5,7 @@ import {
     Logger,
     NotFoundException,
 } from "@nestjs/common";
+import { isStagingDeploy } from "@archaser/cron-jobs";
 import { appendIntIdStringContainsOr } from "@archaser/database";
 import * as bcrypt from "bcryptjs";
 import { randomBytes, randomUUID } from "crypto";
@@ -1388,9 +1389,30 @@ export class AccountAdminEntitiesService {
         delete data.created_at;
         delete data.created_by;
 
+        let stripImportGrants = false;
+        if (entityType === "accounts") {
+            const userInfo = await this.accessScope.resolveUserInfo(user);
+            const canWriteDemo =
+                isStagingDeploy() &&
+                this.accessScope.isAdminAccount(userInfo.accountId);
+            if (!canWriteDemo || typeof body.is_demo !== "boolean") {
+                delete data.is_demo;
+            } else {
+                data.is_demo = body.is_demo;
+                // Strip whenever Demo is saved OFF (true→false or set false).
+                stripImportGrants = body.is_demo === false;
+            }
+            // has_file_import dropped; Demo gates import catalog on staging.
+            delete data.has_file_import;
+        }
+
         const delegate = this.delegate(entityType);
         const updated = await delegate.update({ where: { id }, data });
         const serialized = serializeBigInt(updated) as Record<string, unknown>;
+
+        if (entityType === "accounts" && stripImportGrants) {
+            await this.stripImportRoleGrants(Number(id));
+        }
 
         if (entityType === "users") {
             const userInfo = await this.accessScope.resolveUserInfo(user);
@@ -1407,6 +1429,19 @@ export class AccountAdminEntitiesService {
         }
 
         return serialized;
+    }
+
+    /**
+     * When Demo is turned OFF on staging, remove import_* grants for every
+     * role on the account immediately (they are not restored on Demo ON).
+     */
+    private async stripImportRoleGrants(accountId: number): Promise<void> {
+        await this.db.rolePermission.deleteMany({
+            where: {
+                account_id: accountId,
+                permission_key: { startsWith: "import_" },
+            },
+        });
     }
 
     /**

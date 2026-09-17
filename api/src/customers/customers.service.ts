@@ -23,6 +23,8 @@ import {
 } from "@archaser/credit-insurance-domain";
 import {
     createPromiseToPayScheduledActivities,
+    DEMO_DISABLED_OUTREACH_REASON,
+    accountAllowsCustomerOutreach,
     getRawTemplateContent,
     processTemplateContent,
 } from "@archaser/cron-jobs";
@@ -520,10 +522,10 @@ export class CustomersService {
         // tab decides the customer has no linked policy.
         const { CustomerPolicy: customerPolicies, ...rest } = customer;
 
-        // `total_ar` is derived, not stored: live open Due/Overdue receivables in
-        // account currency, falling back to the denormalized due + overdue rollups.
-        // The header's Total AR card reads it straight off this payload, so without
-        // it the card renders 0 even when the customer has open invoices.
+        // Header Due / Overdue / Total AR share one live invoice split (account
+        // currency + FX), including invoice counts and dual-currency buckets.
+        // Falls back to denormalized rollups only when there are no open
+        // Due/Overdue rows — so the three cards cannot disagree.
         const account = await this.db.account.findUnique({
             where: { id: accountId },
             select: { currency: true, has_credit_insurance: true },
@@ -1511,6 +1513,14 @@ export class CustomersService {
             throw new BadRequestException({ error: "Email body is required" });
         }
 
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { is_demo: true } as never,
+        });
+        const allowsOutreach = accountAllowsCustomerOutreach(
+            (account as { is_demo?: boolean } | null)?.is_demo === true
+        );
+
         const contacts = await this.db.contact.findMany({
             where: {
                 id: {
@@ -1529,6 +1539,44 @@ export class CustomersService {
         }
 
         const now = new Date();
+
+        if (!allowsOutreach) {
+            const activity = await this.db.$transaction(async (tx) => {
+                const created = await tx.activity.create({
+                    data: {
+                        customer_id: id,
+                        account_id: accountId,
+                        type: "Email",
+                        status: "FAILED",
+                        title: subject.trim(),
+                        content: emailBody.trim(),
+                        schedule_time: now,
+                        created_by: effectiveUserId,
+                    } as never,
+                });
+
+                await tx.activityContact.createMany({
+                    data: contacts.map((contact) => ({
+                        activity_id: created.id,
+                        contact_id: contact.id,
+                        communication_channel: "Email",
+                        status: "Failed",
+                        failure_reason: DEMO_DISABLED_OUTREACH_REASON,
+                        failed_at: now,
+                        created_by: effectiveUserId,
+                    })) as never,
+                });
+
+                return created;
+            });
+
+            throw new BadRequestException({
+                error: DEMO_DISABLED_OUTREACH_REASON,
+                code: "DEMO_DISABLED",
+                activity: serializeBigInt(activity),
+            });
+        }
+
         const activity = await this.db.$transaction(async (tx) => {
             const created = await tx.activity.create({
                 data: {
@@ -1941,11 +1989,25 @@ export class CustomersService {
                 sub_domain: true,
                 email_from_name: true,
                 email_from: true,
-            },
+                is_demo: true,
+            } as never,
         });
         if (!account) {
             return;
         }
+
+        const accountRow = account as {
+            id: number;
+            name: string | null;
+            logo: string | null;
+            sub_domain: string | null;
+            email_from_name: string | null;
+            email_from: string | null;
+            is_demo?: boolean;
+        };
+        const allowsOutreach = accountAllowsCustomerOutreach(
+            accountRow.is_demo === true
+        );
 
         const language = customer.language || "English";
         let raw = getRawTemplateContent(
@@ -2006,10 +2068,10 @@ export class CustomersService {
         };
 
         const accountForTemplate = {
-            id: account.id,
-            name: account.name,
-            logo: account.logo,
-            sub_domain: account.sub_domain,
+            id: accountRow.id,
+            name: accountRow.name,
+            logo: accountRow.logo,
+            sub_domain: accountRow.sub_domain,
         };
         const customerForTemplate = {
             type: customer.type as "Person" | "Company",
@@ -2057,7 +2119,7 @@ export class CustomersService {
                     customer_id: args.customerId,
                     account_id: args.accountId,
                     type: "Email",
-                    status: "SENT",
+                    status: allowsOutreach ? "SENT" : "FAILED",
                     title: "{{activities.fields.activity_dispute_resolution_email_sent}}",
                     title_params: {
                         userId: args.effectiveUserId,
@@ -2071,8 +2133,8 @@ export class CustomersService {
                     activity_template: template.id,
                     collection_period_id: periodId,
                     schedule_time: now,
-                    actual_delivery_time: now,
-                    last_sent_time: now,
+                    actual_delivery_time: allowsOutreach ? now : null,
+                    last_sent_time: allowsOutreach ? now : null,
                     created_by: args.effectiveUserId,
                     modified_by: args.effectiveUserId,
                     system_generated: true,
@@ -2085,8 +2147,14 @@ export class CustomersService {
                         activity_id: created.id,
                         contact_id: contactMatch.id,
                         communication_channel: "Email",
-                        status: "Sent",
-                        sent_at: now,
+                        status: allowsOutreach ? "Sent" : "Failed",
+                        ...(allowsOutreach
+                            ? { sent_at: now }
+                            : {
+                                  failure_reason:
+                                      DEMO_DISABLED_OUTREACH_REASON,
+                                  failed_at: now,
+                              }),
                         created_by: args.effectiveUserId,
                     } as never,
                 });
@@ -2095,9 +2163,16 @@ export class CustomersService {
             return created;
         });
 
+        if (!allowsOutreach) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: ${DEMO_DISABLED_OUTREACH_REASON}`
+            );
+            return;
+        }
+
         const fromName =
-            account.email_from_name?.trim() ||
-            account.name?.trim() ||
+            accountRow.email_from_name?.trim() ||
+            accountRow.name?.trim() ||
             "ARchaser";
         try {
             await this.systemEmail.sendHtmlEmail({
@@ -2105,7 +2180,7 @@ export class CustomersService {
                 subject: emailSubject,
                 html: emailHtml,
                 fromName,
-                replyToEmail: account.email_from?.trim() || undefined,
+                replyToEmail: accountRow.email_from?.trim() || undefined,
                 logContext: {
                     accountId: args.accountId,
                     userId: args.effectiveUserId,
