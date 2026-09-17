@@ -116,3 +116,9 @@ export {
     getDefaultCronFrozenAccountMetrics,
     setDefaultCronFrozenAccountMetrics,
 } from "./accountFreeze/defaultCronFrozenAccountMetrics";
+export {
+    DEMO_DISABLED_OUTREACH_REASON,
+    accountAllowsCustomerOutreach,
+    accountAllowsImportCatalog,
+    isStagingDeploy,
+} from "./demoAccountPolicy";
