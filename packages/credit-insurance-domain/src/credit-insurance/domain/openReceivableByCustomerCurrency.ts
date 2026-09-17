@@ -263,9 +263,15 @@ export type CustomerHeaderCurrencyBuckets = {
 
 export type CustomerHeaderOpenArAmounts = CustomerHeaderCurrencyBuckets & {
     total_ar: number;
-    /** Live Due rollup when open invoices exist; else denormalized. */
+    /**
+     * Live Due rollup when account currency allows live computation
+     * (including zero when the open set is empty); else denormalized.
+     */
     total_due_amount: number;
-    /** Live Overdue rollup when open invoices exist; else denormalized. */
+    /**
+     * Live Overdue rollup when account currency allows live computation
+     * (including zero when the open set is empty); else denormalized.
+     */
     total_overdue_amount: number;
     no_of_due_invoices: number;
     number_of_overdue_invoices: number;
@@ -465,7 +471,14 @@ export async function fetchCustomerHeaderOpenArSplitInAccountCurrency(
 /**
  * Customer GET header open AR: one live Due/Overdue split (same FX rules) so the
  * three header cards always agree — amounts, invoice counts, and dual-currency
- * buckets. Denormalized rollups are used only when there are no open invoices.
+ * buckets.
+ *
+ * When account currency is available, always use the live split — including when
+ * the open Due/Overdue set is empty (amounts/counts are zero). That avoids
+ * showing stale denormalized overdue/due after invoices are Paid.
+ *
+ * Denormalized customer rollups are used only when live computation cannot run
+ * (missing/blank account currency). An empty open set is not a fallback case.
  */
 export async function resolveCustomerHeaderOpenArAmounts(
     params: {
@@ -484,6 +497,7 @@ export async function resolveCustomerHeaderOpenArAmounts(
     const denormalizedBuckets = bucketsFromCustomer(customer);
     const acct = accountCurrency?.trim();
 
+    // Default to denormalized only until/unless live computation can run.
     let total_due_amount = denormalizedDue;
     let total_overdue_amount = denormalizedOverdue;
     let total_ar = denormalizedTotalAr;
@@ -500,26 +514,23 @@ export async function resolveCustomerHeaderOpenArAmounts(
             acct,
             dbClient ?? defaultPrisma
         );
-        // Prefer the live split whenever open invoices exist so Due/Overdue/Total AR
-        // share one source. Empty result keeps denormalized rollups (stale-safe
-        // fallback when the customer has no Due/Overdue rows yet).
-        if (live.invoiceCount > 0) {
-            total_due_amount = live.total_due_amount;
-            total_overdue_amount = live.total_overdue_amount;
-            total_ar = live.total_ar;
-            no_of_due_invoices = live.no_of_due_invoices;
-            number_of_overdue_invoices = live.number_of_overdue_invoices;
-            buckets = {
-                customer_due_amount1: live.customer_due_amount1,
-                customer_due_currency1: live.customer_due_currency1,
-                customer_due_amount2: live.customer_due_amount2,
-                customer_due_currency2: live.customer_due_currency2,
-                customer_overdue_amount1: live.customer_overdue_amount1,
-                customer_overdue_currency1: live.customer_overdue_currency1,
-                customer_overdue_amount2: live.customer_overdue_amount2,
-                customer_overdue_currency2: live.customer_overdue_currency2,
-            };
-        }
+        // Always trust live (even invoiceCount === 0) so Due/Overdue/Total AR
+        // share one source and Paid-only customers cannot show stale rollups.
+        total_due_amount = live.total_due_amount;
+        total_overdue_amount = live.total_overdue_amount;
+        total_ar = live.total_ar;
+        no_of_due_invoices = live.no_of_due_invoices;
+        number_of_overdue_invoices = live.number_of_overdue_invoices;
+        buckets = {
+            customer_due_amount1: live.customer_due_amount1,
+            customer_due_currency1: live.customer_due_currency1,
+            customer_due_amount2: live.customer_due_amount2,
+            customer_due_currency2: live.customer_due_currency2,
+            customer_overdue_amount1: live.customer_overdue_amount1,
+            customer_overdue_currency1: live.customer_overdue_currency1,
+            customer_overdue_amount2: live.customer_overdue_amount2,
+            customer_overdue_currency2: live.customer_overdue_currency2,
+        };
     }
 
     let credit_insurance_secondary_currency: string | null = null;

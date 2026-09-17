@@ -288,6 +288,8 @@ export function entityStatsFromCounts(
         const processed = step.processed ?? 0;
         const total = step.total ?? processed;
         const skipped = step.skipped ?? 0;
+        // `_balances` failed must surface via failed/status — resolveSyncExecutionStatus
+        // maps that to FAILED (never soft-complete SUCCESS).
         entityStats[key] = {
             pulled: total,
             // Settled only — do not treat missing invoice numbers as success.
