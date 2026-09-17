@@ -13,8 +13,8 @@ function resolveCustomersDomainRoot(): string {
     if (process.env.CUSTOMERS_DOMAIN_ROOT?.trim()) {
         return path.resolve(process.env.CUSTOMERS_DOMAIN_ROOT.trim());
     }
-    // packages/billing-connector/dist/customers → ../../../api/dist/customers
-    return path.resolve(__dirname, "../../../api/dist/customers");
+    // packages/billing-connector/dist/customers → ../../../../api/dist/customers
+    return path.resolve(__dirname, "../../../../api/dist/customers");
 }
 
 export type RecalculateCustomerAmountsHostOptions = {
