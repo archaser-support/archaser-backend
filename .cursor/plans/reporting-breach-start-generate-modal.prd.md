@@ -16,7 +16,7 @@ Separately, reporting-breach cutover is confusing: Billing has “Skip reporting
 
 ## Solution
 
-1. Add a required **Reporting breach start date** on the Billing connector cutover UI (after **MEP breach start date**). Invoices issued on or after that calendar day participate in reporting-breach evaluation; earlier invoices never do. The field stays editable after backfill (unlike MEP). No soft prefill from backfill start date.
+1. Add a required **Reporting breach start date** on the Billing connector cutover UI (after **MEP breach start date**). Invoices whose **target reporting date** is on or after that calendar day participate in reporting-breach evaluation; earlier deadlines never do. The field stays editable after backfill (unlike MEP). No soft prefill from backfill start date.
 2. Remove both product switches: Portfolio Health “Ignore reporting breach” and Billing “Skip reporting breach during backfill.” Drop the related connector and Generate-job boolean flags from schema/API/runtime.
 3. On Billing save when the date changes: persist immediately, kick a **background** full account reporting-breach recompute (promote and clear), then show success with a link/button to Portfolio Health Generate. Do not auto-start Generate.
 4. Move Generate / Generate recent / Stop / Resume/Retry into an AppDialog opened from a status-aware toolbar button. Keep the progress bar (and ETA / last error) on the page. Inline the large-range confirm inside the modal. Auto-open when landing with an active job; after dismiss, stay closed until the user reopens or a new attention transition occurs.
@@ -32,8 +32,8 @@ Ship as **two vertical slices**: Billing date + flag cleanup first, then the Gen
 5. As an onboarding specialist, I want connectors without a backfill start date left unset until I enter a date, so that we never invent a silent fallback.
 6. As an onboarding specialist, I want to edit the reporting breach start date after backfill has started, so that I can correct cutover without a backfill reset.
 7. As an onboarding specialist, I want the “Skip reporting breach during backfill” switch removed, so that one date rule applies to backfill too.
-8. As a credit analyst, I want invoices issued before the reporting breach start date never to show reporting breach, so that import history does not look like term violations.
-9. As a credit analyst, I want invoices on or after the date to follow normal reporting-breach rules, so that live risk stays accurate.
+8. As a credit analyst, I want invoices whose target reporting date is before the reporting breach start date never to show reporting breach, so that pre-cutover deadlines do not look like term violations.
+9. As a credit analyst, I want invoices whose target reporting date is on or after the date to follow normal reporting-breach rules, so that live risk stays accurate.
 10. As a credit analyst, I want connector backfill to stamp reporting breach using that same date gate, so that import and overnight jobs agree.
 11. As a credit analyst, I want changing the date on Billing to kick a background full recompute, so that invoice flags catch up without blocking the form.
 12. As a credit analyst, I want that recompute to clear breaches that fall out of scope, not only promote new ones, so that moving the date forward actually cleans the grid.
@@ -75,7 +75,7 @@ Ship as **two vertical slices**: Billing date + flag cleanup first, then the Gen
 
 ### Gate semantics
 
-- Comparison field: invoice **issue date**, inclusive on/after the configured date (same calendar-day helper as MEP).
+- Comparison field: invoice **target reporting date**, inclusive on/after the configured date (same calendar-day helper as MEP). The start date is the first day a reporting breach may apply — not the invoice issue date.
 - Applies permanently: import/backfill, incremental sync, overnight reporting-breach sweep, term-breach resolvers, and Portfolio Health Generate / day replay paths that stamp or overlay reporting breach.
 - Null date: Generate fails closed with a clear client error; overnight sweeps skip the account with a clear log/metric. Do not treat null as “no gate.”
 

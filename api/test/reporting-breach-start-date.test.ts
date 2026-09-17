@@ -14,7 +14,7 @@ describe("reporting breach start date", () => {
             ).toBe(false);
         });
 
-        it("includes invoices on or after the start date", () => {
+        it("includes target reporting dates on or after the start date", () => {
             const start = new Date(Date.UTC(2025, 5, 1));
             expect(
                 isInvoiceInReportingBreachScope(

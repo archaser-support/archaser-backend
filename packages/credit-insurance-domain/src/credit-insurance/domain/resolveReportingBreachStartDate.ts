@@ -2,9 +2,10 @@
  * Account-scoped resolver for the reporting breach start date.
  *
  * Reporting breach marks an invoice whose reporting deadline passed unreported.
- * Invoices issued before `BillingConnector.reporting_breach_start_date` are out of
- * scope permanently (import history / pre-cutover). Live sync, overnight sweep,
- * and Portfolio Health Generate all share this gate.
+ * `BillingConnector.reporting_breach_start_date` is the first day a reporting
+ * breach may apply: invoices whose `target_reporting_date` is before that day
+ * are out of scope permanently (pre-cutover deadlines). Live sync, overnight
+ * sweep, and Portfolio Health Generate all share this gate.
  *
  * Null means no gate is configured: Generate fails closed and overnight sweeps
  * skip the account. Callers must not treat null as “evaluate all history.”
