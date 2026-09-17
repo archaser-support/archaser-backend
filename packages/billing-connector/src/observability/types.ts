@@ -24,7 +24,14 @@ export interface SyncResultForStatus {
     };
     entity_stats?: Record<
         string,
-        { pulled: number; success: number; failed: number; skipped: number }
+        {
+            pulled: number;
+            success: number;
+            failed: number;
+            skipped: number;
+            status?: "running" | "done" | "failed" | "queued";
+            sample_errors?: string[];
+        }
     >;
 }
 
