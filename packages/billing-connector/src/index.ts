@@ -84,6 +84,13 @@ export {
     type CronToPresetResult,
 } from "./services/billingConnectorSchedule";
 
+export {
+    AUTH_CIRCUIT_BREAKER_THRESHOLD,
+    recordBillingConnectorAuthFailure,
+    clearBillingConnectorAuthFailures,
+    type AuthCircuitBreakerResult,
+} from "./services/billingConnectorAuthCircuitBreaker";
+
 // ==============================
 // Field utils & Priority contract
 // ==============================

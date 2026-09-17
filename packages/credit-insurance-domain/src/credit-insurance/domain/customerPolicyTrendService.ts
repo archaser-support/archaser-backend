@@ -14,6 +14,7 @@ import {
     resolveAsOfOpenArOnPolicyInLimitCurrencyFromLines,
     sumAsOfOpenAmountFromLines,
     sumAsOfTermsBreachFromLines,
+    isUtcCalendarToday,
     type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
     type AsOfPolicyTermsForBreach,
@@ -1464,15 +1465,23 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         }
     }
     if (options?.asOfTermsFlagsApplied !== true) {
-        ledgerLines = overlayAsOfTermsFlagsOnLines(
-            ledgerLines,
-            snapshotDate,
-            termsByCustomerAndPolicy,
-            {
-                ignoreReportingBreach: options?.ignoreReportingBreach === true,
-                mepBreachStartDate,
-            }
-        );
+        /**
+         * Today: keep live Invoice CTV (no as-of MEP overlay) so CPT tip matches
+         * live Credit Dashboard at-risk.
+         */
+        if (!isUtcCalendarToday(snapshotDate)) {
+            ledgerLines = overlayAsOfTermsFlagsOnLines(
+                ledgerLines,
+                snapshotDate,
+                termsByCustomerAndPolicy,
+                {
+                    ignoreReportingBreach:
+                        options?.ignoreReportingBreach === true,
+                    mepBreachStartDate,
+                }
+            );
+        }
+        // Today: leave live CTV + reporting-breach on ledger lines.
     } else if (options?.ignoreReportingBreach === true) {
         ledgerLines = ledgerLines.map((line) =>
             line.reportingBreach
