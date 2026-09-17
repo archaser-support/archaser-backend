@@ -46,7 +46,6 @@ export interface EntityImportBatchResult {
 export interface EntityImportBatchOptions {
     /** Billing-connector live sync only — skip incomplete invoice/payment rows. */
     enforceMandatoryFields?: boolean;
-    skipReportingBreach?: boolean;
     /**
      * When true, skip deferred-payment maturity after this invoice batch.
      * Connector staged sync sets this and runs maturity once after all
@@ -56,14 +55,6 @@ export interface EntityImportBatchOptions {
     onLog?: (message: string) => void;
     shouldCancel?: () => boolean;
     extension?: BillingAccountExtension;
-}
-
-export function shouldSkipReportingBreachOnConnectorWrite(params: {
-    syncMode: "BACKFILL" | "INCREMENTAL" | "backfill" | "incremental";
-    skipReportingBreachOnBackfill: boolean;
-}): boolean {
-    const mode = String(params.syncMode).toUpperCase();
-    return mode === "BACKFILL" && params.skipReportingBreachOnBackfill === true;
 }
 
 export function extractMaxUpdatedAt(
@@ -1050,9 +1041,6 @@ async function importInvoiceBatch(
             credit_for_invoice_number:
                 invoice.credit_for_invoice_number ?? null,
             custom_code1: invoice.custom_code1 ?? null,
-            ...(options?.skipReportingBreach === true
-                ? { reporting_breach: false }
-                : {}),
             invoice_date: parseErpDateOnly(invoice.invoice_date) ?? now,
             due_date: parseErpDateOnly(invoice.due_date),
             modified_by: userId || null,

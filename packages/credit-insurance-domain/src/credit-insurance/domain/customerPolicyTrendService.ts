@@ -1478,6 +1478,8 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
                     ignoreReportingBreach:
                         options?.ignoreReportingBreach === true,
                     mepBreachStartDate,
+                    reportingBreachStartDate:
+                        runContext?.reportingBreachStartDate ?? null,
                 }
             );
         }
