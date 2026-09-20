@@ -22,6 +22,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
       NEST_PORT: 3010
       PORT: 3010
       SERVICE_NAME: archaser-api-staging
@@ -62,6 +63,8 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
+      SERVICE_NAME: archaser-worker-staging
       WORKER_PORT: 3003
       REDIS_URL: redis://redis:6379
       BULLMQ_QUEUE: archaser-cron
@@ -93,6 +96,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
       SMS_PORT: 3004
       CONNECTION_LIMIT_SMS: 5
       NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
@@ -111,6 +115,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
       CONNECTORS_PORT: 3005
       # Path flip enabled on staging nginx — connectors owns sync schedules (D72).
       ENABLE_CONNECTORS_SYNC_WORKERS: "true"
@@ -134,6 +139,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
       REPORTS_PORT: 3006
       NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
       NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
