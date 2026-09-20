@@ -38,6 +38,10 @@ import {
     buildCustomerUncheckedUpdateData,
 } from "./customer-update.mapper";
 import { SystemEmailService } from "../email/system-email.service";
+import {
+    pickDisputeOutreachContact,
+    toDisputeResolutionI18nPlaceholder,
+} from "./dispute-resolution.util";
 
 export type CustomersListQuery = {
     page?: string;
@@ -1655,6 +1659,11 @@ export class CustomersService {
             body.dispute_comment ??
             body.comment ??
             null;
+        const commentText =
+            typeof resolutionComment === "string"
+                ? resolutionComment.trim()
+                : "";
+        const hasResolutionComment = commentText.length > 0;
 
         const data: Record<string, unknown> = {};
         switch (op) {
@@ -1662,12 +1671,16 @@ export class CustomersService {
             case "resolve-dispute":
                 data.dispute_status = "Resolved";
                 data.dispute_resolution = body.dispute_resolution || "Accepted";
-                data.resolution_comment = resolutionComment;
+                if (hasResolutionComment) {
+                    data.resolution_comment = commentText;
+                }
                 data.closed_at = new Date();
                 break;
             case "update-resolution":
                 data.dispute_resolution = body.dispute_resolution || "Accepted";
-                data.resolution_comment = resolutionComment;
+                if (hasResolutionComment) {
+                    data.resolution_comment = commentText;
+                }
                 break;
             case "cancel":
             case "cancel-dispute":
@@ -1675,7 +1688,9 @@ export class CustomersService {
                 if (body.dispute_resolution != null) {
                     data.dispute_resolution = body.dispute_resolution;
                 }
-                data.resolution_comment = resolutionComment;
+                if (hasResolutionComment) {
+                    data.resolution_comment = commentText;
+                }
                 data.closed_at = new Date();
                 break;
             case "assign":
@@ -1731,10 +1746,6 @@ export class CustomersService {
             typeof body.user_comment === "string"
                 ? body.user_comment.trim()
                 : "";
-        const commentText =
-            typeof resolutionComment === "string"
-                ? resolutionComment.trim()
-                : "";
         const resolutionValue =
             (typeof data.dispute_resolution === "string"
                 ? data.dispute_resolution
@@ -1744,6 +1755,12 @@ export class CustomersService {
                 : null) ||
             dispute.dispute_resolution ||
             "Accepted";
+        const commentForActivity = toDisputeResolutionI18nPlaceholder(
+            commentText ||
+                (typeof dispute.resolution_comment === "string"
+                    ? dispute.resolution_comment.trim()
+                    : "")
+        );
         const resolutionI18n = `{{disputes.values.status_${String(resolutionValue).toLowerCase()}}}`;
 
         const disputeActivityContent = (
@@ -1753,9 +1770,9 @@ export class CustomersService {
             const rows = [
                 `<span class="activity-label-primary">{{disputes.fields.resolution}}:</span> <span class="activity-value">${resolutionI18n}</span>`,
             ];
-            if (includeComment && commentText) {
+            if (includeComment && commentForActivity) {
                 rows.push(
-                    `<span class="activity-label-primary">{{activities.fields.resolution_comment}}:</span> <span class="activity-value">${commentText.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`
+                    `<span class="activity-label-primary">{{activities.fields.resolution_comment}}:</span> <span class="activity-value">${commentForActivity.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`
                 );
             }
             rows.push(
@@ -1918,8 +1935,33 @@ export class CustomersService {
         contactLastName: string | null;
         contactMobile: string | null;
     }) {
-        const toEmail = args.contactEmail?.trim();
-        if (!toEmail) {
+        const customerContacts = await this.db.contact.findMany({
+            where: { customer_id: args.customerId },
+            select: {
+                id: true,
+                first_name: true,
+                last_name: true,
+                email: true,
+                mobile: true,
+                phone: true,
+                role: true,
+                receives_standard_reminder: true,
+            },
+        });
+        const customerRow = await this.db.customer.findFirst({
+            where: { id: args.customerId },
+            select: { email: true },
+        });
+        const recipient = pickDisputeOutreachContact({
+            disputeEmail: args.contactEmail,
+            disputeFirstName: args.contactFirstName,
+            disputeLastName: args.contactLastName,
+            disputeMobile: args.contactMobile,
+            contacts: customerContacts,
+            customerEmail: customerRow?.email,
+        });
+        const toEmail = recipient?.email?.trim();
+        if (!toEmail || !recipient) {
             this.logger.warn(
                 `Skipping dispute resolution email for dispute ${args.disputeId}: no contact email`
             );
@@ -2033,38 +2075,22 @@ export class CustomersService {
             return;
         }
 
-        const contactMatch = await this.db.contact.findFirst({
-            where: {
-                customer_id: args.customerId,
-                email: { equals: toEmail, mode: "insensitive" },
-            },
-            select: {
-                id: true,
-                first_name: true,
-                last_name: true,
-                email: true,
-                mobile: true,
-                phone: true,
-                role: true,
-            },
-        });
+        const contactMatch = recipient.id
+            ? customerContacts.find((contact) => contact.id === recipient.id)
+            : customerContacts.find(
+                  (contact) =>
+                      contact.email?.trim().toLowerCase() ===
+                      toEmail.toLowerCase()
+              );
 
         const contact = {
-            id: contactMatch?.id,
-            first_name:
-                contactMatch?.first_name ||
-                args.contactFirstName ||
-                "",
-            last_name:
-                contactMatch?.last_name || args.contactLastName || "",
+            id: contactMatch?.id ?? recipient.id ?? undefined,
+            first_name: recipient.first_name,
+            last_name: recipient.last_name,
             email: toEmail,
-            mobile:
-                contactMatch?.mobile ||
-                contactMatch?.phone ||
-                args.contactMobile ||
-                "",
-            phone: contactMatch?.phone || contactMatch?.mobile || "",
-            role: contactMatch?.role || "",
+            mobile: recipient.mobile,
+            phone: recipient.phone,
+            role: recipient.role,
         };
 
         const accountForTemplate = {

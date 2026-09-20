@@ -22,9 +22,10 @@ describe("demoAccountPolicy", () => {
         }
     }
 
-    it("treats local development like staging and gates on is_demo", () => {
+    it("treats local development like staging: Demo ON sends, Demo OFF mutes", () => {
         setEnv({
             NODE_ENV: "development",
+            APP_ENV: undefined,
             SERVICE_NAME: undefined,
             NEST_PUBLIC_URL: undefined,
             NEXTAUTH_URL: "http://localhost:3000",
@@ -41,6 +42,7 @@ describe("demoAccountPolicy", () => {
     it("treats localhost URLs as Demo-gated even when NODE_ENV=production", () => {
         setEnv({
             NODE_ENV: "production",
+            APP_ENV: undefined,
             SERVICE_NAME: "archaser-core",
             NEST_PUBLIC_URL: undefined,
             NEXTAUTH_URL: "http://localhost:3000",
@@ -52,9 +54,26 @@ describe("demoAccountPolicy", () => {
         expect(accountAllowsImportCatalog(true)).toBe(true);
     });
 
-    it("treats api.staging host as staging and gates on is_demo", () => {
+    it("APP_ENV=production never Demo-gates even with leftover localhost URLs", () => {
         setEnv({
             NODE_ENV: "production",
+            APP_ENV: "production",
+            SERVICE_NAME: undefined,
+            NEST_PUBLIC_URL: undefined,
+            NEXTAUTH_URL: "http://localhost:3000",
+            NEXT_PUBLIC_BASE_URL: undefined,
+            PORT: "4003",
+        });
+        expect(isStagingDeploy()).toBe(false);
+        expect(accountAllowsCustomerOutreach(false)).toBe(true);
+        expect(accountAllowsCustomerOutreach(true)).toBe(true);
+        expect(accountAllowsImportCatalog(true)).toBe(false);
+    });
+
+    it("treats api.staging host as staging: Demo ON sends, Demo OFF mutes", () => {
+        setEnv({
+            NODE_ENV: "production",
+            APP_ENV: undefined,
             SERVICE_NAME: "archaser-api-staging",
             NEST_PUBLIC_URL: "https://api.staging.archaser.com",
             NEXTAUTH_URL: "https://staging.archaser.com",
@@ -67,9 +86,10 @@ describe("demoAccountPolicy", () => {
         expect(accountAllowsImportCatalog(true)).toBe(true);
     });
 
-    it("treats production as not staging", () => {
+    it("treats production as not staging and always sends", () => {
         setEnv({
             NODE_ENV: "production",
+            APP_ENV: "production",
             SERVICE_NAME: "archaser-api-production",
             NEST_PUBLIC_URL: "https://api.portal.archaser.com",
             NEXTAUTH_URL: "https://archaser.com",

@@ -21,15 +21,23 @@ function envUrlLooksLocal(): boolean {
     return false;
 }
 
+function appEnvIsProduction(): boolean {
+    const appEnv = (process.env.APP_ENV || "").toLowerCase();
+    return appEnv === "production" || appEnv === "prod";
+}
+
 /**
  * Staging/preprod **and local/dev** — so Demo toggle, outreach mute, and
  * import catalog can be verified outside real production.
  *
- * Nest often runs with NODE_ENV=production locally; detectServerEnvironment
- * then returns "production" even when NEXTAUTH_URL is localhost. Treat those
- * local URLs as Demo-gated too.
+ * `APP_ENV=production` (EC2 worker/api) always wins, even if leftover
+ * localhost URLs are in `.env`. Nest `NODE_ENV=production` locally without
+ * APP_ENV still Demo-gates when URLs point at localhost.
  */
 export function isStagingDeploy(): boolean {
+    if (appEnvIsProduction()) {
+        return false;
+    }
     const env = detectServerEnvironment();
     if (env === "preprod" || env === "localhost") {
         return true;
@@ -38,8 +46,8 @@ export function isStagingDeploy(): boolean {
 }
 
 /**
- * Customer Email/SMS/WhatsApp may send when not on a Demo-gated deploy, or
- * when the account is marked Demo on staging/local.
+ * Production always sends customer Email/SMS. Staging/local send only when
+ * the account has Demo ON.
  */
 export function accountAllowsCustomerOutreach(isDemo: boolean): boolean {
     if (!isStagingDeploy()) {
