@@ -11,6 +11,10 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { sendViaVendor } from "@archaser/sms-send";
+import {
+    DEMO_DISABLED_OUTREACH_REASON,
+    accountAllowsCustomerOutreach,
+} from "./demoAccountPolicy";
 import { selectPragmaticChannel } from "./communication/selectPragmaticChannel";
 import { handleActivityEmailSendFailure } from "./email/activityEmailSendFailure";
 import { resolveAccountEmailSender } from "./email/accountSender";
@@ -216,6 +220,7 @@ async function sendDueActivities(
                     sms_from_name: true,
                     sms_fallback_enabled: true,
                     intelligent_channel_selection_enabled: true,
+                    is_demo: true,
                 },
             },
             ActivitiesSequence: {
@@ -306,13 +311,69 @@ async function processActivity(
     );
 
     if (pendingContacts.length === 0) {
-        // No pending contacts - mark activity as SENT
+        // No recipients to send — mark FAILED (not SENT). Treating this as
+        // success previously hid broken schedules (0 ActivityContact rows)
+        // and could unblock duplicate next-step creation.
         await prisma.activity.update({
             where: { id: activity.id },
             data: {
-                status: "SENT",
+                status: "FAILED",
                 modified_at: new Date(),
             },
+        });
+        jobLog("activityWorkflowManager", "warn", "no pending contacts", {
+            activityId: activity.id,
+            accountId: activity.Account?.id,
+            reason: "No contacts to send",
+        });
+        if (String(activity.type) === "SMS") {
+            stats.smsFailed += 1;
+        } else {
+            stats.emailFailed += 1;
+        }
+        return;
+    }
+
+    // Staging Demo OFF: skip SMTP/SMS vendors; mark contacts Failed with
+    // a stable reason so timelines stay visible without delivery.
+    if (
+        !accountAllowsCustomerOutreach(activity.Account?.is_demo === true)
+    ) {
+        const now = new Date();
+        await prisma.$transaction(async (tx) => {
+            await tx.activity.update({
+                where: { id: activity.id },
+                data: {
+                    status: "FAILED",
+                    modified_at: now,
+                },
+            });
+            await Promise.all(
+                pendingContacts.map((ac: { id: number }) =>
+                    tx.activityContact.update({
+                        where: { id: ac.id },
+                        data: {
+                            status: "Failed",
+                            failure_reason: DEMO_DISABLED_OUTREACH_REASON,
+                            failed_at: now,
+                            modified_at: now,
+                        },
+                    })
+                )
+            );
+        });
+
+        const channel = String(activity.type || "");
+        if (channel === "SMS") {
+            stats.smsFailed += pendingContacts.length;
+        } else {
+            stats.emailFailed += pendingContacts.length;
+        }
+        jobLog("activityWorkflowManager", "info", "demo outreach blocked", {
+            activityId: activity.id,
+            accountId: activity.Account?.id,
+            contacts: pendingContacts.length,
+            reason: DEMO_DISABLED_OUTREACH_REASON,
         });
         return;
     }
@@ -1227,6 +1288,52 @@ async function processCollectionPeriodForNextActivity(
         return;
     }
 
+    // Never create a second row for the same automated step (e.g. after a
+    // FAILED send), and never stack another while one is still SCHEDULED.
+    const [existingForStep, pendingScheduled] = await Promise.all([
+        prisma.activity.findFirst({
+            where: {
+                collection_period_id: period.id,
+                status: { not: "CANCELLED" },
+                ActivitiesSequence: {
+                    category: "Automated",
+                    step: nextStep,
+                },
+            },
+            select: { id: true, status: true },
+        }),
+        prisma.activity.findFirst({
+            where: {
+                collection_period_id: period.id,
+                status: "SCHEDULED",
+                ActivitiesSequence: { category: "Automated" },
+            },
+            select: { id: true, status: true },
+        }),
+    ]);
+    const blockingActivity = existingForStep ?? pendingScheduled;
+    if (blockingActivity) {
+        await prisma.customerCollectionPeriod.update({
+            where: { id: period.id },
+            data: {
+                create_next_activity: false,
+                modified_at: new Date(),
+            },
+        });
+        jobLog(
+            "activityWorkflowManager",
+            "info",
+            "skip duplicate automated step",
+            {
+                periodId: period.id,
+                nextStep,
+                existingActivityId: blockingActivity.id,
+                existingStatus: blockingActivity.status,
+            }
+        );
+        return;
+    }
+
     // Get contacts for activity
     const mainContacts = await prisma.contact.findMany({
         where: { customer_id: customer.id },
@@ -1270,10 +1377,19 @@ async function processCollectionPeriodForNextActivity(
     });
 
     if (contacts.length === 0) {
-        await prisma.customer.update({
-            where: { id: customer.id },
-            data: { automation_stuck_no_contacts: true },
-        });
+        await prisma.$transaction([
+            prisma.customer.update({
+                where: { id: customer.id },
+                data: { automation_stuck_no_contacts: true },
+            }),
+            prisma.customerCollectionPeriod.update({
+                where: { id: period.id },
+                data: {
+                    create_next_activity: false,
+                    modified_at: new Date(),
+                },
+            }),
+        ]);
         return;
     }
 

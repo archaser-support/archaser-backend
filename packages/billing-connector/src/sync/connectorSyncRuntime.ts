@@ -102,8 +102,8 @@ export interface ConnectorSyncRunSummary {
     cutover_options?: {
         backfill_start_date: string | null;
         mep_breach_start_date?: string | null;
+        reporting_breach_start_date?: string | null;
         include_older_open_invoices: boolean;
-        skip_reporting_breach_on_backfill: boolean;
     } | null;
     cutover_summary?: string | null;
 }
@@ -288,6 +288,8 @@ export function entityStatsFromCounts(
         const processed = step.processed ?? 0;
         const total = step.total ?? processed;
         const skipped = step.skipped ?? 0;
+        // `_balances` failed must surface via failed/status — resolveSyncExecutionStatus
+        // maps that to FAILED (never soft-complete SUCCESS).
         entityStats[key] = {
             pulled: total,
             // Settled only — do not treat missing invoice numbers as success.

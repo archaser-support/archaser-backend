@@ -63,6 +63,7 @@ export {
     refreshInsuranceTargetDatesForInvoiceIds,
     refreshTermsBreachFlagsForCustomer,
     refreshTermsBreachFlagsForCustomers,
+    recomputeReportingBreachForAccount,
     sweepReportingBreachForOverdueInvoiceIds,
 } from "./credit-insurance/domain/syncInvoiceReportingBreach";
 export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/insurancePolicyStatusCron";
@@ -133,8 +134,10 @@ export {
 // reach the shared domain through these.
 export {
     enqueueAsOfRewrite,
+    getPendingAsOfRewriteWindow,
     isAdminBackfillBlockingDrain,
     resolveRewriteDrainStart,
+    type PendingAsOfRewriteWindow,
 } from "./credit-insurance/domain/asOfRewriteQueue";
 export {
     __resetCreditAsOfBackfillRunnersForTests,
@@ -151,6 +154,7 @@ export {
     startCreditAsOfBackfillJob,
     type CreditAsOfBackfillJobView,
     type CreditAsOfBackfillStatus,
+    type PendingRewriteWindowView,
 } from "./credit-insurance/domain/creditAsOfBackfillJob";
 export {
     asOfCustomerOverdueBlockAt,
@@ -241,7 +245,10 @@ export {
     getNamedPolicyTrend,
 } from "./credit-insurance/domain/insurancePolicyTrendService";
 export { loadEffectiveInsuranceForCustomers } from "./credit-insurance/domain/loadEffectiveInsuranceForCustomers";
-export { resolveCustomerHeaderOpenArAmounts } from "./credit-insurance/domain/openReceivableByCustomerCurrency";
+export {
+    fetchCustomerHeaderOpenArSplitInAccountCurrency,
+    resolveCustomerHeaderOpenArAmounts,
+} from "./credit-insurance/domain/openReceivableByCustomerCurrency";
 export {
     isActiveTopUp,
     resolveEffectiveApprovedLimit,
@@ -293,9 +300,17 @@ export {
     type PortfolioOverLimitGapSummary,
 } from "./credit-insurance/domain/shared/ctpOverLimitGapMetrics";
 export {
+    fetchLinkedCptCustomerDaySeries,
+    type FetchLinkedCptCustomerDaySeriesOptions,
+    type LinkedCptCustomerDayRow,
+} from "./credit-insurance/domain/linkedCptCustomerDaySeries";
+export { deriveCapacityAndOvershootFromLinkedCptDaySeries } from "./credit-insurance/domain/deriveCapacityAndOvershootFromLinkedCptDaySeries";
+export {
     fetchCapacityGapDaysPeriodCustomers,
     fetchCapacityGapDaysPeriodSummary,
     fetchCustomerTrailingOverLimitGapMetrics,
+    mapLinkedCptDaySeriesToCapacityGapCustomers,
+    summarizeCapacityGapFromLinkedCptDaySeries,
     type FetchCapacityGapDaysPeriodOptions,
 } from "./credit-insurance/domain/capacityGapDaysPeriod";
 export {
@@ -322,6 +337,7 @@ export {
     fetchCustomerTrailingStaleSlopeVolatilityMetrics,
     fetchStaleSlopeVolatilityPeriodCustomers,
     fetchStaleSlopeVolatilityPeriodSummary,
+    mapLinkedCptDaySeriesToStaleSlopeVolatilityCustomers,
     summarizePortfolioStaleSlopeVolatility,
     type CustomerStaleSlopeVolatilityRow,
     type FetchStaleSlopeVolatilityPeriodOptions,
@@ -354,6 +370,8 @@ export {
     fetchOvershootLimitCappedPeriodCustomers,
     fetchOvershootLimitCappedPeriodSummary,
     fetchOvershootRankingPeriodCustomers,
+    mapLinkedCptDaySeriesToOvershootLimitCappedCustomers,
+    summarizeOvershootFromLinkedCptDaySeries,
     type FetchOvershootLimitCappedPeriodOptions,
 } from "./credit-insurance/domain/overshootLimitCappedPeriod";
 export {

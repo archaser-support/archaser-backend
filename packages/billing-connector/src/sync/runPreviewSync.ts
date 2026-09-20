@@ -30,7 +30,6 @@ export interface PreviewSyncResult {
     cutover: {
         backfill_start_date: string | null;
         include_older_open_invoices: boolean;
-        skip_reporting_breach_on_backfill: boolean;
     };
     cutover_summary: string | null;
     entities: PreviewEntityResult[];
@@ -193,8 +192,6 @@ export async function runPreviewSync(params: {
             ),
             include_older_open_invoices:
                 connector.include_older_open_invoices ?? true,
-            skip_reporting_breach_on_backfill:
-                connector.skip_reporting_breach_on_backfill ?? false,
         },
         cutover_summary: null,
         entities,

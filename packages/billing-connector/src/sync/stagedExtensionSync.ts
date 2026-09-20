@@ -26,7 +26,10 @@ import {
     type ImportCacheSyncMode,
 } from "../importCache";
 import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
-import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
+import {
+    assertCustomerRollupHostLoadable,
+    recalculateCustomerAmountsViaHost,
+} from "../customers/recalculateCustomerAmountsHost";
 import {
     BALANCES_ENTITY_STATS_KEY,
     MATURITY_ENTITY_STATS_KEY,
@@ -114,7 +117,6 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
     windows: ExtensionSyncWindow[];
     dryRun?: boolean;
     userId?: string;
-    skipReportingBreach?: boolean;
     importBatch?: ImportBatchFn;
     onLog?: (message: string) => void;
     /** Live pulled/imported counts for GET /sync-runs polling. */
@@ -401,9 +403,9 @@ async function finalizeCustomerBalances(
         | undefined,
     log: (message: string) => void,
     setStep?: (key: TailStepKey, state: TailStepState) => void
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
     if (customerIds.size === 0) {
-        return;
+        return { ok: true };
     }
     const ids = Array.from(customerIds);
     const total = ids.length;
@@ -457,17 +459,20 @@ async function finalizeCustomerBalances(
                 total,
             },
         });
+        return { ok: true };
     } catch (error) {
         const message =
             error instanceof Error
                 ? error.message
                 : "Customer amount recalculation failed";
         log(`Customer amount recalculation failed: ${message}`);
+        // Keep stats + return failure — never soft-complete SUCCESS after this.
         setStep?.(BALANCES_ENTITY_STATS_KEY, {
             status: "failed",
             total,
             error: message,
         });
+        return { ok: false, error: message };
     }
 }
 
@@ -480,6 +485,10 @@ async function finalizeCustomerBalances(
 export async function runStagedExtensionSync(
     options: RunStagedExtensionSyncOptions
 ): Promise<RunStagedExtensionSyncResult> {
+    // Same gate as legacy sync: refuse work if rollup refresh cannot load.
+    if (!options.onCustomerBalancesFinal) {
+        assertCustomerRollupHostLoadable();
+    }
     const stats = emptyStats();
     const paymentLink = emptyPaymentLinkProgress();
     const windows: StagedWindowOutcome[] = [];
@@ -772,8 +781,9 @@ export async function runStagedExtensionSync(
     const finishWithBalances = async (
         result: RunStagedExtensionSyncResult
     ): Promise<RunStagedExtensionSyncResult> => {
+        let finished = result;
         try {
-            if (!dryRun && !result.cancelled) {
+            if (!dryRun && !finished.cancelled) {
                 await flushExtensionPendingCloses("finalize");
                 if (pendingInvoiceCloses.size > 0) {
                     log(
@@ -794,17 +804,24 @@ export async function runStagedExtensionSync(
                         runMaturity: true,
                     });
                 }
-                await finalizeCustomerBalances(
+                const balances = await finalizeCustomerBalances(
                     arAffectedCustomerIds,
                     options.prisma,
                     options.onCustomerBalancesFinal,
                     log,
                     setTailStep
                 );
+                if (!balances.ok) {
+                    finished = {
+                        ...finished,
+                        ok: false,
+                        error: finished.error ?? balances.error,
+                    };
+                }
             }
             // Empty pulls still need status=done so the progress panel does not
             // leave Invoice/Payment as Waiting after settle/AR finished.
-            if (result.ok && !result.cancelled) {
+            if (finished.ok && !finished.cancelled) {
                 for (const entityType of options.enabledEntities) {
                     if (
                         isEntityPipelineStatusKey(entityType) &&
@@ -815,7 +832,7 @@ export async function runStagedExtensionSync(
                 }
             }
             return {
-                ...result,
+                ...finished,
                 // Refresh after balances / late AR tail so finish logs include them.
                 stats: resultStats(),
                 invoicePostIngestRan,
@@ -936,8 +953,6 @@ export async function runStagedExtensionSync(
                             null,
                             options.userId,
                             {
-                                skipReportingBreach:
-                                    options.skipReportingBreach === true,
                                 skipDeferredPaymentMaturity:
                                     entityType === "Invoice",
                                 onLog: options.onLog,
@@ -1583,8 +1598,6 @@ export async function runStagedExtensionSync(
                             null,
                             options.userId,
                             {
-                                skipReportingBreach:
-                                    options.skipReportingBreach === true,
                                 skipDeferredPaymentMaturity:
                                     entityType === "Invoice",
                                 onLog: options.onLog,

@@ -5,11 +5,14 @@ import {
     deriveAsOfOpenInvoiceCandidatesFromLedger,
     loadAsOfOpenInvoiceLedgerRange,
 } from "./asOfOpenArLedgerPreload";
-import { resolveRewriteDrainStart } from "./asOfRewriteQueue";
+import {
+    getPendingAsOfRewriteWindow,
+    resolveRewriteDrainStart,
+} from "./asOfRewriteQueue";
 import type { AsOfOpenInvoiceLine } from "./asOfOpenAr";
 import {
     overlayAsOfTermsFlagsOnLines,
-    withReportingBreachIgnored,
+    isUtcCalendarToday,
 } from "./asOfOpenAr";
 import {
     buildAsOfTermsMapFromActiveCustomerPolicies,
@@ -21,6 +24,7 @@ import {
 import { takeCreditDashboardDailySnapshotsForAccount } from "./creditDashboardSnapshotService";
 import { syncCustomerPolicyTrendSnapshotForAccount, seedPriorDayTrendCostCacheForReplay } from "./customerPolicyTrendService";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
+import { resolveReportingBreachStartDate } from "./resolveReportingBreachStartDate";
 
 type PrismaClientLike = PrismaClient | DbClient;
 
@@ -30,6 +34,11 @@ export type CreditAsOfBackfillStatus =
     | "paused"
     | "failed"
     | "complete";
+
+export type PendingRewriteWindowView = {
+    from: string;
+    to: string;
+};
 
 export type CreditAsOfBackfillJobView = {
     status: CreditAsOfBackfillStatus;
@@ -42,9 +51,10 @@ export type CreditAsOfBackfillJobView = {
     requestedBy: string | null;
     startedAt: string | null;
     updatedAt: string | null;
-    skipReportingBreach: boolean;
     avgSecondsPerDay: number | null;
     estimatedSecondsRemaining: number | null;
+    /** Pending CreditAsOfRewriteQueue window only; null when processing/done/missing. */
+    pendingRewrite: PendingRewriteWindowView | null;
 };
 
 type JobRow = {
@@ -57,7 +67,6 @@ type JobRow = {
     days_done: number;
     last_error: string | null;
     requested_by: string | null;
-    skip_reporting_breach: boolean;
     started_at: Date | null;
     updated_at: Date;
 };
@@ -168,7 +177,10 @@ function computeRunEstimates(row: JobRow): {
     };
 }
 
-function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
+function jobView(
+    row: JobRow | null,
+    pendingRewrite: PendingRewriteWindowView | null = null
+): CreditAsOfBackfillJobView {
     if (!row) {
         return {
             status: "idle",
@@ -181,9 +193,9 @@ function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
             requestedBy: null,
             startedAt: null,
             updatedAt: null,
-            skipReportingBreach: true,
             avgSecondsPerDay: null,
             estimatedSecondsRemaining: null,
+            pendingRewrite,
         };
     }
     const estimates = computeRunEstimates(row);
@@ -198,9 +210,9 @@ function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
         requestedBy: row.requested_by,
         startedAt: row.started_at?.toISOString() ?? null,
         updatedAt: row.updated_at?.toISOString() ?? null,
-        skipReportingBreach: row.skip_reporting_breach !== false,
         avgSecondsPerDay: estimates.avgSecondsPerDay,
         estimatedSecondsRemaining: estimates.estimatedSecondsRemaining,
+        pendingRewrite,
     };
 }
 
@@ -219,7 +231,6 @@ async function loadJob(
             days_done,
             last_error,
             requested_by,
-            skip_reporting_breach,
             started_at,
             updated_at
         FROM "CreditAsOfBackfillJob"
@@ -241,12 +252,30 @@ export async function listRunningCreditAsOfBackfillAccountIds(
     return rows.map((row) => Number(row.account_id));
 }
 
+async function loadPendingRewriteView(
+    accountId: number,
+    db: PrismaClientLike
+): Promise<PendingRewriteWindowView | null> {
+    const pending = await getPendingAsOfRewriteWindow(accountId, db);
+    if (!pending) {
+        return null;
+    }
+    return {
+        from: toYmd(pending.fromDate)!,
+        to: toYmd(pending.toDate)!,
+    };
+}
+
 export async function getCreditAsOfBackfillJobStatus(
     accountId: number,
     options?: { dbClient?: PrismaClientLike }
 ): Promise<CreditAsOfBackfillJobView> {
     const db = options?.dbClient ?? defaultPrisma;
-    return jobView(await loadJob(accountId, db));
+    const [job, pendingRewrite] = await Promise.all([
+        loadJob(accountId, db),
+        loadPendingRewriteView(accountId, db),
+    ]);
+    return jobView(job, pendingRewrite);
 }
 
 export class CreditAsOfBackfillConflictError extends Error {
@@ -316,7 +345,12 @@ async function dispatchRunner(accountId: number): Promise<void> {
             return;
         }
     }
-    void runCreditAsOfBackfillJob(accountId).catch(() => {});
+    void runCreditAsOfBackfillJob(accountId).catch((error) => {
+        console.error("[CreditAsOfBackfill] inline runner failed", {
+            accountId,
+            errorMessage: error instanceof Error ? error.message : String(error),
+        });
+    });
 }
 
 async function resolveWriters(
@@ -383,13 +417,20 @@ export async function runCreditAsOfBackfillJob(
          */
         const useOptimizedReplayPath = options?.loadAsOfLines == null;
         if (!useOptimizedReplayPath) {
-            const mepBreachStartDate = await resolveMepBreachStartDate(
-                accountId,
-                db
-            );
+            const [mepBreachStartDate, reportingBreachStartDate] =
+                await Promise.all([
+                    resolveMepBreachStartDate(accountId, db),
+                    resolveReportingBreachStartDate(accountId, db),
+                ]);
+            if (reportingBreachStartDate == null) {
+                throw new Error(
+                    "reporting_breach_start_date is required before generating portfolio health snapshots"
+                );
+            }
             runContext = createMinimalCreditAsOfBackfillRunContext(
                 accountId,
-                mepBreachStartDate
+                mepBreachStartDate,
+                reportingBreachStartDate
             );
         } else {
             runContext = await buildCreditAsOfBackfillRunContext(accountId, {
@@ -397,6 +438,11 @@ export async function runCreditAsOfBackfillJob(
                 replayFromDate: job.from_date,
                 replayToDate: job.to_date,
             });
+            if (runContext.reportingBreachStartDate == null) {
+                throw new Error(
+                    "reporting_breach_start_date is required before generating portfolio health snapshots"
+                );
+            }
             runContext = await ensureCapacityGapsForBackfillRun(runContext, {
                 dbClient: db,
             });
@@ -428,7 +474,7 @@ export async function runCreditAsOfBackfillJob(
                 deriveAsOfOpenInvoiceCandidatesFromLedger(ledger, asOfDate);
         }
 
-        const ignoreReportingBreach = job.skip_reporting_breach !== false;
+        const ignoreReportingBreach = false;
         const sharedTermsByCustomerAndPolicy =
             useOptimizedReplayPath &&
             runContext.activeCustomerPolicies.length > 0
@@ -481,17 +527,23 @@ export async function runCreditAsOfBackfillJob(
             try {
                 let asOfLines = await loadAsOfLines(accountId, day);
                 let asOfTermsFlagsApplied = false;
-                if (sharedTermsByCustomerAndPolicy) {
+                /**
+                 * Today: keep live Invoice CTV (skip as-of MEP overlay) so tip
+                 * matches live cards. Mark applied so writers do not re-overlay.
+                 */
+                if (isUtcCalendarToday(day)) {
+                    // Keep live reporting-breach + CTV; do not strip RB for today.
+                    asOfTermsFlagsApplied = true;
+                } else if (sharedTermsByCustomerAndPolicy) {
                     asOfLines = overlayAsOfTermsFlagsOnLines(
-                        withReportingBreachIgnored(
-                            asOfLines,
-                            ignoreReportingBreach
-                        ),
+                        asOfLines,
                         day,
                         sharedTermsByCustomerAndPolicy,
                         {
                             ignoreReportingBreach,
                             mepBreachStartDate: runContext.mepBreachStartDate,
+                            reportingBreachStartDate:
+                                runContext.reportingBreachStartDate,
                         }
                     );
                     asOfTermsFlagsApplied = true;
@@ -502,7 +554,7 @@ export async function runCreditAsOfBackfillJob(
                     {
                         snapshotDate: day,
                         asOfLines,
-                        ignoreReportingBreach,
+                        ignoreReportingBreach: false,
                         mepBreachStartDate: runContext.mepBreachStartDate,
                         runContext,
                         asOfTermsFlagsApplied,
@@ -514,7 +566,7 @@ export async function runCreditAsOfBackfillJob(
                     {
                         snapshotDate: day,
                         asOfLines,
-                        ignoreReportingBreach,
+                        ignoreReportingBreach: false,
                         runContext,
                         asOfTermsFlagsApplied,
                     }
@@ -563,7 +615,6 @@ export async function startCreditAsOfBackfillJob(
     toDate: Date,
     options?: {
         requestedBy?: string | null;
-        skipReportingBreach?: boolean;
         dbClient?: PrismaClientLike;
         writers?: Partial<BackfillWriters>;
         loadAsOfLines?: LoadAsOfLines;
@@ -576,9 +627,17 @@ export async function startCreditAsOfBackfillJob(
     if (to.getTime() < from.getTime()) {
         throw new Error("to_date must be on or after from_date");
     }
+    const reportingBreachStartDate = await resolveReportingBreachStartDate(
+        accountId,
+        db
+    );
+    if (reportingBreachStartDate == null) {
+        throw new Error(
+            "reporting_breach_start_date is required before generating portfolio health snapshots"
+        );
+    }
     const now = new Date();
     const daysTotal = countInclusiveUtcDays(from, to);
-    const skipReportingBreach = options?.skipReportingBreach !== false;
     const existing = await loadJob(accountId, db);
     // Only an in-flight run blocks Generate. Stop leaves status `paused` —
     // Generate must be allowed to start a fresh range (Retry resumes checkpoint).
@@ -599,7 +658,6 @@ export async function startCreditAsOfBackfillJob(
             days_done,
             last_error,
             requested_by,
-            skip_reporting_breach,
             started_at,
             created_at,
             updated_at
@@ -613,7 +671,6 @@ export async function startCreditAsOfBackfillJob(
             0,
             NULL,
             ${options?.requestedBy ?? null},
-            ${skipReportingBreach},
             ${now},
             ${now},
             ${now}
@@ -627,7 +684,6 @@ export async function startCreditAsOfBackfillJob(
             days_done = 0,
             last_error = NULL,
             requested_by = EXCLUDED.requested_by,
-            skip_reporting_breach = EXCLUDED.skip_reporting_breach,
             started_at = EXCLUDED.started_at,
             updated_at = EXCLUDED.updated_at
     `;
@@ -652,7 +708,7 @@ export async function pauseCreditAsOfBackfillJob(
     const now = new Date();
     const existing = await loadJob(accountId, db);
     if (!existing || existing.status !== "running") {
-        return jobView(existing);
+        return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
     }
     await db.$executeRaw`
         UPDATE "CreditAsOfBackfillJob"

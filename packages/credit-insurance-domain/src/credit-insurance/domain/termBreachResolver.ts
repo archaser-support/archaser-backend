@@ -14,9 +14,8 @@ export type TermBreachInvoiceRow = {
     outstanding: number;
     inCapacityGap?: boolean;
     capacityGapAmount?: number;
+    /** Used with reporting-breach start date (gate on target reporting date). */
     targetReportingDate?: Date | null;
-    /** Needed to apply the reporting-breach start date gate on recompute. */
-    invoiceDate?: Date | null;
     reportingBreach?: boolean;
     ctvPaymentTerm?: boolean;
     ctvCustomerOverdueMep?: boolean;
@@ -58,7 +57,6 @@ export function invoiceHasTermsBreachForKpi(
         asOf,
         undefined,
         {
-            invoiceDate: invoice.invoiceDate ?? null,
             reportingBreachStartDate: options?.reportingBreachStartDate ?? null,
         }
     );

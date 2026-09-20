@@ -2,6 +2,7 @@ import {
     BadRequestException,
     ForbiddenException,
     Injectable,
+    Logger,
     NotFoundException,
 } from "@nestjs/common";
 import {
@@ -9,6 +10,10 @@ import {
     AccessUserInfo,
 } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
+import {
+    applyCollectionPeriodCategoryChange,
+    revertCategoryAfterLastDisputeClosed,
+} from "../common/collection-period-category.util";
 import { serializeBigInt } from "../common/serialize-bigint";
 import {
     bindCreditInsurancePrisma,
@@ -16,6 +21,13 @@ import {
     ensureCustomerCapacityGapStored,
     resolveCustomerHeaderOpenArAmounts,
 } from "@archaser/credit-insurance-domain";
+import {
+    createPromiseToPayScheduledActivities,
+    DEMO_DISABLED_OUTREACH_REASON,
+    accountAllowsCustomerOutreach,
+    getRawTemplateContent,
+    processTemplateContent,
+} from "@archaser/cron-jobs";
 import { DatabaseService } from "../database/database.service";
 import {
     CustomerPolicyService,
@@ -192,6 +204,8 @@ const ACTIVITY_TYPES = [
 
 @Injectable()
 export class CustomersService {
+    private readonly logger = new Logger(CustomersService.name);
+
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService,
@@ -508,10 +522,10 @@ export class CustomersService {
         // tab decides the customer has no linked policy.
         const { CustomerPolicy: customerPolicies, ...rest } = customer;
 
-        // `total_ar` is derived, not stored: live open Due/Overdue receivables in
-        // account currency, falling back to the denormalized due + overdue rollups.
-        // The header's Total AR card reads it straight off this payload, so without
-        // it the card renders 0 even when the customer has open invoices.
+        // Header Due / Overdue / Total AR share one live invoice split (account
+        // currency + FX), including invoice counts and dual-currency buckets.
+        // Empty live open set ⇒ zero (not denormalized rollups). Denormalized
+        // fallback only when live cannot run (e.g. missing account currency).
         const account = await this.db.account.findUnique({
             where: { id: accountId },
             select: { currency: true, has_credit_insurance: true },
@@ -620,6 +634,10 @@ export class CustomersService {
         const filterType = query.filter_type;
 
         const andClause: Record<string, unknown>[] = [{ customer_id: id }];
+        // Cancelled sequence steps keep their future schedule_time, so ordering
+        // the feed by schedule_time buried freshly logged PTP/dispute rows under
+        // a pile of superseded reminders. Hide cancelled by default; cursor by id.
+        andClause.push({ status: { not: "CANCELLED" } });
         if (lastId) {
             andClause.push({ id: { lt: BigInt(lastId) } });
         }
@@ -629,7 +647,9 @@ export class CustomersService {
 
         const activities = await this.db.activity.findMany({
             where: { AND: andClause } as never,
-            orderBy: [{ schedule_time: "desc" }, { id: "desc" }],
+            // id DESC matches creation order and the last_id cursor used by the
+            // timeline infinite scroll (schedule_time DESC + id cursor skipped rows).
+            orderBy: [{ id: "desc" }],
             take: limit,
         });
 
@@ -1117,7 +1137,11 @@ export class CustomersService {
     private async openCollectionPeriod(customerId: number) {
         return this.db.customerCollectionPeriod.findFirst({
             where: { customer_id: customerId, period_end_date: null },
-            select: { id: true, promise_to_pay_count: true },
+            select: {
+                id: true,
+                promise_to_pay_count: true,
+                current_category: true,
+            },
             orderBy: { id: "desc" },
         });
     }
@@ -1411,10 +1435,43 @@ export class CustomersService {
                     where: { id: collectionPeriod.id },
                     data: periodUpdate as never,
                 });
+                if (callOutcome === "open_dispute") {
+                    await applyCollectionPeriodCategoryChange(tx as never, {
+                        collectionPeriodId: collectionPeriod.id,
+                        customerId: id,
+                        accountId,
+                        currentCategory: collectionPeriod.current_category,
+                        nextCategory: "Dispute",
+                        userId: effectiveUserId,
+                        isManual: false,
+                    });
+                } else if (callOutcome === "promise_to_pay") {
+                    await applyCollectionPeriodCategoryChange(tx as never, {
+                        collectionPeriodId: collectionPeriod.id,
+                        customerId: id,
+                        accountId,
+                        currentCategory: collectionPeriod.current_category,
+                        nextCategory: "Promise_to_pay",
+                        userId: effectiveUserId,
+                        isManual: false,
+                    });
+                }
             }
 
             return { activity, disputeId: dispute?.id ?? null };
         });
+
+        if (callOutcome === "promise_to_pay" && collectionPeriod?.id) {
+            try {
+                await createPromiseToPayScheduledActivities(this.db as never, {
+                    collectionPeriodId: collectionPeriod.id,
+                    userId: effectiveUserId,
+                });
+            } catch {
+                // Category + logged call already persisted; scheduling failure
+                // should not roll back the user-visible promise.
+            }
+        }
 
         return serializeBigInt({
             ok: true,
@@ -1456,6 +1513,14 @@ export class CustomersService {
             throw new BadRequestException({ error: "Email body is required" });
         }
 
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { is_demo: true } as never,
+        });
+        const allowsOutreach = accountAllowsCustomerOutreach(
+            (account as { is_demo?: boolean } | null)?.is_demo === true
+        );
+
         const contacts = await this.db.contact.findMany({
             where: {
                 id: {
@@ -1474,6 +1539,44 @@ export class CustomersService {
         }
 
         const now = new Date();
+
+        if (!allowsOutreach) {
+            const activity = await this.db.$transaction(async (tx) => {
+                const created = await tx.activity.create({
+                    data: {
+                        customer_id: id,
+                        account_id: accountId,
+                        type: "Email",
+                        status: "FAILED",
+                        title: subject.trim(),
+                        content: emailBody.trim(),
+                        schedule_time: now,
+                        created_by: effectiveUserId,
+                    } as never,
+                });
+
+                await tx.activityContact.createMany({
+                    data: contacts.map((contact) => ({
+                        activity_id: created.id,
+                        contact_id: contact.id,
+                        communication_channel: "Email",
+                        status: "Failed",
+                        failure_reason: DEMO_DISABLED_OUTREACH_REASON,
+                        failed_at: now,
+                        created_by: effectiveUserId,
+                    })) as never,
+                });
+
+                return created;
+            });
+
+            throw new BadRequestException({
+                error: DEMO_DISABLED_OUTREACH_REASON,
+                code: "DEMO_DISABLED",
+                activity: serializeBigInt(activity),
+            });
+        }
+
         const activity = await this.db.$transaction(async (tx) => {
             const created = await tx.activity.create({
                 data: {
@@ -1623,48 +1726,473 @@ export class CustomersService {
             }
         }
 
-        const updated = await this.db.customerDispute.update({
-            where: { id: disputeId },
-            data: data as never,
-        });
-
+        const userName = await this.actingUserName(effectiveUserId);
         const userComment =
             typeof body.user_comment === "string"
                 ? body.user_comment.trim()
                 : "";
-        if (
+        const commentText =
+            typeof resolutionComment === "string"
+                ? resolutionComment.trim()
+                : "";
+        const resolutionValue =
+            (typeof data.dispute_resolution === "string"
+                ? data.dispute_resolution
+                : null) ||
+            (typeof body.dispute_resolution === "string"
+                ? body.dispute_resolution
+                : null) ||
+            dispute.dispute_resolution ||
+            "Accepted";
+        const resolutionI18n = `{{disputes.values.status_${String(resolutionValue).toLowerCase()}}}`;
+
+        const disputeActivityContent = (
+            statusI18n: string,
+            includeComment: boolean
+        ): string => {
+            const rows = [
+                `<span class="activity-label-primary">{{disputes.fields.resolution}}:</span> <span class="activity-value">${resolutionI18n}</span>`,
+            ];
+            if (includeComment && commentText) {
+                rows.push(
+                    `<span class="activity-label-primary">{{activities.fields.resolution_comment}}:</span> <span class="activity-value">${commentText.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`
+                );
+            }
+            rows.push(
+                `<span class="activity-label-primary">{{disputes.fields.status}}:</span> <span class="activity-value">${statusI18n}</span>`
+            );
+            return `\n                ${rows.join("\n            <br>\n                ")}\n            `;
+        };
+
+        let activityTitle: string | null = null;
+        const activityTitleParams: Record<string, unknown> = {
+            userId: effectiveUserId,
+            ...(userName ? { userName } : {}),
+            disputeId: String(disputeId),
+        };
+        let activityContent: string | null = null;
+
+        if (op === "resolve" || op === "resolve-dispute") {
+            activityTitle = "{{disputes.fields.resolved}}";
+            activityTitleParams.resolution = resolutionI18n;
+            activityContent = disputeActivityContent(
+                "{{disputes.values.dispute_status_resolved}}",
+                true
+            );
+        } else if (op === "update-resolution") {
+            activityTitle = "{{disputes.fields.resolution_updated}}";
+            activityTitleParams.resolution = resolutionI18n;
+            activityContent = disputeActivityContent(
+                "{{disputes.values.dispute_status_awaiting_update}}",
+                true
+            );
+        } else if (op === "cancel" || op === "cancel-dispute") {
+            activityTitle = "{{disputes.fields.cancelled}}";
+            activityContent = disputeActivityContent(
+                "{{disputes.values.dispute_status_cancelled}}",
+                true
+            );
+        } else if (
             (op === "assign" || op === "assign-user") &&
             userComment.length > 0
         ) {
-            const period = await this.db.customerCollectionPeriod.findFirst({
-                where: {
-                    customer_id: id,
-                    period_end_date: null,
-                },
-                select: { id: true },
-                orderBy: { id: "desc" },
+            activityTitle = "{{disputes.fields.assigned}}";
+            activityTitleParams.assigneeId =
+                data.owner_id ?? dispute.owner_id ?? null;
+            activityContent = userComment;
+        }
+
+        const updated = await this.db.$transaction(async (tx) => {
+            const next = await tx.customerDispute.update({
+                where: { id: disputeId },
+                data: data as never,
             });
-            await this.db.activity.create({
-                data: {
-                    customer_id: id,
-                    account_id: accountId,
-                    type: "Internal",
-                    status: "COMPLETED",
-                    title: "Dispute assigned",
-                    content: userComment,
-                    schedule_time: new Date(),
-                    collection_period_id:
-                        dispute.customer_collection_period_id ??
-                        period?.id ??
-                        null,
-                    created_by: effectiveUserId,
-                    modified_by: effectiveUserId,
-                    system_generated: false,
-                } as never,
-            });
+
+            if (
+                op === "resolve" ||
+                op === "resolve-dispute" ||
+                op === "cancel" ||
+                op === "cancel-dispute" ||
+                data.dispute_status === "Resolved" ||
+                data.dispute_status === "Cancelled"
+            ) {
+                await revertCategoryAfterLastDisputeClosed(tx as never, {
+                    customerId: id,
+                    accountId,
+                    userId: effectiveUserId,
+                    excludeDisputeId: disputeId,
+                });
+            }
+
+            if (activityTitle) {
+                const period =
+                    dispute.customer_collection_period_id != null
+                        ? { id: dispute.customer_collection_period_id }
+                        : await tx.customerCollectionPeriod.findFirst({
+                              where: {
+                                  customer_id: id,
+                                  period_end_date: null,
+                              },
+                              select: { id: true },
+                              orderBy: { id: "desc" },
+                          });
+                const now = new Date();
+                await tx.activity.create({
+                    data: {
+                        customer_id: id,
+                        account_id: accountId,
+                        type: "Dispute",
+                        status: "COMPLETED",
+                        title: activityTitle,
+                        title_params: activityTitleParams,
+                        content: activityContent,
+                        collection_period_id: period?.id ?? null,
+                        schedule_time: now,
+                        actual_delivery_time: now,
+                        created_by: effectiveUserId,
+                        modified_by: effectiveUserId,
+                        system_generated: false,
+                    } as never,
+                });
+            }
+
+            return next;
+        });
+
+        if (
+            op === "resolve" ||
+            op === "resolve-dispute" ||
+            op === "cancel" ||
+            op === "cancel-dispute"
+        ) {
+            const emailResolution =
+                op === "cancel" || op === "cancel-dispute"
+                    ? typeof data.dispute_resolution === "string"
+                        ? data.dispute_resolution
+                        : typeof body.dispute_resolution === "string"
+                          ? body.dispute_resolution
+                          : "Cancelled"
+                    : resolutionValue;
+            try {
+                await this.sendDisputeResolutionEmail({
+                    customerId: id,
+                    accountId,
+                    disputeId,
+                    effectiveUserId,
+                    userName,
+                    resolutionValue: emailResolution,
+                    collectionPeriodId:
+                        dispute.customer_collection_period_id ?? null,
+                    contactEmail: dispute.contact_email,
+                    contactFirstName: dispute.contact_first_name,
+                    contactLastName: dispute.contact_last_name,
+                    contactMobile: dispute.contact_mobile,
+                });
+            } catch (err) {
+                this.logger.warn(
+                    `Dispute resolution email failed for dispute ${disputeId}: ${
+                        err instanceof Error ? err.message : String(err)
+                    }`
+                );
+            }
         }
 
         return serializeBigInt(updated);
+    }
+
+    /**
+     * Sends the customer-facing Dispute template matched by
+     * `dispute_resolution`, and records an Email activity on the timeline.
+     * Missing template / contact email is a no-op (resolve still succeeds).
+     */
+    private async sendDisputeResolutionEmail(args: {
+        customerId: number;
+        accountId: number;
+        disputeId: number;
+        effectiveUserId: string;
+        userName: string | null;
+        resolutionValue: string;
+        collectionPeriodId: number | null;
+        contactEmail: string | null;
+        contactFirstName: string | null;
+        contactLastName: string | null;
+        contactMobile: string | null;
+    }) {
+        const toEmail = args.contactEmail?.trim();
+        if (!toEmail) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: no contact email`
+            );
+            return;
+        }
+
+        const templateInclude = {
+            ActivityTemplateLanguage: true,
+        } as const;
+        const templateSelect = {
+            where: {
+                category: "Dispute" as const,
+                dispute_resolution: args.resolutionValue as never,
+                active: true,
+            },
+            include: templateInclude,
+            orderBy: { id: "asc" as const },
+        };
+
+        let template = await this.db.activitiesTemplate.findFirst({
+            ...templateSelect,
+            where: {
+                ...templateSelect.where,
+                account_id: args.accountId,
+            },
+        });
+        if (!template) {
+            template = await this.db.activitiesTemplate.findFirst({
+                ...templateSelect,
+                where: {
+                    ...templateSelect.where,
+                    master_template: true,
+                },
+            });
+        }
+        if (!template) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: no Dispute template for resolution ${args.resolutionValue}`
+            );
+            return;
+        }
+
+        const customer = await this.db.customer.findFirst({
+            where: { id: args.customerId, account_id: args.accountId },
+            select: {
+                id: true,
+                type: true,
+                customer_uuid: true,
+                language: true,
+                Person: { select: { first_name: true } },
+                Company: { select: { name: true } },
+            },
+        });
+        if (!customer?.customer_uuid) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: customer not found`
+            );
+            return;
+        }
+
+        const account = await this.db.account.findUnique({
+            where: { id: args.accountId },
+            select: {
+                id: true,
+                name: true,
+                logo: true,
+                sub_domain: true,
+                email_from_name: true,
+                email_from: true,
+                is_demo: true,
+            } as never,
+        });
+        if (!account) {
+            return;
+        }
+
+        const accountRow = account as {
+            id: number;
+            name: string | null;
+            logo: string | null;
+            sub_domain: string | null;
+            email_from_name: string | null;
+            email_from: string | null;
+            is_demo?: boolean;
+        };
+        const allowsOutreach = accountAllowsCustomerOutreach(
+            accountRow.is_demo === true
+        );
+
+        const language = customer.language || "English";
+        let raw = getRawTemplateContent(
+            {
+                activity_type: "Email",
+                ActivitiesTemplate: template,
+            },
+            language
+        );
+        if (!raw.content?.trim() && language !== "English") {
+            raw = getRawTemplateContent(
+                {
+                    activity_type: "Email",
+                    ActivitiesTemplate: template,
+                },
+                "English"
+            );
+        }
+        if (!raw.subject?.trim() || !raw.content?.trim()) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: empty template content`
+            );
+            return;
+        }
+
+        const contactMatch = await this.db.contact.findFirst({
+            where: {
+                customer_id: args.customerId,
+                email: { equals: toEmail, mode: "insensitive" },
+            },
+            select: {
+                id: true,
+                first_name: true,
+                last_name: true,
+                email: true,
+                mobile: true,
+                phone: true,
+                role: true,
+            },
+        });
+
+        const contact = {
+            id: contactMatch?.id,
+            first_name:
+                contactMatch?.first_name ||
+                args.contactFirstName ||
+                "",
+            last_name:
+                contactMatch?.last_name || args.contactLastName || "",
+            email: toEmail,
+            mobile:
+                contactMatch?.mobile ||
+                contactMatch?.phone ||
+                args.contactMobile ||
+                "",
+            phone: contactMatch?.phone || contactMatch?.mobile || "",
+            role: contactMatch?.role || "",
+        };
+
+        const accountForTemplate = {
+            id: accountRow.id,
+            name: accountRow.name,
+            logo: accountRow.logo,
+            sub_domain: accountRow.sub_domain,
+        };
+        const customerForTemplate = {
+            type: customer.type as "Person" | "Company",
+            customer_uuid: customer.customer_uuid,
+            language: customer.language,
+            Person: customer.Person,
+            Company: customer.Company,
+        };
+
+        const emailSubject = processTemplateContent({
+            content: raw.subject,
+            account: accountForTemplate,
+            customer: customerForTemplate,
+            contact,
+        });
+        const emailHtml = processTemplateContent({
+            content: raw.content,
+            account: accountForTemplate,
+            customer: customerForTemplate,
+            contact,
+        });
+        if (!emailSubject.trim() || !emailHtml.trim()) {
+            return;
+        }
+
+        const resolutionI18n = `{{disputes.values.status_${String(args.resolutionValue).toLowerCase()}}}`;
+        const now = new Date();
+        const periodId =
+            args.collectionPeriodId ??
+            (
+                await this.db.customerCollectionPeriod.findFirst({
+                    where: {
+                        customer_id: args.customerId,
+                        period_end_date: null,
+                    },
+                    select: { id: true },
+                    orderBy: { id: "desc" },
+                })
+            )?.id ??
+            null;
+
+        const activity = await this.db.$transaction(async (tx) => {
+            const created = await tx.activity.create({
+                data: {
+                    customer_id: args.customerId,
+                    account_id: args.accountId,
+                    type: "Email",
+                    status: allowsOutreach ? "SENT" : "FAILED",
+                    title: "{{activities.fields.activity_dispute_resolution_email_sent}}",
+                    title_params: {
+                        userId: args.effectiveUserId,
+                        ...(args.userName ? { userName: args.userName } : {}),
+                        resolution: resolutionI18n,
+                        disputeId: String(args.disputeId),
+                    },
+                    content: emailHtml,
+                    email: toEmail,
+                    contact_id: contactMatch?.id ?? null,
+                    activity_template: template.id,
+                    collection_period_id: periodId,
+                    schedule_time: now,
+                    actual_delivery_time: allowsOutreach ? now : null,
+                    last_sent_time: allowsOutreach ? now : null,
+                    created_by: args.effectiveUserId,
+                    modified_by: args.effectiveUserId,
+                    system_generated: true,
+                } as never,
+            });
+
+            if (contactMatch?.id) {
+                await tx.activityContact.create({
+                    data: {
+                        activity_id: created.id,
+                        contact_id: contactMatch.id,
+                        communication_channel: "Email",
+                        status: allowsOutreach ? "Sent" : "Failed",
+                        ...(allowsOutreach
+                            ? { sent_at: now }
+                            : {
+                                  failure_reason:
+                                      DEMO_DISABLED_OUTREACH_REASON,
+                                  failed_at: now,
+                              }),
+                        created_by: args.effectiveUserId,
+                    } as never,
+                });
+            }
+
+            return created;
+        });
+
+        if (!allowsOutreach) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: ${DEMO_DISABLED_OUTREACH_REASON}`
+            );
+            return;
+        }
+
+        const fromName =
+            accountRow.email_from_name?.trim() ||
+            accountRow.name?.trim() ||
+            "ARchaser";
+        try {
+            await this.systemEmail.sendHtmlEmail({
+                toEmail,
+                subject: emailSubject,
+                html: emailHtml,
+                fromName,
+                replyToEmail: accountRow.email_from?.trim() || undefined,
+                logContext: {
+                    accountId: args.accountId,
+                    userId: args.effectiveUserId,
+                },
+            });
+        } catch (err) {
+            this.logger.warn(
+                `SMTP send failed for dispute ${args.disputeId} activity ${activity.id}: ${
+                    err instanceof Error ? err.message : String(err)
+                }`
+            );
+        }
     }
 
     async searchCustomers(
