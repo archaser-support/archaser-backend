@@ -459,6 +459,73 @@ async function processActivity(
 /**
  * Process SMS activity: resolve vendor and send via sendViaVendor
  */
+function resolveSmsBody(
+    activity: any,
+    account: any,
+    customer: any,
+    contact: any
+): string {
+    let smsRawContent = activity.content || "Reminder";
+    if (activity.system_generated && activity.ActivitiesSequence) {
+        const smsTemplate = getRawTemplateContent(
+            {
+                ...activity.ActivitiesSequence,
+                activity_type: "SMS",
+            },
+            customer.language
+        );
+        if (smsTemplate.content) {
+            smsRawContent = smsTemplate.content;
+        }
+    }
+
+    return processTemplateContent({
+        content: smsRawContent,
+        account: {
+            id: account.id,
+            name: account.name,
+            logo: account.logo,
+            sub_domain: account.sub_domain,
+        },
+        customer: {
+            type: customer.type as "Person" | "Company",
+            customer_uuid: customer.customer_uuid,
+            language: customer.language,
+            Person: customer.Person,
+            Company: customer.Company
+                ? { name: customer.Company.name || "" }
+                : null,
+        },
+        contact: { ...contact, id: contact.id },
+        invoice: activity.Invoice ?? undefined,
+    });
+}
+
+async function resolveSmsFromNumber(
+    prisma: PrismaClient,
+    vendorId: number,
+    countryId: number | null,
+    fallback: string
+): Promise<{ from: string; phoneNumber: string | null }> {
+    if (countryId) {
+        const mapping = await prisma.countrySMSVendor.findFirst({
+            where: {
+                country_id: countryId,
+                vendor_id: vendorId,
+                is_active: true,
+            },
+            select: { phone_number: true },
+        });
+        if (mapping?.phone_number) {
+            return {
+                from: mapping.phone_number,
+                phoneNumber: mapping.phone_number,
+            };
+        }
+    }
+    return { from: fallback, phoneNumber: null };
+}
+
 async function processSmsActivity(
     prisma: PrismaClient,
     activity: any,
@@ -546,9 +613,19 @@ async function processSmsActivity(
 
         // Send SMS via vendor
         try {
-            const smsFromName =
-                account.sms_from_name || "ARchaser";
-            const smsBody = activity.content || "Reminder";
+            const smsFromName = account.sms_from_name || "ARchaser";
+            const smsFrom = await resolveSmsFromNumber(
+                prisma,
+                vendor!.id,
+                countryId,
+                smsFromName
+            );
+            const smsBody = resolveSmsBody(
+                activity,
+                account,
+                customer,
+                contact
+            );
 
             // Convert vendor to SmsVendorCreds (handle Decimal type)
             const vendorCreds = {
@@ -559,7 +636,7 @@ async function processSmsActivity(
                 account_sid: vendor!.account_sid,
                 auth_token: vendor!.auth_token,
                 webhook_url: vendor!.webhook_url,
-                phone_number: null,
+                phone_number: smsFrom.phoneNumber,
                 cost_per_sms: vendor!.cost_per_sms
                     ? parseFloat(vendor!.cost_per_sms.toString())
                     : null,
@@ -568,7 +645,7 @@ async function processSmsActivity(
             const result = await sendViaVendor(
                 vendorCreds,
                 contact.mobile,
-                smsFromName,
+                smsFrom.from,
                 smsBody
             );
 
@@ -623,13 +700,27 @@ async function processSmsActivity(
             : sentCount === 0
               ? "FAILED"
               : "SENT";
+    const now = new Date();
+    const step =
+        activity.ActivitiesSequence?.step ??
+        (activity.title_params as { step?: number } | null)?.step;
 
     await prisma.activity.update({
         where: { id: activity.id },
         data: {
             status: finalStatus,
-            modified_at: new Date(),
-            ...(sentCount > 0 ? { actual_delivery_time: new Date() } : {}),
+            modified_at: now,
+            ...(sentCount > 0 ? { actual_delivery_time: now } : {}),
+            ...(finalStatus === "SENT"
+                ? {
+                      title: "{{activities.fields.activity_automated_step_sent}}",
+                      title_params: {
+                          step,
+                          contacts: sentCount,
+                          time: now.toISOString(),
+                      },
+                  }
+                : {}),
         },
     });
 }
@@ -886,8 +977,6 @@ async function attemptEmailToSmsFallback(
         account,
         customer,
         countryId,
-        accountForTemplate,
-        customerForTemplate,
     } = ctx;
 
     if (
@@ -914,34 +1003,20 @@ async function attemptEmailToSmsFallback(
         return false;
     }
 
-    let smsRawContent = activity.content || "Reminder";
-    if (activity.system_generated && activity.ActivitiesSequence) {
-        const smsTemplate = getRawTemplateContent(
-            {
-                ...activity.ActivitiesSequence,
-                activity_type: "SMS",
-            },
-            customer.language
-        );
-        if (smsTemplate.content) {
-            smsRawContent = smsTemplate.content;
-        }
-    }
-
-    const smsBody = processTemplateContent({
-        content: smsRawContent,
-        account: accountForTemplate,
-        customer: {
-            ...customerForTemplate,
-            Company: customerForTemplate.Company
-                ? { name: customerForTemplate.Company.name || "" }
-                : null,
-        },
-        contact: { ...contact, id: contact.id },
-        invoice: activity.Invoice ?? undefined,
-    });
+    const smsBody = resolveSmsBody(
+        { ...activity, system_generated: activity.system_generated },
+        account,
+        customer,
+        contact
+    );
 
     const smsFromName = account.sms_from_name || "ARchaser";
+    const smsFrom = await resolveSmsFromNumber(
+        prisma,
+        vendor.id,
+        countryId,
+        smsFromName
+    );
     const vendorCreds = {
         id: vendor.id,
         provider: vendor.provider,
@@ -950,7 +1025,7 @@ async function attemptEmailToSmsFallback(
         account_sid: vendor.account_sid,
         auth_token: vendor.auth_token,
         webhook_url: vendor.webhook_url,
-        phone_number: null,
+        phone_number: smsFrom.phoneNumber,
         cost_per_sms: vendor.cost_per_sms
             ? parseFloat(vendor.cost_per_sms.toString())
             : null,
@@ -960,7 +1035,7 @@ async function attemptEmailToSmsFallback(
         const result = await sendViaVendor(
             vendorCreds,
             contact.mobile,
-            smsFromName,
+            smsFrom.from,
             smsBody
         );
 
