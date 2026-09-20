@@ -4,12 +4,14 @@ import {
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
+import { applyCollectionPeriodCategoryChange } from "../common/collection-period-category.util";
 import {
     dbLanguageToLocale,
     resolveDbLanguage,
 } from "../common/language.util";
 import { presignS3Object } from "../common/s3-presign";
 import { serializeBigInt } from "../common/serialize-bigint";
+import { createPromiseToPayScheduledActivities } from "@archaser/cron-jobs";
 import { DatabaseService } from "../database/database.service";
 
 /** Invoice statuses a portal visitor may raise a dispute against. */
@@ -444,7 +446,14 @@ export class PortalService {
             resolveDbLanguage(customer.language)
         );
         const disputes = await this.db.customerDispute.findMany({
-            where: { customer_id: customer.id },
+            where: {
+                customer_id: customer.id,
+                // Portal visitors only need open disputes; resolved/cancelled
+                // clutter the list and imply action is still needed.
+                dispute_status: {
+                    notIn: ["Resolved", "Cancelled"],
+                },
+            },
             orderBy: { created_at: "desc" },
             include: {
                 DisputeReason: {
@@ -673,6 +682,7 @@ export class PortalService {
         if (!Number.isFinite(customerId) || !Number.isFinite(reasonId)) {
             throw new BadRequestException({
                 error: "customer_id and dispute_reason_id are required",
+                message: "customer_id and dispute_reason_id are required",
             });
         }
 
@@ -696,7 +706,10 @@ export class PortalService {
             select: { id: true, name: true },
         });
         if (!reason) {
-            throw new BadRequestException({ error: "Unknown dispute reason" });
+            throw new BadRequestException({
+                error: "Unknown dispute reason",
+                message: "Unknown dispute reason",
+            });
         }
 
         // The portal submits invoice numbers (space/comma separated), not ids.
@@ -707,6 +720,7 @@ export class PortalService {
         if (invoiceNumbers.length === 0) {
             throw new BadRequestException({
                 error: "At least one invoice is required",
+                message: "At least one invoice is required",
             });
         }
 
@@ -720,12 +734,13 @@ export class PortalService {
         if (invoices.length === 0) {
             throw new BadRequestException({
                 error: "No matching invoices for this customer",
+                message: "No matching invoices for this customer",
             });
         }
 
         const collection = await this.db.customerCollectionPeriod.findFirst({
             where: { customer_id: customer.id, period_end_date: null },
-            select: { id: true },
+            select: { id: true, current_category: true },
             orderBy: { id: "desc" },
         });
 
@@ -776,6 +791,15 @@ export class PortalService {
             });
 
             if (collection) {
+                await applyCollectionPeriodCategoryChange(tx as never, {
+                    collectionPeriodId: collection.id,
+                    customerId: customer.id,
+                    accountId: customer.account_id,
+                    currentCategory: collection.current_category,
+                    nextCategory: "Dispute",
+                    userId: "portal_user",
+                    isManual: false,
+                });
                 await tx.customerCollectionPeriod.update({
                     where: { id: collection.id },
                     data: { last_dispute_date: now } as never,
@@ -808,7 +832,7 @@ export class PortalService {
 
         const collection = await this.db.customerCollectionPeriod.findFirst({
             where: { customer_id: customer.id, period_end_date: null },
-            select: { id: true },
+            select: { id: true, current_category: true },
             orderBy: { id: "desc" },
         });
         if (!collection) {
@@ -856,6 +880,15 @@ export class PortalService {
                 } as never,
             });
 
+            await applyCollectionPeriodCategoryChange(tx as never, {
+                collectionPeriodId: collection.id,
+                customerId: customer.id,
+                accountId: customer.account_id,
+                currentCategory: collection.current_category,
+                nextCategory: "Dispute",
+                userId: "portal_user",
+                isManual: false,
+            });
             await tx.customerCollectionPeriod.update({
                 where: { id: collection.id },
                 data: { last_dispute_date: now } as never,
@@ -950,19 +983,24 @@ export class PortalService {
     async updatePromiseToPay(body: Record<string, unknown>) {
         const customerId = parseInt(String(body.customer_id ?? ""), 10);
         if (!Number.isFinite(customerId)) {
-            throw new BadRequestException({ error: "customer_id is required" });
+            throw new BadRequestException({
+                error: "customer_id is required",
+                message: "customer_id is required",
+            });
         }
 
         const raw = String(body.promise_to_pay_date ?? "").slice(0, 10);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
             throw new BadRequestException({
                 error: "promise_to_pay_date must be YYYY-MM-DD",
+                message: "promise_to_pay_date must be YYYY-MM-DD",
             });
         }
         const promiseDate = new Date(`${raw}T00:00:00.000Z`);
         if (Number.isNaN(promiseDate.getTime())) {
             throw new BadRequestException({
                 error: "promise_to_pay_date is not a valid date",
+                message: "promise_to_pay_date is not a valid date",
             });
         }
 
@@ -982,12 +1020,17 @@ export class PortalService {
 
         const collection = await this.db.customerCollectionPeriod.findFirst({
             where: { customer_id: customer.id, period_end_date: null },
-            select: { id: true, promise_to_pay_count: true },
+            select: {
+                id: true,
+                promise_to_pay_count: true,
+                current_category: true,
+            },
             orderBy: { id: "desc" },
         });
         if (!collection) {
             throw new BadRequestException({
                 error: "Customer has no open collection period",
+                message: "Customer has no open collection period",
             });
         }
 
@@ -996,6 +1039,8 @@ export class PortalService {
         if (cap > 0 && (collection.promise_to_pay_count ?? 0) >= cap) {
             throw new BadRequestException({
                 error: "Promise to pay limit reached for this collection period",
+                message:
+                    "Promise to pay limit reached for this collection period",
             });
         }
 
@@ -1026,7 +1071,28 @@ export class PortalService {
                     system_generated: true,
                 } as never,
             });
+
+            await applyCollectionPeriodCategoryChange(tx as never, {
+                collectionPeriodId: collection.id,
+                customerId: customer.id,
+                accountId: customer.account_id,
+                currentCategory: collection.current_category,
+                nextCategory: "Promise_to_pay",
+                userId: "portal_user",
+                isManual: false,
+            });
         });
+
+        try {
+            void createPromiseToPayScheduledActivities(this.db as never, {
+                collectionPeriodId: collection.id,
+                userId: "portal_user",
+            }).catch(() => {
+                // Promise + category already persisted.
+            });
+        } catch {
+            // Promise + category already persisted.
+        }
 
         return serializeBigInt({
             ok: true,

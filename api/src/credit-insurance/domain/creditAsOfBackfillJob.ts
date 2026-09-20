@@ -12,4 +12,5 @@ export {
     startCreditAsOfBackfillJob,
     type CreditAsOfBackfillJobView,
     type CreditAsOfBackfillStatus,
+    type PendingRewriteWindowView,
 } from "@archaser/credit-insurance-domain";

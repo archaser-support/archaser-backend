@@ -206,10 +206,20 @@ export async function handleOverdueInvoices(
         processStats.invoicesUpdated = invoiceIds.length;
 
         bindCreditInsurancePrisma(prisma);
-        await sweepReportingBreachForOverdueInvoiceIds(
+        const sweepResult = await sweepReportingBreachForOverdueInvoiceIds(
             invoiceIds,
             prisma
         );
+        if (sweepResult.skippedMissingStartDateAccountIds.length > 0) {
+            console.warn(
+                "[handleOverdueInvoices] Skipped reporting-breach sweep for accounts missing reporting_breach_start_date",
+                {
+                    skippedCount:
+                        sweepResult.skippedMissingStartDateAccountIds.length,
+                    accountIds: sweepResult.skippedMissingStartDateAccountIds,
+                }
+            );
+        }
     }
 
     // Refresh oldest overdue / overdue_block for open periods

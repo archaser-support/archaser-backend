@@ -418,15 +418,16 @@ export async function processAutomatedCollectionPeriods(
 
                 const latestActivity = latestActivitiesMap.get(p.id);
 
-                // Has delivered/cancelled activities OR no activities at all
-                if (
-                    latestActivity &&
-                    (latestActivity.status === "DELIVERED" ||
-                        latestActivity.status === "CANCELLED")
-                ) {
+                // Only advance after a successful delivery (or cancelled /
+                // never-started). FAILED and bare SENT must not spawn the
+                // next step — that created duplicate step N rows.
+                if (!latestActivity) {
                     return true;
                 }
-                if (!latestActivity) {
+                if (
+                    latestActivity.status === "DELIVERED" ||
+                    latestActivity.status === "CANCELLED"
+                ) {
                     return true;
                 }
                 return false;

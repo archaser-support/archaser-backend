@@ -25,6 +25,7 @@ import { processNotificationRules } from "./processNotificationRules";
 import { processDueNotifications } from "./processDueNotifications";
 import { processAutomatedCollectionPeriods } from "./processAutomatedCollectionPeriods";
 import { activityWorkflowManager } from "./activityWorkflowManager";
+import { reconcileStaleCustomerRollups } from "./reconcileStaleCustomerRollups";
 import { beginCronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 
 export type CronJobResult = {
@@ -382,6 +383,20 @@ const activityWorkflow: Handler = async (prisma) => {
     return activityWorkflowManager(prisma, { freeze });
 };
 
+const reconcileStaleRollups: Handler = async (prisma) => {
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Reconcile Stale Customer Rollups"
+    );
+    const result = await reconcileStaleCustomerRollups(prisma, freeze);
+    return {
+        success: result.success,
+        message: result.message,
+        summary: result.summary,
+        durationMs: result.durationMs,
+    };
+};
+
 /**
  * Cron handler registry.
  *
@@ -411,6 +426,7 @@ const HANDLERS: Record<string, Handler> = {
     "Process Due Notifications": dueNotifications,
     "Process Automated Collection Periods": processAutomatedPeriods,
     "Activity Workflow Manager": activityWorkflow,
+    "Reconcile Stale Customer Rollups": reconcileStaleRollups,
 };
 
 /** CronJob names still owned by the Next cron path / pending Nest port. */

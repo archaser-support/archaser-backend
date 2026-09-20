@@ -84,6 +84,13 @@ export {
     type CronToPresetResult,
 } from "./services/billingConnectorSchedule";
 
+export {
+    AUTH_CIRCUIT_BREAKER_THRESHOLD,
+    recordBillingConnectorAuthFailure,
+    clearBillingConnectorAuthFailures,
+    type AuthCircuitBreakerResult,
+} from "./services/billingConnectorAuthCircuitBreaker";
+
 // ==============================
 // Field utils & Priority contract
 // ==============================
@@ -144,6 +151,19 @@ export {
     type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
 } from "./sync/runInProcessSync";
+
+export {
+    assertCustomerRollupHostLoadable,
+    isCustomerBalancesFinalRegistered,
+    loadRecalculateCustomerAmountsModule,
+    recalculateCustomerAmountsViaHost,
+    registerCustomerBalancesFinal,
+    resetCustomerBalancesFinalForTests,
+    resolveCustomersDomainRoot,
+    type CustomerBalancesFinalFn,
+    type RecalculateCustomerAmountsHostOptions,
+    type RecalculateCustomerAmountsModule,
+} from "./customers/recalculateCustomerAmountsHost";
 
 export {
     CLEAR_BEFORE_IMPORT_BATCH_SIZE,
@@ -414,7 +434,6 @@ export {
 export {
     importMappedEntityBatch,
     extractMaxUpdatedAt,
-    shouldSkipReportingBreachOnConnectorWrite,
     type EntityImportBatchOptions,
     type EntityImportBatchResult,
     type EntityImportRowResult,

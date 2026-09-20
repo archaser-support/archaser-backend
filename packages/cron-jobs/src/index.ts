@@ -18,6 +18,13 @@ export {
 export { computeCustomerOverdueMetrics } from "./computeCustomerOverdueMetrics";
 export { closeZeroOutstandingDebtInvoices } from "./closeZeroOutstandingDebtInvoices";
 export { fixClosedCollectionData } from "./fixClosedCollectionData";
+export {
+    findStaleRollupMismatches,
+    reconcileStaleCustomerRollups,
+    RECONCILE_STALE_ROLLUPS_BATCH_SIZE,
+    type StaleRollupMismatch,
+    type FindStaleRollupMismatchesOptions,
+} from "./reconcileStaleCustomerRollups";
 export { checkInforuSmsStatus } from "./inforuSmsStatusCheck";
 export {
     applyActivityContactDelivery,
@@ -99,6 +106,13 @@ export {
     registerCronFrozenAccountMetrics,
     type CronFrozenAccountMetrics,
 } from "./accountFreeze/frozenAccountMetrics";
+export { createCategoryChangeActivity } from "./activities/createCategoryChangeActivity";
+export { createPromiseToPayScheduledActivities } from "./activities/createPromiseToPayScheduledActivities";
+export {
+    getRawTemplateContent,
+    processTemplateContent,
+    type ProcessTemplateContentArgs,
+} from "./templates/processTemplateContent";
 export {
     beginCronFrozenAccountGuard,
     partitionByFrozenAccount,
@@ -109,3 +123,9 @@ export {
     getDefaultCronFrozenAccountMetrics,
     setDefaultCronFrozenAccountMetrics,
 } from "./accountFreeze/defaultCronFrozenAccountMetrics";
+export {
+    DEMO_DISABLED_OUTREACH_REASON,
+    accountAllowsCustomerOutreach,
+    accountAllowsImportCatalog,
+    isStagingDeploy,
+} from "./demoAccountPolicy";

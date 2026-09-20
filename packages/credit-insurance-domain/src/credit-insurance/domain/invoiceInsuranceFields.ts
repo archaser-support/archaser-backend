@@ -284,11 +284,10 @@ export function isEligibleForCustomerMepOverdue(
  * (evaluation only; persistence in sync helper).
  * Negative-amount invoices (credit notes) never promote reporting breach.
  *
- * Invoices issued before the account's reporting-breach start date are out of
- * scope, mirroring the MEP gate: their reporting filings predate the backfill
- * window, so a missing actual_reporting_date is an import gap and not a breach.
- * Callers that know both dates pass `scope`; omitting it keeps the ungated
- * behavior.
+ * Invoices whose target reporting date is before the account's reporting-breach
+ * start date are out of scope. When `scope` is passed, a missing start date
+ * fails closed (never promote). Omitting `scope` keeps ungated evaluation for
+ * callers that do not yet resolve the account gate.
  */
 export function shouldSetReportingBreach(
     status: invoice_status,
@@ -297,7 +296,6 @@ export function shouldSetReportingBreach(
     today: Date = new Date(),
     amount?: number | null,
     scope?: {
-        invoiceDate?: Date | string | null;
         reportingBreachStartDate?: Date | string | null;
     }
 ): boolean {
@@ -305,9 +303,10 @@ export function shouldSetReportingBreach(
         return false;
     }
     if (
+        scope != null &&
         !isInvoiceInReportingBreachScope(
-            scope?.invoiceDate ?? null,
-            scope?.reportingBreachStartDate ?? null
+            targetReportingDate ?? null,
+            scope.reportingBreachStartDate ?? null
         )
     ) {
         return false;
@@ -603,7 +602,7 @@ export function computeInvoiceInsuranceRowData(args: {
     /** When true, use explicit payment_term from input instead of calendar diff */
     explicitPaymentTerm?: number | null;
     today?: Date;
-    /** Account reporting-breach start date; pre-window invoices never breach. */
+    /** Account reporting-breach start date; pre-window deadlines never breach. */
     reporting_breach_start_date?: Date | null;
 }): InsuranceComputedForRow {
     const today = args.today ?? new Date();
@@ -627,7 +626,6 @@ export function computeInvoiceInsuranceRowData(args: {
         today,
         args.amount,
         {
-            invoiceDate: args.invoice_date ?? null,
             reportingBreachStartDate: args.reporting_breach_start_date ?? null,
         }
     );

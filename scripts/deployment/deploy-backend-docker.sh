@@ -443,6 +443,9 @@ if [[ "$SKIP_BUILD" != "true" ]]; then
     run_workspace_build @archaser/connectors
     run_workspace_build @archaser/reports
     run_workspace_build @archaser/api
+    # Deploy contract: worker / connectors / cron load customer due/overdue
+    # rollups from api/dist/customers (or CUSTOMERS_DOMAIN_ROOT). Building api
+    # last ensures that artifact exists before the stack starts.
 else
     log "Skipping backend builds (--skip-build)"
 fi

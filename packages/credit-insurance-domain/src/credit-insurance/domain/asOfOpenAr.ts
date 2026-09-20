@@ -16,6 +16,7 @@ import {
 import { computeInvoiceLineOpenArInAccountCurrency } from "./openReceivableByCustomerCurrency";
 import { resolveInvoicePaidTolerance } from "./resolveInvoicePaidTolerance";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
+import { resolveReportingBreachStartDate } from "./resolveReportingBreachStartDate";
 import {
     INVOICE_PAID_TOLERANCE,
     isWithinPaidTolerance,
@@ -808,6 +809,8 @@ export function overlayAsOfTermsFlagsOnLine(
         ignoreReportingBreach?: boolean;
         /** Account's MEP breach start date; null / omitted means no gate. */
         mepBreachStartDate?: Date | null;
+        /** Account reporting-breach start date; null fails closed (never breach). */
+        reportingBreachStartDate?: Date | null;
         /**
          * When set (batch overlay), skip the O(siblings) MEP scan and use this
          * precomputed oldest overdue (due + issue date) at the line's issue date.
@@ -836,6 +839,7 @@ export function overlayAsOfTermsFlagsOnLine(
                 terms.paymentTermSubstituteDay,
         },
         today: asOfDate,
+        reporting_breach_start_date: options?.reportingBreachStartDate ?? null,
     });
     const monthEnd: CustomerOverdueMepMonthEnd = {
         mepCutoffDay: terms.mepCutoffDay,
@@ -897,6 +901,8 @@ export function overlayAsOfTermsFlagsOnLines(
         ignoreReportingBreach?: boolean;
         /** Resolved once per replay run and threaded down; null means no gate. */
         mepBreachStartDate?: Date | null;
+        /** Resolved once per replay run; null fails closed for reporting breach. */
+        reportingBreachStartDate?: Date | null;
     }
 ): AsOfOpenInvoiceLine[] {
     const linesByCustomer = new Map<number, AsOfOpenInvoiceLine[]>();
@@ -937,6 +943,7 @@ export function overlayAsOfTermsFlagsOnLines(
         return overlayAsOfTermsFlagsOnLine(line, asOfDate, terms, {
             ignoreReportingBreach: options?.ignoreReportingBreach,
             mepBreachStartDate: options?.mepBreachStartDate,
+            reportingBreachStartDate: options?.reportingBreachStartDate,
             oldestOverdueAtIssue:
                 oldestOverdueAtIssueByInvoiceId.get(line.invoiceId) ?? null,
         });
@@ -1033,12 +1040,20 @@ export async function overlayAsOfTermsFlagsForAccountLines(args: {
     }>;
     ignoreReportingBreach?: boolean;
     mepBreachStartDate?: Date | null;
+    reportingBreachStartDate?: Date | null;
     dbClient?: DbClient;
 }): Promise<AsOfOpenInvoiceLine[]> {
     const mepBreachStartDate =
         args.mepBreachStartDate !== undefined
             ? args.mepBreachStartDate
             : await resolveMepBreachStartDate(args.accountId, args.dbClient);
+    const reportingBreachStartDate =
+        args.reportingBreachStartDate !== undefined
+            ? args.reportingBreachStartDate
+            : await resolveReportingBreachStartDate(
+                  args.accountId,
+                  args.dbClient
+              );
     return overlayAsOfTermsFlagsOnLines(
         args.lines,
         args.asOfDate,
@@ -1046,6 +1061,7 @@ export async function overlayAsOfTermsFlagsForAccountLines(args: {
         {
             ignoreReportingBreach: args.ignoreReportingBreach === true,
             mepBreachStartDate,
+            reportingBreachStartDate,
         }
     );
 }

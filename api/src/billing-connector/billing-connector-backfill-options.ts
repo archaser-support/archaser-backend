@@ -86,6 +86,17 @@ export function normalizeMepBreachStartDateInput(
     );
 }
 
+/** Same normalization; required on Billing cutover save (cannot clear). */
+export function normalizeReportingBreachStartDateInput(
+    input: string | null | undefined
+): Date | null | undefined {
+    return normalizeCalendarDateInput(
+        input,
+        "reporting_breach_start_date",
+        "INVALID_REPORTING_BREACH_START_DATE"
+    );
+}
+
 function sameCalendarDay(
     a: Date | null | undefined,
     b: Date | null | undefined
@@ -189,33 +200,54 @@ export function resolveIncludeOlderOpenInvoicesChange(params: {
     };
 }
 
-export type SkipReportingBreachChangeResult =
-    | { ok: true; value: boolean | undefined }
-    | { ok: false; code: "BACKFILL_OPTIONS_LOCKED"; message: string };
+export type ReportingBreachStartDateChangeResult =
+    | { ok: true; value: Date | null | undefined; changed: boolean }
+    | {
+          ok: false;
+          code: "REPORTING_BREACH_START_DATE_REQUIRED";
+          message: string;
+      };
 
-export function resolveSkipReportingBreachOnBackfillChange(params: {
-    backfillStartedAt: Date | null | undefined;
-    existingValue: boolean | undefined;
-    nextInput: boolean | undefined;
-}): SkipReportingBreachChangeResult {
+/**
+ * Always editable (not locked by backfill). Required whenever the field is
+ * present in the request or the connector has no existing value on a write that
+ * must establish cutover. Cannot clear once set via empty/null input.
+ */
+export function resolveReportingBreachStartDateChange(params: {
+    existingStartDate: Date | null | undefined;
+    nextInput: string | null | undefined;
+    /** When true, omitting the field is an error if no existing date. */
+    requireOnOmit?: boolean;
+}): ReportingBreachStartDateChangeResult {
     if (params.nextInput === undefined) {
-        return { ok: true, value: undefined };
+        if (
+            params.requireOnOmit &&
+            (params.existingStartDate == null)
+        ) {
+            return {
+                ok: false,
+                code: "REPORTING_BREACH_START_DATE_REQUIRED",
+                message:
+                    "reporting_breach_start_date is required on Billing cutover save",
+            };
+        }
+        return {
+            ok: true,
+            value: undefined,
+            changed: false,
+        };
     }
 
-    const next = Boolean(params.nextInput);
-    if (!areBackfillOptionsLocked(params.backfillStartedAt)) {
-        return { ok: true, value: next };
+    const normalized = normalizeReportingBreachStartDateInput(params.nextInput);
+    if (normalized == null) {
+        return {
+            ok: false,
+            code: "REPORTING_BREACH_START_DATE_REQUIRED",
+            message:
+                "reporting_breach_start_date is required on Billing cutover save",
+        };
     }
 
-    const existing = params.existingValue ?? false;
-    if (existing === next) {
-        return { ok: true, value: existing };
-    }
-
-    return {
-        ok: false,
-        code: "BACKFILL_OPTIONS_LOCKED",
-        message:
-            "Skip reporting breach during backfill is locked after backfill has started. Reset backfill to change it.",
-    };
+    const changed = !sameCalendarDay(params.existingStartDate, normalized);
+    return { ok: true, value: normalized, changed };
 }

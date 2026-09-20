@@ -32,6 +32,10 @@ import {
     resolveSyncExecutionStatus,
 } from "../observability/statusAndErrorType";
 import { notifyOnSyncFailure } from "../notify";
+import {
+    clearBillingConnectorAuthFailures,
+    recordBillingConnectorAuthFailure,
+} from "../services/billingConnectorAuthCircuitBreaker";
 
 export type RegisterAcceptedInProcessSyncParams = {
     accountId: number;
@@ -142,6 +146,7 @@ export async function runAcceptedInProcessSync(
             ...runOptions,
         });
         await finalizeAcceptedInProcessSyncRun({
+            prisma,
             accountId,
             executionId,
             mode,
@@ -202,6 +207,7 @@ export async function runAcceptedInProcessSync(
 }
 
 async function finalizeAcceptedInProcessSyncRun(params: {
+    prisma: PrismaClient;
     accountId: number;
     executionId: string;
     mode: string;
@@ -211,6 +217,7 @@ async function finalizeAcceptedInProcessSyncRun(params: {
     onError?: (message: string) => void;
 }): Promise<void> {
     const {
+        prisma,
         accountId,
         executionId,
         mode,
@@ -269,6 +276,41 @@ async function finalizeAcceptedInProcessSyncRun(params: {
             executionId,
             completedAt,
         }).catch(() => undefined);
+    }
+
+    if (!result.postIngestDeferred) {
+        try {
+            const connector = await prisma.billingConnector.findUnique({
+                where: { account_id: accountId },
+                select: { id: true },
+            });
+            if (connector) {
+                if (status === "SUCCESS") {
+                    await clearBillingConnectorAuthFailures({
+                        prisma,
+                        connectorId: connector.id,
+                    });
+                } else if (errorType === "auth") {
+                    const breaker = await recordBillingConnectorAuthFailure({
+                        prisma,
+                        connectorId: connector.id,
+                    });
+                    if (breaker.syncDisabled) {
+                        onLog(
+                            `Auth circuit breaker tripped (${breaker.consecutiveAuthFailures} failures); sync_enabled set to false`
+                        );
+                    }
+                }
+            }
+        } catch (breakerError) {
+            const message =
+                breakerError instanceof Error
+                    ? breakerError.message
+                    : String(breakerError);
+            onError?.(
+                `[account ${accountId}] Auth circuit breaker update failed: ${message}`
+            );
+        }
     }
 }
 
