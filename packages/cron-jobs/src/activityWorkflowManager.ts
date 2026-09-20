@@ -30,6 +30,7 @@ import {
     processTemplateContent,
 } from "./templates/processTemplateContent";
 import { getSystemUserId } from "./users/getSystemUserId";
+import { currentAutomatedCycleStartedAt } from "./activities/currentAutomatedCycle";
 import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 
 const BATCH_SIZE = 50;
@@ -1363,13 +1364,21 @@ async function processCollectionPeriodForNextActivity(
         return;
     }
 
-    // Never create a second row for the same automated step (e.g. after a
-    // FAILED send), and never stack another while one is still SCHEDULED.
+    // Same-cycle only: a previous Automated pass on this period (then Agent,
+    // then Automated again) still has delivered step rows that must not block.
+    const cycleStartedAt = await currentAutomatedCycleStartedAt(
+        prisma,
+        period.id
+    );
+    const inCurrentCycle = cycleStartedAt
+        ? { created_at: { gte: cycleStartedAt } }
+        : {};
     const [existingForStep, pendingScheduled] = await Promise.all([
         prisma.activity.findFirst({
             where: {
                 collection_period_id: period.id,
                 status: { not: "CANCELLED" },
+                ...inCurrentCycle,
                 ActivitiesSequence: {
                     category: "Automated",
                     step: nextStep,
@@ -1381,6 +1390,7 @@ async function processCollectionPeriodForNextActivity(
             where: {
                 collection_period_id: period.id,
                 status: "SCHEDULED",
+                ...inCurrentCycle,
                 ActivitiesSequence: { category: "Automated" },
             },
             select: { id: true, status: true },

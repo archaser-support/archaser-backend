@@ -16,6 +16,7 @@ import {
     TwilioClientFactory,
     buildWebhookUrl,
     sendViaVendor,
+    twilioStatusCallbackFromPublicBase,
     validateTwilioWebhookSignature,
 } from "@archaser/sms-send";
 import { serializeBigInt } from "../common/serialize-bigint";
@@ -586,9 +587,10 @@ export class SmsService {
             url?: string;
         }
     ) {
+        const vendorForWebhook =
+            await this.resolveTwilioVendorForWebhook(body);
         const vendorAuthToken =
-            process.env.TWILIO_AUTH_TOKEN ||
-            (await this.resolveTwilioAuthTokenForWebhook(body));
+            process.env.TWILIO_AUTH_TOKEN || vendorForWebhook?.authToken;
 
         if (!process.env.TWILIO_AUTH_TOKEN && !vendorAuthToken) {
             this.logger.warn(
@@ -610,6 +612,11 @@ export class SmsService {
             authToken: vendorAuthToken,
             signature,
             url: buildWebhookUrl(req),
+            extraUrls: [
+                process.env.SMS_WEBHOOK_PUBLIC_URL,
+                vendorForWebhook?.webhookUrl,
+                twilioStatusCallbackFromPublicBase(process.env.NEST_PUBLIC_URL),
+            ],
             body: bodyForSig,
         });
         if (!valid) {
@@ -722,17 +729,23 @@ export class SmsService {
         return { success: true, matched: true };
     }
 
-    private async resolveTwilioAuthTokenForWebhook(
+    private async resolveTwilioVendorForWebhook(
         body: Record<string, unknown>
-    ): Promise<string | undefined> {
+    ): Promise<
+        { authToken?: string; webhookUrl?: string | null } | undefined
+    > {
         const accountSid = body.AccountSid
             ? String(body.AccountSid)
             : undefined;
         if (!accountSid) return undefined;
         const vendor = await this.db.sMSVendor.findFirst({
             where: { account_sid: accountSid, is_active: true },
-            select: { auth_token: true },
+            select: { auth_token: true, webhook_url: true },
         });
-        return vendor?.auth_token || undefined;
+        if (!vendor) return undefined;
+        return {
+            authToken: vendor.auth_token || undefined,
+            webhookUrl: vendor.webhook_url,
+        };
     }
 }
