@@ -65,6 +65,7 @@ services:
     environment:
       NODE_ENV: production
       APP_ENV: production
+      SERVICE_NAME: archaser-worker-production
       WORKER_PORT: 4003
       REDIS_URL: redis://redis:6379
       BULLMQ_QUEUE: archaser-cron-prod
