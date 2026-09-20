@@ -67,6 +67,7 @@ services:
       APP_ENV: production
       SERVICE_NAME: archaser-worker-production
       WORKER_PORT: 4003
+      NEST_PUBLIC_URL: "https://api.portal.archaser.com"
       REDIS_URL: redis://redis:6379
       BULLMQ_QUEUE: archaser-cron-prod
       CONNECTION_LIMIT_WORKER: 5
@@ -101,6 +102,7 @@ services:
       APP_ENV: production
       SMS_PORT: 3004
       CONNECTION_LIMIT_SMS: 5
+      NEST_PUBLIC_URL: "https://api.portal.archaser.com"
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
       NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:

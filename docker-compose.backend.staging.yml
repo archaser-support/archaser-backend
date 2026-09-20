@@ -66,6 +66,7 @@ services:
       APP_ENV: staging
       SERVICE_NAME: archaser-worker-staging
       WORKER_PORT: 3003
+      NEST_PUBLIC_URL: "https://api.staging.archaser.com"
       REDIS_URL: redis://redis:6379
       BULLMQ_QUEUE: archaser-cron
       CONNECTION_LIMIT_WORKER: 5
@@ -99,6 +100,7 @@ services:
       APP_ENV: staging
       SMS_PORT: 3004
       CONNECTION_LIMIT_SMS: 5
+      NEST_PUBLIC_URL: "https://api.staging.archaser.com"
       NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
       NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
     volumes:

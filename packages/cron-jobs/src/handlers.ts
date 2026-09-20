@@ -18,6 +18,7 @@ import { computeCustomerOverdueMetrics } from "./computeCustomerOverdueMetrics";
 import { closeZeroOutstandingDebtInvoices } from "./closeZeroOutstandingDebtInvoices";
 import { fixClosedCollectionData } from "./fixClosedCollectionData";
 import { checkInforuSmsStatus } from "./inforuSmsStatusCheck";
+import { checkTwilioSmsStatus } from "./twilioSmsStatusCheck";
 import { moveCollectionToNextCategory } from "./moveCollectionToNextCategory";
 import { handleOverdueInvoices } from "./handleOverdueInvoices";
 import { executeScheduledReports } from "./executeScheduledReports";
@@ -300,7 +301,14 @@ const inforuSmsStatus: Handler = async (prisma) => {
         prisma,
         "Inforu SMS Status Check"
     );
-    return checkInforuSmsStatus(prisma, freeze);
+    const inforu = await checkInforuSmsStatus(prisma, freeze);
+    const twilio = await checkTwilioSmsStatus(prisma, freeze);
+    return {
+        success: inforu.success && twilio.success,
+        message: `Inforu: ${inforu.message}. Twilio: ${twilio.message}`,
+        summary: { inforu: inforu.summary, twilio: twilio.summary },
+        durationMs: inforu.durationMs + twilio.durationMs,
+    };
 };
 
 const moveCollectionCategory: Handler = async (prisma) => {
