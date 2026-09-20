@@ -26,6 +26,7 @@ export {
     type FindStaleRollupMismatchesOptions,
 } from "./reconcileStaleCustomerRollups";
 export { checkInforuSmsStatus } from "./inforuSmsStatusCheck";
+export { checkTwilioSmsStatus } from "./twilioSmsStatusCheck";
 export {
     applyActivityContactDelivery,
     type ActivityContactDeliveryOutcome,
