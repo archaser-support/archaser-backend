@@ -259,27 +259,19 @@ ensure_build_tooling() {
 }
 
 # Never `npx prisma` — unpinned npx installs Prisma 7, which rejects `url = env("DATABASE_URL")`.
-ensure_prisma_cli() {
+# Never `npm i prisma` during generate — Prisma 6.19 auto-install OOMs (SIGKILL) on 4GB EC2.
+generate_prisma_client() {
     export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
-    if [[ -x "$ROOT_DIR/node_modules/.bin/prisma" || -f "$ROOT_DIR/node_modules/prisma/build/index.js" ]]; then
-        return 0
-    fi
-    log "prisma CLI missing after npm ci — installing prisma@6.4.1 at workspace root"
-    npm install --include=dev --no-save --no-audit --no-fund --ignore-scripts prisma@6.4.1
-    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
-    if [[ ! -x "$ROOT_DIR/node_modules/.bin/prisma" && ! -f "$ROOT_DIR/node_modules/prisma/build/index.js" ]]; then
-        echo "Error: prisma CLI is still missing after prisma install."
+    local prisma_js="$ROOT_DIR/node_modules/prisma/build/index.js"
+    if [[ ! -f "$prisma_js" ]]; then
+        echo "Error: prisma CLI missing after npm ci: $prisma_js"
+        echo "npm ci --include=dev must install the prisma devDependency."
         exit 1
     fi
-}
-
-generate_prisma_client() {
-    ensure_prisma_cli
-    if [[ -x "$ROOT_DIR/node_modules/.bin/prisma" ]]; then
-        "$ROOT_DIR/node_modules/.bin/prisma" generate --schema="$PRISMA_SCHEMA"
-    else
-        node "$ROOT_DIR/node_modules/prisma/build/index.js" generate --schema="$PRISMA_SCHEMA"
-    fi
+    PRISMA_GENERATE_SKIP_AUTOINSTALL=1 \
+    PRISMA_SKIP_POSTINSTALL_GENERATE=1 \
+    NODE_OPTIONS="--max-old-space-size=384" \
+        node "$prisma_js" generate --schema="$PRISMA_SCHEMA"
 }
 
 run_workspace_build() {
