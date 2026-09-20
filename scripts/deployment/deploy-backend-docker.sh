@@ -258,6 +258,30 @@ ensure_build_tooling() {
     fi
 }
 
+# Never `npx prisma` — unpinned npx installs Prisma 7, which rejects `url = env("DATABASE_URL")`.
+ensure_prisma_cli() {
+    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
+    if [[ -x "$ROOT_DIR/node_modules/.bin/prisma" || -f "$ROOT_DIR/node_modules/prisma/build/index.js" ]]; then
+        return 0
+    fi
+    log "prisma CLI missing after npm ci — installing prisma@6.4.1 at workspace root"
+    npm install --include=dev --no-save --no-audit --no-fund --ignore-scripts prisma@6.4.1
+    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
+    if [[ ! -x "$ROOT_DIR/node_modules/.bin/prisma" && ! -f "$ROOT_DIR/node_modules/prisma/build/index.js" ]]; then
+        echo "Error: prisma CLI is still missing after prisma install."
+        exit 1
+    fi
+}
+
+generate_prisma_client() {
+    ensure_prisma_cli
+    if [[ -x "$ROOT_DIR/node_modules/.bin/prisma" ]]; then
+        "$ROOT_DIR/node_modules/.bin/prisma" generate --schema="$PRISMA_SCHEMA"
+    else
+        node "$ROOT_DIR/node_modules/prisma/build/index.js" generate --schema="$PRISMA_SCHEMA"
+    fi
+}
+
 run_workspace_build() {
     local workspace="$1"
     export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
@@ -422,7 +446,7 @@ fi
 if [[ "$SKIP_PRISMA" != "true" ]]; then
     log "Generating Prisma client"
     mkdir -p node_modules/.prisma/client
-    npx prisma generate --schema="$PRISMA_SCHEMA"
+    generate_prisma_client
     node "$SYNC_SCRIPT"
 else
     log "Skipping prisma generate (--skip-prisma)"
