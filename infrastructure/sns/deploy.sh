@@ -9,6 +9,19 @@ STACK_NAME="archaser-alert-sns"
 REGION="${AWS_REGION:-eu-north-1}"
 ENVIRONMENT="${ENVIRONMENT:-production}"
 ALERT_EMAIL="${ALERT_EMAIL:-nilotpal@archaser.com}"
+CLICKUP_CHAT_PARAMS=()
+if [ -n "${CLICKUP_CHAT_TOKEN:-}" ]; then
+    CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatToken,ParameterValue=${CLICKUP_CHAT_TOKEN}")
+fi
+if [ -n "${CLICKUP_CHAT_CHANNEL_ID:-}" ]; then
+    CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatChannelId,ParameterValue=${CLICKUP_CHAT_CHANNEL_ID}")
+fi
+if [ -n "${CLICKUP_CHAT_WORKSPACE_ID:-}" ]; then
+    CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatWorkspaceId,ParameterValue=${CLICKUP_CHAT_WORKSPACE_ID}")
+fi
+if [ -n "${CLICKUP_CHAT_ENABLED:-}" ]; then
+    CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatEnabled,ParameterValue=${CLICKUP_CHAT_ENABLED}")
+fi
 
 echo "========================================="
 echo "ARChaser SNS Alert Infrastructure Setup"
@@ -19,6 +32,11 @@ echo "  Stack Name:  $STACK_NAME"
 echo "  Region:      $REGION"
 echo "  Environment: $ENVIRONMENT"
 echo "  Alert Email: $ALERT_EMAIL"
+if [ -n "${CLICKUP_CHAT_TOKEN:-}" ] && [ -n "${CLICKUP_CHAT_CHANNEL_ID:-}" ]; then
+    echo "  ClickUp Chat: configured (token not printed)"
+else
+    echo "  ClickUp Chat: skipped until token and channel id are set"
+fi
 echo ""
 
 # Check if AWS CLI is installed
@@ -38,6 +56,7 @@ if [ "$STACK_EXISTS" != "false" ]; then
         --parameters \
             ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
             ParameterKey=AlertEmailAddress,ParameterValue=$ALERT_EMAIL \
+            ${CLICKUP_CHAT_PARAMS[@]+"${CLICKUP_CHAT_PARAMS[@]}"} \
         --capabilities CAPABILITY_NAMED_IAM \
         --region $REGION || true
     
@@ -51,6 +70,7 @@ else
         --parameters \
             ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
             ParameterKey=AlertEmailAddress,ParameterValue=$ALERT_EMAIL \
+            ${CLICKUP_CHAT_PARAMS[@]+"${CLICKUP_CHAT_PARAMS[@]}"} \
         --capabilities CAPABILITY_NAMED_IAM \
         --region $REGION
     
