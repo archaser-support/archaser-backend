@@ -34,6 +34,21 @@ function serviceNameLooksPreprod(): boolean {
 
 /** Detect deploy environment for non-prod email subject prefixes (staging parity). */
 export function detectServerEnvironment(): EnvironmentType {
+    const appEnv = (process.env.APP_ENV || "").toLowerCase();
+    if (appEnv === "production" || appEnv === "prod") {
+        return "production";
+    }
+    if (appEnv === "staging" || appEnv === "preprod") {
+        return "preprod";
+    }
+    if (
+        appEnv === "local" ||
+        appEnv === "localhost" ||
+        appEnv === "development"
+    ) {
+        return "localhost";
+    }
+
     const nodeEnv = process.env.NODE_ENV;
     const isProduction = nodeEnv === "production";
     const serverPort = process.env.PORT;
