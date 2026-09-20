@@ -31,7 +31,9 @@ echo ""
 RUN_ID="${RUN_ID:-test-$(date +%s)}"
 CRITICAL_ALERT_NAME="TestCritical-${RUN_ID}"
 DIGEST_GROUP_NAME="TestDigest-${RUN_ID}"
+CLICKUP_EXPECT="${CLICKUP_EXPECT:-skipped_unconfigured}"
 echo "🏷️  Run ID: $RUN_ID"
+echo "💬 Expected ClickUp post-intent status: $CLICKUP_EXPECT"
 echo ""
 
 assert_response_field() {
@@ -210,11 +212,93 @@ DIGEST_FIRING_PAYLOAD=$(cat <<EOF
 EOF
 )
 
+DIGEST_RESOLVED_PAYLOAD=$(cat <<EOF
+{
+  "status": "resolved",
+  "alerts": [
+    {
+      "status": "resolved",
+      "labels": {
+        "alertname": "Stuck Activities Detected",
+        "severity": "high",
+        "grafana_folder": "Production"
+      },
+      "annotations": {
+        "summary": "Activities stuck in processing state",
+        "description": "One or more activities have been stuck for over 2 hours."
+      },
+      "startsAt": "2026-06-29T10:00:00Z",
+      "endsAt": "2026-06-29T10:20:00Z"
+    },
+    {
+      "status": "resolved",
+      "labels": {
+        "alertname": "Cron Jobs Overdue",
+        "severity": "medium",
+        "grafana_folder": "Production"
+      },
+      "annotations": {
+        "summary": "Cron jobs are overdue",
+        "description": "Scheduled cron jobs have not run on time."
+      },
+      "startsAt": "2026-06-29T10:05:00Z",
+      "endsAt": "2026-06-29T10:20:00Z"
+    }
+  ],
+  "groupLabels": {
+    "alertname": "${DIGEST_GROUP_NAME}"
+  },
+  "commonLabels": {
+    "grafana_folder": "Production"
+  }
+}
+EOF
+)
+
+MIXED_CRITICAL_RESOLVED_PAYLOAD=$(cat <<EOF
+{
+  "status": "resolved",
+  "alerts": [
+    {
+      "status": "resolved",
+      "labels": {
+        "alertname": "Stuck Activities Detected",
+        "severity": "high",
+        "grafana_folder": "Production"
+      },
+      "annotations": {
+        "summary": "Activities stuck in processing state"
+      }
+    },
+    {
+      "status": "resolved",
+      "labels": {
+        "alertname": "${CRITICAL_ALERT_NAME}",
+        "severity": "critical",
+        "grafana_folder": "Production"
+      },
+      "annotations": {
+        "summary": "PostgreSQL database connection lost"
+      }
+    }
+  ],
+  "groupLabels": {
+    "alertname": "${DIGEST_GROUP_NAME}-mixed"
+  },
+  "commonLabels": {
+    "delivery": "digest",
+    "grafana_folder": "Production"
+  }
+}
+EOF
+)
+
 echo "🔥 Test 1: Critical single-alert (firing)..."
 RESPONSE=$(post_alert "$CRITICAL_FIRING_PAYLOAD")
 echo "Response: $RESPONSE"
 assert_response_field "$RESPONSE" "deliveryTier" "critical" "Delivery tier"
 assert_subject_contains "$RESPONSE" "\[CRITICAL\]" "Critical subject prefix"
+assert_response_field "$RESPONSE" "clickupStatus" "$CLICKUP_EXPECT" "ClickUp Chat post-intent status"
 echo ""
 
 echo "⏳ Waiting 3 seconds before resolved critical test..."
@@ -227,6 +311,7 @@ echo "Response: $RESPONSE"
 assert_response_field "$RESPONSE" "deliveryTier" "critical" "Delivery tier"
 assert_subject_contains "$RESPONSE" "\[RESOLVED\]" "Resolved prefix"
 assert_subject_contains "$RESPONSE" "\[CRITICAL\]" "Critical subject prefix"
+assert_response_field "$RESPONSE" "clickupStatus" "$CLICKUP_EXPECT" "ClickUp Chat post-intent status"
 echo ""
 
 echo "📬 Test 3: Digest batch (high + medium alerts)..."
@@ -236,12 +321,28 @@ assert_response_field "$RESPONSE" "deliveryTier" "digest" "Delivery tier"
 assert_subject_contains "$RESPONSE" "\[Digest\]" "Digest subject prefix"
 assert_subject_contains "$RESPONSE" "3 alerts" "Grouped alert count"
 assert_subject_contains "$RESPONSE" "${DIGEST_GROUP_NAME}" "Digest group name in subject"
+assert_response_field "$RESPONSE" "clickupStatus" "$CLICKUP_EXPECT" "ClickUp Chat post-intent status"
+echo ""
+
+echo "📭 Test 4: Digest resolved (Chat skipped, email/SNS still send)..."
+RESPONSE=$(post_alert "$DIGEST_RESOLVED_PAYLOAD")
+echo "Response: $RESPONSE"
+assert_response_field "$RESPONSE" "deliveryTier" "digest" "Delivery tier"
+assert_response_field "$RESPONSE" "clickupStatus" "skipped_resolved_digest" "ClickUp Chat skip (resolved digest)"
+echo ""
+
+echo "🚨 Test 5: Mixed group with a critical alert + delivery=digest (Chat not buried as digest)..."
+RESPONSE=$(post_alert "$MIXED_CRITICAL_RESOLVED_PAYLOAD")
+echo "Response: $RESPONSE"
+assert_response_field "$RESPONSE" "deliveryTier" "digest" "Email delivery tier honors delivery=digest"
+assert_response_field "$RESPONSE" "clickupStatus" "$CLICKUP_EXPECT" "Chat treats any critical as post intent, not skipped_resolved_digest"
 echo ""
 
 echo "========================================="
 echo "✅ All tests passed!"
 echo ""
 echo "Check your email inbox for the test alerts."
+echo "If ClickUp token and ARchaser channel id are set, check ARchaser Chat for markdown messages (none for digest resolved)."
 echo "You can also check CloudWatch Logs for the Lambda function:"
 echo "  aws logs tail /aws/lambda/archaser-alert-webhook-production --follow"
 echo "========================================="
