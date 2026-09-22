@@ -84,3 +84,25 @@ export async function requeueCreditAsOfBackfillBullJob(
         }
     );
 }
+
+export async function requeueAccountVatBasisRefreshBullJob(
+    queue: Queue,
+    jobId: string,
+    accountId: number
+): Promise<Job> {
+    const removal = await forceRemoveCreditAsOfBackfillBullJob(queue, jobId);
+    if (!removal.removed) {
+        throw new Error(
+            `Could not replace BullMQ job ${jobId} (${removal.priorState ?? "unknown"}): ${removal.note ?? "remove failed"}`
+        );
+    }
+    return queue.add(
+        "account-vat-basis-refresh",
+        { accountId },
+        {
+            jobId,
+            removeOnComplete: 100,
+            removeOnFail: 200,
+        }
+    );
+}

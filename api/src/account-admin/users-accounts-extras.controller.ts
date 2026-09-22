@@ -18,6 +18,10 @@ import {
     ApiTags,
     ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
+import {
+    getAccountVatBasisRefreshJobStatus,
+    retryAccountVatBasisRefreshJob,
+} from "@archaser/credit-insurance-domain";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { DualAuthGuard } from "../auth/dual-auth.guard";
 import { AccessScopeService } from "../auth/access-scope.service";
@@ -204,5 +208,50 @@ export class AccountsExtrasController {
             restoredAt: new Date().toISOString(),
             account: restored,
         });
+    }
+
+    @Get(":id/vat-basis-refresh")
+    @ApiOperation({ summary: "VAT basis refresh job status for an account" })
+    async vatBasisRefreshStatus(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        await this.assertAccountAccess(user, id);
+        const status = await getAccountVatBasisRefreshJobStatus(id);
+        return serializeBigInt(status);
+    }
+
+    @Post(":id/vat-basis-refresh/retry")
+    @HttpCode(200)
+    @ApiOperation({ summary: "Retry a failed VAT basis refresh job" })
+    async vatBasisRefreshRetry(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        const userInfo = await this.assertAccountAccess(user, id);
+        try {
+            const status = await retryAccountVatBasisRefreshJob(id, {
+                requestedBy: user.sub ?? user.email ?? userInfo.userId ?? null,
+            });
+            return serializeBigInt(status);
+        } catch (error) {
+            throw new BadRequestException({
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "Retry failed",
+            });
+        }
+    }
+
+    private async assertAccountAccess(user: JwtPayload, accountId: number) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        if (
+            !this.accessScope.isAdminAccount(userInfo.accountId) &&
+            userInfo.accountId !== accountId
+        ) {
+            throw new ForbiddenException({ error: "Access denied" });
+        }
+        return userInfo;
     }
 }

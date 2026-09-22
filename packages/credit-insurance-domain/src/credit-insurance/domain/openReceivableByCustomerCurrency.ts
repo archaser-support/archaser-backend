@@ -13,6 +13,11 @@ import {
     computeCustomerTotalAr,
     invoiceOutstandingInAccountCurrency,
 } from "./invoiceInsuranceFields";
+import {
+    applyOpenArVatBasis,
+    OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL,
+    OPEN_AR_VAT_BASIS_LINE_SQL,
+} from "./openArVatBasis";
 
 export type OpenReceivableCurrencyBucket = {
     currency: string;
@@ -48,8 +53,20 @@ export type OpenArInvoiceLine = {
     outstanding_debt: number | null;
     customer_outstanding_debt: number | null;
     amount: number | null;
+    amount_without_vat?: number | null;
     customer_currency: string | null;
 };
+
+async function loadAccountAmountsIncludeVat(
+    accountId: number,
+    db: DbClient
+): Promise<boolean> {
+    const account = await db.account.findUnique({
+        where: { id: accountId },
+        select: { amounts_include_vat: true },
+    });
+    return account?.amounts_include_vat !== false;
+}
 
 /**
  * One open invoice line total in account currency (policy usage / portfolio KPIs).
@@ -62,7 +79,8 @@ export type OpenArInvoiceLine = {
  */
 export async function resolveInvoiceLineOutstandingInAccountCurrency(
     row: OpenArInvoiceLine,
-    accountCurrency: string
+    accountCurrency: string,
+    amountsIncludeVat = true
 ): Promise<number> {
     const accountCur = accountCurrency.trim().toUpperCase();
     const custCurrency = row.customer_currency?.trim().toUpperCase();
@@ -89,33 +107,38 @@ export async function resolveInvoiceLineOutstandingInAccountCurrency(
     return computeInvoiceLineOpenArInAccountCurrency(
         row,
         accountCur,
-        converted
+        converted,
+        amountsIncludeVat
     );
 }
 
 export function computeInvoiceLineOpenArInAccountCurrency(
     row: OpenArInvoiceLine,
     accountCurrency: string,
-    convertedFromCustomerCurrency?: number | null
+    convertedFromCustomerCurrency?: number | null,
+    amountsIncludeVat = true
 ): number {
+    let gross: number;
     if (row.outstanding_debt != null && row.outstanding_debt !== 0) {
-        return Number(row.outstanding_debt);
+        gross = Number(row.outstanding_debt);
+    } else {
+        const accountCur = accountCurrency.trim().toUpperCase();
+        const custCurrency = row.customer_currency?.trim().toUpperCase();
+        const custOutstanding =
+            row.customer_outstanding_debt != null
+                ? Number(row.customer_outstanding_debt)
+                : 0;
+        const amount = row.amount != null ? Number(row.amount) : 0;
+
+        if (custCurrency && custCurrency !== accountCur) {
+            const val = custOutstanding !== 0 ? custOutstanding : amount;
+            gross = convertedFromCustomerCurrency ?? val;
+        } else {
+            gross = invoiceOutstandingInAccountCurrency(row);
+        }
     }
 
-    const accountCur = accountCurrency.trim().toUpperCase();
-    const custCurrency = row.customer_currency?.trim().toUpperCase();
-    const custOutstanding =
-        row.customer_outstanding_debt != null
-            ? Number(row.customer_outstanding_debt)
-            : 0;
-    const amount = row.amount != null ? Number(row.amount) : 0;
-
-    if (custCurrency && custCurrency !== accountCur) {
-        const val = custOutstanding !== 0 ? custOutstanding : amount;
-        return convertedFromCustomerCurrency ?? val;
-    }
-
-    return invoiceOutstandingInAccountCurrency(row);
+    return applyOpenArVatBasis(amountsIncludeVat, gross, row);
 }
 
 /**
@@ -132,6 +155,7 @@ export async function fetchOpenReceivableByCustomerMapInAccountCurrency(
 ): Promise<Map<number, number>> {
     const db = options?.dbClient ?? defaultPrisma;
     const accountCur = accountCurrency.trim().toUpperCase();
+    const amountsIncludeVat = await loadAccountAmountsIncludeVat(accountId, db);
     const invoices = await db.invoice.findMany({
         where: {
             account_id: accountId,
@@ -150,6 +174,7 @@ export async function fetchOpenReceivableByCustomerMapInAccountCurrency(
             outstanding_debt: true,
             customer_outstanding_debt: true,
             amount: true,
+            amount_without_vat: true,
             customer_currency: true,
         },
     });
@@ -183,7 +208,8 @@ export async function fetchOpenReceivableByCustomerMapInAccountCurrency(
         const line = computeInvoiceLineOpenArInAccountCurrency(
             inv,
             accountCur,
-            converted
+            converted,
+            amountsIncludeVat
         );
         map.set(inv.customer_id, (map.get(inv.customer_id) ?? 0) + line);
     }
@@ -230,17 +256,11 @@ export async function fetchOpenReceivableForCustomerByCurrency(
     if (!code) {
         return 0;
     }
+    const line = Prisma.raw(OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL);
     const rows = await dbClient.$queryRaw<{ ar: number | null }[]>`
-        SELECT COALESCE(
-            SUM(
-                CASE
-                    WHEN COALESCE(i.customer_outstanding_debt, 0) != 0 THEN i.customer_outstanding_debt
-                    ELSE COALESCE(i.amount, 0)
-                END
-            ),
-            0
-        )::float AS ar
+        SELECT COALESCE(SUM(${line}), 0)::float AS ar
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
           AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
@@ -375,6 +395,10 @@ export async function fetchCustomerHeaderOpenArSplitInAccountCurrency(
     invoiceCount: number;
 } & CustomerHeaderCurrencyBuckets> {
     const accountCur = accountCurrency.trim().toUpperCase();
+    const amountsIncludeVat = await loadAccountAmountsIncludeVat(
+        accountId,
+        dbClient
+    );
     const invoices = await dbClient.invoice.findMany({
         where: {
             account_id: accountId,
@@ -390,6 +414,9 @@ export async function fetchCustomerHeaderOpenArSplitInAccountCurrency(
             outstanding_debt: true,
             customer_outstanding_debt: true,
             amount: true,
+            amount_without_vat: true,
+            customer_amount: true,
+            customer_amount_without_vat: true,
             customer_currency: true,
         },
     });
@@ -424,7 +451,22 @@ export async function fetchCustomerHeaderOpenArSplitInAccountCurrency(
         const line = computeInvoiceLineOpenArInAccountCurrency(
             inv,
             accountCur,
-            converted
+            converted,
+            amountsIncludeVat
+        );
+        const scaledCustomerOd = applyOpenArVatBasis(
+            amountsIncludeVat,
+            customerOd,
+            {
+                amount_without_vat:
+                    inv.customer_amount_without_vat ?? inv.amount_without_vat,
+                amount: inv.customer_amount ?? inv.amount,
+            }
+        );
+        const scaledAccountOd = applyOpenArVatBasis(
+            amountsIncludeVat,
+            accountOd,
+            inv
         );
 
         if (inv.status === "Overdue") {
@@ -433,7 +475,7 @@ export async function fetchCustomerHeaderOpenArSplitInAccountCurrency(
             if (custCurrency) {
                 overdueByCurrency.set(
                     custCurrency,
-                    (overdueByCurrency.get(custCurrency) ?? 0) + customerOd
+                    (overdueByCurrency.get(custCurrency) ?? 0) + scaledCustomerOd
                 );
             }
             continue;
@@ -450,8 +492,8 @@ export async function fetchCustomerHeaderOpenArSplitInAccountCurrency(
                 account: 0,
                 customer: 0,
             };
-            existing.account += accountOd;
-            existing.customer += customerOd;
+            existing.account += scaledAccountOd;
+            existing.customer += scaledCustomerOd;
             dueByCurrency.set(custCurrency, existing);
         }
     }
@@ -580,17 +622,11 @@ export async function fetchOpenReceivableTotalForCustomer(
     accountId: number,
     dbClient: DbClient = defaultPrisma
 ): Promise<number> {
+    const line = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const rows = await dbClient.$queryRaw<{ ar: number | null }[]>`
-        SELECT COALESCE(
-          SUM(
-            CASE
-              WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-              ELSE COALESCE(i.customer_outstanding_debt, 0)
-            END
-          ),
-          0
-        )::float AS ar
+        SELECT COALESCE(SUM(${line}), 0)::float AS ar
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.customer_id = ${customerId}
           AND i.account_id = ${accountId}
           AND i.status IN ('Due', 'Overdue')
@@ -605,17 +641,11 @@ export async function fetchOpenReceivableForCustomer(
     policyId?: number | null,
     dbClient: DbClient = defaultPrisma
 ): Promise<number> {
+    const line = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const rows = await dbClient.$queryRaw<{ ar: number | null }[]>`
-        SELECT COALESCE(
-            SUM(
-                CASE
-                    WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                    ELSE COALESCE(i.customer_outstanding_debt, 0)
-                END
-            ),
-            0
-        )::float AS ar
+        SELECT COALESCE(SUM(${line}), 0)::float AS ar
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
           AND i.status IN ('Due', 'Overdue')
@@ -629,12 +659,15 @@ export async function fetchOpenReceivableCurrencyRowsForCustomer(
     accountId: number,
     dbClient: DbClient = defaultPrisma
 ): Promise<CurrencyGroupedRow[]> {
+    const accountLine = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
+    const customerLine = Prisma.raw(OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL);
     return dbClient.$queryRaw<CurrencyGroupedRow[]>`
         SELECT
           i.customer_currency,
-          COALESCE(SUM(i.outstanding_debt), 0)::float AS outstanding_debt,
-          COALESCE(SUM(i.customer_outstanding_debt), 0)::float AS customer_outstanding_debt
+          COALESCE(SUM(${accountLine}), 0)::float AS outstanding_debt,
+          COALESCE(SUM(${customerLine}), 0)::float AS customer_outstanding_debt
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.customer_id = ${customerId}
           AND i.account_id = ${accountId}
           AND i.status IN ('Due', 'Overdue')
@@ -646,17 +679,10 @@ export async function fetchOpenReceivableByCustomerMap(
     dbClient: DbClient = defaultPrisma
 ): Promise<Map<number, number>> {
     type OpenArByCustomerRow = { customer_id: number; ar: number | null };
+    const line = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const rows = await dbClient.$queryRaw<OpenArByCustomerRow[]>`
         SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS ar
+          COALESCE(SUM(${line}), 0)::float AS ar
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
         INNER JOIN "Account" a ON a.id = c.account_id

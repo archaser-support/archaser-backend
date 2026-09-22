@@ -30,7 +30,7 @@ function mockPrisma(queryResults: {
                     account_id,
                 }));
             }
-            if (sql.includes('"CreditAsOfBackfillJob"')) {
+            if (sql.includes('"AccountBackgroundJob"')) {
                 return (queryResults.backfill ?? []).map((account_id) => ({
                     account_id,
                 }));
@@ -61,7 +61,7 @@ describe("getFrozenAccountIds", () => {
         expect([...frozen]).toEqual([101]);
     });
 
-    it("includes account with CreditAsOfBackfillJob running or paused", async () => {
+    it("includes account with AccountBackgroundJob running or paused", async () => {
         process.env.MONGODB_URI = "mongodb://test";
         const frozen = await getFrozenAccountIds({
             prisma: mockPrisma({ backfill: [202] }),

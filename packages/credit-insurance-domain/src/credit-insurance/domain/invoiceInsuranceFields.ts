@@ -7,6 +7,7 @@ import { isCustomerPolicyExcluded } from "./policyExclusion";
 import { normalizeCalendarDayForInsuranceCompare } from "./shared/calendarDayCompare";
 import { isInvoiceInReportingBreachScope } from "./shared/reportingBreachScope";
 import { isInvoiceInMepBreachScope } from "./shared/mepBreachScope";
+import { applyOpenArVatBasis } from "./openArVatBasis";
 
 /**
  * Parse import/API date values as a local calendar day (avoids UTC off-by-one on YYYY-MM-DD).
@@ -1062,6 +1063,7 @@ export type InvoiceForCapacityGapSum = {
     outstanding_debt: number | null;
     customer_outstanding_debt: number | null;
     amount: number | null;
+    amount_without_vat?: number | null;
     limit_assessed_amount: number | null;
     capacity_gap_amount?: number | null;
     capacity_gap_amount_limit?: number | null;
@@ -1069,7 +1071,8 @@ export type InvoiceForCapacityGapSum = {
 
 /** Sum per-invoice gap; prefers stored fields, falls back to runtime compute. */
 export function sumInvoiceCapacityGapContributions(
-    invoices: InvoiceForCapacityGapSum[]
+    invoices: InvoiceForCapacityGapSum[],
+    amountsIncludeVat = true
 ): { total: number | null; hasMissingSnapshots: boolean } {
     if (invoices.length === 0) {
         return { total: 0, hasMissingSnapshots: false };
@@ -1091,10 +1094,18 @@ export function sumInvoiceCapacityGapContributions(
         if (hasStoredGaps && inv.capacity_gap_amount_limit != null) {
             return sum + Math.max(0, Number(inv.capacity_gap_amount_limit));
         }
+        if (hasStoredGaps && inv.capacity_gap_amount != null) {
+            return sum + Math.max(0, Number(inv.capacity_gap_amount));
+        }
+        const scaledOutstanding = applyOpenArVatBasis(
+            amountsIncludeVat,
+            invoiceOutstandingLeft(inv),
+            inv
+        );
         return (
             sum +
             computeInvoiceCapacityGapContribution({
-                outstandingLeft: invoiceOutstandingLeft(inv),
+                outstandingLeft: scaledOutstanding,
                 limitAssessedAmount: Number(inv.limit_assessed_amount ?? 0),
             })
         );
