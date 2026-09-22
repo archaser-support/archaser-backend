@@ -1047,6 +1047,20 @@ async function importInvoiceBatch(
             modified_at: now,
         };
 
+        if (invoice.amount_without_vat !== undefined) {
+            data.amount_without_vat = invoice.amount_without_vat;
+        }
+        if (invoice.vat_amount !== undefined) {
+            data.vat_amount = invoice.vat_amount;
+        }
+        if (invoice.customer_amount_without_vat !== undefined) {
+            data.customer_amount_without_vat =
+                invoice.customer_amount_without_vat;
+        }
+        if (invoice.customer_vat_amount !== undefined) {
+            data.customer_vat_amount = invoice.customer_vat_amount;
+        }
+
         if (existingId != null) {
             const existingStatus = existingStatusByNumber.get(invoiceNumber);
             // Promote Open (legacy import default) to Due; never overwrite Paid/Overdue/etc.

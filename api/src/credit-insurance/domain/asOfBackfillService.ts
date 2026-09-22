@@ -1,8 +1,12 @@
 import {
+    ACCOUNT_BACKGROUND_JOB_KIND,
     creditInsurancePrisma as prisma,
     resolveMepBreachStartDate,
     startOfTodayUtc,
 } from "@archaser/credit-insurance-domain";
+
+const CREDIT_ASOF_JOB_KIND =
+    ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL;
 
 export type AsOfBackfillStatusValue =
     | "idle"
@@ -92,9 +96,11 @@ function rowToStatus(row: BackfillRow): AsOfBackfillStatus {
 async function readRow(accountId: number): Promise<BackfillRow | null> {
     const rows = await prisma.$queryRaw<BackfillRow[]>`
         SELECT account_id, status, from_date, to_date, checkpoint_date,
-               days_total, days_done, last_error, started_at, updated_at
-        FROM "CreditAsOfBackfillJob"
+               units_total AS days_total, units_done AS days_done,
+               last_error, started_at, updated_at
+        FROM "AccountBackgroundJob"
         WHERE account_id = ${accountId}
+          AND job_kind = ${CREDIT_ASOF_JOB_KIND}
         LIMIT 1
     `;
     return rows[0] ?? null;
@@ -125,16 +131,16 @@ export async function startAsOfBackfill(
 
     if (!earliest) {
         await prisma.$executeRaw`
-            INSERT INTO "CreditAsOfBackfillJob" (
-                account_id, status, from_date, to_date, checkpoint_date,
-                days_total, days_done, last_error, requested_by, started_at, updated_at
+            INSERT INTO "AccountBackgroundJob" (
+                account_id, job_kind, status, from_date, to_date, checkpoint_date,
+                units_total, units_done, last_error, requested_by, started_at, updated_at
             ) VALUES (
-                ${accountId}, 'complete', NULL, NULL, NULL, 0, 0, NULL,
+                ${accountId}, ${CREDIT_ASOF_JOB_KIND}, 'complete', NULL, NULL, NULL, 0, 0, NULL,
                 ${requestedBy}, NOW(), NOW()
             )
-            ON CONFLICT (account_id) DO UPDATE SET
+            ON CONFLICT (account_id, job_kind) DO UPDATE SET
                 status = 'complete', from_date = NULL, to_date = NULL,
-                checkpoint_date = NULL, days_total = 0, days_done = 0,
+                checkpoint_date = NULL, units_total = 0, units_done = 0,
                 last_error = NULL, requested_by = ${requestedBy},
                 started_at = NOW(), updated_at = NOW()
         `;
@@ -144,17 +150,17 @@ export async function startAsOfBackfill(
     const fromDate = toDayStartUtc(earliest);
     const daysTotal = daysInclusive(fromDate, toDate);
     await prisma.$executeRaw`
-        INSERT INTO "CreditAsOfBackfillJob" (
-            account_id, status, from_date, to_date, checkpoint_date,
-            days_total, days_done, last_error, requested_by, started_at, updated_at
+        INSERT INTO "AccountBackgroundJob" (
+            account_id, job_kind, status, from_date, to_date, checkpoint_date,
+            units_total, units_done, last_error, requested_by, started_at, updated_at
         ) VALUES (
-            ${accountId}, 'running', ${fromDate}, ${toDate}, ${fromDate},
+            ${accountId}, ${CREDIT_ASOF_JOB_KIND}, 'running', ${fromDate}, ${toDate}, ${fromDate},
             ${daysTotal}, 0, NULL, ${requestedBy}, NOW(), NOW()
         )
-        ON CONFLICT (account_id) DO UPDATE SET
+        ON CONFLICT (account_id, job_kind) DO UPDATE SET
             status = 'running', from_date = ${fromDate}, to_date = ${toDate},
-            checkpoint_date = ${fromDate}, days_total = ${daysTotal},
-            days_done = 0, last_error = NULL, requested_by = ${requestedBy},
+            checkpoint_date = ${fromDate}, units_total = ${daysTotal},
+            units_done = 0, last_error = NULL, requested_by = ${requestedBy},
             started_at = NOW(), updated_at = NOW()
     `;
 
@@ -166,9 +172,11 @@ export async function pauseAsOfBackfill(
     accountId: number
 ): Promise<AsOfBackfillStatus> {
     await prisma.$executeRaw`
-        UPDATE "CreditAsOfBackfillJob"
+        UPDATE "AccountBackgroundJob"
         SET status = 'paused', updated_at = NOW()
-        WHERE account_id = ${accountId} AND status = 'running'
+        WHERE account_id = ${accountId}
+          AND job_kind = ${CREDIT_ASOF_JOB_KIND}
+          AND status = 'running'
     `;
     return getAsOfBackfillStatus(accountId);
 }
@@ -177,9 +185,11 @@ export async function resumeAsOfBackfill(
     accountId: number
 ): Promise<AsOfBackfillStatus> {
     const updated = await prisma.$executeRaw`
-        UPDATE "CreditAsOfBackfillJob"
+        UPDATE "AccountBackgroundJob"
         SET status = 'running', last_error = NULL, updated_at = NOW()
-        WHERE account_id = ${accountId} AND status = 'paused'
+        WHERE account_id = ${accountId}
+          AND job_kind = ${CREDIT_ASOF_JOB_KIND}
+          AND status = 'paused'
     `;
     if (updated > 0) {
         void launchRunner(accountId);
@@ -196,10 +206,11 @@ async function launchRunner(accountId: number): Promise<void> {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await prisma.$executeRaw`
-            UPDATE "CreditAsOfBackfillJob"
+            UPDATE "AccountBackgroundJob"
             SET status = 'failed', last_error = ${message.slice(0, 1000)},
                 updated_at = NOW()
             WHERE account_id = ${accountId}
+              AND job_kind = ${CREDIT_ASOF_JOB_KIND}
         `.catch(() => {});
     } finally {
         runningAccounts.delete(accountId);
@@ -229,9 +240,10 @@ async function runBackfillLoop(accountId: number): Promise<void> {
         const day = toDayStartUtc(row.checkpoint_date);
         if (day.getTime() > toDayStartUtc(row.to_date).getTime()) {
             await prisma.$executeRaw`
-                UPDATE "CreditAsOfBackfillJob"
-                SET status = 'complete', days_done = days_total, updated_at = NOW()
+                UPDATE "AccountBackgroundJob"
+                SET status = 'complete', units_done = units_total, updated_at = NOW()
                 WHERE account_id = ${accountId}
+                  AND job_kind = ${CREDIT_ASOF_JOB_KIND}
             `;
             return;
         }
@@ -247,10 +259,11 @@ async function runBackfillLoop(accountId: number): Promise<void> {
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             await prisma.$executeRaw`
-                UPDATE "CreditAsOfBackfillJob"
+                UPDATE "AccountBackgroundJob"
                 SET status = 'failed', last_error = ${message.slice(0, 1000)},
                     updated_at = NOW()
                 WHERE account_id = ${accountId}
+                  AND job_kind = ${CREDIT_ASOF_JOB_KIND}
             `;
             return;
         }
@@ -258,10 +271,11 @@ async function runBackfillLoop(accountId: number): Promise<void> {
         const nextDay = new Date(day);
         nextDay.setUTCDate(nextDay.getUTCDate() + 1);
         await prisma.$executeRaw`
-            UPDATE "CreditAsOfBackfillJob"
-            SET checkpoint_date = ${nextDay}, days_done = days_done + 1,
+            UPDATE "AccountBackgroundJob"
+            SET checkpoint_date = ${nextDay}, units_done = units_done + 1,
                 updated_at = NOW()
             WHERE account_id = ${accountId}
+              AND job_kind = ${CREDIT_ASOF_JOB_KIND}
         `;
     }
 }

@@ -2,6 +2,7 @@ import { invoice_status, Prisma } from "@prisma/client";
 
 import {
     allocateLiveCapacityGapWaterfall,
+    applyOpenArVatBasis,
     compareInvoicesForLiveCapacityGapWaterfall,
     creditInsurancePrisma as prisma,
     invoiceOutstandingInLimitCurrency,
@@ -19,6 +20,7 @@ type OpenInvoiceForRestamp = {
     customer_outstanding_debt: number | null;
     customer_currency: string | null;
     amount: number | null;
+    amount_without_vat: number | null;
     limit_assessed_amount: Prisma.Decimal | number | null;
 };
 
@@ -51,13 +53,25 @@ export async function restampCustomerOpenInvoiceLimitAssessment(
             customer_outstanding_debt: true,
             customer_currency: true,
             amount: true,
+            amount_without_vat: true,
             limit_assessed_amount: true,
+            account_id: true,
         },
-    })) as OpenInvoiceForRestamp[];
+    })) as Array<OpenInvoiceForRestamp & { account_id: number }>;
 
     if (openInvoices.length === 0) {
         return 0;
     }
+
+    const accountId = openInvoices[0]?.account_id;
+    const account =
+        accountId != null
+            ? await dbClient.account.findUnique({
+                  where: { id: accountId },
+                  select: { amounts_include_vat: true },
+              })
+            : null;
+    const amountsIncludeVat = account?.amounts_include_vat !== false;
 
     const insurance = (
         await loadEffectiveInsuranceForCustomers([customerId])
@@ -88,20 +102,38 @@ export async function restampCustomerOpenInvoiceLimitAssessment(
 
     const allocations = allocateLiveCapacityGapWaterfall({
         effectiveLimit,
-        openInvoices: sorted.map((inv) => ({
-            id: inv.id,
-            outstandingInLimitCurrency: Math.max(
-                0,
-                invoiceOutstandingInLimitCurrency({
-                    outstanding_debt: inv.outstanding_debt,
-                    customer_outstanding_debt: inv.customer_outstanding_debt,
-                    amount: inv.amount,
-                    customer_currency: inv.customer_currency,
-                    limit_assessed_currency: limitCurrency,
-                    accountCurrency: options?.accountCurrency ?? null,
-                })
-            ),
-        })),
+        openInvoices: sorted.map((inv) => {
+            const scaledOutstandingDebt = applyOpenArVatBasis(
+                amountsIncludeVat,
+                Number(inv.outstanding_debt ?? 0),
+                inv
+            );
+            const scaledCustomerOutstanding = applyOpenArVatBasis(
+                amountsIncludeVat,
+                Number(inv.customer_outstanding_debt ?? 0),
+                inv
+            );
+            return {
+                id: inv.id,
+                outstandingInLimitCurrency: Math.max(
+                    0,
+                    invoiceOutstandingInLimitCurrency({
+                        outstanding_debt:
+                            inv.outstanding_debt == null
+                                ? null
+                                : scaledOutstandingDebt,
+                        customer_outstanding_debt:
+                            inv.customer_outstanding_debt == null
+                                ? null
+                                : scaledCustomerOutstanding,
+                        amount: inv.amount,
+                        customer_currency: inv.customer_currency,
+                        limit_assessed_currency: limitCurrency,
+                        accountCurrency: options?.accountCurrency ?? null,
+                    })
+                ),
+            };
+        }),
     });
 
     let updated = 0;

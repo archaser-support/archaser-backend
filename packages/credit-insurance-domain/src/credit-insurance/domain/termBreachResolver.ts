@@ -1,3 +1,4 @@
+import { applyOpenArVatBasis } from "./openArVatBasis";
 import { prisma } from "../domain-db";
 import {
     hasActiveLinkedPolicy,
@@ -172,6 +173,7 @@ export type PortfolioTermsBreachInvoiceRow = {
     outstanding_debt: number | null;
     customer_outstanding_debt: number | null;
     amount?: number | null;
+    amount_without_vat?: number | null;
     reporting_breach: boolean;
     ctv_payment_term: boolean;
     ctv_customer_overdue_mep: boolean;
@@ -179,16 +181,27 @@ export type PortfolioTermsBreachInvoiceRow = {
     ctv_invoice_after_policy_end: boolean;
 };
 
-function lineOutstandingFromInvoiceRow(row: PortfolioTermsBreachInvoiceRow): number {
+function lineOutstandingFromInvoiceRow(
+    row: PortfolioTermsBreachInvoiceRow,
+    amountsIncludeVat = true
+): number {
     const debt = Number(row.outstanding_debt ?? 0);
-    if (debt !== 0) {
-        return Math.max(0, debt);
-    }
-    return Math.max(0, Number(row.customer_outstanding_debt ?? 0));
+    const gross =
+        debt !== 0
+            ? Math.max(0, debt)
+            : Math.max(0, Number(row.customer_outstanding_debt ?? 0));
+    return Math.max(
+        0,
+        applyOpenArVatBasis(amountsIncludeVat, gross, {
+            amount: row.amount ?? null,
+            amount_without_vat: row.amount_without_vat ?? null,
+        })
+    );
 }
 
 export function aggregatePortfolioTermsBreachFromInvoices(
-    invoices: PortfolioTermsBreachInvoiceRow[]
+    invoices: PortfolioTermsBreachInvoiceRow[],
+    amountsIncludeVat = true
 ): {
     invoiceCount: number;
     totalAmount: number;
@@ -204,7 +217,10 @@ export function aggregatePortfolioTermsBreachFromInvoices(
     };
 
     for (const invoice of invoices) {
-        totalAmount += lineOutstandingFromInvoiceRow(invoice);
+        totalAmount += lineOutstandingFromInvoiceRow(
+            invoice,
+            amountsIncludeVat
+        );
         if (invoice.reporting_breach) {
             countByReason.reportingBreach += 1;
         }

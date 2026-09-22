@@ -23,6 +23,10 @@ import {
     type EntityAmount,
 } from "./financial-dashboard.builder";
 import { followUpTimeWhere } from "./agents-follow-up-date-range";
+import {
+    applyOpenArVatBasis,
+    OPEN_AR_VAT_BASIS_LINE_SQL,
+} from "@archaser/credit-insurance-domain";
 
 const COLLECTION_ROLES = [
     "Collection_Agent",
@@ -132,25 +136,73 @@ export class SystemService {
         return account?.currency || "USD";
     }
 
+    private async accountAmountsIncludeVat(
+        accountId: number
+    ): Promise<boolean> {
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { amounts_include_vat: true },
+        });
+        return account?.amounts_include_vat !== false;
+    }
+
+    private scaleOutstandingDebt(
+        amountsIncludeVat: boolean,
+        inv: {
+            outstanding_debt?: number | null;
+            amount?: number | null;
+            amount_without_vat?: number | null;
+        }
+    ): number {
+        return applyOpenArVatBasis(
+            amountsIncludeVat,
+            Number(inv.outstanding_debt ?? 0),
+            inv
+        );
+    }
+
     private async sumOutstanding(
         accountId: number,
         extra: Record<string, unknown> = {}
     ): Promise<{ amount: number; count: number }> {
-        const where = {
-            account_id: accountId,
-            status: { in: [...OPEN_INVOICE_STATUSES] },
-            ...extra,
-        };
-        const [agg, count] = await Promise.all([
-            this.db.invoice.aggregate({
-                where,
-                _sum: { outstanding_debt: true },
-            }),
-            this.db.invoice.count({ where }),
-        ]);
+        const dueDate = extra.due_date as
+            | { gte?: Date; lte?: Date; lt?: Date }
+            | undefined;
+        const statusExtra = extra.status;
+        const statuses: string[] =
+            statusExtra &&
+            typeof statusExtra === "object" &&
+            statusExtra !== null &&
+            Array.isArray((statusExtra as { in?: unknown }).in)
+                ? ([...(statusExtra as { in: string[] }).in] as string[])
+                : statusExtra != null && typeof statusExtra === "string"
+                  ? [statusExtra]
+                  : [...OPEN_INVOICE_STATUSES];
+
+        const line = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
+        const dueGte = dueDate?.gte ?? null;
+        const dueLte = dueDate?.lte ?? null;
+        const dueLt = dueDate?.lt ?? null;
+        const statusList = Prisma.join(
+            statuses.map((status) => Prisma.sql`${status}`)
+        );
+
+        const rows = await this.db.$queryRaw<
+            Array<{ amount: number | null; count: number | null }>
+        >`
+            SELECT COALESCE(SUM(${line}), 0)::float AS amount,
+                   COUNT(*)::int AS count
+            FROM "Invoice" i
+            INNER JOIN "Account" a ON a.id = i.account_id
+            WHERE i.account_id = ${accountId}
+              AND i.status::text IN (${statusList})
+              AND (${dueGte}::timestamptz IS NULL OR i.due_date >= ${dueGte}::date)
+              AND (${dueLte}::timestamptz IS NULL OR i.due_date <= ${dueLte}::date)
+              AND (${dueLt}::timestamptz IS NULL OR i.due_date < ${dueLt}::date)
+        `;
         return {
-            amount: Number(agg._sum.outstanding_debt ?? 0),
-            count,
+            amount: Number(rows[0]?.amount ?? 0),
+            count: Number(rows[0]?.count ?? 0),
         };
     }
 
@@ -358,6 +410,8 @@ export class SystemService {
     private async buildAgingPortfolio(accountId: number) {
         const today = this.startOfUtcDay(new Date());
         const ranges = AGING_BUCKETS;
+        const amountsIncludeVat =
+            await this.accountAmountsIncludeVat(accountId);
 
         const overdueInvoices = await this.db.invoice.findMany({
             where: {
@@ -369,6 +423,8 @@ export class SystemService {
             select: {
                 customer_id: true,
                 outstanding_debt: true,
+                amount: true,
+                amount_without_vat: true,
                 due_date: true,
             },
             take: 20000,
@@ -391,7 +447,8 @@ export class SystemService {
                     .filter((id): id is number => id != null)
             );
             const amount = inRange.reduce(
-                (s, i) => s + Number(i.outstanding_debt ?? 0),
+                (s, i) =>
+                    s + this.scaleOutstandingDebt(amountsIncludeVat, i),
                 0
             );
             return {
@@ -422,19 +479,39 @@ export class SystemService {
         byCustomer: EntityAmount[];
         byBusinessUnit: EntityAmount[];
     }> {
-        const groups = await this.db.invoice.groupBy({
-            by: ["customer_id"],
+        const amountsIncludeVat =
+            await this.accountAmountsIncludeVat(accountId);
+        const invoices = await this.db.invoice.findMany({
             where: {
                 ...invoiceWhere,
                 account_id: accountId,
                 customer_id: { not: null },
             },
-            _sum: { outstanding_debt: true },
+            select: {
+                customer_id: true,
+                outstanding_debt: true,
+                amount: true,
+                amount_without_vat: true,
+            },
+            take: 50000,
         });
 
-        const customerIds = groups
-            .map((group) => group.customer_id)
-            .filter((id): id is number => id != null);
+        const amountByCustomer = new Map<number, number>();
+        for (const inv of invoices) {
+            if (inv.customer_id == null) {
+                continue;
+            }
+            const scaled = this.scaleOutstandingDebt(amountsIncludeVat, inv);
+            if (scaled <= 0) {
+                continue;
+            }
+            amountByCustomer.set(
+                inv.customer_id,
+                (amountByCustomer.get(inv.customer_id) ?? 0) + scaled
+            );
+        }
+
+        const customerIds = [...amountByCustomer.keys()];
         if (customerIds.length === 0) {
             return { byCustomer: [], byBusinessUnit: [] };
         }
@@ -453,17 +530,16 @@ export class SystemService {
         const customerEntries: Array<{ label: string; amount: number }> = [];
         const unitTotals = new Map<number, { label: string; amount: number }>();
 
-        for (const group of groups) {
-            const amount = Number(group._sum?.outstanding_debt ?? 0);
-            if (group.customer_id == null || amount <= 0) {
+        for (const [customerId, amount] of amountByCustomer) {
+            if (amount <= 0) {
                 continue;
             }
-            const customer = byId.get(group.customer_id);
+            const customer = byId.get(customerId);
             customerEntries.push({
                 label:
                     customer?.Person?.full_name ||
                     customer?.Company?.name ||
-                    `#${group.customer_id}`,
+                    `#${customerId}`,
                 amount,
             });
 
@@ -494,6 +570,8 @@ export class SystemService {
      */
     private async buildReceivablesMaturitySchedule(accountId: number) {
         const today = this.startOfUtcDay(new Date());
+        const amountsIncludeVat =
+            await this.accountAmountsIncludeVat(accountId);
 
         const upcoming = await this.db.invoice.findMany({
             where: {
@@ -505,6 +583,8 @@ export class SystemService {
             select: {
                 customer_id: true,
                 outstanding_debt: true,
+                amount: true,
+                amount_without_vat: true,
                 due_date: true,
             },
             take: 20000,
@@ -531,7 +611,9 @@ export class SystemService {
                 invoices: inRange.length,
                 accounts: customers.size,
                 amount: inRange.reduce(
-                    (sum, invoice) => sum + Number(invoice.outstanding_debt ?? 0),
+                    (sum, invoice) =>
+                        sum +
+                        this.scaleOutstandingDebt(amountsIncludeVat, invoice),
                     0
                 ),
             };
@@ -696,10 +778,7 @@ export class SystemService {
             activeCustomersChart,
             automatedPhaseSplit,
         ] = await Promise.all([
-            this.db.invoice.aggregate({
-                where: overdueWhere,
-                _sum: { outstanding_debt: true },
-            }),
+            this.sumOutstanding(accountId, { status: "Overdue" }),
             this.db.invoice.count({ where: overdueWhere }),
             this.db.invoice.groupBy({
                 by: ["customer_id"],
@@ -745,13 +824,7 @@ export class SystemService {
                     },
                 },
             }),
-            this.db.invoice.aggregate({
-                where: {
-                    account_id: accountId,
-                    status: "Under_Dispute",
-                },
-                _sum: { outstanding_debt: true },
-            }),
+            this.sumOutstanding(accountId, { status: "Under_Dispute" }),
             this.db.customerDispute.groupBy({
                 by: ["customer_id"],
                 where: {
@@ -782,7 +855,7 @@ export class SystemService {
 
         const response = {
             activeCustomers: overdueCustomerGroups.length,
-            overdueAmount: Number(overdueAgg._sum.outstanding_debt ?? 0),
+            overdueAmount: Number(overdueAgg.amount ?? 0),
             overdueInvoices,
             totalCollected: Number(collectedMtdAgg._sum.amount ?? 0),
             totalDue: totalDue.amount,
@@ -794,9 +867,7 @@ export class SystemService {
             collectionStats: categoryWidgets.collectionStats,
             categoryStats: [],
             disputeStats: {
-                totalDisputeAmount: Number(
-                    disputeAmountAgg._sum.outstanding_debt ?? 0
-                ),
+                totalDisputeAmount: Number(disputeAmountAgg.amount ?? 0),
                 uniqueCustomerCount: uniqueDisputeCustomers.length,
                 disputeInvoiceCount,
                 totalClosed: disputeClosed,
@@ -1004,23 +1075,62 @@ export class SystemService {
     }
 
     private async invoiceChartSummary(where: Record<string, unknown>) {
-        const [totalRecords, amountAgg] = await Promise.all([
+        const accountId = Number(where.account_id);
+        if (!Number.isFinite(accountId)) {
+            const [totalRecords, amountAgg] = await Promise.all([
+                this.db.invoice.count({ where }),
+                this.db.invoice.aggregate({
+                    where,
+                    _sum: {
+                        outstanding_debt: true,
+                        customer_outstanding_debt: true,
+                    },
+                }),
+            ]);
+            const outstanding = Number(amountAgg._sum.outstanding_debt ?? 0);
+            const customerOutstanding = Number(
+                amountAgg._sum.customer_outstanding_debt ?? 0
+            );
+            return {
+                totalRecords,
+                totalAmount: outstanding || customerOutstanding,
+            };
+        }
+
+        const amountsIncludeVat =
+            await this.accountAmountsIncludeVat(accountId);
+        const [totalRecords, invoices] = await Promise.all([
             this.db.invoice.count({ where }),
-            this.db.invoice.aggregate({
+            this.db.invoice.findMany({
                 where,
-                _sum: {
+                select: {
                     outstanding_debt: true,
                     customer_outstanding_debt: true,
+                    amount: true,
+                    amount_without_vat: true,
                 },
+                take: 50000,
             }),
         ]);
-        const outstanding = Number(amountAgg._sum.outstanding_debt ?? 0);
-        const customerOutstanding = Number(
-            amountAgg._sum.customer_outstanding_debt ?? 0
-        );
+        let totalAmount = 0;
+        for (const inv of invoices) {
+            const accountOutstanding = Number(inv.outstanding_debt ?? 0);
+            if (accountOutstanding !== 0) {
+                totalAmount += this.scaleOutstandingDebt(
+                    amountsIncludeVat,
+                    inv
+                );
+                continue;
+            }
+            totalAmount += applyOpenArVatBasis(
+                amountsIncludeVat,
+                Number(inv.customer_outstanding_debt ?? 0),
+                inv
+            );
+        }
         return {
             totalRecords,
-            totalAmount: outstanding || customerOutstanding,
+            totalAmount,
         };
     }
 
@@ -3436,17 +3546,11 @@ export class SystemService {
                 return { total_accounts: totalCustomers, currency };
             }
             case "amount": {
-                const overdue = await this.db.invoice.aggregate({
-                    where: {
-                        account_id: accountId,
-                        status: "Overdue",
-                    },
-                    _sum: { outstanding_debt: true },
+                const overdue = await this.sumOutstanding(accountId, {
+                    status: "Overdue",
                 });
                 return {
-                    total_overdue_amount: Number(
-                        overdue._sum.outstanding_debt ?? 0
-                    ),
+                    total_overdue_amount: overdue.amount,
                     currency,
                 };
             }

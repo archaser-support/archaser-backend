@@ -140,6 +140,10 @@ export {
     type PendingAsOfRewriteWindow,
 } from "./credit-insurance/domain/asOfRewriteQueue";
 export {
+    ACCOUNT_BACKGROUND_JOB_KIND,
+    type AccountBackgroundJobKind,
+} from "./credit-insurance/domain/accountBackgroundJob";
+export {
     __resetCreditAsOfBackfillRunnersForTests,
     countInclusiveUtcDays,
     CreditAsOfBackfillConflictError,
@@ -249,6 +253,27 @@ export {
     fetchCustomerHeaderOpenArSplitInAccountCurrency,
     resolveCustomerHeaderOpenArAmounts,
 } from "./credit-insurance/domain/openReceivableByCustomerCurrency";
+export {
+    applyOpenArVatBasis,
+    computeOpenArVatBasisContribution,
+    OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL,
+    OPEN_AR_VAT_BASIS_LINE_SQL,
+    type OpenArVatBasisInput,
+} from "./credit-insurance/domain/openArVatBasis";
+export {
+    accountVatBasisRefreshBullJobId,
+    enqueueAccountVatBasisRefresh,
+    getAccountVatBasisRefreshJobStatus,
+    listRunningAccountVatBasisRefreshAccountIds,
+    registerAccountVatBasisRefreshDispatch,
+    registerVatBasisRefreshBalances,
+    retryAccountVatBasisRefreshJob,
+    runAccountVatBasisRefreshJob,
+    startAccountVatBasisRefreshJob,
+    type AccountVatBasisRefreshJobView,
+    type AccountVatBasisRefreshStatus,
+    type VatBasisRefreshBalancesFn,
+} from "./credit-insurance/domain/accountVatBasisRefreshJob";
 export {
     isActiveTopUp,
     resolveEffectiveApprovedLimit,
