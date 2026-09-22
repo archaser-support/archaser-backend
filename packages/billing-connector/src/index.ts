@@ -16,6 +16,7 @@ export {
     SAMPLE_NOOP_EXTENSION_KEY,
     listRegisteredExtensionKeys,
     getRegisteredExtension,
+    getMatchingAccountExtensionKey,
     isRegisteredExtensionKey,
     resolveExtensionAttachmentInput,
     resolveAccountBillingExtension,

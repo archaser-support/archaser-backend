@@ -1,6 +1,6 @@
 # 01 — Account-matched extension label
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1, 2, 3, 4, 5, 6, 18
@@ -12,13 +12,13 @@ On Account → Billing settings → Integration (Schedule), remove the Extension
 
 ## Acceptance criteria
 
-- [ ] Extension key Autocomplete is gone from the Integration / Schedule UI
-- [ ] When `account_{accountId}` exists in the registry, a read-only label identifies it
-- [ ] When no match exists, UI shows no-account-extension copy (EN + HE)
-- [ ] Save attaches the matching key when previously unset
-- [ ] Save clears non-matching stored keys (including sample no-op)
-- [ ] Matched extension settings panel still renders when the key is attached
-- [ ] Matching English and Hebrew locale keys are added/updated together
+- [x] Extension key Autocomplete is gone from the Integration / Schedule UI
+- [x] When `account_{accountId}` exists in the registry, a read-only label identifies it
+- [x] When no match exists, UI shows no-account-extension copy (EN + HE)
+- [x] Save attaches the matching key when previously unset
+- [x] Save clears non-matching stored keys (including sample no-op)
+- [x] Matched extension settings panel still renders when the key is attached
+- [x] Matching English and Hebrew locale keys are added/updated together
 
 ## How to test
 
