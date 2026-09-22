@@ -11,9 +11,11 @@
 -- Run:
 --   npx prisma db execute --schema prisma/schema.prisma \
 --     --file scripts/database/apply-account-vat-include-exclude.sql
+--
+-- No BEGIN/COMMIT here: prisma db execute (and many clients) already wrap
+-- the file in a transaction; nested BEGIN causes
+-- "there is already a transaction in progress".
 -- ============================================================================
-
-BEGIN;
 
 -- ---------------------------------------------------------------------------
 -- 1) Account.amounts_include_vat (default include = true)
@@ -207,5 +209,3 @@ WHERE r.is_system = true
       'due_invoices',
       'overdue_invoices'
   );
-
-COMMIT;
