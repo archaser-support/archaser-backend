@@ -62,6 +62,10 @@ const INVOICE_AMOUNT_FIELDS = [
     "customer_amount",
     "base_amount",
     "invoice_amount",
+    "amount_without_vat",
+    "vat_amount",
+    "customer_amount_without_vat",
+    "customer_vat_amount",
 ] as const;
 
 const CURRENCY_FIELDS = ["currency", "customer_currency"] as const;

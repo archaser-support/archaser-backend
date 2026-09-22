@@ -12,6 +12,11 @@ import {
     resolveInvoiceLineOutstandingInAccountCurrency,
 } from "./openReceivableByCustomerCurrency";
 import {
+    applyOpenArVatBasis,
+    OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL,
+    OPEN_AR_VAT_BASIS_LINE_SQL,
+} from "./openArVatBasis";
+import {
     ACTIVE_CUSTOMER_POLICY_NESTED_SELECT,
     applyBusinessUnitFilterToInvoiceWhere,
     customerPolicyTextSearchOr,
@@ -88,12 +93,17 @@ function customerNameFromRow(
     return c.Person?.full_name || c.Company?.name || "—";
 }
 
-function lineOutstanding(row: {
-    outstanding_debt: number | null;
-    customer_outstanding_debt: number | null;
-    amount: number | null;
-}): number {
-    return invoiceOutstandingLeft(row);
+function lineOutstanding(
+    row: {
+        outstanding_debt: number | null;
+        customer_outstanding_debt: number | null;
+        amount: number | null;
+        amount_without_vat?: number | null;
+    },
+    amountsIncludeVat = true
+): number {
+    const gross = invoiceOutstandingLeft(row);
+    return Math.max(0, applyOpenArVatBasis(amountsIncludeVat, gross, row));
 }
 
 /** Invoice-summed capacity gap for one customer policy (null → use stored policy fallback). */
@@ -102,21 +112,33 @@ export async function sumCustomerPolicyInvoiceCapacityGap(
     customerId: number,
     policyId: number
 ): Promise<{ total: number | null; hasMissingSnapshots: boolean }> {
-    const invoices = (await (prisma.invoice.findMany as any)({
-        where: {
-            account_id: accountId,
-            customer_id: customerId,
-            policy_id: policyId,
-            status: { in: [invoice_status.Due, invoice_status.Overdue] },
-        },
-        select: {
-            outstanding_debt: true,
-            customer_outstanding_debt: true,
-            amount: true,
-            limit_assessed_amount: true,
-        },
-    })) as InvoiceForCapacityGapSum[];
-    return sumInvoiceCapacityGapContributions(invoices);
+    const [account, invoices] = await Promise.all([
+        prisma.account.findUnique({
+            where: { id: accountId },
+            select: { amounts_include_vat: true },
+        }),
+        (prisma.invoice.findMany as any)({
+            where: {
+                account_id: accountId,
+                customer_id: customerId,
+                policy_id: policyId,
+                status: { in: [invoice_status.Due, invoice_status.Overdue] },
+            },
+            select: {
+                outstanding_debt: true,
+                customer_outstanding_debt: true,
+                amount: true,
+                amount_without_vat: true,
+                limit_assessed_amount: true,
+                capacity_gap_amount: true,
+                capacity_gap_amount_limit: true,
+            },
+        }) as Promise<InvoiceForCapacityGapSum[]>,
+    ]);
+    return sumInvoiceCapacityGapContributions(
+        invoices,
+        account?.amounts_include_vat !== false
+    );
 }
 
 function totalArFromCustomerRow(c: {
@@ -411,13 +433,12 @@ export const invoiceTermsBreachWhere = (
     OR: TERMS_BREACH_OR,
 });
 
+/**
+ * Terms-breach / at-risk line outstanding under Account.amounts_include_vat.
+ * Requires invoice alias `i` and account alias `a` (JOIN "Account" a ON a.id = i.account_id).
+ */
 function termsBreachOutstandingLineSql(netOfCapacityGap: boolean): Prisma.Sql {
-    const outstanding = Prisma.sql`
-        CASE
-            WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-            ELSE COALESCE(i.customer_outstanding_debt, 0)
-        END
-    `;
+    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     if (!netOfCapacityGap) {
         return outstanding;
     }
@@ -427,12 +448,7 @@ function termsBreachOutstandingLineSql(netOfCapacityGap: boolean): Prisma.Sql {
 function termsBreachOutstandingLineSqlByCurrency(
     netOfCapacityGap: boolean
 ): Prisma.Sql {
-    const outstanding = Prisma.sql`
-        CASE
-            WHEN COALESCE(i.customer_outstanding_debt, 0) != 0 THEN i.customer_outstanding_debt
-            ELSE COALESCE(i.amount, 0)
-        END
-    `;
+    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL);
     if (!netOfCapacityGap) {
         return outstanding;
     }
@@ -462,6 +478,7 @@ export async function getCustomerTermsBreachOutstandingSum(
     const rows = await prisma.$queryRaw<{ t: number | null }[]>`
         SELECT COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
           AND i.status IN ('Due', 'Overdue')
@@ -552,6 +569,7 @@ export async function getCustomerTermsBreachOutstandingSumByCurrency(
     const rows = await prisma.$queryRaw<{ t: number | null }[]>`
         SELECT COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
           AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
@@ -600,14 +618,10 @@ export async function fetchCustomerAtRiskInvoiceInputs(
     options?: { policyId?: number }
 ): Promise<CustomerAtRiskInvoiceInput[]> {
     const policyId = options?.policyId;
+    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const rows = await prisma.$queryRaw<AtRiskInvoiceSqlRow[]>`
         SELECT
-          (
-            CASE
-              WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-              ELSE COALESCE(i.customer_outstanding_debt, 0)
-            END
-          )::float AS outstanding,
+          (${outstanding})::float AS outstanding,
           COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
           (
             i.reporting_breach = true
@@ -617,6 +631,7 @@ export async function fetchCustomerAtRiskInvoiceInputs(
             OR i.ctv_invoice_after_policy_end = true
           ) AS has_terms_breach
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
           AND i.status IN ('Due', 'Overdue')
@@ -645,14 +660,10 @@ export async function fetchCustomerAtRiskInvoiceInputsByCurrency(
         return [];
     }
     const policyId = options?.policyId;
+    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL);
     const rows = await prisma.$queryRaw<AtRiskInvoiceSqlRow[]>`
         SELECT
-          (
-            CASE
-              WHEN COALESCE(i.customer_outstanding_debt, 0) != 0 THEN i.customer_outstanding_debt
-              ELSE COALESCE(i.amount, 0)
-            END
-          )::float AS outstanding,
+          (${outstanding})::float AS outstanding,
           COALESCE(i.capacity_gap_amount_limit, 0)::float AS capacity_gap_amount,
           (
             i.reporting_breach = true
@@ -662,6 +673,7 @@ export async function fetchCustomerAtRiskInvoiceInputsByCurrency(
             OR i.ctv_invoice_after_policy_end = true
           ) AS has_terms_breach
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND i.customer_id = ${customerId}
           AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
@@ -697,15 +709,11 @@ export async function fetchAtRiskInvoiceInputsByCustomerMap(
         customerIds != null
             ? Prisma.sql`AND i.customer_id IN (${Prisma.join(customerIds)})`
             : Prisma.empty;
+    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const rows = await prisma.$queryRaw<AtRiskInvoiceByCustomerSqlRow[]>`
         SELECT
           i.customer_id,
-          (
-            CASE
-              WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-              ELSE COALESCE(i.customer_outstanding_debt, 0)
-            END
-          )::float AS outstanding,
+          (${outstanding})::float AS outstanding,
           COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
           (
             i.reporting_breach = true
@@ -715,6 +723,7 @@ export async function fetchAtRiskInvoiceInputsByCustomerMap(
             OR i.ctv_invoice_after_policy_end = true
           ) AS has_terms_breach
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND i.status IN ('Due', 'Overdue')
           AND i.amount >= 0
@@ -751,21 +760,15 @@ export async function fetchOpenReceivableByCustomerMap(
     accountId: number,
     policyId?: number
 ): Promise<Map<number, number>> {
+    const line = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const rows =
         policyId != null
             ? await prisma.$queryRaw<OpenArByCustomerRow[]>`
         SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS ar
+          COALESCE(SUM(${line}), 0)::float AS ar
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND c.account_id = ${accountId}
           AND c.collection_status IN ('Active', 'Inactive')
@@ -775,17 +778,10 @@ export async function fetchOpenReceivableByCustomerMap(
       `
             : await prisma.$queryRaw<OpenArByCustomerRow[]>`
         SELECT i.customer_id,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS ar
+          COALESCE(SUM(${line}), 0)::float AS ar
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND c.account_id = ${accountId}
           AND c.collection_status IN ('Active', 'Inactive')
@@ -854,6 +850,11 @@ async function fetchTermsBreachOutstandingByCustomerInAccountCurrency(
 ): Promise<Map<number, number>> {
     const accountCur = accountCurrency.trim().toUpperCase();
     const netOfGap = excludeCapacityGapInvoices === true;
+    const account = await prisma.account.findUnique({
+        where: { id: accountId },
+        select: { amounts_include_vat: true },
+    });
+    const amountsIncludeVat = account?.amounts_include_vat !== false;
     const invoices = await prisma.invoice.findMany({
         where: applyBusinessUnitFilterToInvoiceWhere(
             {
@@ -874,6 +875,7 @@ async function fetchTermsBreachOutstandingByCustomerInAccountCurrency(
             outstanding_debt: true,
             customer_outstanding_debt: true,
             amount: true,
+            amount_without_vat: true,
             customer_currency: true,
             capacity_gap_amount: true,
         },
@@ -908,7 +910,8 @@ async function fetchTermsBreachOutstandingByCustomerInAccountCurrency(
         let line = computeInvoiceLineOpenArInAccountCurrency(
             inv,
             accountCur,
-            converted
+            converted,
+            amountsIncludeVat
         );
         if (netOfGap) {
             const gap = Math.max(0, Number(inv.capacity_gap_amount ?? 0));
@@ -939,6 +942,7 @@ async function fetchTermsBreachOutstandingByCustomer(
           COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND c.account_id = ${accountId}
           AND c.collection_status IN ('Active', 'Inactive')
@@ -958,6 +962,7 @@ async function fetchTermsBreachOutstandingByCustomer(
         SELECT i.customer_id,
           COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
           AND i.status IN ('Due', 'Overdue')
           AND i.amount >= 0
@@ -1190,6 +1195,11 @@ async function aggregateTermsBreachForSummary(
     policyId: number | undefined,
     customerScope: Prisma.CustomerWhereInput
 ): Promise<TermsBreachSummaryAggRow[]> {
+    const account = await prisma.account.findUnique({
+        where: { id: accountId },
+        select: { amounts_include_vat: true },
+    });
+    const amountsIncludeVat = account?.amounts_include_vat !== false;
     const invoices = await prisma.invoice.findMany({
         where: applyBusinessUnitFilterToInvoiceWhere(
             {
@@ -1205,6 +1215,7 @@ async function aggregateTermsBreachForSummary(
             outstanding_debt: true,
             customer_outstanding_debt: true,
             amount: true,
+            amount_without_vat: true,
             reporting_breach: true,
             ctv_payment_term: true,
             ctv_customer_overdue_mep: true,
@@ -1221,7 +1232,7 @@ async function aggregateTermsBreachForSummary(
     let cntAfterPolicyEnd = 0;
 
     for (const inv of invoices) {
-        total += lineOutstanding(inv);
+        total += lineOutstanding(inv, amountsIncludeVat);
         if (inv.reporting_breach) cntReporting += 1;
         if (inv.ctv_payment_term) cntPaymentTerm += 1;
         if (inv.ctv_customer_overdue_mep) cntOverdueMep += 1;
@@ -1282,6 +1293,7 @@ export async function getCreditDashboardSummary(
     let limitWarnThresholdPct: number;
     let scoreValidityWarnDays: number;
     let limitExpirationWarnDays: number;
+    let amountsIncludeVat = true;
 
     if (options?.accountSettings) {
         accountCurrency = options.accountSettings.accountCurrency;
@@ -1292,6 +1304,11 @@ export async function getCreditDashboardSummary(
             options.accountSettings.creditScoreValidityWarningDays;
         limitExpirationWarnDays =
             options.accountSettings.customerLimitExpirationWarningDays;
+        const vatRow = await prisma.account.findUnique({
+            where: { id: accountId },
+            select: { amounts_include_vat: true },
+        });
+        amountsIncludeVat = vatRow?.amounts_include_vat !== false;
     } else {
         const accountRow = await (prisma.account.findUnique as any)({
             where: { id: accountId },
@@ -1301,6 +1318,7 @@ export async function getCreditDashboardSummary(
                 reporting_date_warning_days: true,
                 credit_limit_warning_threshold_pct: true,
                 credit_score_validity_warning_days: true,
+                amounts_include_vat: true,
             },
         }) as {
             currency: string | null;
@@ -1308,6 +1326,7 @@ export async function getCreditDashboardSummary(
             reporting_date_warning_days: number | null;
             credit_limit_warning_threshold_pct: number | null;
             credit_score_validity_warning_days: number | null;
+            amounts_include_vat: boolean | null;
         } | null;
 
         windowDays = Math.max(
@@ -1336,6 +1355,7 @@ export async function getCreditDashboardSummary(
             accountRow?.currency && String(accountRow.currency).trim()
                 ? String(accountRow.currency).trim().toUpperCase()
                 : "USD";
+        amountsIncludeVat = accountRow?.amounts_include_vat !== false;
     }
 
     const scopedPoliciesPromise: Promise<
@@ -1358,6 +1378,7 @@ export async function getCreditDashboardSummary(
               },
           });
 
+    const termsBreachVatLine = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const [
         customersRaw,
         scopedPolicies,
@@ -1405,15 +1426,7 @@ export async function getCreditDashboardSummary(
                         cnt_after_policy_end: number;
                     }[]
                 >`SELECT COUNT(*)::int AS c,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS t,
+          COALESCE(SUM(${termsBreachVatLine}), 0)::float AS t,
           COUNT(*) FILTER (WHERE i.reporting_breach = true)::int AS cnt_reporting,
           COUNT(*) FILTER (WHERE i.ctv_payment_term = true)::int AS cnt_payment_term,
           COUNT(*) FILTER (WHERE i.ctv_customer_overdue_mep = true)::int AS cnt_overdue_mep,
@@ -1421,6 +1434,7 @@ export async function getCreditDashboardSummary(
           COUNT(*) FILTER (WHERE i.ctv_invoice_after_policy_end = true)::int AS cnt_after_policy_end
      FROM "Invoice" i
     INNER JOIN "Customer" c ON c.id = i.customer_id
+    INNER JOIN "Account" a ON a.id = i.account_id
     WHERE i.account_id = ${accountId}
       AND c.account_id = ${accountId}
       AND c.collection_status IN ('Active', 'Inactive')
@@ -1445,21 +1459,14 @@ export async function getCreditDashboardSummary(
                         cnt_after_policy_end: number;
                     }[]
                 >`SELECT COUNT(*)::int AS c,
-          COALESCE(
-            SUM(
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ),
-            0
-          )::float AS t,
+          COALESCE(SUM(${termsBreachVatLine}), 0)::float AS t,
           COUNT(*) FILTER (WHERE i.reporting_breach = true)::int AS cnt_reporting,
           COUNT(*) FILTER (WHERE i.ctv_payment_term = true)::int AS cnt_payment_term,
           COUNT(*) FILTER (WHERE i.ctv_customer_overdue_mep = true)::int AS cnt_overdue_mep,
           COUNT(*) FILTER (WHERE i.ctv_outdated_dcl = true)::int AS cnt_outdated_dcl,
           COUNT(*) FILTER (WHERE i.ctv_invoice_after_policy_end = true)::int AS cnt_after_policy_end
      FROM "Invoice" i
+    INNER JOIN "Account" a ON a.id = i.account_id
     WHERE i.account_id = ${accountId}
       AND i.status IN ('Due', 'Overdue')
       AND i.amount >= 0
@@ -1483,6 +1490,7 @@ export async function getCreditDashboardSummary(
                 outstanding_debt: true,
                 customer_outstanding_debt: true,
                 amount: true,
+                amount_without_vat: true,
             },
         }),
     ]);
@@ -1932,6 +1940,7 @@ export async function getCreditDashboardSummary(
                 outstanding_debt: true,
                 customer_outstanding_debt: true,
                 amount: true,
+                amount_without_vat: true,
                 reporting_breach: true,
                 ctv_payment_term: true,
                 ctv_customer_overdue_mep: true,
@@ -1939,7 +1948,14 @@ export async function getCreditDashboardSummary(
                 ctv_invoice_after_policy_end: true,
             },
         });
-        const agg = aggregatePortfolioTermsBreachFromInvoices(filteredTermInvoices);
+        const accountVat = await prisma.account.findUnique({
+            where: { id: accountId },
+            select: { amounts_include_vat: true },
+        });
+        const agg = aggregatePortfolioTermsBreachFromInvoices(
+            filteredTermInvoices,
+            accountVat?.amounts_include_vat !== false
+        );
         termsCount = agg.invoiceCount;
         termsTotal = agg.totalAmount;
         countByReason = agg.countByReason;
@@ -2193,7 +2209,7 @@ export async function getCreditDashboardSummary(
             continue;
         }
         reportingCount += 1;
-        reportingTotal += invoiceOutstandingInAccountCurrency(inv);
+        reportingTotal += lineOutstanding(inv, amountsIncludeVat);
     }
 
     const zeroLimitWarningsCount = await prisma.customerPolicy.count({
@@ -2493,6 +2509,11 @@ async function buildCapacityGapCandidates(
     // derive row-level capacity gaps directly from open invoice snapshots.
     if (withGap.length === 0 && all.length > 0) {
         const accountCur = await getAccountDisplayCurrency(accountId);
+        const accountVat = await prisma.account.findUnique({
+            where: { id: accountId },
+            select: { amounts_include_vat: true },
+        });
+        const amountsIncludeVat = accountVat?.amounts_include_vat !== false;
         const scopedCustomerIds = all.map((c) => c.id);
         const invoiceRows = await (prisma.invoice.findMany as any)({
             where: {
@@ -2508,6 +2529,7 @@ async function buildCapacityGapCandidates(
                 outstanding_debt: true,
                 customer_outstanding_debt: true,
                 amount: true,
+                amount_without_vat: true,
                 limit_assessed_amount: true,
                 InsurancePolicy: { select: { currency: true } },
             },
@@ -2516,6 +2538,7 @@ async function buildCapacityGapCandidates(
             outstanding_debt: number | null;
             customer_outstanding_debt: number | null;
             amount: number | null;
+            amount_without_vat: number | null;
             limit_assessed_amount: number | null;
             InsurancePolicy: { currency: string | null } | null;
         }>;
@@ -2526,7 +2549,7 @@ async function buildCapacityGapCandidates(
                 continue;
             }
             const contribution = computeInvoiceCapacityGapContribution({
-                outstandingLeft: lineOutstanding(inv),
+                outstandingLeft: lineOutstanding(inv, amountsIncludeVat),
                 limitAssessedAmount: Number(inv.limit_assessed_amount ?? 0),
             });
             if (contribution <= 0) {
@@ -3203,6 +3226,11 @@ export async function getTermsBreachReport(
     options: CreditReportListOptions = {}
 ): Promise<{ total: number; rows: TermsBreachRow[] }> {
     const accountCur = await getAccountDisplayCurrency(accountId);
+    const accountVat = await prisma.account.findUnique({
+        where: { id: accountId },
+        select: { amounts_include_vat: true },
+    });
+    const amountsIncludeVat = accountVat?.amounts_include_vat !== false;
     let where: Prisma.InvoiceWhereInput = applyBusinessUnitFilterToInvoiceWhere(
         withInvoiceCustomerPolicyFilter(
             termsBreachReportWhere(accountId, options.query, {
@@ -3235,6 +3263,7 @@ export async function getTermsBreachReport(
                 outstanding_debt: true,
                 customer_outstanding_debt: true,
                 amount: true,
+                amount_without_vat: true,
                 customer_currency: true,
                 reporting_breach: true,
                 ctv_payment_term: true,
@@ -3272,7 +3301,8 @@ export async function getTermsBreachReport(
                 const invoiceAmountAccount =
                     await resolveInvoiceLineOutstandingInAccountCurrency(
                         inv,
-                        accountCur
+                        accountCur,
+                        amountsIncludeVat
                     );
                 return {
                     customerId: c.id,
@@ -3281,7 +3311,7 @@ export async function getTermsBreachReport(
                     invoiceId: inv.id,
                     invoiceNumber: inv.invoice_number ?? null,
                     termsBreachReasonCodes: codes,
-                    invoiceAmount: lineOutstanding(inv),
+                    invoiceAmount: lineOutstanding(inv, amountsIncludeVat),
                     invoiceAmountAccount,
                     currency: displayCurrencyForInvoiceRow(
                         inv,
@@ -3450,6 +3480,11 @@ export async function getReportingCountdownOpenReport(
     options: CreditReportListOptions = {}
 ): Promise<{ total: number; rows: ReportingCountdownRow[] }> {
     const accountCur = await getAccountDisplayCurrency(accountId);
+    const accountVat = await prisma.account.findUnique({
+        where: { id: accountId },
+        select: { amounts_include_vat: true },
+    });
+    const amountsIncludeVat = accountVat?.amounts_include_vat !== false;
     const w = Math.max(0, windowDays);
     let where: Prisma.InvoiceWhereInput = applyBusinessUnitFilterToInvoiceWhere(
         withInvoiceCustomerPolicyFilter(
@@ -3480,6 +3515,7 @@ export async function getReportingCountdownOpenReport(
                 outstanding_debt: true,
                 customer_outstanding_debt: true,
                 amount: true,
+                amount_without_vat: true,
                 customer_currency: true,
                 InsurancePolicy: {
                     select: {
@@ -3516,7 +3552,7 @@ export async function getReportingCountdownOpenReport(
                 customerName: customerNameFromRow(c as any),
                 invoiceId: inv.id,
                 invoiceNumber: inv.invoice_number ?? null,
-                invoiceAmount: lineOutstanding(inv),
+                invoiceAmount: lineOutstanding(inv, amountsIncludeVat),
                 currency: displayCurrencyForInvoiceRow(
                     inv,
                     c as any,
@@ -3667,6 +3703,11 @@ export async function getReportedInvoicesReport(
     options: CreditReportListOptions = {}
 ): Promise<{ total: number; rows: ReportedInvoicesRow[] }> {
     const accountCur = await getAccountDisplayCurrency(accountId);
+    const accountVat = await prisma.account.findUnique({
+        where: { id: accountId },
+        select: { amounts_include_vat: true },
+    });
+    const amountsIncludeVat = accountVat?.amounts_include_vat !== false;
     const where = applyBusinessUnitFilterToInvoiceWhere(
         withInvoiceCustomerPolicyFilter(
             reportedInvoicesSearchWhere(accountId, options.query),
@@ -3691,6 +3732,7 @@ export async function getReportedInvoicesReport(
                 outstanding_debt: true,
                 customer_outstanding_debt: true,
                 amount: true,
+                amount_without_vat: true,
                 customer_currency: true,
                 actual_reporting_date: true,
                 reporting_captured_at: true,
@@ -3729,7 +3771,7 @@ export async function getReportedInvoicesReport(
                 customerName: customerNameFromRow(c as any),
                 invoiceId: inv.id,
                 invoiceNumber: inv.invoice_number ?? null,
-                invoiceAmount: lineOutstanding(inv),
+                invoiceAmount: lineOutstanding(inv, amountsIncludeVat),
                 currency: displayCurrencyForInvoiceRow(
                     inv,
                     c as any,
