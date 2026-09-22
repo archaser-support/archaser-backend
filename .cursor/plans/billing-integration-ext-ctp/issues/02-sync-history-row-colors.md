@@ -1,6 +1,6 @@
 # 02 — Sync History failed/running row colors
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** —
 **User stories:** 7, 8, 9, 20
@@ -12,11 +12,11 @@ In the Billing Integration Sync History grid, tint the whole row for run-level s
 
 ## Acceptance criteria
 
-- [ ] Failed Sync History rows show a red/error-tinted row background
-- [ ] Running Sync History rows show a blue/info-tinted row background
-- [ ] Success, partial, and timeout rows keep default zebra striping
-- [ ] Coloring uses run-level `status` (not entity cell maturity)
-- [ ] No unrelated Sync History behavior changes
+- [x] Failed Sync History rows show a red/error-tinted row background
+- [x] Running Sync History rows show a blue/info-tinted row background
+- [x] Success, partial, and timeout rows keep default zebra striping
+- [x] Coloring uses run-level `status` (not entity cell maturity)
+- [x] No unrelated Sync History behavior changes
 
 ## How to test
 
