@@ -228,11 +228,13 @@ export interface BillingAccountExtension {
 }
 
 export type ExtensionAttachmentUpsertInput = {
-    /** Undefined = omit key change; null/"" = clear attachment. */
+    /** Account whose connector is being saved — drives account_{id} matching. */
+    accountId: number;
+    /** Undefined = omit key change; null/"" = treat as unset (may auto-attach). */
     extension_key?: string | null;
     /** Undefined = omit config change; object/null when clearing with key. */
     extension_config?: unknown;
-    /** Current key on the connector (for config-only updates). */
+    /** Current key on the connector (for attach vs keep-config). */
     existingKey: string | null;
 };
 
