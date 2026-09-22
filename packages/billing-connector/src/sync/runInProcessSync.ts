@@ -24,7 +24,7 @@ import {
     parseUseCachedImport,
     resolveImportCacheDay,
     rowsEnteringImport,
-    saveEntityImportCacheOrThrow,
+    trySaveEntityImportCache,
     type ImportCacheEntityType,
     type ImportCacheSyncMode,
 } from "../importCache";
@@ -1557,44 +1557,27 @@ async function runInProcessSyncBody(
                     options.mode === "incremental"
                         ? "INCREMENTAL"
                         : "BACKFILL";
-                try {
-                    await saveEntityImportCacheOrThrow(
-                        {
-                            accountId,
-                            connectorId: connector.id,
-                            provider: connector.provider,
-                            importType: entityType,
-                            syncMode: cacheSyncMode,
-                            cacheDay: resolveImportCacheDay(
-                                new Date(),
-                                connector.time_zone
-                            ),
-                            customerScope: normalizeImportCacheCustomerScope(
-                                runtimeCustomerNumber
-                            ),
-                            executionId: options.executionId ?? null,
-                            rows: rowsEnteringImport(forCache, importResult),
-                        },
-                        log
-                    );
-                } catch (cacheErr) {
-                    const message =
-                        cacheErr instanceof Error
-                            ? cacheErr.message
-                            : String(cacheErr);
-                    log(
-                        `Import cache save failed for ${entityType}: ${message}`
-                    );
-                    stats.importErrors += 1;
-                    return {
-                        ok: false,
+                // Best-effort: ERP import already succeeded. Mongo full / write
+                // errors must not fail the sync (cache is a reference only).
+                await trySaveEntityImportCache(
+                    {
                         accountId,
+                        connectorId: connector.id,
                         provider: connector.provider,
-                        stats,
-                        message: `Import cache save failed for ${entityType}: ${message}`,
-                        error: "IMPORT_CACHE_SAVE_FAILED",
-                    };
-                }
+                        importType: entityType,
+                        syncMode: cacheSyncMode,
+                        cacheDay: resolveImportCacheDay(
+                            new Date(),
+                            connector.time_zone
+                        ),
+                        customerScope: normalizeImportCacheCustomerScope(
+                            runtimeCustomerNumber
+                        ),
+                        executionId: options.executionId ?? null,
+                        rows: rowsEnteringImport(forCache, importResult),
+                    },
+                    log
+                );
             } catch (err) {
                 const message =
                     err instanceof Error ? err.message : "Unknown error";

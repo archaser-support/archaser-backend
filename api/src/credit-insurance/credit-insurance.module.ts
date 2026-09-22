@@ -3,6 +3,8 @@ import { registerArPostIngestOrchestrator } from "@archaser/billing-connector";
 import {
     bindCreditInsurancePrisma,
     registerCreditAsOfBackfillDispatch,
+    registerAccountVatBasisRefreshDispatch,
+    registerVatBasisRefreshBalances,
 } from "@archaser/credit-insurance-domain";
 import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
 import { AuthModule } from "../auth/auth.module";
@@ -21,6 +23,7 @@ import {
     InsuranceEntitiesService,
 } from "./insurance-entities.service";
 import { InsurancePoliciesActionsController } from "./insurance-policies-actions.controller";
+import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 
 const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
     createInsuranceEntityController(t)
@@ -63,5 +66,16 @@ export class CreditInsuranceModule implements OnModuleInit {
         registerCreditAsOfBackfillDispatch((accountId: number) =>
             this.cronQueue.enqueueCreditAsOfBackfill({ accountId })
         );
+        registerAccountVatBasisRefreshDispatch((accountId: number) =>
+            this.cronQueue.enqueueAccountVatBasisRefresh({ accountId })
+        );
+        const balances = async (
+            customerIds: number[],
+            prisma: Parameters<typeof recalculateCustomerAmounts>[1],
+            options?: Parameters<typeof recalculateCustomerAmounts>[2]
+        ) => {
+            await recalculateCustomerAmounts(customerIds, prisma, options);
+        };
+        registerVatBasisRefreshBalances(balances);
     }
 }

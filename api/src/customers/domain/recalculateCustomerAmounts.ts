@@ -10,8 +10,12 @@
  *   wrote timeline activities. A checkpoint restore re-inserts collection periods
  *   exactly as saved, so closing one here would deviate from the restored baseline.
  * - dashboard cache invalidation / log service — no Nest equivalent exists.
+ *
+ * Open-AR contributions respect Account.amounts_include_vat via
+ * {@link computeOpenArVatBasisContribution} (payments stay on with-VAT outstanding).
  */
 import { Prisma, PrismaClient, record_status } from "@prisma/client";
+import { computeOpenArVatBasisContribution } from "@archaser/credit-insurance-domain";
 
 export type RecalcDbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -96,9 +100,50 @@ const EMPTY_OVERDUE: CustomerOverdueAmounts = {
     customer_outstanding_amount2: 0,
 };
 
+type InvoiceRollupRow = {
+    customer_id: number;
+    outstanding_debt: number | null;
+    customer_outstanding_debt: number | null;
+    amount: number | null;
+    amount_without_vat: number | null;
+    customer_amount: number | null;
+    customer_amount_without_vat: number | null;
+    customer_currency: string | null;
+    amounts_include_vat: boolean | null;
+};
+
+function scaleAccountOutstanding(inv: InvoiceRollupRow): number {
+    const gross =
+        inv.outstanding_debt != null && inv.outstanding_debt !== 0
+            ? Number(inv.outstanding_debt)
+            : Number(inv.customer_outstanding_debt ?? 0);
+    return computeOpenArVatBasisContribution({
+        amountsIncludeVat: inv.amounts_include_vat !== false,
+        outstandingWithVat: gross,
+        amountWithoutVat: inv.amount_without_vat,
+        amountWithVat: inv.amount,
+    });
+}
+
+function scaleCustomerOutstanding(inv: InvoiceRollupRow): number {
+    const gross =
+        inv.customer_outstanding_debt != null &&
+        inv.customer_outstanding_debt !== 0
+            ? Number(inv.customer_outstanding_debt)
+            : Number(inv.outstanding_debt ?? 0);
+    return computeOpenArVatBasisContribution({
+        amountsIncludeVat: inv.amounts_include_vat !== false,
+        outstandingWithVat: gross,
+        amountWithoutVat:
+            inv.customer_amount_without_vat ?? inv.amount_without_vat,
+        amountWithVat: inv.customer_amount ?? inv.amount,
+    });
+}
+
 /**
  * Due totals per customer. Invoices with a zero balance on both the account and
  * customer currency columns are excluded; credits (negative amounts) are kept.
+ * When the account excludes VAT, each line is scaled via the shared basis helper.
  */
 export async function calculateDueAmountsForCustomers(
     customerIds: number[],
@@ -109,60 +154,68 @@ export async function calculateDueAmountsForCustomers(
         return result;
     }
 
-    const nonZeroBalance = {
-        customer_id: { in: customerIds },
-        status: "Due" as const,
-        OR: [
-            { outstanding_debt: { not: 0 } },
-            { customer_outstanding_debt: { not: 0 } },
-        ],
-    };
+    const invoices = await db.$queryRaw<InvoiceRollupRow[]>`
+        SELECT
+            i.customer_id,
+            i.outstanding_debt,
+            i.customer_outstanding_debt,
+            i.amount,
+            i.amount_without_vat,
+            i.customer_amount,
+            i.customer_amount_without_vat,
+            i.customer_currency,
+            a.amounts_include_vat
+        FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
+        WHERE i.customer_id = ANY(${customerIds}::int[])
+          AND i.status = 'Due'
+          AND (
+            COALESCE(i.outstanding_debt, 0) != 0
+            OR COALESCE(i.customer_outstanding_debt, 0) != 0
+          )
+    `;
 
-    const [totalGrouped, currencyGrouped, countGrouped] = await Promise.all([
-        db.invoice.groupBy({
-            by: ["customer_id"],
-            where: nonZeroBalance,
-            _sum: { outstanding_debt: true, customer_outstanding_debt: true },
-        }),
-        db.invoice.groupBy({
-            by: ["customer_id", "customer_currency"],
-            where: nonZeroBalance,
-            _sum: { outstanding_debt: true, customer_outstanding_debt: true },
-        }),
-        db.invoice.groupBy({
-            by: ["customer_id"],
-            where: nonZeroBalance,
-            _count: { id: true },
-        }),
-    ]);
+    const totals = new Map<
+        number,
+        {
+            total: number;
+            count: number;
+            byCurrency: Map<string, number>;
+        }
+    >();
+
+    for (const id of customerIds) {
+        totals.set(id, { total: 0, count: 0, byCurrency: new Map() });
+    }
+
+    for (const inv of invoices) {
+        const bucket = totals.get(inv.customer_id);
+        if (!bucket) {
+            continue;
+        }
+        const accountLine = scaleAccountOutstanding(inv);
+        const customerLine = scaleCustomerOutstanding(inv);
+        bucket.total += accountLine;
+        bucket.count += 1;
+        const currency = inv.customer_currency?.trim();
+        if (currency && customerLine > 0) {
+            bucket.byCurrency.set(
+                currency,
+                (bucket.byCurrency.get(currency) ?? 0) + customerLine
+            );
+        }
+    }
 
     for (const customerId of customerIds) {
-        const totalGroup = totalGrouped.find(
-            (g) => g.customer_id === customerId
-        );
-        const count =
-            countGrouped.find((g) => g.customer_id === customerId)?._count?.id ??
-            0;
-
-        // Per-currency amounts fall back to the customer-currency column when the
-        // account-currency column is zero.
-        const currencyAmounts = currencyGrouped
-            .filter((g) => g.customer_id === customerId)
-            .map((g) => {
-                const accountAmount = g._sum?.outstanding_debt ?? 0;
-                const customerAmount = g._sum?.customer_outstanding_debt ?? 0;
-                return {
-                    currency: g.customer_currency,
-                    amount: customerAmount !== 0 ? customerAmount : accountAmount,
-                };
-            })
-            .filter((g) => g.currency && g.amount > 0)
+        const bucket = totals.get(customerId)!;
+        const currencyAmounts = Array.from(bucket.byCurrency.entries())
+            .map(([currency, amount]) => ({ currency, amount }))
             .sort((a, b) => b.amount - a.amount);
 
         result.set(customerId, {
             ...EMPTY_DUE,
-            total_due_amount: totalGroup?._sum?.outstanding_debt ?? 0,
-            no_of_due_invoices: count,
+            total_due_amount: bucket.total,
+            no_of_due_invoices: bucket.count,
             customer_due_amount1: currencyAmounts[0]?.amount ?? 0,
             customer_due_currency1: currencyAmounts[0]?.currency || null,
             customer_due_amount2: currencyAmounts[1]?.amount ?? 0,
@@ -183,59 +236,78 @@ export async function calculateOutstandingAmountsForCustomers(
         return result;
     }
 
-    const overdue = {
-        customer_id: { in: customerIds },
-        status: "Overdue" as const,
-    };
+    const invoices = await db.$queryRaw<InvoiceRollupRow[]>`
+        SELECT
+            i.customer_id,
+            i.outstanding_debt,
+            i.customer_outstanding_debt,
+            i.amount,
+            i.amount_without_vat,
+            i.customer_amount,
+            i.customer_amount_without_vat,
+            i.customer_currency,
+            a.amounts_include_vat
+        FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
+        WHERE i.customer_id = ANY(${customerIds}::int[])
+          AND i.status = 'Overdue'
+    `;
 
-    const [totalGrouped, currencyGrouped, countGrouped] = await Promise.all([
-        db.invoice.groupBy({
-            by: ["customer_id"],
-            where: overdue,
-            _sum: { outstanding_debt: true, customer_outstanding_debt: true },
-        }),
-        db.invoice.groupBy({
-            by: ["customer_id", "customer_currency"],
-            where: overdue,
-            _sum: { customer_outstanding_debt: true },
-        }),
-        db.invoice.groupBy({
-            by: ["customer_id"],
-            where: overdue,
-            _count: { id: true },
-        }),
-    ]);
+    const totals = new Map<
+        number,
+        {
+            accountTotal: number;
+            customerTotal: number;
+            count: number;
+            byCurrency: Map<string, number>;
+        }
+    >();
+
+    for (const id of customerIds) {
+        totals.set(id, {
+            accountTotal: 0,
+            customerTotal: 0,
+            count: 0,
+            byCurrency: new Map(),
+        });
+    }
+
+    for (const inv of invoices) {
+        const bucket = totals.get(inv.customer_id);
+        if (!bucket) {
+            continue;
+        }
+        const accountLine = scaleAccountOutstanding(inv);
+        const customerLine = scaleCustomerOutstanding(inv);
+        bucket.accountTotal += accountLine;
+        bucket.customerTotal += customerLine;
+        bucket.count += 1;
+        const currency = inv.customer_currency?.trim();
+        if (currency) {
+            bucket.byCurrency.set(
+                currency,
+                (bucket.byCurrency.get(currency) ?? 0) + customerLine
+            );
+        }
+    }
 
     for (const customerId of customerIds) {
-        const totalGroup = totalGrouped.find(
-            (g) => g.customer_id === customerId
+        const bucket = totals.get(customerId)!;
+        const sortedCurrencies = Array.from(bucket.byCurrency.entries()).sort(
+            (a, b) => a[0].localeCompare(b[0])
         );
-        const accountAmount = totalGroup?._sum?.outstanding_debt ?? 0;
-        const customerAmount = totalGroup?._sum?.customer_outstanding_debt ?? 0;
-        const count =
-            countGrouped.find((g) => g.customer_id === customerId)?._count?.id ??
-            0;
-
-        // Overdue currency slots are ordered alphabetically, not by size.
-        const sortedGroups = currencyGrouped
-            .filter((g) => g.customer_id === customerId && !!g.customer_currency)
-            .sort((a, b) =>
-                (a.customer_currency ?? "").localeCompare(
-                    b.customer_currency ?? ""
-                )
-            );
 
         result.set(customerId, {
             ...EMPTY_OVERDUE,
             total_outstanding_amount:
-                accountAmount !== 0 ? accountAmount : customerAmount,
-            no_of_overdue_invoices: count,
-            customer_currency1: sortedGroups[0]?.customer_currency ?? null,
-            customer_outstanding_amount1:
-                sortedGroups[0]?._sum?.customer_outstanding_debt ?? 0,
-            customer_currency2: sortedGroups[1]?.customer_currency ?? null,
-            customer_outstanding_amount2:
-                sortedGroups[1]?._sum?.customer_outstanding_debt ?? 0,
+                bucket.accountTotal !== 0
+                    ? bucket.accountTotal
+                    : bucket.customerTotal,
+            no_of_overdue_invoices: bucket.count,
+            customer_currency1: sortedCurrencies[0]?.[0] ?? null,
+            customer_outstanding_amount1: sortedCurrencies[0]?.[1] ?? 0,
+            customer_currency2: sortedCurrencies[1]?.[0] ?? null,
+            customer_outstanding_amount2: sortedCurrencies[1]?.[1] ?? 0,
         });
     }
 
@@ -352,10 +424,7 @@ export async function recalculateCustomerAmounts(
         await applyCollectionPeriodAmounts(customerId, overdue, db);
 
         processed += 1;
-        if (
-            processed === total ||
-            processed % progressEvery === 0
-        ) {
+        if (processed === total || processed % progressEvery === 0) {
             options?.onProgress?.({ processed, total });
         }
     });

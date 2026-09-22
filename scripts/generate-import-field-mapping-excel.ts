@@ -292,20 +292,54 @@ const INVOICE_FIELDS: ImportFieldRow[] = [
     },
     {
         fieldKey: "base_amount",
-        displayName: "Amount in Base Currency",
+        displayName: "Amount with VAT in Base Currency",
         type: "number",
         mandatory: "Yes",
         description:
-            "Invoice amount in the account base currency (used for currency ratio calculation)",
+            "Invoice amount including VAT in the account base currency (used for currency ratio calculation)",
         example: "1500.00",
     },
     {
         fieldKey: "invoice_amount",
-        displayName: "Amount",
+        displayName: "Amount with VAT",
         type: "number",
         mandatory: "Yes",
-        description: "Total invoice amount in customer currency",
+        description: "Total invoice amount including VAT in customer currency",
         example: "1500.00",
+    },
+    {
+        fieldKey: "amount_without_vat",
+        displayName: "Amount without VAT (Base Currency)",
+        type: "number",
+        mandatory: "No",
+        description:
+            "Optional invoice amount excluding VAT in account base currency",
+        example: "1282.05",
+    },
+    {
+        fieldKey: "vat_amount",
+        displayName: "VAT Amount (Base Currency)",
+        type: "number",
+        mandatory: "No",
+        description: "Optional VAT amount in account base currency",
+        example: "217.95",
+    },
+    {
+        fieldKey: "customer_amount_without_vat",
+        displayName: "Amount without VAT",
+        type: "number",
+        mandatory: "No",
+        description:
+            "Optional invoice amount excluding VAT in customer currency",
+        example: "1282.05",
+    },
+    {
+        fieldKey: "customer_vat_amount",
+        displayName: "VAT Amount",
+        type: "number",
+        mandatory: "No",
+        description: "Optional VAT amount in customer currency",
+        example: "217.95",
     },
     {
         fieldKey: "customer_total_paid",

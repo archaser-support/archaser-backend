@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
 import { type DbClient, prisma as defaultPrisma } from "../domain-db";
+import { ACCOUNT_BACKGROUND_JOB_KIND } from "./accountBackgroundJob";
 import {
     deriveAsOfOpenInvoiceCandidatesFromLedger,
     loadAsOfOpenInvoiceLedgerRange,
@@ -25,6 +26,9 @@ import { takeCreditDashboardDailySnapshotsForAccount } from "./creditDashboardSn
 import { syncCustomerPolicyTrendSnapshotForAccount, seedPriorDayTrendCostCacheForReplay } from "./customerPolicyTrendService";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import { resolveReportingBreachStartDate } from "./resolveReportingBreachStartDate";
+
+const CREDIT_ASOF_JOB_KIND =
+    ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL;
 
 type PrismaClientLike = PrismaClient | DbClient;
 
@@ -227,14 +231,15 @@ async function loadJob(
             from_date,
             to_date,
             checkpoint_date,
-            days_total,
-            days_done,
+            units_total AS days_total,
+            units_done AS days_done,
             last_error,
             requested_by,
             started_at,
             updated_at
-        FROM "CreditAsOfBackfillJob"
+        FROM "AccountBackgroundJob"
         WHERE account_id = ${accountId}
+          AND job_kind = ${CREDIT_ASOF_JOB_KIND}
         LIMIT 1
     `;
     return rows[0] ?? null;
@@ -246,8 +251,9 @@ export async function listRunningCreditAsOfBackfillAccountIds(
     const db = options?.dbClient ?? defaultPrisma;
     const rows = await db.$queryRaw<{ account_id: number }[]>`
         SELECT account_id
-        FROM "CreditAsOfBackfillJob"
-        WHERE status = 'running'
+        FROM "AccountBackgroundJob"
+        WHERE job_kind = ${CREDIT_ASOF_JOB_KIND}
+          AND status = 'running'
     `;
     return rows.map((row) => Number(row.account_id));
 }
@@ -398,9 +404,10 @@ export async function runCreditAsOfBackfillJob(
         }
 
         await db.$executeRaw`
-            UPDATE "CreditAsOfBackfillJob"
+            UPDATE "AccountBackgroundJob"
             SET updated_at = ${now}
             WHERE account_id = ${accountId}
+              AND job_kind = ${CREDIT_ASOF_JOB_KIND}
               AND status = 'running'
         `;
 
@@ -504,12 +511,13 @@ export async function runCreditAsOfBackfillJob(
                 return;
             }
             await db.$executeRaw`
-                UPDATE "CreditAsOfBackfillJob"
+                UPDATE "AccountBackgroundJob"
                 SET checkpoint_date = ${pendingCheckpoint.checkpointDate},
-                    days_done = ${pendingCheckpoint.daysDone},
+                    units_done = ${pendingCheckpoint.daysDone},
                     last_error = NULL,
                     updated_at = ${new Date()}
                 WHERE account_id = ${accountId}
+                  AND job_kind = ${CREDIT_ASOF_JOB_KIND}
                   AND status = 'running'
             `;
             lastCheckpointFlushAt = Date.now();
@@ -576,11 +584,12 @@ export async function runCreditAsOfBackfillJob(
                     error instanceof Error ? error.message : String(error);
                 await flushCheckpoint(true);
                 await db.$executeRaw`
-                    UPDATE "CreditAsOfBackfillJob"
+                    UPDATE "AccountBackgroundJob"
                     SET status = 'failed',
                         last_error = ${message.slice(0, 1000)},
                         updated_at = ${now}
                     WHERE account_id = ${accountId}
+                      AND job_kind = ${CREDIT_ASOF_JOB_KIND}
                 `;
                 return getCreditAsOfBackfillJobStatus(accountId, {
                     dbClient: db,
@@ -595,12 +604,13 @@ export async function runCreditAsOfBackfillJob(
 
         await flushCheckpoint(true);
         await db.$executeRaw`
-            UPDATE "CreditAsOfBackfillJob"
+            UPDATE "AccountBackgroundJob"
             SET status = 'complete',
-                days_done = days_total,
+                units_done = units_total,
                 last_error = NULL,
                 updated_at = ${now}
             WHERE account_id = ${accountId}
+              AND job_kind = ${CREDIT_ASOF_JOB_KIND}
               AND status = 'running'
         `;
         return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
@@ -648,14 +658,15 @@ export async function startCreditAsOfBackfillJob(
     }
 
     await db.$executeRaw`
-        INSERT INTO "CreditAsOfBackfillJob" (
+        INSERT INTO "AccountBackgroundJob" (
             account_id,
+            job_kind,
             status,
             from_date,
             to_date,
             checkpoint_date,
-            days_total,
-            days_done,
+            units_total,
+            units_done,
             last_error,
             requested_by,
             started_at,
@@ -663,6 +674,7 @@ export async function startCreditAsOfBackfillJob(
             updated_at
         ) VALUES (
             ${accountId},
+            ${CREDIT_ASOF_JOB_KIND},
             'running',
             ${from},
             ${to},
@@ -675,13 +687,13 @@ export async function startCreditAsOfBackfillJob(
             ${now},
             ${now}
         )
-        ON CONFLICT (account_id) DO UPDATE SET
+        ON CONFLICT (account_id, job_kind) DO UPDATE SET
             status = 'running',
             from_date = EXCLUDED.from_date,
             to_date = EXCLUDED.to_date,
             checkpoint_date = NULL,
-            days_total = EXCLUDED.days_total,
-            days_done = 0,
+            units_total = EXCLUDED.units_total,
+            units_done = 0,
             last_error = NULL,
             requested_by = EXCLUDED.requested_by,
             started_at = EXCLUDED.started_at,
@@ -711,9 +723,10 @@ export async function pauseCreditAsOfBackfillJob(
         return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
     }
     await db.$executeRaw`
-        UPDATE "CreditAsOfBackfillJob"
+        UPDATE "AccountBackgroundJob"
         SET status = 'paused', updated_at = ${now}
         WHERE account_id = ${accountId}
+          AND job_kind = ${CREDIT_ASOF_JOB_KIND}
           AND status = 'running'
     `;
     return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
@@ -736,9 +749,10 @@ export async function retryCreditAsOfBackfillJob(
     }
     if (existing.status === "running") {
         await db.$executeRaw`
-            UPDATE "CreditAsOfBackfillJob"
+            UPDATE "AccountBackgroundJob"
             SET updated_at = ${now}
             WHERE account_id = ${accountId}
+              AND job_kind = ${CREDIT_ASOF_JOB_KIND}
               AND status = 'running'
         `;
         await dispatchRunner(accountId);
@@ -751,11 +765,12 @@ export async function retryCreditAsOfBackfillJob(
     }
 
     await db.$executeRaw`
-        UPDATE "CreditAsOfBackfillJob"
+        UPDATE "AccountBackgroundJob"
         SET status = 'running',
             last_error = NULL,
             updated_at = ${now}
         WHERE account_id = ${accountId}
+          AND job_kind = ${CREDIT_ASOF_JOB_KIND}
     `;
 
     if (options?.runInline) {

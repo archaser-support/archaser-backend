@@ -16,7 +16,7 @@ Orchestrator for the **ClickUp ↔ Git** workflow. Process contract: `docs/agent
 | PRD + durable ClickUp light sync | `/to-prd` |
 | Commit-able vertical slices | `/to-issues` |
 
-This skill owns: ClickUp intake (create only on explicit ask), status ladder, primary-repo branch from `staging`, planning commit/push, short path, interrupt/park, ready-PR phase, and post-merge status.
+This skill owns: ClickUp intake (create only on explicit ask), status ladder, primary-repo branch from `staging`, planning files under `.cursor/plans/` then **commit/push only with user approval**, short path, interrupt/park, ready-PR phase, and post-merge status.
 
 **Never** set ClickUp status to `done` automatically — humans set `done` after deploy or final acceptance.
 
@@ -62,8 +62,8 @@ Default when invoked for non-trivial work:
 2. Grill until shared understanding
 3. Branch from latest `staging` (primary repo only)
 4. `/to-prd` then `/to-issues` on that branch
-5. Commit + push planning under `.cursor/plans/`
-6. Durable summary + branch link + status `selected for development`
+5. Ask for approval, then commit + push planning under `.cursor/plans/` (**never** commit or push without an explicit user ask)
+6. Durable summary + branch link + status `selected for development` (only after a successful push)
 7. **Stop** — tell the user implementation can use fresh sessions per slice
 
 Later: coding → Ready-PR → Post-merge (see below). Do not force full implementation in the planning chat.
@@ -131,32 +131,41 @@ Same name will be used in every repo **when** that repo is later touched. **Do n
 2. Follow `/to-issues` to publish commit-able slices (no ClickUp MCP from that skill).
 3. Keep planning files only under `.cursor/plans/` — never treat `.scratch/` as the shippable home.
 
-### Phase 5 — Commit and push planning
+### Phase 5 — Commit and push planning (approval required)
 
-**Completion:** Planning files under `.cursor/plans/` for this feature are committed on the feature branch and pushed to origin.
+**Completion:** Planning files under `.cursor/plans/` for this feature are committed on the feature branch and pushed to origin — **only after the user explicitly approves**.
 
-1. Stage only the planning paths for this feature (PRD, `OVERVIEW.md`, `issues/*` as applicable).
-2. Commit with a clear message (planning for the ClickUp task / feature slug).
-3. Push the branch (`-u` if first push).
-4. Resolve the remote branch URL for ClickUp linking.
+1. After Phase 4, **stop and ask** whether to commit and push the planning files. Do **not** stage, commit, or push until the user says yes (e.g. “commit and push”, “approve”, “go ahead”).
+2. If the user declines or defers → leave files on the local feature branch; do **not** run Phase 6 remote-branch linking or set `selected for development`; summarize local paths and wait.
+3. On explicit approval only:
+   - Stage only the planning paths for this feature (PRD, `OVERVIEW.md`, `issues/*` as applicable).
+   - Commit with a clear message (planning for the ClickUp task / feature slug).
+   - Push the branch (`-u` if first push).
+   - Resolve the remote branch URL for ClickUp linking.
 
 Do **not** open a PR at this phase (no draft planning-only PR by default).
+
+Same rule for any later git publish from this skill (Ready-PR push included): **never** `git commit` or `git push` unless the user explicitly asked in that turn (or already approved the Ready-PR / push step).
 
 ### Phase 6 — ClickUp sync and status
 
 **Completion:** ClickUp has durable summary + How to test + branch link; status is `selected for development`.
 
-1. Ensure `/to-prd` light sync ran (or re-apply per **ClickUp durable summary policy** in the process doc) including the **branch URL** now that push succeeded.
-2. Set status to `selected for development`.
-3. Statuses used in this phase’s ladder only: `requirement definition` → `techincal design` → `selected for development`. Do **not** set `done`.
+1. Run only after Phase 5 push succeeded (or the user already pushed and asked to sync).
+2. Ensure `/to-prd` light sync ran (or re-apply per **ClickUp durable summary policy** in the process doc) including the **branch URL** now that push succeeded.
+3. Set status to `selected for development`.
+4. Statuses used in this phase’s ladder only: `requirement definition` → `techincal design` → `selected for development`. Do **not** set `done`.
 
-### Phase 7 — Stop (after planning push)
+If planning is still local-only, durable summary without a remote branch URL may still run when useful; **do not** set `selected for development` until the branch is on origin (unless the user explicitly overrides).
 
-**Completion:** Chat ends the planning-push run; user knows next steps.
+### Phase 7 — Stop (after planning)
 
-1. Summarize: task URL, branch name, primary repo, PRD path, slices overview/path, ClickUp status.
-2. Tell the user to implement in **fresh sessions per slice** (or continue coding on the same branch later) — do **not** force full implementation in this chat.
-3. When coding starts → set `in progress` (see **Coding status**). When ready for review → **Ready-PR phase**. Do not open the ready PR here unless the user explicitly asks.
+**Completion:** Chat ends the planning run; user knows next steps (including whether commit/push is still pending).
+
+1. Summarize: task URL, branch name, primary repo, PRD path, slices overview/path, ClickUp status, and whether planning is **local-only** or **pushed**.
+2. If still local-only, remind the user they can approve commit + push when ready.
+3. Tell the user to implement in **fresh sessions per slice** (or continue coding on the same branch later) — do **not** force full implementation in this chat.
+4. When coding starts → set `in progress` (see **Coding status**). When ready for review → **Ready-PR phase**. Do not open the ready PR here unless the user explicitly asks.
 
 ---
 
@@ -256,7 +265,8 @@ If invoked mid-flow (task exists, grill done, branch exists, coding done, etc.):
 - [ ] Branch name `{type}/{short-slug}-CU-{taskId}`; same name in every touched repo
 - [ ] Sibling repos not branched until touched
 - [ ] Full path: PRD + slices via `/to-prd` / `/to-issues` under `.cursor/plans/`
-- [ ] Planning committed and pushed; no default planning-only PR
+- [ ] **Never** `git commit` or `git push` without an explicit user ask in that turn (planning Phase 5 and Ready-PR included)
+- [ ] Planning committed and pushed only after approval; no default planning-only PR
 - [ ] Coding → `in progress`; Ready PR → merge `staging` then open ready-for-review PR(s) → `pending internal`; merge → `move to staging`
 - [ ] Multi-repo: link all PRs on the ClickUp task
 - [ ] Durable ClickUp summary — not full PRD mirror

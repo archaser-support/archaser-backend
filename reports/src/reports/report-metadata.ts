@@ -970,8 +970,22 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
                 {
                     name: "amount",
                     type: "number",
-                    label: "Amount",
+                    label: "Amount with VAT",
                     translationKey: "amount",
+                    translationNamespace: "invoices",
+                },
+                {
+                    name: "amount_without_vat",
+                    type: "number",
+                    label: "Amount without VAT",
+                    translationKey: "amount_without_vat",
+                    translationNamespace: "invoices",
+                },
+                {
+                    name: "vat_amount",
+                    type: "number",
+                    label: "VAT Amount",
+                    translationKey: "vat_amount",
                     translationNamespace: "invoices",
                 },
                 {
@@ -1216,8 +1230,22 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
                 {
                     name: "customer_amount",
                     type: "number",
-                    label: "Customer Amount",
+                    label: "Customer Amount with VAT",
                     translationKey: "customer_amount",
+                    translationNamespace: "invoices",
+                },
+                {
+                    name: "customer_amount_without_vat",
+                    type: "number",
+                    label: "Customer Amount without VAT",
+                    translationKey: "customer_amount_without_vat",
+                    translationNamespace: "invoices",
+                },
+                {
+                    name: "customer_vat_amount",
+                    type: "number",
+                    label: "Customer VAT Amount",
+                    translationKey: "customer_vat_amount",
                     translationNamespace: "invoices",
                 },
                 {

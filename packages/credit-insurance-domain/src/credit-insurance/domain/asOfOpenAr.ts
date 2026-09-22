@@ -14,6 +14,7 @@ import {
     type CustomerAtRiskInvoiceInput,
 } from "./invoiceInsuranceFields";
 import { computeInvoiceLineOpenArInAccountCurrency } from "./openReceivableByCustomerCurrency";
+import { applyOpenArVatBasis } from "./openArVatBasis";
 import { resolveInvoicePaidTolerance } from "./resolveInvoicePaidTolerance";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import { resolveReportingBreachStartDate } from "./resolveReportingBreachStartDate";
@@ -169,6 +170,15 @@ export type AsOfOpenInvoiceLine = {
     dueDate: Date | null;
     amount: number | null;
     customerAmount: number | null;
+    /** Invoice with-VAT triad: without-VAT side for account-currency basis. */
+    amountWithoutVat?: number | null;
+    /** Customer-currency without-VAT (falls back to amountWithoutVat). */
+    customerAmountWithoutVat?: number | null;
+    /**
+     * Account.amounts_include_vat. When false, open amounts are scaled after
+     * payment-ledger settlement (payments stay with-VAT).
+     */
+    amountsIncludeVat?: boolean;
     customerCurrency: string | null;
     paymentsOnOrBeforeAsOf: number;
     paymentsCustomerOnOrBeforeAsOf: number;
@@ -1079,14 +1089,31 @@ export function computeAsOfOpenInvoiceLine(
     if (line.liveClosed && !wasAsOfInvoiceOpenAt(line, asOfDate)) {
         return null;
     }
-    const openCustomerAmount = computeAsOfOpenCustomerAmount(line);
+    const openCustomerAmountGross = computeAsOfOpenCustomerAmount(line);
     // Billing Paid leftover is customer-currency ± tolerance. Within band →
     // closed for CPT AR, MEP overdue-block, and health (ignore doc-currency dust).
-    if (openCustomerAmount === 0) {
+    if (openCustomerAmountGross === 0) {
         return null;
     }
-    const openAmount = computeAsOfOpenAccountAmount(line);
-    if (openAmount === 0) {
+    const openAmountGross = computeAsOfOpenAccountAmount(line);
+    if (openAmountGross === 0) {
+        return null;
+    }
+    const amountsIncludeVat = line.amountsIncludeVat !== false;
+    const openAmount = applyOpenArVatBasis(amountsIncludeVat, openAmountGross, {
+        amount: line.amount,
+        amount_without_vat: line.amountWithoutVat,
+    });
+    const openCustomerAmount = applyOpenArVatBasis(
+        amountsIncludeVat,
+        openCustomerAmountGross,
+        {
+            amount: line.customerAmount ?? line.amount,
+            amount_without_vat:
+                line.customerAmountWithoutVat ?? line.amountWithoutVat,
+        }
+    );
+    if (openAmount === 0 && openCustomerAmount === 0) {
         return null;
     }
     return {
@@ -1118,6 +1145,9 @@ type AsOfInvoiceSqlRow = {
     due_date: Date | null;
     amount: number | null;
     customer_amount: number | null;
+    amount_without_vat: number | null;
+    customer_amount_without_vat: number | null;
+    amounts_include_vat: boolean | null;
     customer_currency: string | null;
     paid_amount: number | null;
     paid_customer_amount: number | null;
@@ -1146,6 +1176,15 @@ function mapSqlRow(
         amount: row.amount != null ? Number(row.amount) : null,
         customerAmount:
             row.customer_amount != null ? Number(row.customer_amount) : null,
+        amountWithoutVat:
+            row.amount_without_vat != null
+                ? Number(row.amount_without_vat)
+                : null,
+        customerAmountWithoutVat:
+            row.customer_amount_without_vat != null
+                ? Number(row.customer_amount_without_vat)
+                : null,
+        amountsIncludeVat: row.amounts_include_vat !== false,
         customerCurrency: row.customer_currency,
         paymentsOnOrBeforeAsOf: Number(row.paid_amount ?? 0),
         paymentsCustomerOnOrBeforeAsOf: Number(row.paid_customer_amount ?? 0),
@@ -1198,6 +1237,9 @@ export async function loadAsOfOpenInvoiceCandidates(
             i.due_date,
             i.amount,
             i.customer_amount,
+            i.amount_without_vat,
+            i.customer_amount_without_vat,
+            a.amounts_include_vat,
             i.customer_currency,
             COALESCE(p.paid_amount, 0)::float AS paid_amount,
             COALESCE(p.paid_customer_amount, 0)::float AS paid_customer_amount,
@@ -1213,6 +1255,7 @@ export async function loadAsOfOpenInvoiceCandidates(
             i.status::text AS status
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
+        INNER JOIN "Account" a ON a.id = i.account_id
         LEFT JOIN LATERAL (
             SELECT
                 SUM(
@@ -1541,7 +1584,8 @@ export async function buildAsOfAtRiskInvoiceInputsByCustomerInAccountCurrencyFro
             computeInvoiceLineOpenArInAccountCurrency(
                 synthetic,
                 accountCur,
-                converted
+                converted,
+                true
             )
         );
         const bucket = map.get(computed.customerId) ?? [];
@@ -1659,7 +1703,8 @@ export async function buildAsOfOpenReceivableByCustomerMapInAccountCurrencyFromL
         const lineAmount = computeInvoiceLineOpenArInAccountCurrency(
             synthetic,
             accountCur,
-            converted
+            converted,
+            true
         );
         map.set(
             computed.customerId,
@@ -1881,7 +1926,8 @@ export async function buildAsOfTermsBreachOutstandingByCustomerInAccountCurrency
         let lineAmount = computeInvoiceLineOpenArInAccountCurrency(
             synthetic,
             accountCur,
-            converted
+            converted,
+            true
         );
         if (options?.excludeCapacityGapInvoices) {
             lineAmount = Math.max(

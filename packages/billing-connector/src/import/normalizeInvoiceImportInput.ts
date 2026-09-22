@@ -8,6 +8,10 @@ export interface NormalizedInvoiceInput {
     due_date?: string;
     amount: number;
     customer_amount?: number;
+    amount_without_vat?: number;
+    vat_amount?: number;
+    customer_amount_without_vat?: number;
+    customer_vat_amount?: number;
     customer_currency?: string;
     total_paid?: number;
     customer_total_paid?: number;
@@ -24,6 +28,104 @@ function toOptionalNumber(value: unknown): number | undefined {
     const parsed =
         typeof value === "string" ? parseFloat(value) : Number(value);
     return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Priority (and similar) often map document-currency DISPRICE/VAT into the
+ * base-currency without-VAT / VAT fields. When base `amount` and document
+ * `customer_amount` differ (FX), promote those values to the customer-*
+ * fields and scale into account currency via the invoice FX ratio.
+ */
+export function alignInvoiceVatFieldsToCurrencies(input: {
+    amount: number;
+    customerAmount?: number;
+    amountWithoutVat?: number;
+    vatAmount?: number;
+    customerAmountWithoutVat?: number;
+    customerVatAmount?: number;
+}): {
+    amountWithoutVat?: number;
+    vatAmount?: number;
+    customerAmountWithoutVat?: number;
+    customerVatAmount?: number;
+} {
+    const amount = Number(input.amount);
+    const customerAmount =
+        input.customerAmount == null ? undefined : Number(input.customerAmount);
+    let amountWithoutVat = input.amountWithoutVat;
+    let vatAmount = input.vatAmount;
+    let customerAmountWithoutVat = input.customerAmountWithoutVat;
+    let customerVatAmount = input.customerVatAmount;
+
+    const isFx =
+        customerAmount != null &&
+        Number.isFinite(customerAmount) &&
+        customerAmount !== 0 &&
+        Number.isFinite(amount) &&
+        amount !== 0 &&
+        Math.abs(amount) !== Math.abs(customerAmount);
+
+    if (isFx && customerAmount != null) {
+        // Mis-mapped: document-currency DISPRICE/VAT landed on base fields.
+        if (
+            customerAmountWithoutVat === undefined &&
+            amountWithoutVat !== undefined
+        ) {
+            customerAmountWithoutVat = amountWithoutVat;
+            amountWithoutVat =
+                amount * (customerAmountWithoutVat / customerAmount);
+        } else if (
+            amountWithoutVat === undefined &&
+            customerAmountWithoutVat !== undefined
+        ) {
+            amountWithoutVat =
+                amount * (customerAmountWithoutVat / customerAmount);
+        }
+
+        if (customerVatAmount === undefined && vatAmount !== undefined) {
+            customerVatAmount = vatAmount;
+            vatAmount = amount * (customerVatAmount / customerAmount);
+        } else if (
+            vatAmount === undefined &&
+            customerVatAmount !== undefined
+        ) {
+            vatAmount = amount * (customerVatAmount / customerAmount);
+        }
+    } else {
+        // Same currency: mirror whichever side is present onto the other.
+        if (
+            amountWithoutVat === undefined &&
+            customerAmountWithoutVat !== undefined
+        ) {
+            amountWithoutVat = customerAmountWithoutVat;
+        } else if (
+            customerAmountWithoutVat === undefined &&
+            amountWithoutVat !== undefined
+        ) {
+            customerAmountWithoutVat = amountWithoutVat;
+        }
+        if (vatAmount === undefined && customerVatAmount !== undefined) {
+            vatAmount = customerVatAmount;
+        } else if (
+            customerVatAmount === undefined &&
+            vatAmount !== undefined
+        ) {
+            customerVatAmount = vatAmount;
+        }
+    }
+
+    return {
+        ...(amountWithoutVat !== undefined
+            ? { amountWithoutVat }
+            : {}),
+        ...(vatAmount !== undefined ? { vatAmount } : {}),
+        ...(customerAmountWithoutVat !== undefined
+            ? { customerAmountWithoutVat }
+            : {}),
+        ...(customerVatAmount !== undefined
+            ? { customerVatAmount }
+            : {}),
+    };
 }
 
 function toOptionalString(value: unknown): string | undefined {
@@ -69,6 +171,17 @@ export function normalizeInvoiceImportInput(
         toOptionalNumber(row.customer_amount) ??
         toOptionalNumber(row.invoice_amount);
 
+    const alignedVat = alignInvoiceVatFieldsToCurrencies({
+        amount,
+        customerAmount,
+        amountWithoutVat: toOptionalNumber(row.amount_without_vat),
+        vatAmount: toOptionalNumber(row.vat_amount),
+        customerAmountWithoutVat: toOptionalNumber(
+            row.customer_amount_without_vat
+        ),
+        customerVatAmount: toOptionalNumber(row.customer_vat_amount),
+    });
+
     const customerCurrency =
         toOptionalString(row.customer_currency) ??
         toOptionalString(row.currency);
@@ -83,6 +196,21 @@ export function normalizeInvoiceImportInput(
         customer_amount: customerAmount,
         customer_currency: customerCurrency,
         ...(customCode1 ? { custom_code1: customCode1 } : {}),
+        ...(alignedVat.amountWithoutVat !== undefined
+            ? { amount_without_vat: alignedVat.amountWithoutVat }
+            : {}),
+        ...(alignedVat.vatAmount !== undefined
+            ? { vat_amount: alignedVat.vatAmount }
+            : {}),
+        ...(alignedVat.customerAmountWithoutVat !== undefined
+            ? {
+                  customer_amount_without_vat:
+                      alignedVat.customerAmountWithoutVat,
+              }
+            : {}),
+        ...(alignedVat.customerVatAmount !== undefined
+            ? { customer_vat_amount: alignedVat.customerVatAmount }
+            : {}),
     };
 
     const dueDate = toErpDateOnly(row.due_date);
