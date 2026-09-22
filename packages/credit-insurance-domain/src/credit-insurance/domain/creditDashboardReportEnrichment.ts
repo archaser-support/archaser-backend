@@ -33,6 +33,7 @@ import {
     fetchBreachDilutionStreakPeriodCustomers,
 } from "./breachDilutionStreakPeriod";
 import type { CustomerBreachDilutionStreakRow } from "./shared/ctpBreachDilutionStreakMetrics";
+import { OPEN_AR_VAT_BASIS_LINE_SQL } from "./openArVatBasis";
 
 const CLOSED_INVOICE_STATUS: invoice_status[] = [
     InvoiceStatus.Paid,
@@ -236,28 +237,17 @@ async function fetchTermsBreachOutstandingByCustomer(
     policyId: number | undefined,
     excludeCapacityGapInvoices: boolean
 ): Promise<Map<number, number>> {
+    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const line = excludeCapacityGapInvoices
-        ? Prisma.sql`GREATEST(
-            0,
-            (
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ) - COALESCE(i.capacity_gap_amount, 0)
-          )`
-        : Prisma.sql`
-            CASE
-              WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-              ELSE COALESCE(i.customer_outstanding_debt, 0)
-            END
-          `;
+        ? Prisma.sql`GREATEST(0, (${outstanding}) - COALESCE(i.capacity_gap_amount, 0))`
+        : outstanding;
     const rows =
         policyId != null
             ? await prisma.$queryRaw<TermsBreachByCustomerRow[]>`
         SELECT i.customer_id,
           COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         INNER JOIN "Customer" c ON c.id = i.customer_id
         WHERE i.account_id = ${accountId}
           AND c.account_id = ${accountId}
@@ -278,6 +268,7 @@ async function fetchTermsBreachOutstandingByCustomer(
         SELECT i.customer_id,
           COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         INNER JOIN "Customer" c ON c.id = i.customer_id
         WHERE i.account_id = ${accountId}
           AND c.account_id = ${accountId}

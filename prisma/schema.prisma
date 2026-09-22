@@ -72,6 +72,8 @@ model Account {
   /// Staging-only Demo account: unlocks customer outreach and import_* catalog when true.
   is_demo                                Boolean                         @default(false)
   enable_customer_checkpoints            Boolean                         @default(false)
+  /// When true (default), open AR uses with-VAT outstanding. When false, scale by without/with VAT.
+  amounts_include_vat                    Boolean                         @default(true)
   /// AR coverage percentage threshold to include a customer in limit warnings (e.g. 95).
   credit_limit_warning_threshold_pct     Int?                            @db.SmallInt
   /// Number of days before credit-score validity expiry to include customer in warnings.
@@ -1030,24 +1032,30 @@ model ArPostIngestRetryQueue {
   @@index([status, account_id], map: "idx_ar_post_ingest_retry_status_account")
 }
 
-/// Admin-driven full-history as-of backfill job (one per target account).
-/// Drives a day-by-day recompute of CustomerPolicyTrend + CreditDashboardDailySnapshot
-/// with pause/resume via `status` and per-day `checkpoint_date`. Overnight drain
-/// skips accounts while status is `running` or `paused`.
-model CreditAsOfBackfillJob {
-  id                    BigInt    @id @default(autoincrement())
-  account_id            Int       @unique
-  status                String    @default("idle") @db.VarChar(16)
-  from_date             DateTime? @db.Date
-  to_date               DateTime? @db.Date
-  checkpoint_date       DateTime? @db.Date
-  days_total            Int       @default(0)
-  days_done             Int       @default(0)
-  last_error            String?
-  requested_by          String?   @db.VarChar(128)
-  started_at            DateTime? @db.Timestamptz(6)
-  created_at            DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime  @default(now()) @db.Timestamptz(6)
+/// Shared admin-driven account background job progress (one row per account + kind).
+/// Kinds: `credit_asof_backfill` (day walk + checkpoint), `vat_basis_refresh` (customer AR).
+/// `units_*` is days for as-of backfill and customers for VAT refresh. Mid-job VAT flip
+/// supersedes via `run_token`. Overnight drain skips accounts while as-of status is
+/// `running` or `paused`.
+model AccountBackgroundJob {
+  id              BigInt    @id @default(autoincrement())
+  account_id      Int
+  job_kind        String    @db.VarChar(64)
+  status          String    @default("idle") @db.VarChar(16)
+  units_total     Int       @default(0)
+  units_done      Int       @default(0)
+  from_date       DateTime? @db.Date
+  to_date         DateTime? @db.Date
+  checkpoint_date DateTime? @db.Date
+  run_token       String?   @db.VarChar(64)
+  last_error      String?
+  requested_by    String?   @db.VarChar(128)
+  started_at      DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([account_id, job_kind], map: "AccountBackgroundJob_account_kind_uniq")
+  @@index([status, job_kind], map: "AccountBackgroundJob_status_kind_idx")
 }
 
 /// Daily snapshot of insurance policy master data and rollups (policy config trends).
@@ -1660,7 +1668,12 @@ model Invoice {
   invoice_number                    String?
   /// Account-specific billing code from import (custom_code1).
   custom_code1                      String?                   @db.VarChar(10)
+  /// With-VAT amount in account currency (existing).
   amount                            Float?
+  /// Without-VAT amount in account currency (optional; omit → unscaled under exclude mode).
+  amount_without_vat                Float?
+  /// VAT amount in account currency (optional).
+  vat_amount                        Float?
   due_date                          DateTime?                 @db.Date
   oldest_overdue_invoice_date       DateTime?                 @db.Date
   total_paid                        Float?                    @default(0)
@@ -1674,7 +1687,12 @@ model Invoice {
   customer_number                   Int?
   account_id                        Int
   customer_total_paid               Float?
+  /// With-VAT amount in customer currency (existing).
   customer_amount                   Float?
+  /// Without-VAT amount in customer currency (optional; unpaid list triad).
+  customer_amount_without_vat       Float?
+  /// VAT amount in customer currency (optional; unpaid list triad).
+  customer_vat_amount               Float?
   customer_outstanding_debt         Float?
   customer_currency                 String?                   @db.VarChar
   credit_for_invoice_id             Int?

@@ -50,8 +50,8 @@ BEGIN
     IF to_regclass('public."CreditAsOfRewriteQueue"') IS NOT NULL THEN
         DELETE FROM "CreditAsOfRewriteQueue" WHERE account_id IN (SELECT id FROM target_accounts);
     END IF;
-    IF to_regclass('public."CreditAsOfBackfillJob"') IS NOT NULL THEN
-        DELETE FROM "CreditAsOfBackfillJob" WHERE account_id IN (SELECT id FROM target_accounts);
+    IF to_regclass('public."AccountBackgroundJob"') IS NOT NULL THEN
+        DELETE FROM "AccountBackgroundJob" WHERE account_id IN (SELECT id FROM target_accounts);
     END IF;
 END $del$;
 

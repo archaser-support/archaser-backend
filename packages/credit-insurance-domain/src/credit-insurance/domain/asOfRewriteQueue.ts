@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "../domain-db";
+import { ACCOUNT_BACKGROUND_JOB_KIND } from "./accountBackgroundJob";
 import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
 
 type PrismaClientLike = PrismaClient;
@@ -370,8 +371,9 @@ export async function drainAsOfRewriteQueue(options?: {
         );
         const blocking = await db.$queryRaw<Array<{ account_id: number }>>`
             SELECT account_id
-            FROM "CreditAsOfBackfillJob"
+            FROM "AccountBackgroundJob"
             WHERE account_id IN (${Prisma.join(accountIds)})
+              AND job_kind = ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL}
               AND status IN ('running', 'paused')
         `;
         blocking.forEach((row) => blockingAccountIds.add(row.account_id));

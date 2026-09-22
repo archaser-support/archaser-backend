@@ -26,8 +26,8 @@ When creating a task, always include a short **How to test** section unless the 
 3. Create the unique feature branch from latest **`staging`** (status moves to `techincal design` while grilling completes and the PRD is written — board spelling is intentional).
 4. Write the PRD at `.cursor/plans/<feature-slug>.prd.md`.
 5. Publish vertical slices at `.cursor/plans/<feature-slug>/issues/<NN>-<slug>.md` (plus `OVERVIEW.md` when there are 2+ slices).
-6. Commit and push planning files immediately on that branch.
-7. Update ClickUp with the **durable summary** (see below), branch link, and set status to `selected for development`.
+6. **Ask for approval**, then commit and push planning files on that branch — never commit or push without an explicit ask.
+7. After a successful push, update ClickUp with the **durable summary** (see below), branch link, and set status to `selected for development`.
 8. Implement on the **same** branch (status: `in progress` when coding starts).
 9. Merge latest `staging` into the feature branch (merge, not rebase/force-push by default).
 10. Open a **ready-for-review** PR per affected repo (status: `pending internal`). Do **not** open a draft PR for planning-only commits by default.
@@ -123,7 +123,7 @@ Commit and push planning files as soon as they are written so teammates can see 
 
 ## Skills
 
-- **`/start-work`:** orchestrator for the full ClickUp ↔ Git ladder — full path through planning push, **short path** (tiny fixes), **interrupt/park**, **coding** (`in progress`), **ready-PR** (merge latest `staging` into the feature branch, open ready-for-review PR per touched repo with How to test + ClickUp link, set `pending internal`, link all PRs), and **post-merge** `move to staging`. Skill: `.agents/skills/start-work/SKILL.md`. On a bare or incomplete `/start-work`, the agent **asks** (one question at a time) for missing path, ClickUp create vs existing URL, and other intake gaps — it does not guess or create a ClickUp task unprompted. Does not force implementation into one chat; does not open a planning-only PR by default; never auto-sets `done`. Discoverable via **`/ask-matt`** on the idea → ship flow.
+- **`/start-work`:** orchestrator for the full ClickUp ↔ Git ladder — full path through planning (PRD + slices; **commit/push only with explicit user approval**), **short path** (tiny fixes), **interrupt/park**, **coding** (`in progress`), **ready-PR** (merge latest `staging` into the feature branch, open ready-for-review PR per touched repo with How to test + ClickUp link, set `pending internal`, link all PRs), and **post-merge** `move to staging`. Skill: `.agents/skills/start-work/SKILL.md`. On a bare or incomplete `/start-work`, the agent **asks** (one question at a time) for missing path, ClickUp create vs existing URL, and other intake gaps — it does not guess or create a ClickUp task unprompted. Does not force implementation into one chat; does not open a planning-only PR by default; never auto-sets `done`. Discoverable via **`/ask-matt`** on the idea → ship flow.
 - **`/grill-me`:** relentless interview until shared understanding.
 - **`/to-prd`:** writes `.cursor/plans/<feature-slug>.prd.md`. When `clickup_task_url` is set (or the session/orchestrator already provides a task), it applies the **durable light sync** above (summary + How to test + branch link when known) — never a full PRD mirror, and never creates ClickUp tasks by itself.
 - **`/to-issues`:** publishes commit-able slices under `.cursor/plans/<feature-slug>/issues/` only; does not call ClickUp MCP.

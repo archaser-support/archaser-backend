@@ -1899,7 +1899,19 @@ export class BillingConnectorApiService {
     async listSyncHistory(user: JwtPayload, accountId: number) {
         await this.assertAccess(user, accountId, "view_billing_connector");
         try {
-            await sweepStaleRunning({ accountId, olderThanHours: 2 });
+            try {
+                await sweepStaleRunning({ accountId, olderThanHours: 2 });
+            } catch (sweepError) {
+                // Writes may be blocked (e.g. Atlas space quota). Still return
+                // history from reads so the UI keeps working.
+                const sweepMessage =
+                    sweepError instanceof Error
+                        ? sweepError.message
+                        : String(sweepError);
+                this.logger.warn(
+                    `[account ${accountId}] Stale RUNNING sweep skipped: ${sweepMessage}`
+                );
+            }
             const docs = await listExecutionsForAccount(accountId);
             return {
                 runs: docs.map(syncHistoryExecutionToSummary),

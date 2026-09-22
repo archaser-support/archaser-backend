@@ -843,24 +843,17 @@ export async function runStagedExtensionSync(
         }
     };
 
-    const flushEntityImportCacheOrAbort = async (
+    const flushEntityImportCacheBestEffort = async (
         entityType: ExtensionEntityType
-    ): Promise<RunStagedExtensionSyncResult | null> => {
+    ): Promise<void> => {
         try {
             await flushEntityImportCache(entityType);
-            return null;
         } catch (err) {
+            // Best-effort: ERP import already succeeded. Mongo full / write
+            // errors must not fail the sync (cache is a reference only).
             const message =
                 err instanceof Error ? err.message : String(err);
             log(`Import cache save failed for ${entityType}: ${message}`);
-            stats.importErrors += 1;
-            return finishWithBalances({
-                ok: false,
-                windows,
-                previewBatch,
-                stats: resultStats(),
-                error: `Import cache save failed for ${entityType}: ${message}`,
-            });
         }
     };
 
@@ -1826,12 +1819,7 @@ export async function runStagedExtensionSync(
 
             // Write once after the entity finishes all windows for this run.
             if (isLastWindow) {
-                const cacheAbort = await flushEntityImportCacheOrAbort(
-                    entityType
-                );
-                if (cacheAbort) {
-                    return cacheAbort;
-                }
+                await flushEntityImportCacheBestEffort(entityType);
             }
         }
 
