@@ -1,6 +1,6 @@
 # 03 — Post-sync CTP catch-up
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 10, 11, 12, 13, 14, 15, 16, 17, 19
@@ -12,14 +12,14 @@ After an accepted in-process billing sync finalizes as `SUCCESS` for `incrementa
 
 ## Acceptance criteria
 
-- [ ] SUCCESS incremental sync triggers CTP catch-up for that account
-- [ ] SUCCESS backfill sync triggers the same catch-up
-- [ ] Preview / FAILED / PARTIAL do not trigger catch-up
-- [ ] Catch-up fills missing days after the last successful CTP day through today, max 30 days
-- [ ] No prior CTP history → generate today only (within the cap)
-- [ ] CTP failure does not change sync run status from SUCCESS
-- [ ] CTP failure is logged; light warning only if easy reuse
-- [ ] Does not invoke full Generate / dashboard snapshot backfill
+- [x] SUCCESS incremental sync triggers CTP catch-up for that account
+- [x] SUCCESS backfill sync triggers the same catch-up
+- [x] Preview / FAILED / PARTIAL do not trigger catch-up
+- [x] Catch-up fills missing days after the last successful CTP day through today, max 30 days
+- [x] No prior CTP history → generate today only (within the cap)
+- [x] CTP failure does not change sync run status from SUCCESS
+- [x] CTP failure is logged; light warning only if easy reuse
+- [x] Does not invoke full Generate / dashboard snapshot backfill
 
 ## How to test
 

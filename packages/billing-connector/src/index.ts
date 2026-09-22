@@ -266,6 +266,7 @@ export {
     INSURANCE_TARGETS_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
     BALANCES_ENTITY_STATS_KEY,
+    CTP_ENTITY_STATS_KEY,
     clearRunningSync,
     completePreviewJob,
     getPreviewJob,
@@ -339,6 +340,16 @@ export {
     type DeferredArPostIngestStep,
     type PostIngestDrainScheduleResult,
 } from "./credit/arPostIngestHost";
+
+export {
+    POST_SYNC_CTP_CATCH_UP_MAX_DAYS,
+    maybeRunPostSyncCtpCatchUp,
+    resolveCtpCatchUpDates,
+    shouldRunPostSyncCtpCatchUp,
+    type CtpCatchUpStepState,
+    type MaybeRunPostSyncCtpCatchUpParams,
+    type SyncCustomerPolicyTrendSnapshotFn,
+} from "./credit/postSyncCtpCatchUp";
 
 export {
     syncDueBillingConnectors,
