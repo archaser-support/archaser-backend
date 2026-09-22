@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { formatMoneyIso } from "../format-money.util";
 import { getFieldOutputKey } from "../report.constants";
 import {
     getDirectFieldReferences,
@@ -221,15 +222,16 @@ function formatFormulaValue(
         if (formula.format === "currency") {
             return {
                 raw,
-                formatted: new Intl.NumberFormat(locale, {
-                    style: "currency",
-                    currency: resolveCurrency(
+                formatted: formatMoneyIso(
+                    raw,
+                    resolveCurrency(
                         row,
                         formula.currencySource,
                         fields,
                         accountCurrency
                     ),
-                }).format(raw),
+                    locale
+                ),
             };
         }
         if (formula.format === "percentage") {
