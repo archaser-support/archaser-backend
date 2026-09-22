@@ -1,3 +1,4 @@
+import type { PrismaClient } from "@prisma/client";
 import type { ConnectorEntityStatSlice } from "../sync/connectorSyncRuntime";
 
 export type ConnectorExecutionStatus =
@@ -96,4 +97,11 @@ export interface FinalizeAwaitingPostIngestDrainOptions {
     accountId?: number;
     /** When omitted, callers must pass countPendingForAccount. */
     countPendingForAccount?: (accountId: number) => Promise<number>;
+    /**
+     * When set, SUCCESS drain finalization runs post-sync CTP catch-up for the
+     * account (same hook as immediate SUCCESS finalize).
+     */
+    prisma?: PrismaClient;
+    onLog?: (message: string) => void;
+    onError?: (message: string) => void;
 }

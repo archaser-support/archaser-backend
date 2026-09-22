@@ -311,6 +311,9 @@ async function finalizeAcceptedInProcessSyncRun(params: {
                 `[account ${accountId}] Auth circuit breaker update failed: ${message}`
             );
         }
+        // CTP catch-up runs as a live `_ctp` tail step inside the sync while
+        // RUNNING (Backfill progress). Deferred post-ingest still runs it from
+        // finalizeAwaitingPostIngestDrainExecutions after SUCCESS.
     }
 }
 

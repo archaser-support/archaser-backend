@@ -24,6 +24,8 @@ export const PROCESS_OVERDUE_ENTITY_STATS_KEY = "_process_overdue";
 export const INSURANCE_TARGETS_ENTITY_STATS_KEY = "_insurance_targets";
 export const PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
 export const BALANCES_ENTITY_STATS_KEY = "_balances";
+/** Post-SUCCESS CTP day catch-up (Customer×Policy Trend); soft-fail only. */
+export const CTP_ENTITY_STATS_KEY = "_ctp";
 
 export const TAIL_STEP_KEYS = [
     PENDING_CLOSES_ENTITY_STATS_KEY,
@@ -32,6 +34,7 @@ export const TAIL_STEP_KEYS = [
     AR_REPLAY_ENTITY_STATS_KEY,
     LIVE_REFRESH_ENTITY_STATS_KEY,
     BALANCES_ENTITY_STATS_KEY,
+    CTP_ENTITY_STATS_KEY,
 ] as const;
 
 export type TailStepKey = (typeof TAIL_STEP_KEYS)[number];

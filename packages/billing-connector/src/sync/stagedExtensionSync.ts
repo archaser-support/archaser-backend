@@ -32,6 +32,7 @@ import {
 } from "../customers/recalculateCustomerAmountsHost";
 import {
     BALANCES_ENTITY_STATS_KEY,
+    CTP_ENTITY_STATS_KEY,
     MATURITY_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
@@ -42,6 +43,7 @@ import {
     type TailStepDetail,
     type TailStepState,
 } from "./connectorSyncRuntime";
+import { maybeRunPostSyncCtpCatchUp } from "../credit/postSyncCtpCatchUp";
 import {
     type ArPostIngestHostFn,
     type ConnectorPostIngestDeferOptions,
@@ -817,6 +819,20 @@ export async function runStagedExtensionSync(
                         ok: false,
                         error: finished.error ?? balances.error,
                     };
+                }
+                if (finished.ok && !finished.cancelled) {
+                    await maybeRunPostSyncCtpCatchUp({
+                        prisma: options.prisma,
+                        accountId: options.accountId,
+                        mode:
+                            cacheSyncMode === "INCREMENTAL"
+                                ? "incremental"
+                                : "backfill",
+                        status: "SUCCESS",
+                        onLog: log,
+                        onStep: (state) =>
+                            setTailStep(CTP_ENTITY_STATS_KEY, state),
+                    });
                 }
             }
             // Empty pulls still need status=done so the progress panel does not
