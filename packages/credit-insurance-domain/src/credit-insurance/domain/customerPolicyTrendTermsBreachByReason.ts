@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../domain-db";
 
 import type { TermsBreachCountByReason } from "./creditInsuranceDashboardService";
+import { applyOpenArVatBasis } from "./openArVatBasis";
 
 export type TermsBreachReasonSnapshot = {
     count: number;
@@ -52,12 +53,19 @@ function emptyBuckets(): Record<
 export function invoiceOutstandingInAccountCurrency(row: {
     outstanding_debt: number | null;
     customer_outstanding_debt: number | null;
+    amount?: number | null;
+    amount_without_vat?: number | null;
+    amountsIncludeVat?: boolean;
 }): number {
     const debt = Number(row.outstanding_debt ?? 0);
-    if (debt !== 0) {
-        return Math.max(0, debt);
-    }
-    return Math.max(0, Number(row.customer_outstanding_debt ?? 0));
+    const gross =
+        debt !== 0
+            ? Math.max(0, debt)
+            : Math.max(0, Number(row.customer_outstanding_debt ?? 0));
+    return Math.max(
+        0,
+        applyOpenArVatBasis(row.amountsIncludeVat !== false, gross, row)
+    );
 }
 
 export function invoiceMatchesPolicyScope(
@@ -225,38 +233,50 @@ export async function getCustomerTermsBreachByReasonSnapshot(
         };
     }
 
-    const rows = await prisma.invoice.findMany({
-        where: {
-            account_id: accountId,
-            customer_id: customerId,
-            status: { in: ["Due", "Overdue"] },
-            amount: { gte: 0 },
-            ...(policyId === null
-                ? { policy_id: null }
-                : { policy_id: policyId }),
-            OR: [
-                { reporting_breach: true },
-                { ctv_payment_term: true },
-                { ctv_customer_overdue_mep: true },
-                { ctv_outdated_dcl: true },
-                { ctv_invoice_after_policy_end: true },
-            ],
-        },
-        select: {
-            policy_id: true,
-            outstanding_debt: true,
-            customer_outstanding_debt: true,
-            reporting_breach: true,
-            ctv_payment_term: true,
-            ctv_customer_overdue_mep: true,
-            ctv_outdated_dcl: true,
-            ctv_invoice_after_policy_end: true,
-        },
-    });
+    const [account, rows] = await Promise.all([
+        prisma.account.findUnique({
+            where: { id: accountId },
+            select: { amounts_include_vat: true },
+        }),
+        prisma.invoice.findMany({
+            where: {
+                account_id: accountId,
+                customer_id: customerId,
+                status: { in: ["Due", "Overdue"] },
+                amount: { gte: 0 },
+                ...(policyId === null
+                    ? { policy_id: null }
+                    : { policy_id: policyId }),
+                OR: [
+                    { reporting_breach: true },
+                    { ctv_payment_term: true },
+                    { ctv_customer_overdue_mep: true },
+                    { ctv_outdated_dcl: true },
+                    { ctv_invoice_after_policy_end: true },
+                ],
+            },
+            select: {
+                policy_id: true,
+                outstanding_debt: true,
+                customer_outstanding_debt: true,
+                amount: true,
+                amount_without_vat: true,
+                reporting_breach: true,
+                ctv_payment_term: true,
+                ctv_customer_overdue_mep: true,
+                ctv_outdated_dcl: true,
+                ctv_invoice_after_policy_end: true,
+            },
+        }),
+    ]);
+    const amountsIncludeVat = account?.amounts_include_vat !== false;
 
     const invoices: TermsBreachInvoiceForAggregation[] = rows.map((row) => ({
         policyId: row.policy_id,
-        outstanding: invoiceOutstandingInAccountCurrency(row),
+        outstanding: invoiceOutstandingInAccountCurrency({
+            ...row,
+            amountsIncludeVat,
+        }),
         reportingBreach: row.reporting_breach,
         ctvPaymentTerm: row.ctv_payment_term,
         ctvCustomerOverdueMep: row.ctv_customer_overdue_mep,

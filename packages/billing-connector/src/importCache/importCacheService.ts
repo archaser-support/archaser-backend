@@ -267,8 +267,9 @@ export async function loadSameDayImportCachesForReplay(input: {
 }
 
 /**
- * Persist import cache after entity success. Throws on missing execution_id
- * or Mongo failure so callers can fail the entity and stop later entities.
+ * Persist import cache after entity success.
+ * Prefer {@link trySaveEntityImportCache} from sync runners so Mongo full /
+ * write failures do not fail an otherwise successful ERP import.
  */
 export async function saveEntityImportCacheOrThrow(
     input: Omit<SaveEntityImportCacheInput, "executionId"> & {
@@ -280,6 +281,26 @@ export async function saveEntityImportCacheOrThrow(
     onLog?.(
         `Import cache saved ${input.importType} ${input.syncMode} day=${input.cacheDay} scope=${input.customerScope} execution=${String(input.executionId)} rows=${result.rowCount} chunks=${result.chunkCount}`
     );
+}
+
+/**
+ * Best-effort import-cache write for sync runners. Logs and swallows failures
+ * (including Atlas space quota) so ERP import can complete without Mongo.
+ */
+export async function trySaveEntityImportCache(
+    input: Omit<SaveEntityImportCacheInput, "executionId"> & {
+        executionId: string | null | undefined;
+    },
+    onLog?: (message: string) => void
+): Promise<void> {
+    try {
+        await saveEntityImportCacheOrThrow(input, onLog);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        onLog?.(
+            `Import cache save failed for ${input.importType}: ${message}`
+        );
+    }
 }
 
 function encodePendingInvoiceCloseRows(
@@ -410,23 +431,4 @@ export async function loadPendingInvoiceCloseCache(
         allRows.push(...doc.rows);
     }
     return decodePendingInvoiceCloseRows(allRows);
-}
-
-/**
- * @deprecated Best-effort write — prefer saveEntityImportCacheOrThrow (D2/D3).
- */
-export async function trySaveEntityImportCache(
-    input: Omit<SaveEntityImportCacheInput, "executionId"> & {
-        executionId: string | null | undefined;
-    },
-    onLog?: (message: string) => void
-): Promise<void> {
-    try {
-        await saveEntityImportCacheOrThrow(input, onLog);
-    } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        onLog?.(
-            `Import cache save failed for ${input.importType}: ${message}`
-        );
-    }
 }

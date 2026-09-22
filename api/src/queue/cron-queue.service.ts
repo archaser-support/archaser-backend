@@ -2,16 +2,21 @@ import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
-import { creditAsOfBackfillBullJobId } from "@archaser/credit-insurance-domain";
+import { creditAsOfBackfillBullJobId, accountVatBasisRefreshBullJobId } from "@archaser/credit-insurance-domain";
 import {
     CRON_QUEUE_NAME,
     CREDIT_ASOF_BACKFILL_QUEUE_NAME,
+    ACCOUNT_VAT_BASIS_REFRESH_QUEUE_NAME,
     CronRunNowJobData,
     CronSyncSchedulesJobData,
     ArPostIngestDrainJobData,
     CreditAsOfBackfillJobData,
+    AccountVatBasisRefreshJobData,
 } from "./cron-queue.types";
-import { requeueCreditAsOfBackfillBullJob } from "./backfill-bull-job.util";
+import {
+    requeueAccountVatBasisRefreshBullJob,
+    requeueCreditAsOfBackfillBullJob,
+} from "./backfill-bull-job.util";
 
 @Injectable()
 export class CronQueueService implements OnModuleDestroy {
@@ -19,6 +24,7 @@ export class CronQueueService implements OnModuleDestroy {
     private connection: IORedis | null = null;
     private queue: Queue | null = null;
     private backfillQueue: Queue | null = null;
+    private vatBasisRefreshQueue: Queue | null = null;
 
     constructor(private readonly config: ConfigService) {}
 
@@ -70,6 +76,29 @@ export class CronQueueService implements OnModuleDestroy {
             `Credit as-of backfill queue ready (${CREDIT_ASOF_BACKFILL_QUEUE_NAME})`
         );
         return this.backfillQueue;
+    }
+
+    private ensureVatBasisRefreshQueue(): Queue | null {
+        if (!this.enabled()) {
+            return null;
+        }
+        const cronQueue = this.ensureQueue();
+        if (!cronQueue || !this.connection) {
+            return null;
+        }
+        if (this.vatBasisRefreshQueue) {
+            return this.vatBasisRefreshQueue;
+        }
+        this.vatBasisRefreshQueue = new Queue(
+            ACCOUNT_VAT_BASIS_REFRESH_QUEUE_NAME,
+            {
+                connection: this.connection,
+            }
+        );
+        this.logger.log(
+            `Account VAT basis refresh queue ready (${ACCOUNT_VAT_BASIS_REFRESH_QUEUE_NAME})`
+        );
+        return this.vatBasisRefreshQueue;
     }
 
     async enqueueRunNow(data: CronRunNowJobData): Promise<{
@@ -279,7 +308,52 @@ export class CronQueueService implements OnModuleDestroy {
         }
     }
 
+    async enqueueAccountVatBasisRefresh(
+        data: AccountVatBasisRefreshJobData
+    ): Promise<{ queued: boolean; jobId?: string; reason?: string }> {
+        const queue = this.ensureVatBasisRefreshQueue();
+        if (!queue) {
+            return {
+                queued: false,
+                reason: "BULLMQ_ENABLED=false or Redis unavailable",
+            };
+        }
+        const ready = await this.ensureRedisReady();
+        if (!ready.ok) {
+            this.logger.error(
+                `enqueueAccountVatBasisRefresh failed: ${ready.reason ?? "Redis not ready"}`
+            );
+            return {
+                queued: false,
+                reason: ready.reason ?? "Redis not ready",
+            };
+        }
+        try {
+            const jobId = accountVatBasisRefreshBullJobId(data.accountId);
+            const job = await requeueAccountVatBasisRefreshBullJob(
+                queue,
+                jobId,
+                data.accountId
+            );
+            this.logger.log(
+                `enqueueAccountVatBasisRefresh ok accountId=${data.accountId} jobId=${job.id} queue=${ACCOUNT_VAT_BASIS_REFRESH_QUEUE_NAME}`
+            );
+            return { queued: true, jobId: String(job.id) };
+        } catch (error) {
+            this.logger.error(
+                `enqueueAccountVatBasisRefresh failed: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+            return {
+                queued: false,
+                reason: error instanceof Error ? error.message : "enqueue failed",
+            };
+        }
+    }
+
     async onModuleDestroy() {
+        await this.vatBasisRefreshQueue?.close();
         await this.backfillQueue?.close();
         await this.queue?.close();
         await this.connection?.quit();

@@ -64,7 +64,7 @@ function createPrismaMock(options?: {
                     (account_id) => ({ account_id })
                 );
             }
-            if (sql.includes('"CreditAsOfBackfillJob"')) {
+            if (sql.includes('"AccountBackgroundJob"')) {
                 return [];
             }
             return [];

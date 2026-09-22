@@ -6,6 +6,7 @@ import {
     NotFoundException,
 } from "@nestjs/common";
 import { isStagingDeploy } from "@archaser/cron-jobs";
+import { enqueueAccountVatBasisRefresh } from "@archaser/credit-insurance-domain";
 import { appendIntIdStringContainsOr } from "@archaser/database";
 import * as bcrypt from "bcryptjs";
 import { randomBytes, randomUUID } from "crypto";
@@ -1390,6 +1391,7 @@ export class AccountAdminEntitiesService {
         delete data.created_by;
 
         let stripImportGrants = false;
+        let vatBasisChanged = false;
         if (entityType === "accounts") {
             const userInfo = await this.accessScope.resolveUserInfo(user);
             const canWriteDemo =
@@ -1404,6 +1406,16 @@ export class AccountAdminEntitiesService {
             }
             // has_file_import dropped; Demo gates import catalog on staging.
             delete data.has_file_import;
+
+            if (typeof body.amounts_include_vat === "boolean") {
+                data.amounts_include_vat = body.amounts_include_vat;
+                const previousInclude =
+                    existing.amounts_include_vat !== false;
+                vatBasisChanged =
+                    body.amounts_include_vat !== previousInclude;
+            } else {
+                delete data.amounts_include_vat;
+            }
         }
 
         const delegate = this.delegate(entityType);
@@ -1412,6 +1424,10 @@ export class AccountAdminEntitiesService {
 
         if (entityType === "accounts" && stripImportGrants) {
             await this.stripImportRoleGrants(Number(id));
+        }
+
+        if (entityType === "accounts" && vatBasisChanged) {
+            await enqueueAccountVatBasisRefresh(Number(id));
         }
 
         if (entityType === "users") {

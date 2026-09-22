@@ -469,7 +469,19 @@ export async function listDurableSyncHistoryRuns(
     onError?: (message: string) => void
 ): Promise<ConnectorSyncRunSummary[]> {
     try {
-        await sweepStaleRunning({ accountId, olderThanHours: 2 });
+        try {
+            await sweepStaleRunning({ accountId, olderThanHours: 2 });
+        } catch (sweepError) {
+            // Writes may be blocked (e.g. Atlas space quota). Still return
+            // history from reads so the UI keeps working.
+            const sweepMessage =
+                sweepError instanceof Error
+                    ? sweepError.message
+                    : String(sweepError);
+            onError?.(
+                `[account ${accountId}] Stale RUNNING sweep skipped: ${sweepMessage}`
+            );
+        }
         const docs = await listExecutionsForAccount(accountId);
         return docs.map(syncHistoryExecutionToSummary);
     } catch (error) {
