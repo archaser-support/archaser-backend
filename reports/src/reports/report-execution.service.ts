@@ -37,6 +37,11 @@ import { prepareDashboardActivityMarkers } from "./dashboard-activity-markers.ut
 import { prepareDashboardCreditCustomerMarkers } from "./dashboard-credit-customer-markers.util";
 import { prepareDashboardCreditInvoiceMarkers } from "./dashboard-credit-invoice-markers.util";
 import {
+    formatMoneyIso,
+    isMoneyFieldName,
+    isMoneyMetadataType,
+} from "./format-money.util";
+import {
     extractTrendCostReportField,
     isTrendCostBackedReportField,
     mergeLatestCustomerPolicyTrendSelect,
@@ -362,6 +367,14 @@ export class ReportExecutionService {
             const locale = body.locale || "en-US";
             const language = body.language || user.language || undefined;
             const timezone = body.timezone;
+            const topUpAccount = await this.db.account.findUnique({
+                where: { id: accountId },
+                select: { currency: true },
+            });
+            const topUpAccountCurrency =
+                (topUpAccount?.currency &&
+                    String(topUpAccount.currency).trim()) ||
+                "USD";
             const data = topUpResult.rows.map((row) =>
                 this.formatRow(
                     row,
@@ -370,12 +383,14 @@ export class ReportExecutionService {
                     locale,
                     creditDashboardPolicyId,
                     timezone,
-                    language
+                    language,
+                    topUpAccountCurrency
                 )
             );
             const formulaResult = applyFormulasToRows(data, config, {
                 locale,
                 metadataTables: REPORT_METADATA.tables,
+                accountCurrency: topUpAccountCurrency,
             });
             let topUpRows = formulaResult.rows;
             let topUpTotal = topUpResult.total;
@@ -539,7 +554,13 @@ export class ReportExecutionService {
         const locale = body.locale || "en-US";
         const language = body.language || user.language || undefined;
         const timezone = body.timezone;
-        const accountCurrency = "USD";
+        const accountRow = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { currency: true },
+        });
+        const accountCurrency =
+            (accountRow?.currency && String(accountRow.currency).trim()) ||
+            "USD";
 
         const data = needsGroupedExecution
             ? this.expandRowsForGrouping(
@@ -550,7 +571,8 @@ export class ReportExecutionService {
                   locale,
                   creditDashboardPolicyId,
                   timezone,
-                  language
+                  language,
+                  accountCurrency
               )
             : rows.map((row) =>
                   this.formatRow(
@@ -560,7 +582,8 @@ export class ReportExecutionService {
                       locale,
                       creditDashboardPolicyId,
                       timezone,
-                      language
+                      language,
+                      accountCurrency
                   )
               );
         const formulaResult = applyFormulasToRows(data, config, {
@@ -1553,7 +1576,8 @@ export class ReportExecutionService {
         locale: string,
         scopedPolicyId?: number,
         timezone?: string,
-        language?: string
+        language?: string,
+        accountCurrency: string = "USD"
     ): Record<string, unknown>[] {
         const relationMap = RELATION_FROM_PRIMARY[primaryTable] || {};
         const oneToMany = detectOneToManyRelationTable(
@@ -1574,7 +1598,8 @@ export class ReportExecutionService {
                     locale,
                     scopedPolicyId,
                     timezone,
-                    language
+                    language,
+                    accountCurrency
                 );
                 for (const field of aggregatedFields) {
                     if (field.table !== primaryTable) {
@@ -1607,7 +1632,8 @@ export class ReportExecutionService {
                     locale,
                     scopedPolicyId,
                     timezone,
-                    language
+                    language,
+                    accountCurrency
                 );
                 for (const field of aggregatedFields) {
                     if (field.table !== oneToMany.table) {
@@ -1637,7 +1663,8 @@ export class ReportExecutionService {
                     locale,
                     scopedPolicyId,
                     timezone,
-                    language
+                    language,
+                    accountCurrency
                 );
                 for (const field of aggregatedFields) {
                     if (field.table !== oneToMany.table) {
@@ -1670,7 +1697,8 @@ export class ReportExecutionService {
         locale: string,
         scopedPolicyId?: number,
         timezone?: string,
-        language?: string
+        language?: string,
+        accountCurrency: string = "USD"
     ): Record<string, unknown> {
         const out: Record<string, unknown> = {
             id: row.id,
@@ -1716,12 +1744,14 @@ export class ReportExecutionService {
                 }
             }
             out[key] = value ?? null;
+            const metadataType = resolveReportFieldType(f.table, f.field);
             out[`___formatted_${key}`] = this.formatValue(
                 value,
                 f.field,
                 locale,
                 timezone,
-                resolveReportFieldType(f.table, f.field)
+                metadataType,
+                this.resolveRowDisplayCurrency(row, out, accountCurrency)
             );
             // dispute_number aliases the primary key. Override display to
             // "DIS-000726" so formatValue's thousands separator does not turn
@@ -2196,12 +2226,40 @@ export class ReportExecutionService {
         return parent.Company?.name || null;
     }
 
+    private resolveRowDisplayCurrency(
+        row: Record<string, unknown>,
+        out: Record<string, unknown>,
+        accountCurrency: string
+    ): string {
+        const candidates = [
+            out.currency,
+            out["Invoice.currency"],
+            out["Invoice.customer_currency"],
+            out["InvoicePayment.currency"],
+            out["InvoicePayment.customer_currency"],
+            out["Customer.approved_limit_currency"],
+            out["CustomerCollectionPeriod.currency"],
+            row.currency,
+            row.customer_currency,
+            (row.Invoice as Record<string, unknown> | undefined)?.currency,
+            (row.Invoice as Record<string, unknown> | undefined)
+                ?.customer_currency,
+        ];
+        for (const candidate of candidates) {
+            if (candidate != null && String(candidate).trim() !== "") {
+                return String(candidate).trim().toUpperCase();
+            }
+        }
+        return accountCurrency;
+    }
+
     private formatValue(
         value: unknown,
         field: string,
         locale: string,
         timezone?: string,
-        metadataType?: string
+        metadataType?: string,
+        currency?: string
     ): string | null {
         if (value == null) {
             return null;
@@ -2222,6 +2280,18 @@ export class ReportExecutionService {
         }
         if (typeof value === "bigint") {
             return value.toString();
+        }
+        const asNumber =
+            typeof value === "number"
+                ? value
+                : Prisma.Decimal.isDecimal(value)
+                  ? value.toNumber()
+                  : null;
+        if (
+            asNumber != null &&
+            (isMoneyMetadataType(metadataType) || isMoneyFieldName(field))
+        ) {
+            return formatMoneyIso(asNumber, currency, locale);
         }
         if (typeof value === "number") {
             return this.formatNumber(value, locale);
