@@ -1,6 +1,6 @@
 # 01 — API: top-N Credit Protection cohorts on portfolio-health
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 10, 11, 12, 13, 14, 18, 19, 20
@@ -18,10 +18,10 @@ Default N in the payload is 10; options are 5 / 10 / 20. No chart series in this
 
 ## Acceptance criteria
 
-- [ ] `GET` portfolio-health Health section includes cohort metrics for 5, 10, and 20
-- [ ] Ranking uses mean daily total receivables and respects page filters (date, policy, BU scope, include-no-policy rules)
-- [ ] CPL and share % match the PRD aggregation rules; fewer-than-N uses available customers
-- [ ] Payload supports local UI switching without a second request for N
+- [x] `GET` portfolio-health Health section includes cohort metrics for 5, 10, and 20
+- [x] Ranking uses mean daily total receivables and respects page filters (date, policy, BU scope, include-no-policy rules)
+- [x] CPL and share % match the PRD aggregation rules; fewer-than-N uses available customers
+- [x] Payload supports local UI switching without a second request for N
 
 ## How to test
 
