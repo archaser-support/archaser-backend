@@ -89,6 +89,42 @@ export type PortfolioHealthMonthlyPoint = {
     atRiskExposure: number;
 };
 
+/** Discrete top-N cohort sizes for Health Credit Protection Level card. */
+export const PORTFOLIO_HEALTH_TOP_N_OPTIONS = [5, 10, 20] as const;
+export type PortfolioHealthTopNOption =
+    (typeof PORTFOLIO_HEALTH_TOP_N_OPTIONS)[number];
+export const PORTFOLIO_HEALTH_TOP_N_DEFAULT = 10 as const;
+export const PORTFOLIO_HEALTH_TOP_N_RANK_LIMIT = 20 as const;
+
+export type PortfolioTopCustomerCreditProtectionCohort = {
+    nRequested: number;
+    nActual: number;
+    creditProtectionLevel: number;
+    totalReceivables: number;
+    totalReceivablesSharePct: number;
+    compliantExposure: number;
+    compliantExposureSharePct: number;
+    atRiskExposure: number;
+    atRiskExposureSharePct: number;
+};
+
+export type PortfolioTopCustomerCreditProtectionSection = {
+    defaultN: typeof PORTFOLIO_HEALTH_TOP_N_DEFAULT;
+    options: typeof PORTFOLIO_HEALTH_TOP_N_OPTIONS;
+    cohorts: Record<
+        PortfolioHealthTopNOption,
+        PortfolioTopCustomerCreditProtectionCohort
+    >;
+};
+
+/** Per-customer mean daily CPT amounts used for top-N Credit Protection ranking. */
+export type PortfolioTopCustomerPeriodMeans = {
+    customerId: number;
+    totalReceivables: number;
+    compliantExposure: number;
+    atRiskExposure: number;
+};
+
 export type PortfolioHealthSection = {
     seriesA: PortfolioHealthSeriesMetrics;
     seriesB: PortfolioHealthSeriesMetrics;
@@ -104,6 +140,11 @@ export type PortfolioHealthSection = {
     exposureReconciliation: PortfolioExposureReconciliationSection | null;
     /** Breach dilution + clean-streak (Bucket 1 KPIs #11 / #12). */
     breachDilutionStreak: PortfolioBreachDilutionStreakSection | null;
+    /**
+     * Precomputed top-N Credit Protection cohorts (N ∈ {5,10,20}) for local
+     * UI switching without a second request.
+     */
+    topCustomerCreditProtection: PortfolioTopCustomerCreditProtectionSection;
 };
 
 export type PortfolioNegativeCostPreviewEntry = {
@@ -704,7 +745,8 @@ export function buildPortfolioHealthSection(
     overLimitGap: PortfolioOverLimitGapSection | null = null,
     staleSlopeVolatility: PortfolioStaleSlopeVolatilitySection | null = null,
     exposureReconciliation: PortfolioExposureReconciliationSection | null = null,
-    breachDilutionStreak: PortfolioBreachDilutionStreakSection | null = null
+    breachDilutionStreak: PortfolioBreachDilutionStreakSection | null = null,
+    topCustomerCreditProtection: PortfolioTopCustomerCreditProtectionSection = emptyTopCustomerCreditProtectionSection()
 ): PortfolioHealthSection {
     return {
         seriesA: computePortfolioHealthSeriesMetrics(dailyA),
@@ -717,7 +759,135 @@ export function buildPortfolioHealthSection(
         staleSlopeVolatility,
         exposureReconciliation,
         breachDilutionStreak,
+        topCustomerCreditProtection,
     };
+}
+
+/** Share of portfolio (0–100). Zero when the portfolio denominator is ≤ 0. */
+export function computePortfolioSharePct(
+    cohortAmount: number,
+    portfolioAmount: number
+): number {
+    if (
+        !(portfolioAmount > 0) ||
+        !Number.isFinite(cohortAmount) ||
+        !Number.isFinite(portfolioAmount)
+    ) {
+        return 0;
+    }
+    return (100 * cohortAmount) / portfolioAmount;
+}
+
+/** Mean of available daily portfolio stock amounts (share % denominators). */
+export function meanDailyPortfolioAmounts(
+    daily: Array<{
+        totalReceivables: number;
+        compliantExposure: number;
+        atRiskExposure: number;
+    }>
+): {
+    totalReceivables: number;
+    compliantExposure: number;
+    atRiskExposure: number;
+} {
+    if (daily.length === 0) {
+        return {
+            totalReceivables: 0,
+            compliantExposure: 0,
+            atRiskExposure: 0,
+        };
+    }
+    const n = daily.length;
+    let totalReceivables = 0;
+    let compliantExposure = 0;
+    let atRiskExposure = 0;
+    for (const point of daily) {
+        totalReceivables += point.totalReceivables;
+        compliantExposure += point.compliantExposure;
+        atRiskExposure += point.atRiskExposure;
+    }
+    return {
+        totalReceivables: totalReceivables / n,
+        compliantExposure: compliantExposure / n,
+        atRiskExposure: atRiskExposure / n,
+    };
+}
+
+export function buildTopCustomerCreditProtectionCohort(
+    ranked: PortfolioTopCustomerPeriodMeans[],
+    nRequested: number,
+    portfolioMeans: {
+        totalReceivables: number;
+        compliantExposure: number;
+        atRiskExposure: number;
+    }
+): PortfolioTopCustomerCreditProtectionCohort {
+    const slice = ranked.slice(0, Math.max(0, nRequested));
+    let totalReceivables = 0;
+    let compliantExposure = 0;
+    let atRiskExposure = 0;
+    for (const row of slice) {
+        totalReceivables += row.totalReceivables;
+        compliantExposure += row.compliantExposure;
+        atRiskExposure += row.atRiskExposure;
+    }
+    return {
+        nRequested,
+        nActual: slice.length,
+        creditProtectionLevel: computeCreditDashboardHealthIndex(
+            compliantExposure,
+            totalReceivables
+        ),
+        totalReceivables,
+        totalReceivablesSharePct: computePortfolioSharePct(
+            totalReceivables,
+            portfolioMeans.totalReceivables
+        ),
+        compliantExposure,
+        compliantExposureSharePct: computePortfolioSharePct(
+            compliantExposure,
+            portfolioMeans.compliantExposure
+        ),
+        atRiskExposure,
+        atRiskExposureSharePct: computePortfolioSharePct(
+            atRiskExposure,
+            portfolioMeans.atRiskExposure
+        ),
+    };
+}
+
+export function buildTopCustomerCreditProtectionSection(
+    ranked: PortfolioTopCustomerPeriodMeans[],
+    portfolioMeans: {
+        totalReceivables: number;
+        compliantExposure: number;
+        atRiskExposure: number;
+    }
+): PortfolioTopCustomerCreditProtectionSection {
+    const cohorts = {} as Record<
+        PortfolioHealthTopNOption,
+        PortfolioTopCustomerCreditProtectionCohort
+    >;
+    for (const n of PORTFOLIO_HEALTH_TOP_N_OPTIONS) {
+        cohorts[n] = buildTopCustomerCreditProtectionCohort(
+            ranked,
+            n,
+            portfolioMeans
+        );
+    }
+    return {
+        defaultN: PORTFOLIO_HEALTH_TOP_N_DEFAULT,
+        options: PORTFOLIO_HEALTH_TOP_N_OPTIONS,
+        cohorts,
+    };
+}
+
+export function emptyTopCustomerCreditProtectionSection(): PortfolioTopCustomerCreditProtectionSection {
+    return buildTopCustomerCreditProtectionSection([], {
+        totalReceivables: 0,
+        compliantExposure: 0,
+        atRiskExposure: 0,
+    });
 }
 
 /** Whether a CPT row belongs in Health A when the no-policy cohort toggle is off. */
@@ -2035,6 +2205,13 @@ type CptTopCustomerRow = {
     company_name: string | null;
 };
 
+type CptTopCreditProtectionRow = {
+    customer_id: number;
+    total_receivables: number | string;
+    compliant_exposure: number | string;
+    at_risk_exposure: number | string;
+};
+
 type CptDistributionRow = {
     customer_id: number;
     utilization_pct: number | string;
@@ -2751,6 +2928,64 @@ async function fetchCptTopUtilizationCustomers(
     });
 }
 
+/**
+ * Top customers by mean daily total receivables for Health Credit Protection
+ * cohorts. Same CPT filters as portfolio-health health / utilization queries.
+ * Rank once for top 20; callers roll up N ∈ {5,10,20}.
+ */
+async function fetchCptTopCreditProtectionCustomers(
+    accountId: number,
+    options: {
+        fromDateUtc: Date;
+        toDateUtc: Date;
+        policyId?: number;
+        scopedCustomerIds: number[] | null;
+        includeNoPolicyExposure: boolean;
+        limit?: number;
+    }
+): Promise<PortfolioTopCustomerPeriodMeans[]> {
+    const pendingReviewLiteral = "pending review";
+    const topN = options.limit ?? PORTFOLIO_HEALTH_TOP_N_RANK_LIMIT;
+
+    const rows = await prisma.$queryRaw<CptTopCreditProtectionRow[]>`
+        SELECT
+            t.customer_id,
+            AVG(COALESCE(t.total_receivables, 0))::float8 AS total_receivables,
+            AVG(COALESCE(t.compliant_exposure, 0))::float8 AS compliant_exposure,
+            AVG(COALESCE(t.at_risk_exposure, 0))::float8 AS at_risk_exposure
+        FROM "CustomerPolicyTrend" t
+        WHERE t.account_id = ${accountId}
+          AND t.snapshot_date >= ${options.fromDateUtc}::date
+          AND t.snapshot_date <= ${options.toDateUtc}::date
+          AND (
+            ${options.policyId ?? null}::int IS NULL
+            OR t.insurance_policy_id = ${options.policyId ?? null}
+          )
+          AND (
+            ${options.scopedCustomerIds == null}::boolean
+            OR t.customer_id = ANY(${options.scopedCustomerIds ?? []}::int[])
+          )
+          AND (
+            ${options.includeNoPolicyExposure}::boolean
+            OR COALESCE(t.total_receivables, 0) <= 0
+            OR LOWER(TRIM(COALESCE(t.policy_exclusion_reason, ''))) IS DISTINCT FROM ${pendingReviewLiteral}
+          )
+        GROUP BY t.customer_id
+        ORDER BY
+            AVG(COALESCE(t.total_receivables, 0)) DESC,
+            AVG(COALESCE(t.compliant_exposure, 0)) DESC,
+            t.customer_id ASC
+        LIMIT ${topN}
+    `;
+
+    return rows.map((row) => ({
+        customerId: row.customer_id,
+        totalReceivables: toNumber(row.total_receivables),
+        compliantExposure: toNumber(row.compliant_exposure),
+        atRiskExposure: toNumber(row.at_risk_exposure),
+    }));
+}
+
 async function fetchCptUtilizationDistribution(
     accountId: number,
     options: {
@@ -2982,6 +3217,7 @@ export async function getCreditPortfolioHealth(
         topCustomers,
         distributionCustomers,
         linkedCptDaySeries,
+        topCreditProtectionCustomers,
     ] = await Promise.all([
         fetchAccountCurrency(accountId),
         fetchCptDailyHealthAggregates(accountId, cptScope),
@@ -3031,6 +3267,14 @@ export async function getCreditPortfolioHealth(
             policyId: query.policyId,
             scopedCustomerIds,
             includeNoPolicyExposure: query.includeNoPolicyExposure,
+        }),
+        fetchCptTopCreditProtectionCustomers(accountId, {
+            fromDateUtc: parsed.fromDateUtc,
+            toDateUtc: parsed.toDateUtc,
+            policyId: query.policyId,
+            scopedCustomerIds,
+            includeNoPolicyExposure: query.includeNoPolicyExposure,
+            limit: PORTFOLIO_HEALTH_TOP_N_RANK_LIMIT,
         }),
     ]);
 
@@ -3106,7 +3350,13 @@ export async function getCreditPortfolioHealth(
         {
             ...slopeVolSummary,
             accountCurrency,
-        }
+        },
+        null,
+        null,
+        buildTopCustomerCreditProtectionSection(
+            topCreditProtectionCustomers,
+            meanDailyPortfolioAmounts(dailyA)
+        )
     );
     const utilizationDaily = buildUtilizationDailyPoints(utilizationRows);
     const rangeCost = computePortfolioRangeCost({

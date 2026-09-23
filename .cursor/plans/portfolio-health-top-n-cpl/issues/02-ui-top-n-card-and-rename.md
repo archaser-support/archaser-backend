@@ -1,6 +1,6 @@
 # 02 — UI: top-N card, slider, and CPL rename
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-api-top-n-cohorts](01-api-top-n-cohorts.md)
 **User stories:** 1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 17
@@ -19,12 +19,12 @@ On Portfolio Health **Health** tab:
 
 ## Acceptance criteria
 
-- [ ] Whole-book Health KPI/halo uses Credit Protection Level wording in EN and HE
-- [ ] New card appears after Longest over-limit streak
-- [ ] Gauge + three share metrics update when sliding 5 / 10 / 20 without refetch
-- [ ] Default slider position is 10
-- [ ] Matching English and Hebrew locale keys are added/updated together
-- [ ] No new customer lines on Health charts
+- [x] Whole-book Health KPI/halo uses Credit Protection Level wording in EN and HE
+- [x] New card appears after Longest over-limit streak
+- [x] Gauge + three share metrics update when sliding 5 / 10 / 20 without refetch
+- [x] Default slider position is 10
+- [x] Matching English and Hebrew locale keys are added/updated together
+- [x] No new customer lines on Health charts
 
 ## How to test
 
