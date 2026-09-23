@@ -350,7 +350,8 @@ export function detectOneToManyRelationTable(
                 (field.table === "Invoice" ||
                     field.table === "InvoicePayment" ||
                     field.table === "Contact" ||
-                    field.table === "Activity")) ||
+                    field.table === "Activity" ||
+                    field.table === "CustomerPolicy")) ||
             (primaryTable === "Invoice" && field.table === "InvoicePayment")
         ) {
             return { table: field.table, relationName };

@@ -7,6 +7,7 @@ export const MODEL_NAME_MAP: Record<string, string> = {
     Activity: "activity",
     Dispute: "customerDispute",
     CustomerCollectionPeriod: "customerCollectionPeriod",
+    CustomerPolicy: "customerPolicy",
     CustomerBanks: "customerBanks",
     AccountBankAccounts: "accountBankAccounts",
     Person: "person",
@@ -150,6 +151,7 @@ export const RELATION_FROM_PRIMARY: Record<
         User: "Owner",
         Owner: "Owner",
         CustomerCollectionPeriod: "CustomerCollectionPeriod",
+        CustomerPolicy: "CustomerPolicy",
         Company: "Company",
         Person: "Person",
         Country: "Country",
@@ -189,6 +191,10 @@ export const RELATION_FROM_PRIMARY: Record<
     },
     CustomerCollectionPeriod: {
         Customer: "Customer",
+    },
+    CustomerPolicy: {
+        Customer: "Customer",
+        InsurancePolicy: "InsurancePolicy",
     },
     InvoicePayment: {
         Invoice: "Invoice",
