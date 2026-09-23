@@ -398,10 +398,11 @@ class WorkerRuntimeService implements OnModuleDestroy {
         }
 
         if (job.name === "ar-post-ingest-drain") {
-            if (!this.prisma) {
+            const prisma = this.prisma;
+            if (!prisma) {
                 throw new Error("database unavailable");
             }
-            bindCreditInsurancePrisma(this.prisma);
+            bindCreditInsurancePrisma(prisma);
             const data = job.data as {
                 accountId?: number;
                 maxItems?: number;
@@ -417,11 +418,13 @@ class WorkerRuntimeService implements OnModuleDestroy {
                         accountId,
                         countPendingForAccount:
                             countPendingArPostIngestCustomers,
+                        prisma,
                     });
                 },
             });
             await finalizeAwaitingPostIngestDrainExecutions({
                 countPendingForAccount: countPendingArPostIngestCustomers,
+                prisma,
             });
             if (data.accountId != null) {
                 const remaining = await countPendingArPostIngestCustomers(

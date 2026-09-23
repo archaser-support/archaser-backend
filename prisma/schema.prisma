@@ -1180,6 +1180,18 @@ model InsurancePolicy {
   registration_fee_percent               Decimal?                      @db.Decimal(10, 3)
   /// Optional annual fee charged per named customer (account currency). Null = no fee / $0.
   annual_credit_assessment_fee           Decimal?                      @db.Decimal(20, 4)
+  /// Primary-only commercial terms (policy currency for money fields). Null = not set.
+  insured_percentage                     Decimal?                      @db.Decimal(10, 3)
+  non_qualifying_loss_threshold          Decimal?                      @db.Decimal(20, 4)
+  minimum_premium                        Decimal?                      @db.Decimal(20, 4)
+  minimum_premium_period_years           Int?
+  /// Aggregate excess; 0 means none (distinct from null = not set).
+  aggregate_excess                       Decimal?                      @db.Decimal(20, 4)
+  sdl_excess                             Decimal?                      @db.Decimal(20, 4)
+  ncb_zero_claims_bonus_percent          Decimal?                      @db.Decimal(10, 3)
+  ncb_claims_ratio_threshold_percent     Decimal?                      @db.Decimal(10, 3)
+  ncb_up_to_threshold_bonus_percent      Decimal?                      @db.Decimal(10, 3)
+  product_type                           insurance_policy_product_type?
   status                                 record_status                 @default(Draft)
   auto_activate_on_term_start            Boolean                       @default(false)
   created_by                             String?                       @db.VarChar
@@ -2610,6 +2622,12 @@ enum customer_limit_type {
 enum insurance_policy_kind {
   Primary
   TopUp
+}
+
+/// Primary-only: whether account products under the policy are tailor-made or commodity.
+enum insurance_policy_product_type {
+  TailorMade
+  Commodity
 }
 
 enum cost_calculation_method {

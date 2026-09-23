@@ -28,7 +28,7 @@ export const DEFAULT_IMPORT_CACHE_TIME_ZONE = "Asia/Jerusalem";
 /** Keep BSON docs under Mongo’s 16MB limit with headroom. */
 export const IMPORT_CACHE_MAX_CHUNK_BYTES = 10 * 1024 * 1024;
 
-export const IMPORT_CACHE_TTL_SECONDS = 180 * 24 * 60 * 60;
+export const IMPORT_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 export const IMPORT_CACHE_ENTITY_TYPES: ImportCacheEntityType[] = [
     "Customer",

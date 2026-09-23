@@ -21,6 +21,7 @@ import {
     POLICY_PUSH_CUSTOMER_FIELDS,
 } from "./domain/hasMeaningfulCustomerPolicyFieldChange";
 import { parseAnnualCreditAssessmentFee } from "./domain/annualCreditAssessmentFee";
+import { applyInsurancePolicyCommercialTerms } from "./domain/policyCommercialTerms";
 import { parseRegistrationFeePercent } from "./domain/registrationFeePercent";
 
 /** Match customers.parseDateOnly — YYYY-MM-DD → UTC midnight Date. */
@@ -356,6 +357,19 @@ export class InsuranceEntitiesService {
                         policy.policy_kind
                     );
             }
+            try {
+                applyInsurancePolicyCommercialTerms(data, policy.policy_kind, {
+                    mode: "update",
+                });
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                throw new BadRequestException({
+                    error:
+                        message ||
+                        "Invalid insurance policy commercial terms",
+                });
+            }
             const userInfo = await this.accessScope.resolveUserInfo(user);
             const policyId = Number(id);
             try {
@@ -475,6 +489,19 @@ export class InsuranceEntitiesService {
                 body.policy_kind === "TopUp" ? "TopUp" : "Primary";
             const createData: Record<string, unknown> = { ...body };
             coercePolicyDateFields(createData);
+            try {
+                applyInsurancePolicyCommercialTerms(createData, policyKind, {
+                    mode: "create",
+                });
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                throw new BadRequestException({
+                    error:
+                        message ||
+                        "Invalid insurance policy commercial terms",
+                });
+            }
             const created = await this.db.insurancePolicy.create({
                 data: {
                     ...createData,

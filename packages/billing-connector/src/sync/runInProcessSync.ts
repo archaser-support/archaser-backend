@@ -43,6 +43,7 @@ import {
 import { isConnectorSyncCancelRequested } from "./connectorSyncCancelRegistry";
 import {
     BALANCES_ENTITY_STATS_KEY,
+    CTP_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
     PURGE_ENTITY_STATS_KEY,
     entityStatsFromCounts,
@@ -53,6 +54,7 @@ import {
     type TailStepKey,
     type TailStepState,
 } from "./connectorSyncRuntime";
+import { maybeRunPostSyncCtpCatchUp } from "../credit/postSyncCtpCatchUp";
 import {
     planDefaultSyncWindows,
     runStagedExtensionSync,
@@ -1644,6 +1646,17 @@ async function runInProcessSyncBody(
             : stats.importErrors > 0
               ? `${stats.importErrors} import error(s)`
               : undefined;
+
+        if (ok && !options.dryRun) {
+            await maybeRunPostSyncCtpCatchUp({
+                prisma,
+                accountId,
+                mode: options.mode ?? "incremental",
+                status: "SUCCESS",
+                onLog: log,
+                onStep: (state) => setTailStep(CTP_ENTITY_STATS_KEY, state),
+            });
+        }
 
         return {
             ok,
