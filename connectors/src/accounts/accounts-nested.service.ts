@@ -734,6 +734,7 @@ export class AccountsNestedService {
         let extensionPatch;
         try {
             extensionPatch = resolveExtensionAttachmentInput({
+                accountId,
                 extension_key:
                     body.extension_key === undefined
                         ? undefined
@@ -746,11 +747,7 @@ export class AccountsNestedService {
             });
         } catch (error: unknown) {
             const err = error as { code?: string; message?: string };
-            if (
-                err?.code === "UNKNOWN_EXTENSION_KEY" ||
-                err?.code === "INVALID_EXTENSION_CONFIG" ||
-                err?.code === "EXTENSION_KEY_REQUIRED"
-            ) {
+            if (err?.code === "INVALID_EXTENSION_CONFIG") {
                 throw new BadRequestException({
                     error: err.message ?? "Invalid extension attachment",
                     code: err.code,

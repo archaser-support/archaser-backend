@@ -198,11 +198,13 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
                         accountId,
                         countPendingForAccount:
                             countPendingArPostIngestCustomers,
+                        prisma,
                     });
                 },
             });
             await finalizeAwaitingPostIngestDrainExecutions({
                 countPendingForAccount: countPendingArPostIngestCustomers,
+                prisma,
             });
             if (retryResult.failures > 0) {
                 retryError = new Error(

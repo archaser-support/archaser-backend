@@ -253,9 +253,9 @@ export class PriorityProviderClient implements BillingProviderClient {
         }
         const columns = columnNameSet(columnList);
         const endpoint = getPriorityEntityEndpoint(entity);
-        // Prefer FNCDATE for IDG payments — matches the date window and matches
-        // the sample query that Priority can answer. FNCNUM keyset + date filter
-        // often 502s after ~2 minutes on idigital.
+        // Prefer FNCDATE for IDG $orderby — Priority serves it; RECONDATE lead
+        // order often 502s after ~2 minutes. Account 10149 still windows on
+        // RECONDATE via preferredDateField / extension resolvePullDateField.
         const preferredOrderBy = isIdgPayment
             ? "FNCDATE"
             : endpoint.defaultOrderBy;
@@ -339,10 +339,10 @@ export class PriorityProviderClient implements BillingProviderClient {
                 ? (options.overlapMinutes ?? 0)
                 : 0;
         // Always AND the watermark / cutover date bound — even when pull_filters
-        // already mention the date field (e.g. FNCDATE gt backfill floor). Skipping
+        // already mention the date field (e.g. RECONDATE gt backfill floor). Skipping
         // here made INCREMENTAL re-scan from the static floor instead of since.
-        // Also cap dateField ≤ now so future-dated document dates (common on
-        // Payment FNCDATE) are not crawled after the lower bound.
+        // Also cap dateField ≤ now so future-dated values are not crawled after
+        // the lower bound (important when the window field is FNCDATE).
         const nowIso = dateLeIso(new Date());
         const dateFilter =
             dateField && dateBound
