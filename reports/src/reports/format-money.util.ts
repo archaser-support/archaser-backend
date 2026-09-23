@@ -40,6 +40,7 @@ export function isMoneyFieldName(field: string): boolean {
         lower === "approved_limit" ||
         lower === "effective_approved_limit" ||
         lower === "capacity_gap_amount" ||
+        lower === "retained_capacity_gap" ||
         lower === "top_up_value" ||
         lower === "top_up_resolved_amount" ||
         lower === "at_risk_exposure" ||

@@ -167,6 +167,20 @@ export class ReportExecutionService {
             primaryTable: config.primaryTable,
             tables: config.tables,
         });
+        if (primaryTable === "CustomerPolicy") {
+            const accountRow = await this.db.account.findUnique({
+                where: { id: accountId },
+                select: { has_credit_insurance: true } as never,
+            });
+            if (
+                !(accountRow as { has_credit_insurance?: boolean } | null)
+                    ?.has_credit_insurance
+            ) {
+                throw new ForbiddenException(
+                    "CustomerPolicy reports require credit insurance"
+                );
+            }
+        }
         const modelKey = MODEL_NAME_MAP[primaryTable];
         if (!modelKey) {
             throw new ForbiddenException(
@@ -873,6 +887,26 @@ export class ReportExecutionService {
         if (primaryTable === "Contact") {
             return { email: { contains: q, mode: "insensitive" } };
         }
+        if (primaryTable === "CustomerPolicy") {
+            return {
+                OR: [
+                    {
+                        customer_number_policy: {
+                            contains: q,
+                            mode: "insensitive",
+                        },
+                    },
+                    {
+                        Customer: {
+                            customer_number: {
+                                contains: q,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                ],
+            };
+        }
         return null;
     }
 
@@ -907,6 +941,7 @@ export class ReportExecutionService {
                         select: Record<string, unknown>;
                         take?: number;
                         orderBy?: unknown;
+                        where?: Record<string, unknown>;
                     };
                     if (existingObj.take == null) {
                         select[rel] = {
@@ -914,6 +949,17 @@ export class ReportExecutionService {
                             take: 1,
                             orderBy:
                                 existingObj.orderBy ?? { id: "asc" as const },
+                            ...(rel === "CustomerPolicy" && !existingObj.where
+                                ? { where: { is_active: true } }
+                                : {}),
+                        };
+                    } else if (
+                        rel === "CustomerPolicy" &&
+                        !existingObj.where
+                    ) {
+                        select[rel] = {
+                            ...existingObj,
+                            where: { is_active: true },
                         };
                     }
                 }
@@ -925,6 +971,10 @@ export class ReportExecutionService {
                 select[rel] = {
                     take: 1,
                     orderBy: { id: "asc" as const },
+                    // Prefer the active CustomerPolicy row when sampling from Customer.
+                    ...(rel === "CustomerPolicy"
+                        ? { where: { is_active: true } }
+                        : {}),
                     select: nested,
                 };
             } else {
@@ -953,6 +1003,15 @@ export class ReportExecutionService {
                     f.field === "InsurancePolicy.policy_number"
                 ) {
                     this.applyInvoicePolicyNumberSelect(select);
+                    continue;
+                }
+                if (
+                    primaryTable === "CustomerPolicy" &&
+                    f.field === "InsurancePolicy.policy_number"
+                ) {
+                    this.applyCustomerPolicyInsurancePolicyNumberSelect(
+                        select
+                    );
                     continue;
                 }
                 if (f.field.includes(".")) {
@@ -1066,6 +1125,47 @@ export class ReportExecutionService {
                 nested.customer_id = true;
                 continue;
             }
+            // Dotted paths on a related table (e.g. Customer primary +
+            // CustomerPolicy.InsurancePolicy.policy_number). Scalars on the
+            // related table are handled below; nested relation leaves need the
+            // same expand as primary-table dotted fields.
+            if (f.field.includes(".")) {
+                const [relTable, ...rest] = f.field.split(".");
+                const leaf = rest.join(".");
+                const relatedSelect = ensureRelSelect(rel);
+                const nestedRelationMap =
+                    RELATION_FROM_PRIMARY[f.table] || {};
+                const nestedRel = nestedRelationMap[relTable] || relTable;
+
+                if (leaf === "name" && relTable === "Customer") {
+                    this.applyCustomerNameSelect(
+                        this.ensureNestedRelSelect(relatedSelect, nestedRel)
+                    );
+                    continue;
+                }
+                if (
+                    f.table === "CustomerPolicy" &&
+                    f.field === "InsurancePolicy.policy_number"
+                ) {
+                    this.applyCustomerPolicyInsurancePolicyNumberSelect(
+                        relatedSelect
+                    );
+                    continue;
+                }
+                if (
+                    leaf &&
+                    !isPrismaScalarField(relTable, leaf) &&
+                    !leaf.includes(".")
+                ) {
+                    continue;
+                }
+                if (leaf) {
+                    this.ensureNestedRelSelect(relatedSelect, nestedRel)[
+                        leaf
+                    ] = true;
+                }
+                continue;
+            }
             if (!isPrismaScalarField(f.table, f.field)) {
                 continue;
             }
@@ -1081,6 +1181,28 @@ export class ReportExecutionService {
             mergeLatestCustomerPolicyTrendSelect(select, customerFields);
         }
         return select;
+    }
+
+    /**
+     * Ensure a nested relation select exists under a related-table select bag
+     * (e.g. CustomerPolicy.select.InsurancePolicy.select).
+     */
+    private ensureNestedRelSelect(
+        parentSelect: Record<string, unknown>,
+        nestedRel: string
+    ): Record<string, unknown> {
+        const existing = parentSelect[nestedRel];
+        if (
+            existing &&
+            typeof existing === "object" &&
+            existing !== null &&
+            "select" in (existing as object)
+        ) {
+            return (existing as { select: Record<string, unknown> }).select;
+        }
+        const nested: Record<string, unknown> = { id: true };
+        parentSelect[nestedRel] = { select: nested };
+        return nested;
     }
 
     private applyCustomerPolicyNumberSelect(
@@ -1120,6 +1242,20 @@ export class ReportExecutionService {
         select: Record<string, unknown>
     ): void {
         select.policy_id = true;
+        this.mergeInsurancePolicyNumberRelation(select);
+    }
+
+    /** CustomerPolicy FK is insurance_policy_id (not Invoice.policy_id). */
+    private applyCustomerPolicyInsurancePolicyNumberSelect(
+        select: Record<string, unknown>
+    ): void {
+        select.insurance_policy_id = true;
+        this.mergeInsurancePolicyNumberRelation(select);
+    }
+
+    private mergeInsurancePolicyNumberRelation(
+        select: Record<string, unknown>
+    ): void {
         const existing = select.InsurancePolicy as
             | { select?: Record<string, unknown> }
             | undefined;
@@ -1166,7 +1302,8 @@ export class ReportExecutionService {
             tables.has("Contact") ||
             primaryTable === "Dispute" ||
             primaryTable === "Activity" ||
-            primaryTable === "Invoice"
+            primaryTable === "Invoice" ||
+            primaryTable === "CustomerPolicy"
         ) {
             select.customer_id = true;
         }
@@ -1395,6 +1532,19 @@ export class ReportExecutionService {
             if (normalized === "InsurancePolicy.policy_number") {
                 return (dir) => ({
                     InsurancePolicy: { policy_number: dir },
+                });
+            }
+        }
+
+        if (primaryTable === "CustomerPolicy") {
+            if (normalized === "InsurancePolicy.policy_number") {
+                return (dir) => ({
+                    InsurancePolicy: { policy_number: dir },
+                });
+            }
+            if (normalized === "Customer.name") {
+                return (dir) => ({
+                    Customer: { Company: { name: dir } },
                 });
             }
         }
@@ -1847,6 +1997,12 @@ export class ReportExecutionService {
             ) {
                 return this.extractInvoicePolicyNumber(row);
             }
+            if (
+                primaryTable === "CustomerPolicy" &&
+                f.field === "InsurancePolicy.policy_number"
+            ) {
+                return this.extractInvoicePolicyNumber(row);
+            }
             if (primaryTable === "Customer" && f.field === "category") {
                 const periods = row.CustomerCollectionPeriod;
                 if (Array.isArray(periods) && periods.length > 0) {
@@ -2080,7 +2236,13 @@ export class ReportExecutionService {
             | null
             | undefined;
         const value = policy?.policy_number;
-        return typeof value === "string" && value.trim() !== "" ? value : null;
+        if (typeof value === "string" && value.trim() !== "") {
+            return value;
+        }
+        const direct = this.getNestedValue(row, "InsurancePolicy.policy_number");
+        return typeof direct === "string" && direct.trim() !== ""
+            ? direct
+            : null;
     }
 
     /**
@@ -2238,9 +2400,12 @@ export class ReportExecutionService {
             out["InvoicePayment.currency"],
             out["InvoicePayment.customer_currency"],
             out["Customer.approved_limit_currency"],
+            out["CustomerPolicy.approved_limit_currency"],
+            out["CustomerPolicy.capacity_gap_currency1"],
             out["CustomerCollectionPeriod.currency"],
             row.currency,
             row.customer_currency,
+            row.approved_limit_currency,
             (row.Invoice as Record<string, unknown> | undefined)?.currency,
             (row.Invoice as Record<string, unknown> | undefined)
                 ?.customer_currency,

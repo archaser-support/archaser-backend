@@ -376,9 +376,31 @@ export class ReportsService {
             );
         }
 
+        const accountRow = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { has_credit_insurance: true } as never,
+        });
+        const hasCreditInsurance = Boolean(
+            (accountRow as { has_credit_insurance?: boolean } | null)
+                ?.has_credit_insurance
+        );
+
+        if (hasCreditInsurance) {
+            return {
+                tables: REPORT_METADATA.tables,
+                relationships: REPORT_RELATIONSHIPS,
+            };
+        }
+
         return {
-            tables: REPORT_METADATA.tables,
-            relationships: REPORT_RELATIONSHIPS,
+            tables: REPORT_METADATA.tables.filter(
+                (table) => table.name !== "CustomerPolicy"
+            ),
+            relationships: REPORT_RELATIONSHIPS.filter(
+                (rel) =>
+                    rel.from !== "CustomerPolicy" &&
+                    rel.to !== "CustomerPolicy"
+            ),
         };
     }
 
