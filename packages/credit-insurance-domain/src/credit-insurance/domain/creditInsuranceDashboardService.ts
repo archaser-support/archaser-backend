@@ -1837,6 +1837,17 @@ export async function getCreditDashboardSummary(
     );
     const capacityTotal = policyGapRollup.gapBaseTotal;
     const customerOverLimit = policyGapRollup.customerOverLimitCount;
+    const capacityGapByCustomerId = new Map<number, number>();
+    for (const [key, gap] of policyGapRollup.gapByCustomerPolicy) {
+        const customerId = Number(String(key).split(":")[0]);
+        if (!Number.isFinite(customerId)) {
+            continue;
+        }
+        capacityGapByCustomerId.set(
+            customerId,
+            (capacityGapByCustomerId.get(customerId) ?? 0) + Math.max(0, gap)
+        );
+    }
 
     const invRow = invAgg[0];
     let termsCount = invRow?.c ?? 0;
@@ -2143,6 +2154,10 @@ export async function getCreditDashboardSummary(
             uncovered,
             totalAr: ar,
             invoices,
+            capacityGapAmount:
+                uncovered || asOfDate != null
+                    ? undefined
+                    : (capacityGapByCustomerId.get(c.id) ?? 0),
         });
         if (!uncovered) {
             policyRiskExposure += allocated;
