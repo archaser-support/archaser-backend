@@ -83,8 +83,8 @@ export const STAGED_ENTITY_ORDER: ExtensionEntityType[] = [
 ];
 
 /**
- * Max keyset pages per entity per window. At recommendedPageSize 500 this is
- * 2.5M rows — raised from 200 (100k) after Payment backfills exhausted early.
+ * Max keyset pages per entity per window. At recommendedPageSize 1000 this is
+ * 5M rows — raised from 200 (100k) after Payment backfills exhausted early.
  */
 const MAX_ENTITY_PAGES_PER_WINDOW = 5_000;
 
@@ -1355,7 +1355,17 @@ export async function runStagedExtensionSync(
                             ? windowCutover
                             : null,
                         preferredDateField: usesDatePull
-                            ? options.dateFieldByType?.get(entityType) ?? null
+                            ? (typeof options.extension.resolvePullDateField ===
+                              "function"
+                                  ? options.extension.resolvePullDateField({
+                                        entityType,
+                                        entitySet,
+                                        extension_config:
+                                            options.extensionConfig,
+                                    })
+                                  : null) ??
+                              options.dateFieldByType?.get(entityType) ??
+                              null
                             : null,
                         overlapMinutes: options.overlapMinutes,
                         afterKey,
