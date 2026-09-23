@@ -98,7 +98,7 @@ export interface FinalizeAwaitingPostIngestDrainOptions {
     /** When omitted, callers must pass countPendingForAccount. */
     countPendingForAccount?: (accountId: number) => Promise<number>;
     /**
-     * When set, SUCCESS drain finalization runs post-sync CTP catch-up for the
+     * When set, SUCCESS drain finalization starts Portfolio Health Generate for the
      * account (same hook as immediate SUCCESS finalize).
      */
     prisma?: PrismaClient;

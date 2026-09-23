@@ -1,11 +1,14 @@
 import type { PrismaClient } from "@prisma/client";
 import {
-    bindCreditInsurancePrisma,
-    startOfTodayUtc,
-    syncCustomerPolicyTrendSnapshotForAccount,
+    CreditAsOfBackfillConflictError,
+    getPendingAsOfRewriteWindow,
+    startCreditAsOfBackfillJob,
 } from "@archaser/credit-insurance-domain";
 
-/** Max missing CTP days processed after one successful billing sync. */
+/**
+ * @deprecated Tip CTP fill was replaced by starting Portfolio Health Generate
+ * for the pending as-of rewrite window. Kept for export compatibility.
+ */
 export const POST_SYNC_CTP_CATCH_UP_MAX_DAYS = 30;
 
 /** Progress callback for Backfill progress `_ctp` tail step (soft-fail only). */
@@ -41,9 +44,8 @@ function utcCalendarDaysBetween(start: Date, end: Date): number {
 }
 
 /**
- * UTC dates to write for post-sync CTP catch-up: day after last successful
- * snapshot through today (inclusive), capped at {@link POST_SYNC_CTP_CATCH_UP_MAX_DAYS}.
- * No prior history → today only.
+ * @deprecated Prefer the pending rewrite window + Generate start. Kept for
+ * callers/tests that still assert tip-fill date math.
  */
 export function resolveCtpCatchUpDates(args: {
     lastSnapshotDate: Date | null;
@@ -86,7 +88,8 @@ function normalizeSyncMode(mode: string | undefined | null): string {
 }
 
 /**
- * True when an accepted in-process billing sync should trigger CTP catch-up.
+ * True when an accepted in-process billing sync should start Portfolio Health
+ * Generate for the pending as-of rewrite window (import-touched days).
  */
 export function shouldRunPostSyncCtpCatchUp(args: {
     mode: string;
@@ -103,6 +106,18 @@ export function shouldRunPostSyncCtpCatchUp(args: {
     return mode === "incremental" || mode === "backfill";
 }
 
+export type StartPortfolioGenerateFn = (
+    accountId: number,
+    fromDate: Date,
+    toDate: Date,
+    options?: { requestedBy?: string | null; runInline?: boolean }
+) => Promise<unknown>;
+
+export type GetPendingRewriteWindowFn = (
+    accountId: number
+) => Promise<{ fromDate: Date; toDate: Date } | null>;
+
+/** @deprecated Tip CTP writer seam — unused by the Generate-start path. */
 export type SyncCustomerPolicyTrendSnapshotFn = (
     accountId: number,
     options?: { snapshotDate?: Date }
@@ -114,20 +129,25 @@ export type MaybeRunPostSyncCtpCatchUpParams = {
     mode: string;
     status: string;
     postIngestDeferred?: boolean;
-    todayUtc?: Date;
     onLog?: (message: string) => void;
     onError?: (message: string) => void;
     /** Emits Backfill progress `_ctp` while the sync is still RUNNING. */
     onStep?: (state: CtpCatchUpStepState) => void;
-    /** Test seam — defaults to domain CTP writer. */
-    syncSnapshot?: SyncCustomerPolicyTrendSnapshotFn;
-    /** Test seam — defaults to bindCreditInsurancePrisma. */
-    bindPrisma?: (prisma: PrismaClient) => void;
+    /** Test seam — defaults to {@link startCreditAsOfBackfillJob}. */
+    startGenerate?: StartPortfolioGenerateFn;
+    /** Test seam — defaults to {@link getPendingAsOfRewriteWindow}. */
+    getPendingWindow?: GetPendingRewriteWindowFn;
     /**
-     * Intentionally unused production path — present so tests can assert we do
-     * not invoke Portfolio Health / dashboard snapshot backfill.
+     * Intentionally unused — present so tests can assert we do not invoke
+     * dashboard writers inline inside the sync (Generate runs async).
      */
     takeDashboardSnapshots?: (accountId: number) => Promise<unknown>;
+    /** @deprecated Tip CTP path removed; ignored. */
+    syncSnapshot?: SyncCustomerPolicyTrendSnapshotFn;
+    /** @deprecated Tip CTP path removed; ignored. */
+    bindPrisma?: (prisma: PrismaClient) => void;
+    /** @deprecated Tip CTP path removed; ignored. */
+    todayUtc?: Date;
 };
 
 function emitStep(
@@ -137,10 +157,15 @@ function emitStep(
     onStep?.(state);
 }
 
+function countInclusiveUtcDays(from: Date, to: Date): number {
+    return utcCalendarDaysBetween(from, to) + 1;
+}
+
 /**
- * After a successful accepted incremental/backfill sync, catch up missing CTP
- * days for the account. Never throws — CTP failure must not change sync status.
- * When `onStep` is provided, emits running/done/failed for Backfill progress.
+ * After a successful accepted incremental/backfill sync, start Portfolio Health
+ * Generate for the pending as-of rewrite window (min import entity date → today).
+ * That covers all days touched by a backfill without blocking sync finalize.
+ * Never throws — Generate failure / conflict must not change sync status.
  */
 export async function maybeRunPostSyncCtpCatchUp(
     params: MaybeRunPostSyncCtpCatchUpParams
@@ -161,8 +186,13 @@ export async function maybeRunPostSyncCtpCatchUp(
         onLog,
         onError,
         onStep,
-        syncSnapshot = syncCustomerPolicyTrendSnapshotForAccount,
-        bindPrisma = bindCreditInsurancePrisma,
+        startGenerate = (id, from, to, options) =>
+            startCreditAsOfBackfillJob(id, from, to, {
+                requestedBy: options?.requestedBy,
+                runInline: options?.runInline ?? false,
+                dbClient: prisma,
+            }),
+        getPendingWindow = (id) => getPendingAsOfRewriteWindow(id, prisma),
     } = params;
 
     try {
@@ -180,50 +210,35 @@ export async function maybeRunPostSyncCtpCatchUp(
             return;
         }
 
-        const latest = await prisma.customerPolicyTrend.findFirst({
-            where: { account_id: accountId },
-            orderBy: { snapshot_date: "desc" },
-            select: { snapshot_date: true },
-        });
-
-        const todayUtc = params.todayUtc ?? startOfTodayUtc();
-        const dates = resolveCtpCatchUpDates({
-            lastSnapshotDate: latest?.snapshot_date ?? null,
-            todayUtc,
-        });
-        if (dates.length === 0) {
+        const pending = await getPendingWindow(accountId);
+        if (pending == null) {
             emitStep(onStep, {
                 status: "done",
                 processed: 0,
                 total: 0,
                 detail: { step: "ctp", processed: 0, total: 0 },
             });
+            onLog?.(
+                `Portfolio Generate skipped for account ${accountId} (no pending rewrite window)`
+            );
             return;
         }
 
-        const total = dates.length;
+        const total = countInclusiveUtcDays(pending.fromDate, pending.toDate);
         emitStep(onStep, {
             status: "running",
             processed: 0,
             total,
             detail: { step: "ctp", processed: 0, total },
         });
-        bindPrisma(prisma);
         onLog?.(
-            `CTP catch-up starting for account ${accountId} (${total} day(s))`
+            `Portfolio Generate starting for account ${accountId} (${total} day(s), ${pending.fromDate.toISOString().slice(0, 10)} – ${pending.toDate.toISOString().slice(0, 10)})`
         );
 
-        let processed = 0;
-        for (const snapshotDate of dates) {
-            await syncSnapshot(accountId, { snapshotDate });
-            processed += 1;
-            emitStep(onStep, {
-                status: "running",
-                processed,
-                total,
-                detail: { step: "ctp", processed, total },
-            });
-        }
+        await startGenerate(accountId, pending.fromDate, pending.toDate, {
+            requestedBy: "billing-sync-post-success",
+            runInline: false,
+        });
 
         emitStep(onStep, {
             status: "done",
@@ -232,9 +247,19 @@ export async function maybeRunPostSyncCtpCatchUp(
             detail: { step: "ctp", processed: total, total },
         });
         onLog?.(
-            `CTP catch-up finished for account ${accountId} (${total} day(s))`
+            `Portfolio Generate queued for account ${accountId} (${total} day(s))`
         );
     } catch (error) {
+        if (error instanceof CreditAsOfBackfillConflictError) {
+            emitStep(onStep, {
+                status: "done",
+                detail: { step: "ctp" },
+            });
+            onLog?.(
+                `[account ${accountId}] Portfolio Generate already running — left in place after billing sync SUCCESS`
+            );
+            return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         emitStep(onStep, {
             status: "failed",
@@ -242,7 +267,7 @@ export async function maybeRunPostSyncCtpCatchUp(
             detail: { step: "ctp" },
         });
         onError?.(
-            `[account ${accountId}] CTP catch-up failed after billing sync SUCCESS: ${message}`
+            `[account ${accountId}] Portfolio Generate failed to start after billing sync SUCCESS: ${message}`
         );
     }
 }
