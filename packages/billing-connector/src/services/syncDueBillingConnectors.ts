@@ -178,7 +178,7 @@ export async function syncDueBillingConnectors(
                         );
                     }
                 }
-                // CTP catch-up runs inside the in-process sync (`_ctp` progress step).
+                // Portfolio Generate start runs inside the in-process sync (`_ctp` progress step).
             } catch {
                 // Circuit breaker must not fail the cron batch.
             }
