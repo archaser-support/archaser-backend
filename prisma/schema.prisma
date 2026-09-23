@@ -1679,6 +1679,8 @@ model Invoice {
   total_paid                        Float?                    @default(0)
   status                            invoice_status
   last_payment_date                 DateTime?                 @db.Date
+  /// Calendar day the invoice became Paid (usually max linked payment_date).
+  close_date                        DateTime?                 @db.Date
   zero_limit_alert                  Boolean                   @default(false)
   invoice_date                      DateTime                  @db.Date
   outstanding_debt                  Float?
@@ -1764,6 +1766,7 @@ model Invoice {
   @@index([status, target_reporting_date], map: "idx_invoice_status_target_reporting_date")
   @@index([account_id, customer_id, policy_id, status], map: "idx_invoice_gap_rollup")
   @@index([account_id, invoice_date], map: "idx_invoice_account_invoice_date")
+  @@index([account_id, close_date], map: "idx_invoice_account_close_date")
 }
 
 model InvoicePayment {

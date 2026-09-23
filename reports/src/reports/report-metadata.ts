@@ -1221,6 +1221,13 @@ export const REPORT_METADATA: { tables: TableMetadata[] } = {
                     translationNamespace: "invoices",
                 },
                 {
+                    name: "close_date",
+                    type: "date",
+                    label: "Invoice Close Date",
+                    translationKey: "close_date",
+                    translationNamespace: "invoices",
+                },
+                {
                     name: "customer_currency",
                     type: "string",
                     label: "Customer Currency",

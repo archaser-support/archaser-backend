@@ -65,7 +65,12 @@ export class InvoicePaymentDateController {
 
         const invoice = await this.db.invoice.findUnique({
             where: { id: invoiceId },
-            select: { id: true, customer_id: true, account_id: true },
+            select: {
+                id: true,
+                customer_id: true,
+                account_id: true,
+                status: true,
+            },
         });
         if (!invoice) {
             throw new NotFoundException({ error: "Invoice not found" });
@@ -83,16 +88,19 @@ export class InvoicePaymentDateController {
         }
 
         const paymentDate = new Date(`${lastPaymentDate.trim()}T00:00:00.000Z`);
+        const isPaid = invoice.status === "Paid";
         const updated = await this.db.invoice.update({
             where: { id: invoiceId },
             data: {
                 last_payment_date: paymentDate,
+                close_date: isPaid ? paymentDate : null,
                 modified_by: actor,
                 modified_at: new Date(),
             },
             select: {
                 id: true,
                 last_payment_date: true,
+                close_date: true,
                 customer_id: true,
             },
         });
