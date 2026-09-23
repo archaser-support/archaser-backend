@@ -1,4 +1,4 @@
-# 03 — Post-sync CTP catch-up
+# 03 — Post-sync Portfolio Health Generate start
 
 **Status:** done
 **Priority:** high
@@ -8,24 +8,24 @@
 
 ## What to build
 
-After an accepted in-process billing sync finalizes as `SUCCESS` for `incremental` or `backfill` (not preview), run a CTP-only catch-up for that account: day-by-day from the day after the last successful Customer×Policy Trend snapshot through today, capped at 30 days, reusing the existing per-account CTP snapshot writer. Do not run Portfolio Health Generate. If CTP fails, leave billing sync status as SUCCESS; log the error; add a light non-blocking warning in Sync History or Integration UI only if a small reuse path exists. Prefer a single hook shared by scheduled and manual accepted syncs.
+After an accepted in-process billing sync finalizes as `SUCCESS` for `incremental` or `backfill` (not preview), start Portfolio Health Generate asynchronously for the account’s pending as-of rewrite window (min imported invoice/payment date → today — covers full backfill history). Reuse `startCreditAsOfBackfillJob` (same job as the Portfolio Health page). Do not run tip-only CTP fill inline. If Generate fails to start (or is already running), leave billing sync status as SUCCESS; log the error/conflict.
 
 ## Acceptance criteria
 
-- [x] SUCCESS incremental sync triggers CTP catch-up for that account
-- [x] SUCCESS backfill sync triggers the same catch-up
-- [x] Preview / FAILED / PARTIAL do not trigger catch-up
-- [x] Catch-up fills missing days after the last successful CTP day through today, max 30 days
-- [x] No prior CTP history → generate today only (within the cap)
-- [x] CTP failure does not change sync run status from SUCCESS
-- [x] CTP failure is logged; light warning only if easy reuse
-- [x] Does not invoke full Generate / dashboard snapshot backfill
+- [x] SUCCESS incremental sync starts Generate when a pending rewrite window exists
+- [x] SUCCESS backfill sync starts Generate for that same pending window (all import-touched days)
+- [x] Preview / FAILED / PARTIAL do not start Generate
+- [x] Generate runs async (`runInline: false`) so sync can finish SUCCESS quickly
+- [x] No pending rewrite window → skip (log); do not invent a tip-only CTP fill
+- [x] Generate start failure / already-running conflict does not change sync run status from SUCCESS
+- [x] Failure/conflict is logged
+- [x] Does not invoke dashboard writers inline inside the sync
 
 ## How to test
 
-1. On a test account with a known last CTP snapshot a few days ago, run a successful incremental billing sync.
-2. Confirm CTP rows exist for the missing days through today (≤30).
-3. Confirm Sync History still shows SUCCESS for the billing run.
-4. Force a CTP failure in a safe test setup (or stub) and confirm sync remains SUCCESS with a log/warning.
-5. Run a preview sync and confirm CTP catch-up does not run.
-6. Spot-check a successful backfill path the same way.
+1. On a credit account, run a successful backfill that imports historical invoices (creates a pending rewrite window).
+2. Confirm Sync History still shows SUCCESS quickly and logs show Portfolio Generate queued for the pending from–to range.
+3. Confirm Portfolio Health Generate job is running/complete for that range (CTP + dashboard days).
+4. Force Generate already running and confirm sync remains SUCCESS with a soft log.
+5. Run a preview sync and confirm Generate is not started.
+6. Spot-check a successful incremental path the same way when rewrite was enqueued.

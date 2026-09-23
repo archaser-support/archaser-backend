@@ -24,7 +24,7 @@ export const PROCESS_OVERDUE_ENTITY_STATS_KEY = "_process_overdue";
 export const INSURANCE_TARGETS_ENTITY_STATS_KEY = "_insurance_targets";
 export const PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
 export const BALANCES_ENTITY_STATS_KEY = "_balances";
-/** Post-SUCCESS CTP day catch-up (Customer×Policy Trend); soft-fail only. */
+/** Post-SUCCESS: queue Portfolio Health Generate (pending rewrite window); soft-fail only. */
 export const CTP_ENTITY_STATS_KEY = "_ctp";
 
 export const TAIL_STEP_KEYS = [
