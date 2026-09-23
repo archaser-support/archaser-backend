@@ -32,6 +32,7 @@ import {
 } from "../customers/recalculateCustomerAmountsHost";
 import {
     BALANCES_ENTITY_STATS_KEY,
+    CTP_ENTITY_STATS_KEY,
     MATURITY_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
@@ -42,6 +43,7 @@ import {
     type TailStepDetail,
     type TailStepState,
 } from "./connectorSyncRuntime";
+import { maybeRunPostSyncCtpCatchUp } from "../credit/postSyncCtpCatchUp";
 import {
     type ArPostIngestHostFn,
     type ConnectorPostIngestDeferOptions,
@@ -81,8 +83,8 @@ export const STAGED_ENTITY_ORDER: ExtensionEntityType[] = [
 ];
 
 /**
- * Max keyset pages per entity per window. At recommendedPageSize 500 this is
- * 2.5M rows — raised from 200 (100k) after Payment backfills exhausted early.
+ * Max keyset pages per entity per window. At recommendedPageSize 1000 this is
+ * 5M rows — raised from 200 (100k) after Payment backfills exhausted early.
  */
 const MAX_ENTITY_PAGES_PER_WINDOW = 5_000;
 
@@ -818,6 +820,20 @@ export async function runStagedExtensionSync(
                         error: finished.error ?? balances.error,
                     };
                 }
+                if (finished.ok && !finished.cancelled) {
+                    await maybeRunPostSyncCtpCatchUp({
+                        prisma: options.prisma,
+                        accountId: options.accountId,
+                        mode:
+                            cacheSyncMode === "INCREMENTAL"
+                                ? "incremental"
+                                : "backfill",
+                        status: "SUCCESS",
+                        onLog: log,
+                        onStep: (state) =>
+                            setTailStep(CTP_ENTITY_STATS_KEY, state),
+                    });
+                }
             }
             // Empty pulls still need status=done so the progress panel does not
             // leave Invoice/Payment as Waiting after settle/AR finished.
@@ -1339,7 +1355,17 @@ export async function runStagedExtensionSync(
                             ? windowCutover
                             : null,
                         preferredDateField: usesDatePull
-                            ? options.dateFieldByType?.get(entityType) ?? null
+                            ? (typeof options.extension.resolvePullDateField ===
+                              "function"
+                                  ? options.extension.resolvePullDateField({
+                                        entityType,
+                                        entitySet,
+                                        extension_config:
+                                            options.extensionConfig,
+                                    })
+                                  : null) ??
+                              options.dateFieldByType?.get(entityType) ??
+                              null
                             : null,
                         overlapMinutes: options.overlapMinutes,
                         afterKey,

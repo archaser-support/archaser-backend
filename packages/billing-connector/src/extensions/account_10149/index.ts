@@ -45,15 +45,20 @@ export const ACCOUNT_10149_DEFAULT_IDG_PAYMENT_COMPANY_CODES = [
 export const ACCOUNT_10149_PAYMENT_EXTRA_SELECT_FIELDS = [] as const;
 
 /**
- * IDG_ARFNCITEMS4 payment keyset must be unique across receipts. FNCDATE+KLINE
- * alone collides (many docs share KLINE on the same day) and drops lines such
- * as a single recon allocation mid-receipt. FNCNUM disambiguates the document.
+ * IDG_ARFNCITEMS4 payment keyset must be unique across receipts.
+ * Keep FNCDATE as the $orderby lead — Priority 502s on RECONDATE,FNCNUM,KLINE
+ * (and times out on RECONDATE desc). Incremental/backfill *windows* still use
+ * RECONDATE via {@link ACCOUNT_10149_IDG_PAYMENT_PULL_DATE_FIELD}; keyset only
+ * pages the already-filtered set. FNCNUM+KLINE disambiguate same-day rows.
  */
 export const ACCOUNT_10149_IDG_PAYMENT_KEYSET_ORDER_FIELDS = [
     "FNCDATE",
     "FNCNUM",
     "KLINE",
 ] as const;
+
+/** Watermark / date window for IDG Payment pulls (not document FNCDATE). */
+export const ACCOUNT_10149_IDG_PAYMENT_PULL_DATE_FIELD = "RECONDATE";
 
 const IDG_PAYMENT_COMPANY_CODES_CONFIG_KEY = "idgPaymentCompanyCodes";
 
@@ -572,6 +577,21 @@ export function resolveAccount10149PullKeysetOrderFields(params: {
     return [...ACCOUNT_10149_IDG_PAYMENT_KEYSET_ORDER_FIELDS];
 }
 
+export function resolveAccount10149PullDateField(params: {
+    entityType: ExtensionEntityType | string;
+    entitySet?: string | null;
+}): string | null {
+    if (
+        !isAccount10149IdgPaymentEntitySet(
+            params.entityType,
+            params.entitySet
+        )
+    ) {
+        return null;
+    }
+    return ACCOUNT_10149_IDG_PAYMENT_PULL_DATE_FIELD;
+}
+
 function odataEqAny(field: string, values: string[]): string | null {
     const clauses = values
         .map((value) => value.trim())
@@ -1003,6 +1023,12 @@ export const account10149Extension: BillingAccountExtension = {
     },
     resolvePullKeysetOrderFields(params) {
         return resolveAccount10149PullKeysetOrderFields({
+            entityType: params.entityType,
+            entitySet: params.entitySet,
+        });
+    },
+    resolvePullDateField(params) {
+        return resolveAccount10149PullDateField({
             entityType: params.entityType,
             entitySet: params.entitySet,
         });

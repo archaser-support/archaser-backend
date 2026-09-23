@@ -44,6 +44,14 @@ export function isRegisteredExtensionKey(key: string): boolean {
     return EXTENSION_REGISTRY.has(key);
 }
 
+/** Registry key of the form `account_{accountId}`, or null if unregistered. */
+export function getMatchingAccountExtensionKey(
+    accountId: number
+): string | null {
+    const key = `account_${accountId}`;
+    return isRegisteredExtensionKey(key) ? key : null;
+}
+
 type ConnectorExtensionLookup = {
     billingConnector?: {
         findFirst: (args: {
@@ -107,6 +115,8 @@ function normalizeExtensionConfig(
 
 /**
  * Resolve extension_key / extension_config for billing-connector PUT.
+ * Only `account_{accountId}` registry entries are attachable: auto-set when
+ * unset, replace non-matching keys, or clear when no account match exists.
  * Returns undefined when neither field is present (omit from update).
  */
 export function resolveExtensionAttachmentInput(
@@ -119,51 +129,25 @@ export function resolveExtensionAttachmentInput(
         return undefined;
     }
 
-    if (nextKey === null) {
+    const matchedKey = getMatchingAccountExtensionKey(input.accountId);
+    const existing = input.existingKey?.trim() || null;
+
+    if (!matchedKey) {
         return {
             extension_key: null,
             extension_config: null,
         };
     }
 
-    if (nextKey !== undefined) {
-        if (!isRegisteredExtensionKey(nextKey)) {
-            throw Object.assign(
-                new Error(`Unknown extension_key: ${nextKey}`),
-                { statusCode: 400, code: "UNKNOWN_EXTENSION_KEY" }
-            );
-        }
-        const patch: ExtensionAttachmentUpsertPatch = {
-            extension_key: nextKey,
-        };
-        if (hasConfig) {
-            patch.extension_config =
-                normalizeExtensionConfig(input.extension_config) ?? {};
-        } else if (!input.existingKey) {
-            // First attach without config payload — store empty object.
-            patch.extension_config = {};
-        }
-        return patch;
-    }
-
-    // Config-only update: require an existing known key.
-    const existing = input.existingKey?.trim() || null;
-    if (!existing) {
-        throw Object.assign(
-            new Error(
-                "extension_config requires an extension_key on the connector"
-            ),
-            { statusCode: 400, code: "EXTENSION_KEY_REQUIRED" }
-        );
-    }
-    if (!isRegisteredExtensionKey(existing)) {
-        throw Object.assign(
-            new Error(`Unknown extension_key: ${existing}`),
-            { statusCode: 400, code: "UNKNOWN_EXTENSION_KEY" }
-        );
-    }
-
-    return {
-        extension_config: normalizeExtensionConfig(input.extension_config) ?? {},
+    const patch: ExtensionAttachmentUpsertPatch = {
+        extension_key: matchedKey,
     };
+    if (hasConfig) {
+        patch.extension_config =
+            normalizeExtensionConfig(input.extension_config) ?? {};
+    } else if (existing !== matchedKey) {
+        // First attach or replacing a non-matching key — empty config.
+        patch.extension_config = {};
+    }
+    return patch;
 }

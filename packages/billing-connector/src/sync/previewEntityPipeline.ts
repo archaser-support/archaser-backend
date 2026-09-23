@@ -28,8 +28,11 @@ export const PREVIEW_SAMPLE_TOP = 50;
 const PREVIEW_PAYMENT_SAMPLE_TOP = 10;
 /** Keep Payment preview from hanging for the full 180s Priority timeout. */
 const PREVIEW_PAYMENT_TIMEOUT_SECONDS = 45;
-/** Prefer newest payments first so Priority can stop after $top without a full scan. */
+/** Prefer newest document dates first so Priority can stop after $top without a full scan.
+ * Keep FNCDATE here even when live watermark is RECONDATE — IDG `$orderby=RECONDATE desc`
+ * often times out on Priority; preview only needs a representative sample. */
 const PREVIEW_PAYMENT_ORDER_BY = "FNCDATE desc";
+const PREVIEW_PAYMENT_DEFAULT_DATE_FIELD = "FNCDATE";
 
 /** Same entity order as staged live sync (Customer → Payment → Invoice → Contact). */
 export const PREVIEW_ENTITY_ORDER: ImportType[] = [...STAGED_ENTITY_ORDER];
