@@ -477,3 +477,10 @@ export {
     normalizeInvoicePaidTolerance,
     resolveInvoicePaidTolerance,
 } from "./invoice/invoicePaidTolerance";
+
+export {
+    calendarDateFromTimestamp,
+    maxPaymentDate,
+    resolveInvoicePaymentCloseDates,
+    type InvoicePaymentCloseDates,
+} from "./invoice/invoicePaymentCloseDates";

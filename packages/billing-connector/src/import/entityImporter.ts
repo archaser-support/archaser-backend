@@ -17,6 +17,7 @@ import {
 } from "./validateConnectorLiveImportRow";
 import { sortInvoicesForImport } from "./sortInvoicesForImport";
 import { linkOrphanedCreditNotes } from "../invoice/linkOrphanedCreditNotes";
+import { resolveInvoicePaymentCloseDates } from "../invoice/invoicePaymentCloseDates";
 import type { BillingAccountExtension } from "../extensions/types";
 
 export type ImportEntityType = "Customer" | "Contact" | "Invoice" | "Payment";
@@ -1024,6 +1025,14 @@ async function importInvoiceBatch(
         const customerOutstanding = customerNetAmount - customerTotalPaid;
         const existingId = existingByNumber.get(invoiceNumber) ?? null;
         const importStatus = resolveImportedInvoiceStatus(invoice.status);
+        const existingStatus = existingId
+            ? existingStatusByNumber.get(invoiceNumber)
+            : undefined;
+        const writingPaidStatus =
+            existingId == null
+                ? importStatus === "Paid"
+                : (!existingStatus || existingStatus === "Open") &&
+                  importStatus === "Paid";
 
         const data: Record<string, unknown> = {
             invoice_number: invoiceNumber,
@@ -1060,9 +1069,19 @@ async function importInvoiceBatch(
         if (invoice.customer_vat_amount !== undefined) {
             data.customer_vat_amount = invoice.customer_vat_amount;
         }
+        if (writingPaidStatus) {
+            // Payments may not be linked yet on create; D6 uses modifiedAt day.
+            // Later payment link/recalc refreshes from MAX(payment_date).
+            const dates = resolveInvoicePaymentCloseDates({
+                status: "Paid",
+                paymentDates: [],
+                modifiedAt: now,
+            });
+            data.last_payment_date = dates.last_payment_date;
+            data.close_date = dates.close_date;
+        }
 
         if (existingId != null) {
-            const existingStatus = existingStatusByNumber.get(invoiceNumber);
             // Promote Open (legacy import default) to Due; never overwrite Paid/Overdue/etc.
             if (!existingStatus || existingStatus === "Open") {
                 data.status = importStatus;

@@ -8,6 +8,7 @@ import {
     isWithinPaidTolerance,
     resolveInvoicePaidTolerance,
 } from "./invoicePaidTolerance";
+import { resolveInvoicePaymentCloseDates } from "./invoicePaymentCloseDates";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
 import { shrinkOrDeleteVirtualPaymentsForInvoiceIds } from "../payment/virtualPaymentTrim";
@@ -68,6 +69,8 @@ type InvoicePaidRecalcRow = {
     outstanding_debt: number;
     customer_outstanding_debt: number;
     status: Invoice["status"];
+    last_payment_date: Date | null;
+    close_date: Date | null;
     clearAlerts: boolean;
 };
 
@@ -130,15 +133,24 @@ function buildInvoicePaidUpdate(
     modifiedAt: Date,
     paidTolerance: number
 ): Prisma.InvoiceUpdateInput {
+    const paymentDates = linkedPayments.map((payment) => payment.payment_date);
+
     if (hasForcePaidClose(linkedPayments, options?.isForcePaidClose)) {
         const totalPaid = invoice.net_amount ?? 0;
         const totalCustomerPaid = invoice.customer_net_amount ?? 0;
+        const dates = resolveInvoicePaymentCloseDates({
+            status: "Paid",
+            paymentDates,
+            modifiedAt,
+        });
         return {
             total_paid: totalPaid,
             customer_total_paid: totalCustomerPaid,
             outstanding_debt: 0,
             customer_outstanding_debt: 0,
             status: "Paid",
+            last_payment_date: dates.last_payment_date,
+            close_date: dates.close_date,
             zero_limit_alert: false,
             reporting_breach: false,
             modified_at: modifiedAt,
@@ -160,13 +172,21 @@ function buildInvoicePaidUpdate(
         newCustomerOutstanding,
         paidTolerance
     );
+    const nextStatus = becomesPaid ? "Paid" : invoice.status;
+    const dates = resolveInvoicePaymentCloseDates({
+        status: nextStatus,
+        paymentDates,
+        modifiedAt,
+    });
 
     return {
         total_paid: totalPaid,
         customer_total_paid: totalCustomerPaid,
         outstanding_debt: newOutstanding,
         customer_outstanding_debt: newCustomerOutstanding,
-        status: becomesPaid ? "Paid" : invoice.status,
+        status: nextStatus,
+        last_payment_date: dates.last_payment_date,
+        close_date: dates.close_date,
         modified_at: modifiedAt,
         ...(becomesPaid && {
             zero_limit_alert: false,
@@ -179,13 +199,14 @@ function toInvoicePaidRecalcRow(
     invoice: InvoiceForPaidRecalc,
     linkedPayments: LinkedPaymentForRecalc[],
     options: InvoicePaidRecalcOptions | undefined,
-    paidTolerance: number
+    paidTolerance: number,
+    modifiedAt: Date = new Date()
 ): InvoicePaidRecalcRow {
     const update = buildInvoicePaidUpdate(
         invoice,
         linkedPayments,
         options,
-        new Date(),
+        modifiedAt,
         paidTolerance
     );
     const status =
@@ -199,6 +220,9 @@ function toInvoicePaidRecalcRow(
         outstanding_debt: update.outstanding_debt as number,
         customer_outstanding_debt: update.customer_outstanding_debt as number,
         status,
+        last_payment_date:
+            (update.last_payment_date as Date | null | undefined) ?? null,
+        close_date: (update.close_date as Date | null | undefined) ?? null,
         clearAlerts:
             update.zero_limit_alert === false &&
             update.reporting_breach === false,
@@ -223,6 +247,8 @@ async function bulkWriteInvoicePaidRecalcRows(
             (row) => row.customer_outstanding_debt
         );
         const statuses = chunk.map((row) => row.status);
+        const lastPaymentDates = chunk.map((row) => row.last_payment_date);
+        const closeDates = chunk.map((row) => row.close_date);
         const clearAlerts = chunk.map((row) => row.clearAlerts);
         await prisma.$executeRaw`
             UPDATE "Invoice" AS inv
@@ -232,6 +258,8 @@ async function bulkWriteInvoicePaidRecalcRows(
                 outstanding_debt = data.outstanding_debt,
                 customer_outstanding_debt = data.customer_outstanding_debt,
                 status = data.status::"invoice_status",
+                last_payment_date = data.last_payment_date,
+                close_date = data.close_date,
                 modified_at = ${modifiedAt},
                 zero_limit_alert = CASE
                     WHEN data.clear_alerts THEN false
@@ -249,6 +277,8 @@ async function bulkWriteInvoicePaidRecalcRows(
                     UNNEST(${outstandingDebt}::float8[]) AS outstanding_debt,
                     UNNEST(${customerOutstandingDebt}::float8[]) AS customer_outstanding_debt,
                     UNNEST(${statuses}::text[]) AS status,
+                    UNNEST(${lastPaymentDates}::date[]) AS last_payment_date,
+                    UNNEST(${closeDates}::date[]) AS close_date,
                     UNNEST(${clearAlerts}::boolean[]) AS clear_alerts
             ) AS data
             WHERE inv.id = data.id
@@ -466,7 +496,8 @@ export async function recalculateInvoicesFromLinkedPayments(
                 isForcePaidClose: forcePaidByAccount.get(invoice.account_id),
             },
             paidToleranceByAccount.get(invoice.account_id) ??
-                INVOICE_PAID_TOLERANCE
+                INVOICE_PAID_TOLERANCE,
+            modifiedAt
         )
     );
 

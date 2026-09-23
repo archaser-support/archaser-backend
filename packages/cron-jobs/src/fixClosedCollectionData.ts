@@ -3,6 +3,7 @@ import {
     bindCreditInsurancePrisma,
     syncCustomerInsuranceFields,
 } from "@archaser/credit-insurance-domain";
+import { resolveInvoicePaymentCloseDates } from "@archaser/billing-connector";
 
 import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 import { recalculateCustomerAmountsViaApi } from "./customersDomain";
@@ -89,6 +90,7 @@ export async function fixClosedCollectionData(
             },
         },
         select: {
+            id: true,
             customer_id: true,
             account_id: true,
         },
@@ -105,22 +107,63 @@ export async function fixClosedCollectionData(
         )
     );
 
-    const updateResult = await prisma.invoice.updateMany({
-        where: {
-            customer_outstanding_debt: 0,
-            status: "Overdue",
-            ...(freeze ? freeze.accountIdNotInFilter() : {}),
-            CustomerCollectionPeriod: {
-                period_end_date: {
-                    gte: lastRunAt,
-                },
-            },
-        },
-        data: {
-            status: "Paid",
-            zero_limit_alert: false,
-        },
-    });
+    const modifiedAt = new Date();
+    const invoiceIds = affectedInvoices.map((invoice) => invoice.id);
+    let invoicesUpdated = 0;
+
+    if (invoiceIds.length > 0) {
+        const linkedPayments = await prisma.invoicePayment.findMany({
+            where: { invoice_id: { in: invoiceIds } },
+            select: { invoice_id: true, payment_date: true },
+        });
+        const paymentsByInvoiceId = new Map<number, Date[]>();
+        for (const payment of linkedPayments) {
+            if (payment.invoice_id == null) {
+                continue;
+            }
+            const list = paymentsByInvoiceId.get(payment.invoice_id) ?? [];
+            list.push(payment.payment_date);
+            paymentsByInvoiceId.set(payment.invoice_id, list);
+        }
+
+        const ids: number[] = [];
+        const lastPaymentDates: Array<Date | null> = [];
+        const closeDates: Array<Date | null> = [];
+        for (const invoice of affectedInvoices) {
+            const dates = resolveInvoicePaymentCloseDates({
+                status: "Paid",
+                paymentDates: paymentsByInvoiceId.get(invoice.id) ?? [],
+                modifiedAt,
+            });
+            ids.push(invoice.id);
+            lastPaymentDates.push(dates.last_payment_date);
+            closeDates.push(dates.close_date);
+        }
+
+        const CHUNK = 200;
+        for (let i = 0; i < ids.length; i += CHUNK) {
+            const chunkIds = ids.slice(i, i + CHUNK);
+            const chunkLast = lastPaymentDates.slice(i, i + CHUNK);
+            const chunkClose = closeDates.slice(i, i + CHUNK);
+            const result = await prisma.$executeRaw`
+                UPDATE "Invoice" AS inv
+                SET
+                    status = 'Paid'::"invoice_status",
+                    zero_limit_alert = false,
+                    last_payment_date = data.last_payment_date,
+                    close_date = data.close_date,
+                    modified_at = ${modifiedAt}
+                FROM (
+                    SELECT
+                        UNNEST(${chunkIds}::int[]) AS id,
+                        UNNEST(${chunkLast}::date[]) AS last_payment_date,
+                        UNNEST(${chunkClose}::date[]) AS close_date
+                ) AS data
+                WHERE inv.id = data.id
+            `;
+            invoicesUpdated += Number(result);
+        }
+    }
 
     bindCreditInsurancePrisma(prisma);
     for (const affectedCustomerId of affectedCustomerIds) {
@@ -151,10 +194,10 @@ export async function fixClosedCollectionData(
 
     return {
         success: true,
-        message: `Fix closed collection data: ${updateResult.count} invoices updated across ${affectedCustomerIds.length} customers`,
+        message: `Fix closed collection data: ${invoicesUpdated} invoices updated across ${affectedCustomerIds.length} customers`,
         summary: {
             totalCollectionPeriods: collectionPeriodsCount,
-            invoicesUpdated: updateResult.count,
+            invoicesUpdated,
             customersRecalculated: affectedCustomerIds.length,
         },
         durationMs: Date.now() - start,
