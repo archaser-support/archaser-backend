@@ -251,7 +251,7 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
     accountId: number,
     invoiceNumbers: string[],
     userId?: string,
-    /** ERP CURDATE per invoice number; used when the invoice has no real payment. */
+    /** ERP RECONDATE per invoice number; used when the invoice has no real payment. */
     paymentDates?: Map<string, Date>,
     paymentDate: Date = new Date(),
     options?: {

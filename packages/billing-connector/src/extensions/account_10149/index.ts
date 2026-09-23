@@ -738,6 +738,12 @@ export function isAccount10149CreditInvoiceNumber(
     return trimmed.length > 0 && /^CR/i.test(trimmed);
 }
 
+/**
+ * Prefer RECONDATE (actual recon / receipt day). Do not use CURDATE — on
+ * IDG_ARFNCITEMS4 it is the FX rate date and usually equals the invoice date.
+ * FNCDATE is often the due date. Keep the latest recon day when several lines
+ * queue the same invoice.
+ */
 function queueReconciledInvoiceClose(
     invoiceNumber: string | null | undefined,
     raw: Record<string, unknown>,
@@ -750,9 +756,13 @@ function queueReconciledInvoiceClose(
         return;
     }
     queuedCloseNumbers.push(trimmed);
-    const curDate = parseErpDateOnly(raw.CURDATE ?? row.CURDATE);
-    if (curDate) {
-        queuedCloseDates.set(trimmed, curDate);
+    const reconDate = parseErpDateOnly(raw.RECONDATE ?? row.RECONDATE);
+    if (!reconDate) {
+        return;
+    }
+    const existing = queuedCloseDates.get(trimmed);
+    if (!existing || reconDate > existing) {
+        queuedCloseDates.set(trimmed, reconDate);
     }
 }
 
@@ -812,7 +822,7 @@ export function transformAccount10149Batch(
         /** Invoice numbers queued for flush virtual close. */
         onReconciledInvoiceCloseTargets?: (
             invoiceNumbers: string[],
-            /** ERP CURDATE per invoice number, when the line carries one. */
+            /** ERP RECONDATE per invoice number, when the line carries one. */
             closeDates?: Map<string, Date>
         ) => void;
         extension_config?: Record<string, unknown> | null;
@@ -942,12 +952,18 @@ export async function afterAccount10149PaymentLinked(
     const touched = await applyReconciledVirtualCloses(
         ctx.prisma,
         ctx.accountId,
-        closeCandidates.map((candidate) => ({
-            invoiceId: candidate.invoiceId,
-            customerId: candidate.customerId,
-            invoiceNumber: candidate.invoiceNumber,
-            paymentDate: candidate.paymentDate,
-        })),
+        closeCandidates.map((candidate) => {
+            const reconDate = parseErpDateOnly(
+                candidate.rawErpRow.RECONDATE
+            );
+            return {
+                invoiceId: candidate.invoiceId,
+                customerId: candidate.customerId,
+                invoiceNumber: candidate.invoiceNumber,
+                // Prefer recon day over mapped PAY_DATE (often FNCDATE/due).
+                paymentDate: reconDate ?? candidate.paymentDate,
+            };
+        }),
         ctx.userId,
         {
             onProgress: ctx.onProgress,

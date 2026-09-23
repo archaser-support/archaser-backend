@@ -641,7 +641,7 @@ export async function runStagedExtensionSync(
     const paymentAffectedCustomerIds = new Set<number>();
     /** Reconciled payment-feed IVNUMs queued during Payment transform for virtual close. */
     const pendingInvoiceCloses = new Set<string>();
-    /** ERP CURDATE per queued IVNUM — payment date for its virtual close. */
+    /** ERP RECONDATE per queued IVNUM — payment date for its virtual close. */
     const pendingInvoiceCloseDates = new Map<string, Date>();
     let invoicePostIngestRan = false;
 

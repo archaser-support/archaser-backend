@@ -37,8 +37,9 @@ export interface ExtensionTransformContext {
      */
     pendingInvoiceCloses?: Set<string>;
     /**
-     * ERP close date (Priority CURDATE) per pending invoice number, so a
-     * virtual close carries the ERP date instead of the import timestamp.
+     * ERP close date (Priority RECONDATE) per pending invoice number, so a
+     * virtual close carries the recon day instead of the import timestamp.
+     * Do not store CURDATE here — that is the FX rate date on IDG feeds.
      */
     pendingInvoiceCloseDates?: Map<string, Date>;
 }
@@ -135,7 +136,7 @@ export interface BillingAccountExtension {
         accountId: number;
         userId?: string;
         invoiceNumbers: string[];
-        /** ERP CURDATE per invoice number for virtual-close payment dates. */
+        /** ERP RECONDATE per invoice number for virtual-close payment dates. */
         invoiceCloseDates?: Map<string, Date>;
         /** Live progress for the Settle closed invoices tail step. */
         onProgress?: (progress: {
