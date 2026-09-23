@@ -1,6 +1,6 @@
 # Billing Integration — Extension label, sync row colors, post-sync CTP
 
-Short overview: Account Billing Integration tab drops the Extension key picker in favor of an account-id matched label, tints Sync History failed/running rows, and runs a capped CTP catch-up after successful incremental/backfill syncs.
+Short overview: Account Billing Integration tab drops the Extension key picker in favor of an account-id matched label, tints Sync History failed/running rows, and after successful incremental/backfill syncs starts Portfolio Health Generate for the pending rewrite window (import-touched days).
 
 **PRD:** `.cursor/plans/billing-integration-ext-ctp.prd.md`
 
