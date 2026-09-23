@@ -217,22 +217,34 @@ export interface BillingAccountExtension {
     /**
      * Unique left-to-right `$orderby` fields for keyset pagination on custom
      * ERP entity sets. Return null to keep the provider default.
-     * Account 10149 IDG payments: FNCDATE,FNCNUM,KLINE (KLINE alone collides
-     * across receipts on the same day).
+     * Account 10149 IDG payments: FNCDATE,FNCNUM,KLINE for $orderby (Priority
+     * 502s on RECONDATE lead); watermark date field is still RECONDATE.
      */
     resolvePullKeysetOrderFields?(params: {
         entityType: ExtensionEntityType;
         entitySet?: string | null;
         extension_config: Record<string, unknown> | null;
     }): string[] | null;
+    /**
+     * Preferred OData date column for incremental/backfill windows.
+     * Return null to keep ConnectorFieldMapping.pull_date_field / provider default.
+     * Account 10149 IDG payments: RECONDATE (FNCDATE is often due date).
+     */
+    resolvePullDateField?(params: {
+        entityType: ExtensionEntityType;
+        entitySet?: string | null;
+        extension_config: Record<string, unknown> | null;
+    }): string | null;
 }
 
 export type ExtensionAttachmentUpsertInput = {
-    /** Undefined = omit key change; null/"" = clear attachment. */
+    /** Account whose connector is being saved — drives account_{id} matching. */
+    accountId: number;
+    /** Undefined = omit key change; null/"" = treat as unset (may auto-attach). */
     extension_key?: string | null;
     /** Undefined = omit config change; object/null when clearing with key. */
     extension_config?: unknown;
-    /** Current key on the connector (for config-only updates). */
+    /** Current key on the connector (for attach vs keep-config). */
     existingKey: string | null;
 };
 

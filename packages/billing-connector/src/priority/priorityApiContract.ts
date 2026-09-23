@@ -170,7 +170,7 @@ export interface PriorityRateLimitContract {
     /** Priority Cloud does not document a standard Retry-After header. */
     retryAfterHeader: "Retry-After (not guaranteed)";
     recommendedBackoffSeconds: readonly [5, 15, 30];
-    recommendedPageSize: 500;
+    recommendedPageSize: 1000;
 }
 
 export const PRIORITY_RATE_LIMITS: PriorityRateLimitContract = {
@@ -181,7 +181,7 @@ export const PRIORITY_RATE_LIMITS: PriorityRateLimitContract = {
     throttleStatusCode: 429,
     retryAfterHeader: "Retry-After (not guaranteed)",
     recommendedBackoffSeconds: [5, 15, 30],
-    recommendedPageSize: 500,
+    recommendedPageSize: 1000,
 };
 
 // ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ export interface PriorityPaginationContract {
     topParam: "$top";
     skipParam: "$skip";
     defaultMaxRecords: 2000;
-    recommendedTop: 500;
+    recommendedTop: 1000;
     /** Continue while `value.length === $top`; stop on shorter page. */
     terminationRule: "short_page";
 }
@@ -205,7 +205,7 @@ export const PRIORITY_PAGINATION: PriorityPaginationContract = {
     topParam: "$top",
     skipParam: "$skip",
     defaultMaxRecords: 2000,
-    recommendedTop: 500,
+    recommendedTop: 1000,
     terminationRule: "short_page",
 };
 
