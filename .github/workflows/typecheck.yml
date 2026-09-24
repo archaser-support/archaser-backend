@@ -1,0 +1,35 @@
+name: Type check
+
+on:
+  workflow_call:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    env:
+      # prisma generate reads DATABASE_URL from the schema; it does not connect.
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Typecheck libraries
+        run: |
+          set -euo pipefail
+          npm run build -w @archaser/database
+          npm run build -w @archaser/sms-send
+          npm run build -w @archaser/auth
+          npm run build -w @archaser/credit-insurance-domain
+          npm run build -w @archaser/billing-connector
+          npm run build -w @archaser/cron-jobs
+      - name: Typecheck apps
+        run: |
+          set -euo pipefail
+          npx tsc --noEmit -p api/tsconfig.json
+          npx tsc --noEmit -p worker/tsconfig.json
+          npx tsc --noEmit -p sms/tsconfig.json
+          npx tsc --noEmit -p connectors/tsconfig.json
+          npx tsc --noEmit -p reports/tsconfig.json
