@@ -230,9 +230,11 @@ export {
     type CreditReportListOptions,
 } from "./credit-insurance/domain/creditInsuranceDashboardService";
 export {
+    enrichCustomerTopUpFields,
     getTopUpCoverReport,
     getTopUpExpiringReport,
 } from "./credit-insurance/domain/creditInsuranceTopUpDashboardService";
+export type { CustomerTopUpEnrichFields } from "./credit-insurance/domain/creditInsuranceTopUpDashboardService";
 export { getCustomerDashboardKpis } from "./credit-insurance/domain/customerDashboardKpisService";
 export {
     computeCustomerOutdatedDcl,
