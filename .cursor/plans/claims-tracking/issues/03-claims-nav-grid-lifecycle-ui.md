@@ -1,6 +1,6 @@
 # 03 — Claims nav page, grid, and lifecycle UI
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** [01-claim-schema-domain-api](01-claim-schema-domain-api.md)
 **User stories:** 6–12, 21, 25–26
@@ -12,12 +12,12 @@ Add a top-level **Claims** navigation item and page patterned after Disputes: vi
 
 ## Acceptance criteria
 
-- [ ] Claims nav item shows only for credit-product accounts; hidden otherwise
-- [ ] Claims page grid lists claims with status and key amounts
-- [ ] Manual create works with and without an invoice
-- [ ] Status transitions enforce Submitted required fields in the UI
-- [ ] Recognized loss can be overridden before Approve/Paid
-- [ ] English and Hebrew strings added together
+- [x] Claims nav item shows only for credit-product accounts; hidden otherwise
+- [x] Claims page grid lists claims with status and key amounts
+- [x] Manual create works with and without an invoice
+- [x] Status transitions enforce Submitted required fields in the UI
+- [x] Recognized loss can be overridden before Approve/Paid
+- [x] English and Hebrew strings added together
 
 ## How to test
 

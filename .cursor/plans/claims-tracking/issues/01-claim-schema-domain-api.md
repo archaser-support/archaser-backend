@@ -1,6 +1,6 @@
 # 01 — Claim schema, domain, and API
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 4–5, 10–18, 22–23, 27–30
@@ -14,13 +14,13 @@ Statuses: Draft, Submitted, Under Inquiry, Approved, Paid, Rejected, Canceled. T
 
 ## Acceptance criteria
 
-- [ ] Claim schema and API create/list/get/update round-trip for an account
-- [ ] At most one claim per invoice when invoice_id is set
-- [ ] Submitted requires submission date + insurer reference
-- [ ] First transition into Approved or Paid deducts SDL-then-Aggregate for the correct anniversary policy year; Approved→Paid does not double-deduct
-- [ ] Leaving `{Approved, Paid}` reverses the prior deduction
-- [ ] Remaining excess per policy year API/helper matches applied claims
-- [ ] TopUp is not used as claim owner; Primary only
+- [x] Claim schema and API create/list/get/update round-trip for an account
+- [x] At most one claim per invoice when invoice_id is set
+- [x] Submitted requires submission date + insurer reference
+- [x] First transition into Approved or Paid deducts SDL-then-Aggregate for the correct anniversary policy year; Approved→Paid does not double-deduct
+- [x] Leaving `{Approved, Paid}` reverses the prior deduction
+- [x] Remaining excess per policy year API/helper matches applied claims
+- [x] TopUp is not used as claim owner; Primary only
 
 ## How to test
 

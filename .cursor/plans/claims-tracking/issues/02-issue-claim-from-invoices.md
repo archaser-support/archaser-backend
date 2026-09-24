@@ -1,6 +1,6 @@
 # 02 — Issue Claim from invoices (eligibility)
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** [01-claim-schema-domain-api](01-claim-schema-domain-api.md)
 **User stories:** 1–5, 13–14, 24
@@ -12,11 +12,11 @@ Add an **Issue Claim** action on the invoices list that calls the claim-create p
 
 ## Acceptance criteria
 
-- [ ] Issue Claim appears on the invoices list for credit-insurance accounts
-- [ ] Eligible invoice creates a Draft claim and surfaces success
-- [ ] Ineligible invoice is blocked with a clear reason (NQL, overdue, reporting breach, or already claimed)
-- [ ] Default recognized loss matches open × insured %
-- [ ] English and Hebrew strings added together
+- [x] Issue Claim appears on the invoices list for credit-insurance accounts
+- [x] Eligible invoice creates a Draft claim and surfaces success
+- [x] Ineligible invoice is blocked with a clear reason (NQL, overdue, reporting breach, or already claimed)
+- [x] Default recognized loss matches open × insured %
+- [x] English and Hebrew strings added together
 
 ## How to test
 
