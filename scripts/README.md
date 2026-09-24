@@ -107,14 +107,9 @@ node development/create-test-user.js
 # Setup internal email templates
 ./database/setup-internal-email-templates.sh
 
-# Run database migrations
-./database/run-cron-monitoring-migration.sh
-
-# Or use the TypeScript migration runner
-npx ts-node database/run-migration.ts prisma/migrations/your_migration.sql
+# New SQL files in prisma/migrations/ run on staging and production deploy.
+# See scripts/database/README.md for the filename and statement rules.
 ```
-
-**See**: [Database Migration Guide](../../docs/development-guides/database-migration-guide.md) for detailed instructions on creating and running migrations.
 
 ### Utilities
 

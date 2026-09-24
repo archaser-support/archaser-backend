@@ -1,0 +1,492 @@
+{
+  "files": [
+    {
+      "filename": "20260208_add_account_sso.sql",
+      "checksum": "1d408ba1e09d1f9ce1d8a08f2533516c4ddcdaa7aea700761326ba9d27693ac9"
+    },
+    {
+      "filename": "20260224_move_automation_stuck_no_contacts_to_customer.sql",
+      "checksum": "3eba1f7c8d7d52a733e830f8ebef04ca151549f26e021e56ff5774bc0a932bdf"
+    },
+    {
+      "filename": "20260412_credit_insurance_product.sql",
+      "checksum": "532c160b63d5a69a253cb8f1f0f595fcf9ebf1b137ff969659fdeae8ff56fcc3"
+    },
+    {
+      "filename": "20260413_customer_credit_score_fields.sql",
+      "checksum": "9394b8cd2704dc0377de38d80562b350903beabfce128350c756cd84fbd56698"
+    },
+    {
+      "filename": "20260414_insurance_policy_dcl_customer_since_months.sql",
+      "checksum": "af172f5f510127c1c7b3ff9d16f6d6d4ac4b715f60cec3b664a5e1de380cbd06"
+    },
+    {
+      "filename": "20260414_insurance_policy_draft_status.sql",
+      "checksum": "05b295a2412a1179403c44af5df838ad283ab11327bfab1a6e499326135c4a6a"
+    },
+    {
+      "filename": "20260414_insurance_policy_term_fields.sql",
+      "checksum": "7a01732064431ca26450fa6a7832bc41f05662d1a7445ce9d695120e25bb784a"
+    },
+    {
+      "filename": "20260414_invoice_oldest_overdue_invoice_date.sql",
+      "checksum": "ec6e2e194c7ff6481c4315d62934140aaa4dd2a029263b9d53f2f6a09ac9060a"
+    },
+    {
+      "filename": "20260419_customer_number_policy.sql",
+      "checksum": "55da566cc4c5a044e179a69a3ae82df9c6cc099ceea54265e66573de60759c3c"
+    },
+    {
+      "filename": "20260419_invoice_payment_term_breach.sql",
+      "checksum": "ffb97a13ecea5738230301647fe8ae02804345ecda3ad388bc0050e81d28453a"
+    },
+    {
+      "filename": "20260419_named_policy_table.sql",
+      "checksum": "572763ad4ac821723902ef40008131fe4927b4eebb802513fa753877ebbd255d"
+    },
+    {
+      "filename": "20260419_rename_invoice_payment_term_breach.sql",
+      "checksum": "5bc6bf8e6c6ffee6a889898e547337f054bab82a048d4543f43a08bfd97c7c6f"
+    },
+    {
+      "filename": "20260420_customer_overdue_breach_to_overdue_block.sql",
+      "checksum": "d13fb460994444f507b821aaa4aa9a417bd37d614a9f57ff9f0fabd8cada0b9e"
+    },
+    {
+      "filename": "20260420_invoice_created_terms_violation_snapshot.sql",
+      "checksum": "4d8ac47e80f6e29431a5ff3d552ccb2d90b3d1a32f8c813844ee9f2351db6138"
+    },
+    {
+      "filename": "20260421_invoice_ctv_rename_columns.sql",
+      "checksum": "5e73a071592054a978a1a0bde53f1772b8482553ba8a6d8dd5e6781027f988a9"
+    },
+    {
+      "filename": "20260422_credit_dashboard_settings_and_reporting.sql",
+      "checksum": "8e12cb44792c64d013e65b024cbd8c5b9705d25be0ff24b800d83499ce698dd2"
+    },
+    {
+      "filename": "20260423_drop_account_credit_dashboard_columns.sql",
+      "checksum": "459dfb83bb7475a9a5ead8993a359493784e15538a62352763231251e4e2dac4"
+    },
+    {
+      "filename": "20260423_merge_invoice_reporting_ref_into_comment.sql",
+      "checksum": "c16773e765f4616abd0a280b3c1c2f6005e8e8c17d3efabd0bab44cc0ced7458"
+    },
+    {
+      "filename": "20260427_approved_limit_expiration_date.sql",
+      "checksum": "af2fc9f07e934c39d4a1c381912eb314b1091fda5773c1a299ab43be44a78cbf"
+    },
+    {
+      "filename": "20260428_account_credit_insurance_warning_fields.sql",
+      "checksum": "2c0994fad7f8a2f10ae969153dff6c63ee7eeed22e0f38c70e3bb9ac1f498b45"
+    },
+    {
+      "filename": "20260428_credit_dashboard_daily_snapshots.sql",
+      "checksum": "66c12372bdcff9a740bd2af833df328626e03a6041f6c47829f265bb95fe48da"
+    },
+    {
+      "filename": "20260428_credit_dashboard_daily_snapshots_add_timestamps.sql",
+      "checksum": "319a3e66c0fa97d93f4bba4ab84aacc6d0f3d0c3bb756ffbd541880080ff7fb7"
+    },
+    {
+      "filename": "20260429_customer_outdated_dcl_active_since.sql",
+      "checksum": "e1559bdca9f7505d0f612cfa1df51dc5f89c0a6783ed3bae158d8b3ace302bb4"
+    },
+    {
+      "filename": "20260429_insurance_policy_max_total_dcl_sdl_cover.sql",
+      "checksum": "e5081fc84878ea75564f32337bb5e54f7eb345131f6d990b54c3d9a98f6acde0"
+    },
+    {
+      "filename": "20260512_customer_crn.sql",
+      "checksum": "d7940309383d54de9b514245cd7740a63972ff01e2cc1c5c258fe7df66d1cc92"
+    },
+    {
+      "filename": "20260517_customer_policy.sql",
+      "checksum": "d5824f94984e9cd9a2db56f81fcf5a25c3056c667a5bf4a038993cc4a83d1708"
+    },
+    {
+      "filename": "20260519_invoice_in_capacity_gap.sql",
+      "checksum": "5d96484a7361550628e3d67dc59c800642dffb114985b90dd1e872b9b412add5"
+    },
+    {
+      "filename": "20260520_customer_policy_trend.sql",
+      "checksum": "1e2aa6c4693f2cb6e76b4491124bf40b429644265df3abdff86c706ba9aead0a"
+    },
+    {
+      "filename": "20260524_drop_customer_legacy_policy_columns.sql",
+      "checksum": "1725fcdbac8ca3ac858eb561ea4d4ca42bf018f5e6c69b5e8294d5a8ccfd4aca"
+    },
+    {
+      "filename": "20260531_customer_policy_gap_amounts.sql",
+      "checksum": "9b9e4b4095132fc9d7bd60b611fc271245c47ad66a3e17c6d6f0644aafe2a1d8"
+    },
+    {
+      "filename": "20260531_drop_customer_gap_columns.sql",
+      "checksum": "b6c5d36806fd29893e9e3f1a9149e3cb98267b62b9db71e3a61812a18849cb5e"
+    },
+    {
+      "filename": "20260602_invoice_limit_assessment_snapshots.sql",
+      "checksum": "73d06c90c3f036cd66010d83e6423c4ecfc3d2c7fd51385baa29aadbb07bc53a"
+    },
+    {
+      "filename": "20260610_credit_insurance_top_up.sql",
+      "checksum": "a23782560d1de745d99e692cf90738996135026939c09fc800492f28a9d03248"
+    },
+    {
+      "filename": "20260615_customer_top_up_premium.sql",
+      "checksum": "4ae8dd820c52ec1b1515ea3d0270a6a99a53b0276fe71c452aaf36a5e5d02502"
+    },
+    {
+      "filename": "20260617_invoice_capacity_gap_amounts.sql",
+      "checksum": "226ff1bb0ae9d14fbec14f62a0d00a53d0ade5fd79ca6c1d968deb63e5d9e63f"
+    },
+    {
+      "filename": "20260621_insurance_policy_cost_fields.sql",
+      "checksum": "280d24e0732e9cb8550cf11dff0804dc1d684ddd11e75dacac6532c39bf8bd13"
+    },
+    {
+      "filename": "20260621_insurance_policy_trend.sql",
+      "checksum": "b8134ff325fbb6baf09ea1938157065005104c6a6aff57780230838abaa027cb"
+    },
+    {
+      "filename": "20260622_insurance_policy_auto_activate.sql",
+      "checksum": "162afaae2203fd0f8a37338d2f443f54e70f6b6de4ee715454eb0ad3d98f2611"
+    },
+    {
+      "filename": "20260623_billing_connector.sql",
+      "checksum": "99ec95f082ab6b201d06d1bbe5ce89ea93d22ff1a9075d6a057d9e6ee820321a"
+    },
+    {
+      "filename": "20260623_connector_field_mapping.sql",
+      "checksum": "19bcf4ce89afa99b33e3d8317b98ad1c3c063243eaef8dce6da6053c8ed7e48c"
+    },
+    {
+      "filename": "20260623_contact_erp_contact_id.sql",
+      "checksum": "1952824a375a103853b99ef6c81f2aef235db008d22711097f3966477e9e82af"
+    },
+    {
+      "filename": "20260623_drop_billing_connector_enabled.sql",
+      "checksum": "02f3f5b24d405c32b6082cd123e1da835e643f940e711a7435d13d48934d37b4"
+    },
+    {
+      "filename": "20260626_credit_dashboard_snapshot_business_unit.sql",
+      "checksum": "b8761ab55ad00b35e56d96d10cf2bcc5f762eb56bcda3dc1ea5181ef7cac6052"
+    },
+    {
+      "filename": "20260626_import_type_policy.sql",
+      "checksum": "8a5671d3d53fb37c7e692b268f6dfbe3db89d936058f16fe2afcd1ed5d33cc8e"
+    },
+    {
+      "filename": "20260628_customer_policy_trend_daily_cost.sql",
+      "checksum": "1dd19e5b6832fd858e9dcd8101afc1faac289c9cec198282219cff303b302932"
+    },
+    {
+      "filename": "20260629_snapshot_drop_audit_columns.sql",
+      "checksum": "56d6fd204abe114c60ff1dea3ef3cd9426ae0110bdc073f33fa932a4beb9e629"
+    },
+    {
+      "filename": "20260630_credit_notification_email_template.sql",
+      "checksum": "e1eb0312c5d9ea6852f8a019e1735993d39b3eeba0560fad7ffe0d8760a25409"
+    },
+    {
+      "filename": "20260630_notification_rule_sets_credit.sql",
+      "checksum": "0a9164fb4a0c96e434c8af7e00a2b74374a7738ed57a0c1a6d8195c7d317d593"
+    },
+    {
+      "filename": "20260630_notification_rules_cron.sql",
+      "checksum": "56818d5a20ac34643a09b8637be9d70eca5e871235a055eac2b4791a6686187a"
+    },
+    {
+      "filename": "20260702_invoice_payment_deferred.sql",
+      "checksum": "5eef9ab456e70574d979de5b5fb4d77f03a0abb2280732b626451052586aef54"
+    },
+    {
+      "filename": "20260705_customer_checkpoint.sql",
+      "checksum": "74400b3a7d905b52399609daecd539dad2071f136b8746b0bf9113ed850895ab"
+    },
+    {
+      "filename": "20260705_policy_month_end_cutoff_fields.sql",
+      "checksum": "b8c1a0f9b3fd0cabf1f21054346509e3692410a41117fd18d31acd73c092094a"
+    },
+    {
+      "filename": "20260706_customer_policy_retained_capacity_gap.sql",
+      "checksum": "df1355add989c575547d3dc8a0e30ffbb6476d669370b3ab036dcff31d04444f"
+    },
+    {
+      "filename": "20260706_payment_term_month_end_cutoff_fields.sql",
+      "checksum": "d00be6328600ad82bb1fbcc14ef2d20857f16639ca5c7bef1553625f42dbf617"
+    },
+    {
+      "filename": "20260708_customer_policy_trend_per_policy_grain_kpis.sql",
+      "checksum": "c7b6d6f0025432651db4b312e0268a1e43c56a972fc0ce2b478d3834e2987ba0"
+    },
+    {
+      "filename": "20260709_customer_policy_trend_payment_term_month_end.sql",
+      "checksum": "19f9f07f4b9bc875efea920e88fcbe1ee02be835821bac69c00afd54178f1845"
+    },
+    {
+      "filename": "20260721_credit_asof_backfill_job.sql",
+      "checksum": "af022fabf3f4b8831bc965dd4533fea31d73e9973cb69473ee4a8504e68f3f11"
+    },
+    {
+      "filename": "20260721_credit_asof_rewrite_queue.sql",
+      "checksum": "0edf34ff0f18ffa715656dc88b7c353ab040e9bac637316a0ffd535fd4bd70fc"
+    },
+    {
+      "filename": "20260721_customer_policy_pricing.sql",
+      "checksum": "5223d6c2956cb10e8c609131e5332d9c5d347acd0dff226c60cb05fce7b5bbb5"
+    },
+    {
+      "filename": "20260721_customer_policy_trend_registration_fee.sql",
+      "checksum": "e746912f9be5f6d87203dcdc5c04624b13caf68b3df10314e8905e70d44a08ca"
+    },
+    {
+      "filename": "20260721_insurance_policy_registration_fee.sql",
+      "checksum": "f1997d4a361d50b7f4848b2a9698ed45120271f5bb2af16e9de8d919be67d5b9"
+    },
+    {
+      "filename": "20260727_credit_asof_rewrite_queue_checkpoint.sql",
+      "checksum": "3c6a79c71fdcb6e3e700c36435cc29dc37fb2353f036f954dd1579d28c14804b"
+    },
+    {
+      "filename": "20260728_billing_connector_backfill_start_date.sql",
+      "checksum": "5776855c2d3041240d1d3e31168b86892a70b99ee54ed285219bf44543887aae"
+    },
+    {
+      "filename": "20260728_billing_connector_include_older_open.sql",
+      "checksum": "cd0da9c09f11d66dbcaa54c28805f007159b09e80412b8bd121d831a181de687"
+    },
+    {
+      "filename": "20260728_billing_connector_skip_reporting_breach.sql",
+      "checksum": "da56d5345ac6d78af328ee9d2b06bb56ecbeb36e04d85023cd82c43ab23a9a1b"
+    },
+    {
+      "filename": "20260803_billing_connector_entity_sets.sql",
+      "checksum": "d739090a1e484d1b8468e8f0917bf7e2ce60a3fc126d7b7d8bedf859831fce54"
+    },
+    {
+      "filename": "20260803_billing_connector_pull_filters.sql",
+      "checksum": "cc6c5d1f446c1f0751ef97f873cb98b7c15b7b200de926c2eeb7f15fa1c6d4ab"
+    },
+    {
+      "filename": "20260803_connector_discovered_fields.sql",
+      "checksum": "bb3c2ed835d5a6c59cd99bae6049121f727bc0d932604010622ac29810f49245"
+    },
+    {
+      "filename": "20260804_billing_connector_preview_passes.sql",
+      "checksum": "f036e9e01eef9225c03ada33c31dca12ffbda2e2c4de9e21d5e13a893d6db470"
+    },
+    {
+      "filename": "20260812_drop_invoice_payment_unique_reference.sql",
+      "checksum": "73cc322c01b93247145ff29fc8c5f738c7fe586951e06411400846755ced661c"
+    },
+    {
+      "filename": "20260816_account_has_file_import.sql",
+      "checksum": "1d0a647edce2808f71be821ed83c85f161b494c6d1ee479b3663a3a3ab830f0a"
+    },
+    {
+      "filename": "20260816_billing_connector_extension.sql",
+      "checksum": "ffea310dcd7b0e0ae925591733a2fcefd24acf0d1286436ebbae68ff74f628df"
+    },
+    {
+      "filename": "20260825_connector_mapping_pull_date_field.sql",
+      "checksum": "9d5de7de81ef8c59678fe9d25f13edbc17bc7e1321933a006302b34c11c7ebc7"
+    },
+    {
+      "filename": "20260825_rename_priority_erp_debit_to_custom_code1.sql",
+      "checksum": "1bff75f0ab547a51f79f41922d3050aab76c88129a505b86d453e506b31a1670"
+    },
+    {
+      "filename": "20260826_drop_legacy_payment_table.sql",
+      "checksum": "74329ecb9b0616540eb8c6cb190d1a0a4a03ccb677280af8f75a8d0ad9e4ddab"
+    },
+    {
+      "filename": "20260828_ar_post_ingest_retry_queue.sql",
+      "checksum": "8405e56ee576e3f046fa4ad54899c132f2b5725cbc28702ace482d8489914471"
+    },
+    {
+      "filename": "20260830_billing_connector_invoice_paid_tolerance.sql",
+      "checksum": "f64c34491b86b815619655aa013cd05bc8f0843335946a8e70e0e1a4af9dd299"
+    },
+    {
+      "filename": "20260830_billing_connector_mep_breach_start_date.sql",
+      "checksum": "d402bbbc2d831127c24b859ec76a680aa5455d3ecec5b1ab42290dd7124ab98c"
+    },
+    {
+      "filename": "20260830_customer_oldest_invoice_overdue_date_all.sql",
+      "checksum": "0d119cd8f12b43cff00ed515901f348f63ead4134c42cbca6da658d6572f38d0"
+    },
+    {
+      "filename": "20260830_drop_account_last_sync_date.sql",
+      "checksum": "703fca52eaedd7eb98bc78f03f084b60350c6a56d9e0f7d2b0ce7bb2d6903944"
+    },
+    {
+      "filename": "20260902_customer_oldest_invoice_overdue_date_to_date.sql",
+      "checksum": "ce5572b91f7ea57322b1817b838bfb2e05ed72aa363291a197848d4aea94ee5a"
+    },
+    {
+      "filename": "20260903_invoice_payment_payment_date_to_date.sql",
+      "checksum": "1b4c3eb298a940b3a5d4b831b273472e0c0506c86717459a8a1982367687319f"
+    },
+    {
+      "filename": "20260903_portfolio_health_generate_indexes.sql",
+      "checksum": "0d93e03f3e81fc495d3156857305068afa40009bd3bf522f09341a96319fbdba"
+    },
+    {
+      "filename": "20260904_billing_connector_time_zone.sql",
+      "checksum": "88f3f30f618f69b3d4940bbea8aa65a200a626e8dfbdc7d4c054210120b3c025"
+    },
+    {
+      "filename": "20260906_rename_mep_reporting_cutoff_day_fields.sql",
+      "checksum": "3d22f3cf3a1fdb09461bc0c4a8a6868dbe00f632c643a6d88e9461705d2f17cf"
+    },
+    {
+      "filename": "20260906_rename_mep_reporting_substitute_extra_days.sql",
+      "checksum": "b06605b3fc84967381e284a79c4192f511da7b5b5856600127dc80403b9fd91b"
+    },
+    {
+      "filename": "20260908_cost_registration_fee_percent_scale_3.sql",
+      "checksum": "f05f4fc3afce22f4d52f863b96ee6f2e34967c0b1624645aca8e250fde85faa9"
+    },
+    {
+      "filename": "20260915_insurance_policy_annual_credit_assessment_fee.sql",
+      "checksum": "e3b7ba4dd8d185f3790f0e27f0809ca7796259f10a1bc20d0b2f92dcb29ac21c"
+    },
+    {
+      "filename": "20260916_drop_billing_connector_status.sql",
+      "checksum": "22fa8585262f653cca423e15d4068cd34aade5f40d74e88f6928b8f5b6d13121"
+    },
+    {
+      "filename": "20260917_account_is_demo.sql",
+      "checksum": "464f8dbd211cebc1f0acc58fbaec7f62ea2da1466b6974bbb71b2e999bcfebdf"
+    },
+    {
+      "filename": "20260917_drop_account_has_file_import.sql",
+      "checksum": "244eaf22c260f1bb9d24de948c3328f40e755fc5ea185130b3cd923ff945f8fa"
+    },
+    {
+      "filename": "20260917_reconcile_stale_customer_rollups_cron.sql",
+      "checksum": "fa16a6ef319a804deebd0915bf563e43f74f74f998cec008c5b41cfb6f906f3d"
+    },
+    {
+      "filename": "20260917_reporting_breach_start_date.sql",
+      "checksum": "baa810d78490ae3c6f0a44fd9818e7430762d9b8979c1fcdc165df40aed94f67"
+    },
+    {
+      "filename": "20260922_account_amounts_include_vat.sql",
+      "checksum": "91cacc85f64be13abac7508503fa039b895cd9b9c41d2d6f351b37db0b2cb526"
+    },
+    {
+      "filename": "20260922_account_background_job.sql",
+      "checksum": "3582c182650e8a552572343ad7049c5b75decbca493c58b624c341573fc93c0c"
+    },
+    {
+      "filename": "20260922_invoice_vat_amount_fields.sql",
+      "checksum": "5b7997de26b37c1d1ec8160ba77ec0206f309fee00ff022d6d70a11a65fb7fce"
+    },
+    {
+      "filename": "20260923_invoice_close_date.sql",
+      "checksum": "f688c5ad3699f9dea6be378d1465a94e8b98e79701158483ac805c5e7ffcd563"
+    },
+    {
+      "filename": "YYYYMMDD_add_due_notification_state_and_datafix.sql",
+      "checksum": "0ed71692af1a7d6521bfcf9727bad7a97c64d49b425bd1e2b754e30f9d6d40fc"
+    },
+    {
+      "filename": "YYYYMMDD_add_due_notification_support.sql",
+      "checksum": "d8093fdceab2da4b33c3df7193bf6868fb35236e7d13b3490da544f07f342cb1"
+    },
+    {
+      "filename": "add_account_chart_palette_color.sql",
+      "checksum": "d5c31d26cff727c58f9c27f6f70f947ec64095c46c0adee56e20295426cec29c"
+    },
+    {
+      "filename": "add_account_primary_color.sql",
+      "checksum": "7b98cffa37de7a44216d45549b2a2d53f127b1a80912a1652725ab39503d6a94"
+    },
+    {
+      "filename": "add_account_secondary_color.sql",
+      "checksum": "9b673a2a3b2874769e80e07c713567b37ebec4d9b46fd6fbbb95f3c1ac1f3776"
+    },
+    {
+      "filename": "add_business_unit_bank_accounts.sql",
+      "checksum": "2221e138569e1adcf84fedb8316914c9d351dbf81bec2959683f9e9c07003fd5"
+    },
+    {
+      "filename": "add_cron_job_monitoring.sql",
+      "checksum": "55be6e9e7934ba274f5d267840be9530e5baed4296f9a9b79af6530fc08b9772"
+    },
+    {
+      "filename": "add_customer_to_import_type_enum.sql",
+      "checksum": "29c4e3503efbdaa9f6a560a61af8ba55c712a4ca6f6d65d558ee12c5b4c9e7f4"
+    },
+    {
+      "filename": "add_dashboard_cache.sql",
+      "checksum": "c3c50070d7e7aa1741e7b6bfe422d2e98bb231c4030e79f22788716bb3ce7777"
+    },
+    {
+      "filename": "add_due_invoice_notifications_cronjob.sql",
+      "checksum": "3e9a931396ae127f5bd8c279f276416b29552aad95a6fbaea033d341239d8bb4"
+    },
+    {
+      "filename": "add_email_engagement_fields.sql",
+      "checksum": "53b6fb4df407d890a786140da35922b2fb50ad9fc0b8e28aebd0089cb1009d15"
+    },
+    {
+      "filename": "add_generic_fields.sql",
+      "checksum": "3e1edc9ee8ea0238c403d2f97d7e2f5df788ed157b27cd95e7112a0748426acd"
+    },
+    {
+      "filename": "add_is_default_to_reports.sql",
+      "checksum": "3bb6b9c210cdd57d90e2821700584b4bcd49f948489da1b81549d38babeb80fb"
+    },
+    {
+      "filename": "add_is_system_and_context_to_reports.sql",
+      "checksum": "27d5d02995ddad81f22a1349ad25d70b28070fec6f8f3406819fc198ddf29f59"
+    },
+    {
+      "filename": "add_report_tables.sql",
+      "checksum": "e799d994d03622bf1dc07826bc19e556fe94d9c69d9af3e7e235600e2e3ab5bc"
+    },
+    {
+      "filename": "add_sequence_containers.sql",
+      "checksum": "7c0027ae981a124e4fe4a25a7736bf70489150d56cececcc086fcdb2f5bb207f"
+    },
+    {
+      "filename": "add_user_default_report.sql",
+      "checksum": "40181d17c43aea1407bf9a50e2eb33a1ae7a69f6db2db01f2dd6bfe0f00a67ab"
+    },
+    {
+      "filename": "add_username_field.sql",
+      "checksum": "959304b2144b99c652d9a24f161bd189087abdfce3fd0c8a204ee3d669aabfde"
+    },
+    {
+      "filename": "create_business_unit_table.sql",
+      "checksum": "811118e6708b3dbeda711ecdbc5190082da41c5d7cae8fe3b563226a185961f6"
+    },
+    {
+      "filename": "due_templates.sql",
+      "checksum": "9ef4ccebda77f86ad51bfd005acc9f0f2758bb09ff1231fa36bd31fe5542274c"
+    },
+    {
+      "filename": "manual_migration_contact_status.sql",
+      "checksum": "5a3bcd52507552e78b6dba90c4ffade1b790a3b6e6c797220a3b3e67eb683433"
+    },
+    {
+      "filename": "manual_migration_report_contact_status.sql",
+      "checksum": "60dfc46cc6b8a5a133b8fab8d27440ded707877adaab7d627f59ef29597ed31b"
+    },
+    {
+      "filename": "migrate_timezone_to_iana.sql",
+      "checksum": "e20ce04d1390c3f5eaf7e8eaf210ee0ad2ee3abcebdc28352925a69aa45d6cdb"
+    },
+    {
+      "filename": "remove_redundant_fields_from_activities_template_and_language.sql",
+      "checksum": "cf36de5a809b40e6902b82f0f357a0a2033aa37fd728f889f0ae1916a4f2d143"
+    },
+    {
+      "filename": "remove_redundant_fields_from_dispute_reason_language.sql",
+      "checksum": "1ea627923f829a3fa28328d28ef5ae8ef1b7d6d830ee78a22fe65a15eba4c63c"
+    }
+  ]
+}

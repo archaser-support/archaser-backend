@@ -31,15 +31,18 @@ psql "$DATABASE_URL" -f prisma/migrations/your_migration.sql
 
 ### Creating New Migrations
 
-See the comprehensive guide: [Database Migration Guide](../../docs/development-guides/database-migration-guide.md)
+Staging and production deploys apply new files in `prisma/migrations/` before the new containers start. Files already in that folder when the runner was turned on are recorded and are not run again. Scripts outside `prisma/migrations/` are not part of the deploy.
 
-**Quick Steps:**
+**New file rules:**
 
-1. Create SQL file in `prisma/migrations/`
-2. Create runner script in `scripts/database/`
-3. Make script executable: `chmod +x scripts/database/run-your-migration.sh`
-4. Test the migration
-5. Run: `npx prisma generate`
+1. Name the file `YYYYMMDD_description.sql`. When two files share a day and order matters, use `_01_` and `_02_` in the name so alphabetical order matches the sequence.
+2. Do not put `BEGIN` or `COMMIT` in the file. The deploy opens one transaction for the file.
+3. Do not use `CREATE INDEX CONCURRENTLY` or `VACUUM`. Use a normal `CREATE INDEX`.
+4. Ship a drop or a rename only in a later release, after the running app no longer uses the old column.
+5. Do not edit a file that has already deployed. Add a new dated file instead.
+6. Run `npx prisma generate` after the Prisma schema changes.
+
+Do not paste new migration files into DBeaver for staging or production. The deploy runs them.
 
 ## Available Scripts
 
