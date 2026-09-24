@@ -16,6 +16,9 @@ jobs:
           node-version: "20"
           cache: npm
       - run: npm ci
+      # .npmrc sets ignore-scripts, so postinstall does not generate the client.
+      - name: Generate Prisma client
+        run: npx prisma generate --schema=./prisma/schema.prisma
       - name: Typecheck libraries
         run: |
           set -euo pipefail
