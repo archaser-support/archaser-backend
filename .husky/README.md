@@ -6,13 +6,14 @@ This project uses [Husky](https://typicode.github.io/husky/) to enforce code qua
 
 The pre-commit hook automatically runs before each commit and performs:
 
-1. **TypeScript Type Checking** (`npm run type-check`)
-   - Ensures no TypeScript errors exist
-   - Uses increased memory allocation for large codebase
+1. **Lint / format** (`npx lint-staged`) when installed
+2. **TypeScript type checking** (`npm run type-check`)
+   - Builds workspace libraries, then `tsc --noEmit` for Nest apps
+   - Same shape as `.github/workflows/typecheck.yml`
 
-2. **Unit Tests** (`npm run test:unit`)
-   - Runs all unit tests to ensure functionality
-   - Uses Vitest with jsdom environment
+FE Nest API parity (`check:api-parity`) lives in the frontend repo husky hook.
+
+Unit tests and build are skipped in pre-commit (run manually / CI).
 
 ### What Happens When Tests Fail?
 

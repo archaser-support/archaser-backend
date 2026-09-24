@@ -93,20 +93,25 @@ while read -r LOCAL_REF LOCAL_SHA1 REMOTE_REF REMOTE_SHA1; do
     fi
 done
 
-# Step 1: Auto-fix linting and formatting issues
-log "🔧 Auto-fixing linting and formatting issues..."
-if ! npx lint-staged >&2; then
+# Step 1: Auto-fix linting and formatting issues (optional — lint-staged not required)
+if [ -f "node_modules/lint-staged/bin/lint-staged.js" ] || npm ls lint-staged --depth=0 >/dev/null 2>&1; then
+    log "🔧 Auto-fixing linting and formatting issues..."
+    if ! npx lint-staged >&2; then
+        log ""
+        log "❌ Auto-fix failed"
+        log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log "Some issues could not be auto-fixed. Please fix them manually."
+        log ""
+        exit 1
+    fi
+    log "✅ Auto-fix completed"
     log ""
-    log "❌ Auto-fix failed"
-    log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log "Some issues could not be auto-fixed. Please fix them manually."
+else
+    log "⏭️  Skipping lint-staged (not installed in this workspace)"
     log ""
-    exit 1
 fi
-log "✅ Auto-fix completed"
-log ""
 
-# Step 2: Run type checking (fast check)
+# Step 2: Run type checking (workspace libs + Nest apps)
 log "📝 Type checking TypeScript..."
 if ! npm run type-check >&2; then
     log ""
