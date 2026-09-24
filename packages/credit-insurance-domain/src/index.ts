@@ -100,6 +100,13 @@ export {
     resolveCreatedOverdueMepForInvoice,
 } from "./credit-insurance/domain/createdOverdueMepAtInvoiceDate";
 
+// --- Calendar-day compare (shared by MEP/reporting gates and claims anniversary) ---
+export {
+    isInvoiceOnOrAfterStartDate,
+    normalizeCalendarDayForInsuranceCompare,
+    toComparableCalendarDay,
+} from "./credit-insurance/domain/shared/calendarDayCompare";
+
 // --- MEP breach start date gate (shared by cause side, flag side and replay) ---
 export {
     filterInvoicesInMepBreachScope,
@@ -223,9 +230,11 @@ export {
     type CreditReportListOptions,
 } from "./credit-insurance/domain/creditInsuranceDashboardService";
 export {
+    enrichCustomerTopUpFields,
     getTopUpCoverReport,
     getTopUpExpiringReport,
 } from "./credit-insurance/domain/creditInsuranceTopUpDashboardService";
+export type { CustomerTopUpEnrichFields } from "./credit-insurance/domain/creditInsuranceTopUpDashboardService";
 export { getCustomerDashboardKpis } from "./credit-insurance/domain/customerDashboardKpisService";
 export {
     computeCustomerOutdatedDcl,

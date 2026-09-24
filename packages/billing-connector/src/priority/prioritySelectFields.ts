@@ -42,6 +42,8 @@ export const PAYMENT_ALWAYS_SELECT_SOURCES = [
     "DEBIT1",
     "DEBIT5",
     "CURDATE",
+    /** IDG watermark / keyset (account 10149); harmless when absent on other tables. */
+    "RECONDATE",
     ...SYNTHETIC_SOURCE_FIELDS.PAY_REFERENCE,
 ] as const;
 

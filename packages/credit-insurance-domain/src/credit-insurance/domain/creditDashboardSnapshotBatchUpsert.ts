@@ -83,7 +83,8 @@ function rowToValuesSql(row: CreditDashboardDailySnapshotUpsertRow): Prisma.Sql 
         ${summary.accountCurrency},
         ${row.topUpCoverTotalAmount},
         ${row.customersWithActiveTopUpCount},
-        ${row.topUpExpiringCustomerCount}
+        ${row.topUpExpiringCustomerCount},
+        NOW()
     )`;
 }
 
@@ -137,7 +138,8 @@ export async function batchUpsertCreditDashboardDailySnapshotRows(
                 account_currency,
                 top_up_cover_total_amount,
                 customers_with_active_top_up_count,
-                top_up_expiring_customer_count
+                top_up_expiring_customer_count,
+                modified_at
             ) VALUES ${Prisma.join(values)}
             ON CONFLICT (
                 account_id,

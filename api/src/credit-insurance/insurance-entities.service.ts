@@ -21,6 +21,7 @@ import {
     POLICY_PUSH_CUSTOMER_FIELDS,
 } from "./domain/hasMeaningfulCustomerPolicyFieldChange";
 import { parseAnnualCreditAssessmentFee } from "./domain/annualCreditAssessmentFee";
+import { applyInsurancePolicyCommercialTerms } from "./domain/policyCommercialTerms";
 import { parseRegistrationFeePercent } from "./domain/registrationFeePercent";
 
 /** Match customers.parseDateOnly — YYYY-MM-DD → UTC midnight Date. */
@@ -70,6 +71,19 @@ function coercePolicyDateFields(data: Record<string, unknown>): void {
         }
         data[field] = parsed;
     }
+}
+
+/** TopUp UI omits term dates; DB requires them — drop nulls so update keeps existing values. */
+function omitNullTopUpTermDates(data: Record<string, unknown>): void {
+    for (const field of ["start_date", "end_date"] as const) {
+        if (field in data && (data[field] == null || data[field] === "")) {
+            delete data[field];
+        }
+    }
+}
+
+function hasUsablePolicyTermDate(value: unknown): boolean {
+    return value instanceof Date && !Number.isNaN(value.getTime());
 }
 
 const POLICY_PUSH_TRANSACTION_TIMEOUT_MS = 120_000;
@@ -155,6 +169,8 @@ const POLICY_DETAIL_INCLUDE = {
             policy_number: true,
             insurer_name: true,
             status: true,
+            start_date: true,
+            end_date: true,
         },
     },
 } as const;
@@ -343,6 +359,9 @@ export class InsuranceEntitiesService {
                 throw new NotFoundException({ error: "insurance-policies not found" });
             }
             coercePolicyDateFields(data);
+            if (policy.policy_kind === "TopUp") {
+                omitNullTopUpTermDates(data);
+            }
             if ("registration_fee_percent" in data) {
                 data.registration_fee_percent = parseRegistrationFeePercent(
                     data.registration_fee_percent,
@@ -355,6 +374,19 @@ export class InsuranceEntitiesService {
                         data.annual_credit_assessment_fee,
                         policy.policy_kind
                     );
+            }
+            try {
+                applyInsurancePolicyCommercialTerms(data, policy.policy_kind, {
+                    mode: "update",
+                });
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                throw new BadRequestException({
+                    error:
+                        message ||
+                        "Invalid insurance policy commercial terms",
+                });
             }
             const userInfo = await this.accessScope.resolveUserInfo(user);
             const policyId = Number(id);
@@ -475,6 +507,56 @@ export class InsuranceEntitiesService {
                 body.policy_kind === "TopUp" ? "TopUp" : "Primary";
             const createData: Record<string, unknown> = { ...body };
             coercePolicyDateFields(createData);
+            if (policyKind === "TopUp") {
+                omitNullTopUpTermDates(createData);
+                const parentId = Number(createData.parent_insurance_policy_id);
+                if (!Number.isFinite(parentId)) {
+                    throw new BadRequestException({
+                        error: "parent_insurance_policy_id is required for TopUp policies",
+                    });
+                }
+                const parent = await this.db.insurancePolicy.findFirst({
+                    where: {
+                        id: parentId,
+                        account_id: accountId,
+                        policy_kind: "Primary",
+                    },
+                    select: { id: true, start_date: true, end_date: true },
+                });
+                if (!parent) {
+                    throw new BadRequestException({
+                        error: "parent_insurance_policy_id must reference a Primary policy on this account",
+                    });
+                }
+                // TopUp UI does not collect term dates; inherit from parent Primary.
+                if (!hasUsablePolicyTermDate(createData.start_date)) {
+                    createData.start_date = parent.start_date;
+                }
+                if (!hasUsablePolicyTermDate(createData.end_date)) {
+                    createData.end_date = parent.end_date;
+                }
+            }
+            if (
+                !hasUsablePolicyTermDate(createData.start_date) ||
+                !hasUsablePolicyTermDate(createData.end_date)
+            ) {
+                throw new BadRequestException({
+                    error: "start_date and end_date are required",
+                });
+            }
+            try {
+                applyInsurancePolicyCommercialTerms(createData, policyKind, {
+                    mode: "create",
+                });
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                throw new BadRequestException({
+                    error:
+                        message ||
+                        "Invalid insurance policy commercial terms",
+                });
+            }
             const created = await this.db.insurancePolicy.create({
                 data: {
                     ...createData,

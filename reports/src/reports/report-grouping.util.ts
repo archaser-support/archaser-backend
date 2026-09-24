@@ -1,5 +1,6 @@
 import { getFieldOutputKey } from "./report.constants";
 import { ReportFormula } from "./report-formula/types";
+import { formatMoneyIso } from "./format-money.util";
 
 export type AggregationType = "SUM" | "AVG" | "COUNT" | "MIN" | "MAX";
 
@@ -153,21 +154,7 @@ function formatCurrencyValue(
     currency: string,
     locale: string
 ): string {
-    const language = locale.startsWith("he") ? "he" : "en";
-    let formattedAmount: string;
-    try {
-        formattedAmount = new Intl.NumberFormat(locale, {
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 2,
-        }).format(amount);
-    } catch {
-        formattedAmount = String(amount);
-    }
-    const nbsp = "\u00A0";
-    if (language === "he") {
-        return `\u200E${formattedAmount}${nbsp}${currency}`;
-    }
-    return `${currency}${nbsp}${formattedAmount}`;
+    return formatMoneyIso(amount, currency, locale);
 }
 
 /**
@@ -363,7 +350,8 @@ export function detectOneToManyRelationTable(
                 (field.table === "Invoice" ||
                     field.table === "InvoicePayment" ||
                     field.table === "Contact" ||
-                    field.table === "Activity")) ||
+                    field.table === "Activity" ||
+                    field.table === "CustomerPolicy")) ||
             (primaryTable === "Invoice" && field.table === "InvoicePayment")
         ) {
             return { table: field.table, relationName };

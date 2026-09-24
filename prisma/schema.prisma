@@ -116,6 +116,7 @@ model Account {
   RolePermission                         RolePermission[]                @relation("RolePermission_account_idToAccount")
   Customer                               Customer[]
   InsurancePolicy                        InsurancePolicy[]
+  Claim                                  Claim[]
   Report                                 Report[]
   BillingConnector                       BillingConnector?
   CustomerCheckpoint                     CustomerCheckpoint[]
@@ -840,6 +841,7 @@ model Customer {
   CustomerPolicyTrend             CustomerPolicyTrend[]
   CustomerTopUp                   CustomerTopUp[]
   CustomerCheckpoint              CustomerCheckpoint?
+  Claim                           Claim[]
 
   @@unique([account_id, customer_number], map: "customer_number_unique")
   @@index([company_id], map: "idx_company_company_id")
@@ -983,7 +985,7 @@ model CustomerPolicyTrend {
   top_up_usage_pct                     Float?
   effective_usage_pct                  Float?
   created_at                           DateTime                 @default(now()) @db.Timestamptz(6)
-  modified_at                          DateTime                 @updatedAt @db.Timestamptz(6)
+  modified_at                          DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
   Customer                             Customer                 @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customer_policy_trend_customer_id_fkey")
   InsurancePolicy                      InsurancePolicy?         @relation(fields: [insurance_policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_policy_trend_insurance_policy_id_fkey")
   CustomerPolicy                       CustomerPolicy?          @relation(fields: [customer_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customer_policy_trend_customer_policy_id_fkey")
@@ -1092,7 +1094,7 @@ model InsurancePolicyTrend {
   named_policy_row_count       Int                      @default(0)
   country_row_count            Int                      @default(0)
   created_at                   DateTime                 @default(now()) @db.Timestamptz(6)
-  modified_at                  DateTime                 @updatedAt @db.Timestamptz(6)
+  modified_at                  DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
   InsurancePolicy              InsurancePolicy          @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_trend_insurance_policy_id_fkey")
 
   @@unique([insurance_policy_id, snapshot_date], map: "ux_insurance_policy_trend_policy_day")
@@ -1113,7 +1115,7 @@ model InsurancePolicyCountryTrend {
   reporting_days              Int?
   country_max_limit           Decimal?               @db.Decimal(20, 4)
   created_at                  DateTime               @default(now()) @db.Timestamptz(6)
-  modified_at                 DateTime               @updatedAt @db.Timestamptz(6)
+  modified_at                 DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
   InsurancePolicyCountry      InsurancePolicyCountry @relation(fields: [insurance_policy_country_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_country_trend_country_row_fkey")
   InsurancePolicy             InsurancePolicy        @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_country_trend_policy_id_fkey")
 
@@ -1136,7 +1138,7 @@ model NamedPolicyTrend {
   customer_max_limit    Decimal?        @db.Decimal(20, 4)
   limit_expiration_date DateTime?       @db.Date
   created_at            DateTime        @default(now()) @db.Timestamptz(6)
-  modified_at           DateTime        @updatedAt @db.Timestamptz(6)
+  modified_at           DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
   NamedPolicy           NamedPolicy     @relation(fields: [named_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "named_policy_trend_named_policy_id_fkey")
   InsurancePolicy       InsurancePolicy @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "named_policy_trend_insurance_policy_id_fkey")
 
@@ -1180,6 +1182,18 @@ model InsurancePolicy {
   registration_fee_percent               Decimal?                      @db.Decimal(10, 3)
   /// Optional annual fee charged per named customer (account currency). Null = no fee / $0.
   annual_credit_assessment_fee           Decimal?                      @db.Decimal(20, 4)
+  /// Primary-only commercial terms (policy currency for money fields). Null = not set.
+  insured_percentage                     Decimal?                      @db.Decimal(10, 3)
+  non_qualifying_loss_threshold          Decimal?                      @db.Decimal(20, 4)
+  minimum_premium                        Decimal?                      @db.Decimal(20, 4)
+  minimum_premium_period_years           Int?
+  /// Aggregate excess; 0 means none (distinct from null = not set).
+  aggregate_excess                       Decimal?                      @db.Decimal(20, 4)
+  sdl_excess                             Decimal?                      @db.Decimal(20, 4)
+  ncb_zero_claims_bonus_percent          Decimal?                      @db.Decimal(10, 3)
+  ncb_claims_ratio_threshold_percent     Decimal?                      @db.Decimal(10, 3)
+  ncb_up_to_threshold_bonus_percent      Decimal?                      @db.Decimal(10, 3)
+  product_type                           insurance_policy_product_type?
   status                                 record_status                 @default(Draft)
   auto_activate_on_term_start            Boolean                       @default(false)
   created_by                             String?                       @db.VarChar
@@ -1196,6 +1210,7 @@ model InsurancePolicy {
   NamedPolicyTrend                       NamedPolicyTrend[]
   Invoice                                Invoice[]
   CustomerTopUp                          CustomerTopUp[]
+  Claim                                  Claim[]
   ParentInsurancePolicy                  InsurancePolicy?              @relation("InsurancePolicyToInsurancePolicy", fields: [parent_insurance_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   ChildInsurancePolicies                 InsurancePolicy[]             @relation("InsurancePolicyToInsurancePolicy")
 
@@ -1470,7 +1485,7 @@ model CreditDashboardDailySnapshot {
   customers_with_active_top_up_count     Int?
   top_up_expiring_customer_count         Int?
   created_at                             DateTime      @default(now()) @db.Timestamptz(6)
-  modified_at                            DateTime      @updatedAt @db.Timestamptz(6)
+  modified_at                            DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
   BusinessUnit                           BusinessUnit? @relation(fields: [business_unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([account_id, snapshot_date(sort: Desc)], map: "idx_credit_dashboard_daily_snapshot_account_day")
@@ -1679,6 +1694,8 @@ model Invoice {
   total_paid                        Float?                    @default(0)
   status                            invoice_status
   last_payment_date                 DateTime?                 @db.Date
+  /// Calendar day the invoice became Paid (usually max linked payment_date).
+  close_date                        DateTime?                 @db.Date
   zero_limit_alert                  Boolean                   @default(false)
   invoice_date                      DateTime                  @db.Date
   outstanding_debt                  Float?
@@ -1753,6 +1770,7 @@ model Invoice {
   InsurancePolicy                   InsurancePolicy?          @relation(fields: [policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "invoice_insurance_policy_id_fkey")
   InvoicePayment                    InvoicePayment[]
   Activity                          Activity[]
+  Claim                             Claim?
 
   @@index([policy_id], map: "idx_invoice_policy_id")
   @@index([created_by], map: "idx_invoice_created_by")
@@ -1764,6 +1782,7 @@ model Invoice {
   @@index([status, target_reporting_date], map: "idx_invoice_status_target_reporting_date")
   @@index([account_id, customer_id, policy_id, status], map: "idx_invoice_gap_rollup")
   @@index([account_id, invoice_date], map: "idx_invoice_account_invoice_date")
+  @@index([account_id, close_date], map: "idx_invoice_account_close_date")
 }
 
 model InvoicePayment {
@@ -2178,11 +2197,57 @@ model User {
   ReportShare_ReportShare_created_byToUser                                        ReportShare[]                    @relation("ReportShare_created_byToUser")
   ReportExecution_ReportExecution_executed_byToUser                               ReportExecution[]                @relation("ReportExecution_executed_byToUser")
   UserDefaultReport                                                               UserDefaultReport[]              @relation("UserDefaultReport_user_idToUser")
+  Claim_Claim_created_byToUser                                                    Claim[]                          @relation("Claim_created_byToUser")
+  Claim_Claim_modified_byToUser                                                   Claim[]                          @relation("Claim_modified_byToUser")
 
   @@index([created_by], map: "idx_user_created_by")
   @@index([modified_by], map: "idx_user_modified_by")
   @@index([business_unit_id], map: "idx_user_business_unit_id")
   @@index([account_id], map: "idx_user_account_id")
+}
+
+
+/// Credit-insurance claim against a Primary policy (optional unique invoice link).
+model Claim {
+  id                           Int             @id @default(autoincrement())
+  created_at                   DateTime        @default(now()) @db.Timestamptz(6)
+  modified_at                  DateTime        @updatedAt @db.Timestamptz(6)
+  account_id                   Int
+  insurance_policy_id          Int
+  invoice_id                   Int?
+  customer_id                  Int
+  status                       claim_status    @default(Draft)
+  /// Recognized loss (policy currency). Defaults to open × insured %; editable before Approve/Paid.
+  recognized_loss              Decimal         @db.Decimal(20, 4)
+  /// Loss/invoice-equivalent date for policy-year assignment when no invoice is linked.
+  loss_date                    DateTime?       @db.Date
+  /// 1-based Primary anniversary year index containing the claim date.
+  policy_year                  Int
+  submission_date              DateTime?       @db.Date
+  insurer_submission_reference String?         @db.VarChar(255)
+  /// SDL amount applied on first entry to Approved/Paid (for exact reverse).
+  applied_sdl_excess           Decimal?        @db.Decimal(20, 4)
+  /// Aggregate amount applied on first entry to Approved/Paid (for exact reverse).
+  applied_aggregate_excess     Decimal?        @db.Decimal(20, 4)
+  /// True while excess deduction is active for this claim.
+  excess_applied               Boolean         @default(false)
+  notes                        String?         @db.Text
+  created_by                   String?         @db.VarChar
+  modified_by                  String?         @db.VarChar
+  Account                      Account         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "claim_account_id_fkey")
+  InsurancePolicy              InsurancePolicy @relation(fields: [insurance_policy_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "claim_insurance_policy_id_fkey")
+  Invoice                      Invoice?        @relation(fields: [invoice_id], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "claim_invoice_id_fkey")
+  Customer                     Customer        @relation(fields: [customer_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "claim_customer_id_fkey")
+  User_Claim_created_byToUser  User?           @relation("Claim_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ClaimCreatedBy_fkey")
+  User_Claim_modified_byToUser User?           @relation("Claim_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ClaimModifiedBy_fkey")
+
+  @@unique([invoice_id], map: "unique_claim_invoice_id")
+  @@index([account_id], map: "idx_claim_account_id")
+  @@index([insurance_policy_id, policy_year], map: "idx_claim_policy_year")
+  @@index([account_id, status], map: "idx_claim_account_status")
+  @@index([customer_id], map: "idx_claim_customer_id")
+  @@index([created_by], map: "idx_claim_created_by")
+  @@index([modified_by], map: "idx_claim_modified_by")
 }
 
 model UserPreferences {
@@ -2474,6 +2539,16 @@ enum dispute_status {
   Cancelled
 }
 
+enum claim_status {
+  Draft
+  Submitted
+  Under_Inquiry @map("Under Inquiry")
+  Approved
+  Paid
+  Rejected
+  Canceled
+}
+
 enum email_status {
   Valid
   Bounced
@@ -2607,6 +2682,12 @@ enum customer_limit_type {
 enum insurance_policy_kind {
   Primary
   TopUp
+}
+
+/// Primary-only: whether account products under the policy are tailor-made or commodity.
+enum insurance_policy_product_type {
+  TailorMade
+  Commodity
 }
 
 enum cost_calculation_method {

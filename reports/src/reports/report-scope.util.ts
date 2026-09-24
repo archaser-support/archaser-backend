@@ -34,6 +34,12 @@ export function buildAccountScopeWhere(
     ) {
         return { Customer: { account_id: accountId } };
     }
+    if (primaryTable === "CustomerPolicy") {
+        return {
+            Customer: { account_id: accountId },
+            is_active: true,
+        };
+    }
     if (primaryTable === "InvoicePayment") {
         return { Invoice: { account_id: accountId } };
     }
@@ -66,7 +72,8 @@ export function nestOwnerScopeWhere(
     }
     if (
         primaryTable === "Dispute" ||
-        primaryTable === "CustomerCollectionPeriod"
+        primaryTable === "CustomerCollectionPeriod" ||
+        primaryTable === "CustomerPolicy"
     ) {
         return { Customer: ownerFilter };
     }
@@ -102,6 +109,7 @@ export function nestBusinessUnitScopeWhere(
     if (
         primaryTable === "Dispute" ||
         primaryTable === "CustomerCollectionPeriod" ||
+        primaryTable === "CustomerPolicy" ||
         primaryTable === "Activity" ||
         primaryTable === "CustomerBanks"
     ) {

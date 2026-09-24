@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { BillingConnectorApiService } from "../src/billing-connector/billing-connector.service";
 import {
     ACCOUNT_10149_EXTENSION_KEY,
+    SAMPLE_NOOP_EXTENSION_KEY,
     allEnabledEntitiesPreviewPassed,
 } from "@archaser/billing-connector";
 import { resetConnectorSyncCancelRegistryForTests } from "../../packages/billing-connector/src/sync/connectorSyncCancelRegistry";
@@ -330,9 +331,10 @@ describe("billing connector Nest API", () => {
         expect(result.config.extension_config).toEqual({});
     });
 
-    it("persists a registered extension_key on upsert and returns it", async () => {
-        const existing = connectorRow();
+    it("persists the matching account extension_key on upsert and returns it", async () => {
+        const existing = connectorRow({ account_id: 10149 });
         const updated = connectorRow({
+            account_id: 10149,
             extension_key: ACCOUNT_10149_EXTENSION_KEY,
             extension_config: {},
         });
@@ -342,12 +344,12 @@ describe("billing connector Nest API", () => {
         });
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never,
+            accessScope(10149, true) as never,
             mockCronQueue() as never,
             mockMetrics() as never
         );
-        const result = await service.upsertConfig(user(42), 42, {
-            extension_key: ACCOUNT_10149_EXTENSION_KEY,
+        const result = await service.upsertConfig(user(10149), 10149, {
+            extension_key: null,
             extension_config: {},
         });
         expect(db.billingConnector.update).toHaveBeenCalledWith(
@@ -362,9 +364,9 @@ describe("billing connector Nest API", () => {
         expect(result.config.extension_config).toEqual({});
     });
 
-    it("clears extension_key when upsert sends null", async () => {
+    it("clears a non-matching extension_key when no account extension exists", async () => {
         const existing = connectorRow({
-            extension_key: ACCOUNT_10149_EXTENSION_KEY,
+            extension_key: SAMPLE_NOOP_EXTENSION_KEY,
             extension_config: {},
         });
         const updated = connectorRow({
@@ -382,8 +384,8 @@ describe("billing connector Nest API", () => {
             mockMetrics() as never
         );
         const result = await service.upsertConfig(user(42), 42, {
-            extension_key: null,
-            extension_config: null,
+            extension_key: SAMPLE_NOOP_EXTENSION_KEY,
+            extension_config: {},
         });
         expect(db.billingConnector.update).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -397,25 +399,39 @@ describe("billing connector Nest API", () => {
         expect(result.config.extension_config).toBeNull();
     });
 
-    it("rejects an unknown extension_key on upsert", async () => {
-        const db = {
-            billingConnector: {
-                findUnique: jest.fn().mockResolvedValue(connectorRow()),
-                update: jest.fn(),
-            },
-        };
+    it("replaces a non-matching key with the account extension on upsert", async () => {
+        const existing = connectorRow({
+            account_id: 10149,
+            extension_key: SAMPLE_NOOP_EXTENSION_KEY,
+            extension_config: { keep: false },
+        });
+        const updated = connectorRow({
+            account_id: 10149,
+            extension_key: ACCOUNT_10149_EXTENSION_KEY,
+            extension_config: {},
+        });
+        const db = billingConnectorDb({
+            findUnique: jest.fn().mockResolvedValue(existing),
+            update: jest.fn().mockResolvedValue(updated),
+        });
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never,
+            accessScope(10149, true) as never,
             mockCronQueue() as never,
             mockMetrics() as never
         );
-        await expect(
-            service.upsertConfig(user(42), 42, {
-                extension_key: "not_a_real_extension",
+        const result = await service.upsertConfig(user(10149), 10149, {
+            extension_key: SAMPLE_NOOP_EXTENSION_KEY,
+        });
+        expect(db.billingConnector.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    extension_key: ACCOUNT_10149_EXTENSION_KEY,
+                    extension_config: {},
+                }),
             })
-        ).rejects.toBeInstanceOf(BadRequestException);
-        expect(db.billingConnector.update).not.toHaveBeenCalled();
+        );
+        expect(result.config.extension_key).toBe(ACCOUNT_10149_EXTENSION_KEY);
     });
 });
 

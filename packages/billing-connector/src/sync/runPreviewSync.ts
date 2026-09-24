@@ -1,5 +1,7 @@
 import type { ImportType, Prisma, PrismaClient } from "@prisma/client";
 
+import { getRegisteredExtension } from "../extensions";
+import type { ExtensionEntityType } from "../extensions/types";
 import {
     discoverPriorityFields,
     testPriorityConnection,
@@ -21,6 +23,17 @@ import {
     type PreviewEntityResult,
 } from "./previewEntityPipeline";
 
+function normalizeExtensionConfig(
+    value: unknown
+): Record<string, unknown> | null {
+    if (value == null) {
+        return null;
+    }
+    if (typeof value !== "object" || Array.isArray(value)) {
+        return null;
+    }
+    return { ...(value as Record<string, unknown>) };
+}
 export type { PreviewEntityResult } from "./previewEntityPipeline";
 
 export interface PreviewSyncResult {
@@ -121,7 +134,7 @@ export async function runPreviewSync(params: {
     for (const importType of targets) {
         const mappingRow = mappingByType.get(importType);
         const rules = parseMappingRules(mappingRow?.mapping);
-        const pullDateField =
+        const pullDateFieldFromMapping =
             mappingRow &&
             "pull_date_field" in mappingRow &&
             typeof (mappingRow as { pull_date_field?: string | null })
@@ -129,6 +142,27 @@ export async function runPreviewSync(params: {
                 ? (mappingRow as { pull_date_field?: string | null })
                       .pull_date_field
                 : null;
+        const entitySets = parseEntitySetsMap(connector.entity_sets);
+        const extensionKey =
+            typeof connector.extension_key === "string"
+                ? connector.extension_key.trim() || null
+                : null;
+        const extension = extensionKey
+            ? getRegisteredExtension(extensionKey)
+            : null;
+        const extensionPullDate =
+            extension &&
+            typeof extension.resolvePullDateField === "function"
+                ? extension.resolvePullDateField({
+                      entityType: importType as ExtensionEntityType,
+                      entitySet: entitySets[importType] ?? null,
+                      extension_config: normalizeExtensionConfig(
+                          connector.extension_config
+                      ),
+                  })
+                : null;
+        const pullDateField =
+            extensionPullDate ?? pullDateFieldFromMapping;
         entities.push(
             await previewEntityFromConnector({
                 importType,
