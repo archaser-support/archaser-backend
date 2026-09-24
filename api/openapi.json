@@ -955,6 +955,168 @@
         }
       }
     },
+    "/api/entities/claims": {
+      "get": {
+        "operationId": "ClaimsController_list",
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List claims for the effective account",
+        "tags": [
+          "entities"
+        ]
+      },
+      "post": {
+        "operationId": "ClaimsController_create",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a claim (Primary policy ownership)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/claims/eligibility/{invoiceId}": {
+      "get": {
+        "operationId": "ClaimsController_eligibility",
+        "parameters": [
+          {
+            "name": "invoiceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Evaluate Issue Claim eligibility for an invoice",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/claims/policy-excess-summary": {
+      "get": {
+        "operationId": "ClaimsController_policyExcessSummary",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remaining Aggregate/SDL excess (and optional claims) for Primary policy anniversary years",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/claims/remaining-excess": {
+      "get": {
+        "operationId": "ClaimsController_remainingExcess",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remaining Aggregate/SDL excess for a Primary policy year after applied claims",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/claims/{id}": {
+      "get": {
+        "operationId": "ClaimsController_getById",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get claim by id",
+        "tags": [
+          "entities"
+        ]
+      },
+      "put": {
+        "operationId": "ClaimsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update claim (status, amounts, references)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/customers": {
       "get": {
         "tags": [
