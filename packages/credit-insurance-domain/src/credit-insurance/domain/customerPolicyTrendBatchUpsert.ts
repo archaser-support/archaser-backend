@@ -161,7 +161,8 @@ function rowToValuesSql(row: CustomerPolicyTrendUpsertRow): Prisma.Sql {
         ${termsBreachByReasonSnapshotToJson(row.termsBreachByReason)}::jsonb,
         ${row.policyUsagePct},
         ${row.topUpUsagePct},
-        ${row.effectiveUsagePct}
+        ${row.effectiveUsagePct},
+        NOW()
     )`;
 }
 
@@ -264,7 +265,8 @@ export async function batchUpsertCustomerPolicyTrendRows(
                 terms_breach_by_reason,
                 policy_usage_pct,
                 top_up_usage_pct,
-                effective_usage_pct
+                effective_usage_pct,
+                modified_at
             ) VALUES ${Prisma.join(values)}
             ON CONFLICT (customer_id, customer_policy_id, snapshot_date)
             ${ON_CONFLICT_UPDATE}

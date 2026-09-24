@@ -315,7 +315,8 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                 total_open_ar,
                 policy_usage_pct,
                 named_policy_row_count,
-                country_row_count
+                country_row_count,
+                modified_at
             ) VALUES (
                 ${accountId},
                 ${policy.id},
@@ -346,7 +347,8 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                 ${rollups.totalOpenAr},
                 ${rollups.policyUsagePct},
                 ${namedCount},
-                ${countryCount}
+                ${countryCount},
+                NOW()
             )
             ON CONFLICT (insurance_policy_id, snapshot_date)
             DO UPDATE SET
@@ -393,7 +395,8 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                     payment_term_cap,
                     country_mep,
                     reporting_days,
-                    country_max_limit
+                    country_max_limit,
+                    modified_at
                 ) VALUES (
                     ${accountId},
                     ${policy.id},
@@ -403,7 +406,8 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                     ${countryRow.payment_term_cap},
                     ${countryRow.country_mep},
                     ${countryRow.reporting_days},
-                    ${countryRow.country_max_limit}
+                    ${countryRow.country_max_limit},
+                    NOW()
                 )
                 ON CONFLICT (insurance_policy_country_id, snapshot_date)
                 DO UPDATE SET
@@ -431,7 +435,8 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                     customer_mep,
                     reporting_days,
                     customer_max_limit,
-                    limit_expiration_date
+                    limit_expiration_date,
+                    modified_at
                 ) VALUES (
                     ${accountId},
                     ${policy.id},
@@ -442,7 +447,8 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                     ${namedRow.customer_mep},
                     ${namedRow.reporting_days},
                     ${namedRow.customer_max_limit},
-                    ${namedRow.limit_expiration_date}
+                    ${namedRow.limit_expiration_date},
+                    NOW()
                 )
                 ON CONFLICT (named_policy_id, snapshot_date)
                 DO UPDATE SET

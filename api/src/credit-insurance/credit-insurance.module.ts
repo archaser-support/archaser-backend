@@ -13,6 +13,8 @@ import { DatabaseService } from "../database/database.service";
 import { QueueModule } from "../queue/queue.module";
 import { CronQueueService } from "../queue/cron-queue.service";
 import { AsOfBackfillController } from "./as-of-backfill.controller";
+import { ClaimsController } from "./claims.controller";
+import { ClaimsService } from "./claims.service";
 import { createInsuranceEntityController } from "./create-insurance-entity.controller";
 import { CreditDashboardAccessService } from "./credit-dashboard-access.service";
 import { CreditInsuranceDomainController } from "./credit-insurance.controller";
@@ -34,6 +36,7 @@ const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
     controllers: [
         CreditInsuranceDomainController,
         AsOfBackfillController,
+        ClaimsController,
         InsurancePoliciesActionsController,
         ...insuranceEntityControllers,
     ],
@@ -41,6 +44,7 @@ const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
         CreditInsuranceService,
         CreditInsuranceLeavesService,
         CreditDashboardAccessService,
+        ClaimsService,
         InsuranceEntitiesService,
     ],
     exports: [CreditInsuranceService, InsuranceEntitiesService],
