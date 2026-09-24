@@ -108,5 +108,6 @@ Tracer-bullet breakdown published as commit-able markdown under `.cursor/plans/c
 | 3 | Claims nav page, grid, and lifecycle UI | `issues/03-claims-nav-grid-lifecycle-ui.md` | 01 | 6–12, 21, 25–26 |
 | 4 | Remaining excess per year + policy summary history | `issues/04-excess-remaining-policy-summary.md` | 01 | 18–19 |
 | 5 | Report builder Claim object | `issues/05-report-builder-claim-object.md` | 01 | 20 |
+| 6 | Customer invoices claims system report | `issues/06-customer-invoices-claims-system-report.md` | 01 | (grill) |
 
 **Status:** `ready-for-agent` on all slices unless the user specified otherwise.

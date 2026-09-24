@@ -1,6 +1,6 @@
 # 05 — Report builder Claim object
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-claim-schema-domain-api](01-claim-schema-domain-api.md)
 **User stories:** 20
@@ -12,10 +12,10 @@ Register **Claim** as a report-builder object with core fields (status, submissi
 
 ## Acceptance criteria
 
-- [ ] Claim appears as a selectable object in the report builder
-- [ ] Core claim fields are available and resolve against live claim data
-- [ ] Account scoping respects the signed-in account
-- [ ] Labels follow existing EN+HE report metadata patterns
+- [x] Claim appears as a selectable object in the report builder
+- [x] Core claim fields are available and resolve against live claim data
+- [x] Account scoping respects the signed-in account
+- [x] Labels follow existing EN+HE report metadata patterns
 
 ## How to test
 

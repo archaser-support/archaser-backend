@@ -1,6 +1,6 @@
 # 04 — Remaining excess per year + policy summary history
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-claim-schema-domain-api](01-claim-schema-domain-api.md)
 **User stories:** 18–19
@@ -14,10 +14,10 @@ Soft note: Claims grid from slice 03 can ship without this; this slice wires pol
 
 ## Acceptance criteria
 
-- [ ] Primary policy settings/summary shows remaining Aggregate and SDL excess per policy year
-- [ ] Portfolio Health policy summary shows claims / excess context for current year and prior two anniversary years
-- [ ] Values update after Approve/Paid and after reverse (Canceled/Rejected from those states)
-- [ ] English and Hebrew strings added together
+- [x] Primary policy settings/summary shows remaining Aggregate and SDL excess per policy year
+- [x] Portfolio Health policy summary shows claims / excess context for current year and prior two anniversary years
+- [x] Values update after Approve/Paid and after reverse (Canceled/Rejected from those states)
+- [x] English and Hebrew strings added together
 
 ## How to test
 
