@@ -14,6 +14,7 @@ export const MODEL_NAME_MAP: Record<string, string> = {
     Company: "company",
     User: "user",
     BusinessUnit: "businessUnit",
+    Claim: "claim",
 };
 
 /** Context → primary report table for entity-list execute. */
@@ -159,11 +160,18 @@ export const RELATION_FROM_PRIMARY: Record<
         ParentCustomer: "ParentCustomer",
         Invoice: "Invoice",
         InvoicePayment: "InvoicePayment",
+        Claim: "Claim",
     },
     Invoice: {
         Customer: "Customer",
         BusinessUnit: "BusinessUnit",
         User: "User",
+        InsurancePolicy: "InsurancePolicy",
+        Claim: "Claim",
+    },
+    Claim: {
+        Invoice: "Invoice",
+        Customer: "Customer",
         InsurancePolicy: "InsurancePolicy",
     },
     Contact: {
