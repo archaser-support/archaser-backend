@@ -466,6 +466,11 @@ else
     log "Skipping backend builds (--skip-build)"
 fi
 
+# After this environment's env file is loaded and Prisma client generation.
+# Failure exits before recreate_backend_stack, so the previous containers stay up.
+log "Applying SQL migrations for $ENVIRONMENT"
+node "$ROOT_DIR/scripts/deployment/apply-sql-migrations.js"
+
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
 recreate_backend_stack
 
