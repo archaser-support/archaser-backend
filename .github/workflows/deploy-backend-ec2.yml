@@ -12,8 +12,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  typecheck:
+    name: Type check
+    uses: ./.github/workflows/typecheck.yml
+
   deploy:
     name: Deploy Backend Docker Containers to EC2
+    needs: typecheck
     runs-on: ubuntu-latest
 
     steps:
