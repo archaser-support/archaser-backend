@@ -17,6 +17,7 @@ import {
 import { serializeBigInt } from "../common/serialize-bigint";
 import {
     bindCreditInsurancePrisma,
+    enrichCustomerTopUpFields,
     enqueueAsOfRewrite,
     ensureCustomerCapacityGapStored,
     resolveCustomerHeaderOpenArAmounts,
@@ -542,9 +543,25 @@ export class CustomersService {
             dbClient: this.db,
         });
 
+        const activeCustomerPolicy =
+            customerPolicies.find((policy) => policy.is_active) ?? null;
+        const topUpFields = await enrichCustomerTopUpFields(
+            id,
+            accountId,
+            {
+                approved_limit: activeCustomerPolicy?.approved_limit ?? null,
+                approved_limit_currency:
+                    activeCustomerPolicy?.approved_limit_currency ?? null,
+                outdated_dcl: activeCustomerPolicy?.outdated_dcl ?? false,
+                excluded_from_policy:
+                    activeCustomerPolicy?.excluded_from_policy ?? false,
+            }
+        );
+
         return serializeBigInt({
             ...rest,
             ...headerAr,
+            ...topUpFields,
             Account: {
                 ...rest.Account,
                 currency: rest.Account?.currency ?? account?.currency ?? null,
@@ -554,8 +571,7 @@ export class CustomersService {
                     false,
             },
             customerPolicies,
-            activeCustomerPolicy:
-                customerPolicies.find((policy) => policy.is_active) ?? null,
+            activeCustomerPolicy,
         });
     }
 
