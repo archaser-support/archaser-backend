@@ -1,5 +1,4 @@
 import { Prisma } from "@prisma/client";
-import { addDays, startOfDay } from "date-fns";
 
 import { prisma } from "../domain-db";
 
@@ -8,9 +7,22 @@ import {
     isActiveTopUp,
     resolveEffectiveApprovedLimit,
 } from "./resolveEffectiveApprovedLimit";
+import {
+    startOfTodayUtc,
+    toUtcDateOnly,
+    utcDateKey,
+} from "./shared/insurancePolicyLifecycle";
 
 const COLLECTION_LIVE = ["Active", "Inactive"] as const;
 const URGENT_EXPIRY_DAYS = 7;
+
+/** Add calendar days on a UTC date-only value (DATE columns, not datetimes). */
+function addUtcDays(date: Date, days: number): Date {
+    const d = toUtcDateOnly(date);
+    return new Date(
+        Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days)
+    );
+}
 
 export type TopUpDashboardBlock = {
     activeCoverTotal: number;
@@ -111,9 +123,9 @@ export async function computeTopUpDashboardMetrics(args: {
     policyUsageTopUp: TopUpPolicyUsageMetrics;
     expiringSoonAlerts: TopUpExpiringSoonAlert[];
 }> {
-    const today = startOfDay(new Date());
-    const windowEnd = addDays(today, Math.max(0, args.expiringWindowDays));
-    const urgentEnd = addDays(today, URGENT_EXPIRY_DAYS);
+    const today = startOfTodayUtc();
+    const windowEnd = addUtcDays(today, Math.max(0, args.expiringWindowDays));
+    const urgentEnd = addUtcDays(today, URGENT_EXPIRY_DAYS);
 
     let activeCoverTotal = 0;
     const customersWithActive = new Set<number>();
@@ -203,7 +215,7 @@ export async function computeTopUpDashboardMetrics(args: {
                 continue;
             }
             for (const row of policyBucket.rows) {
-                const end = startOfDay(row.endDate);
+                const end = toUtcDateOnly(row.endDate);
                 if (end < today || end > windowEnd) {
                     continue;
                 }
@@ -260,8 +272,8 @@ async function computeCoverDeclinedDueToLimit(
     accountCurrency: string,
     primaryPolicyId?: number
 ): Promise<{ customerCount: number; coverLostTotal: number }> {
-    const today = startOfDay(new Date());
-    const yesterday = addDays(today, -1);
+    const today = startOfTodayUtc();
+    const yesterday = addUtcDays(today, -1);
 
     type TrendRow = {
         customer_id: number;
@@ -340,8 +352,8 @@ export async function getTopUpExpiringSoonAlerts(
     primaryPolicyId?: number,
     businessUnitFilter?: import("@prisma/client").Prisma.CustomerWhereInput
 ): Promise<TopUpExpiringSoonAlert[]> {
-    const today = startOfDay(new Date());
-    const windowEnd = addDays(today, Math.max(0, withinDays));
+    const today = startOfTodayUtc();
+    const windowEnd = addUtcDays(today, Math.max(0, withinDays));
 
     const rows = await prisma.customerTopUp.findMany({
         where: {
@@ -401,7 +413,7 @@ export async function getTopUpExpiringSoonAlerts(
         customerName: r.Customer ? customerNameFromRow(r.Customer) : null,
         policyId: r.insurance_policy_id,
         policyNumber: r.InsurancePolicy?.policy_number ?? null,
-        endDate: startOfDay(r.end_date).toISOString().slice(0, 10),
+        endDate: utcDateKey(r.end_date),
     }));
 }
 
@@ -447,7 +459,7 @@ export async function enrichCustomerTopUpFields(
         };
     }
 
-    const today = startOfDay(new Date());
+    const today = startOfTodayUtc();
     const baseLimit = policyFields.approved_limit
         ? decimalToNumber(policyFields.approved_limit)
         : null;
@@ -488,11 +500,11 @@ export async function enrichCustomerTopUpFields(
                 today
             )
         ) {
-            const end = startOfDay(row.end_date);
+            const end = toUtcDateOnly(row.end_date);
             if (!soonestEnd || end < soonestEnd) {
                 soonestEnd = end;
             }
-        } else if (startOfDay(row.start_date) > today) {
+        } else if (toUtcDateOnly(row.start_date) > today) {
             hasScheduled = true;
         }
     }
@@ -508,7 +520,7 @@ export async function enrichCustomerTopUpFields(
         base_approved_limit: baseLimit,
         has_active_top_up: activeCount > 0,
         top_up_expires_soonest: soonestEnd
-            ? soonestEnd.toISOString().slice(0, 10)
+            ? utcDateKey(soonestEnd)
             : null,
         has_scheduled_top_up: hasScheduled,
     };
@@ -593,7 +605,7 @@ export async function getTopUpCoverReport(
     );
 
     const accountCurrency = await getAccountDisplayCurrency(accountId);
-    const today = startOfDay(new Date());
+    const today = startOfTodayUtc();
 
     const allRaw = await prisma.customer.findMany({
         where: {
@@ -714,9 +726,9 @@ export async function getTopUpExpiringReport(
         "./creditInsuranceDashboardService"
     );
     const accountCurrency = await getAccountDisplayCurrency(accountId);
-    const today = startOfDay(new Date());
+    const today = startOfTodayUtc();
     const windowDays = Math.max(1, options.withinDays ?? 30);
-    const windowEnd = addDays(today, windowDays);
+    const windowEnd = addUtcDays(today, windowDays);
 
     const rows = await prisma.customerTopUp.findMany({
         where: {
@@ -795,7 +807,7 @@ export async function getTopUpExpiringReport(
         ) {
             continue;
         }
-        const end = startOfDay(row.end_date);
+        const end = toUtcDateOnly(row.end_date);
         if (end > windowEnd) {
             continue;
         }
@@ -839,7 +851,7 @@ export async function getTopUpExpiringReport(
             topUpType: row.top_up_type,
             topUpValue: decimalToNumber(row.top_up_value),
             resolvedAmount: resolvedInAccount,
-            endDate: end.toISOString().slice(0, 10),
+            endDate: utcDateKey(end),
             daysLeft,
             currency: accountCurrency,
         });
