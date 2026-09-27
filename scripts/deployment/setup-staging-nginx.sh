@@ -5,7 +5,10 @@
 # UI is on Amplify (staging.archaser.com) — this EC2 is Nest API + Grafana only.
 # Do not enable nginx/archaser-staging.conf (legacy Next-on-EC2).
 #
-# Run on the staging API EC2 as ubuntu (uses sudo):
+# Shared staging+production API host: use setup-single-ec2-nginx.sh instead
+# (installs all split API/Grafana/Portainer sites from nginx/).
+#
+# Run on a staging-only API EC2 as ubuntu (uses sudo):
 #   cd /home/ubuntu/api   # or your checkout
 #   bash scripts/deployment/setup-staging-nginx.sh
 #   bash scripts/deployment/setup-staging-nginx.sh --email you@archaser.com
