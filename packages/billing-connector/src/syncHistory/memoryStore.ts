@@ -1,3 +1,4 @@
+import { SyncAlreadyRunningError } from "./syncAlreadyRunningError";
 import {
     defaultSinceDate,
     durationSecondsFrom,
@@ -54,6 +55,17 @@ export function createMemorySyncHistoryStore(): SyncHistoryStore & {
                 throw new Error(
                     `execution_id already exists: ${input.executionId}`
                 );
+            }
+            for (const existing of byId.values()) {
+                if (
+                    existing.account_id === input.accountId &&
+                    existing.status === "RUNNING"
+                ) {
+                    throw new SyncAlreadyRunningError(
+                        input.accountId,
+                        existing.execution_id
+                    );
+                }
             }
             const startedAt = input.startedAt ?? new Date();
             const doc: SyncHistoryExecution = {

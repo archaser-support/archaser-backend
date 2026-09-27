@@ -1,5 +1,16 @@
 export { ensureMongoConnection } from "./mongooseConnection";
 export {
+    cleanupTwinRunningSyncExecutions,
+    ensureAccountRunningUniqueIndex,
+    ensureUniqueRunningSyncMutex,
+    ensureUniqueRunningSyncMutexOnce,
+    resetUniqueRunningSyncMutexEnsuredForTests,
+    TWIN_RUNNING_CLEANUP_ERROR_MESSAGE,
+    TWIN_RUNNING_CLEANUP_ERROR_TYPE,
+    type CleanupTwinRunningResult,
+    type EnsureUniqueRunningMutexResult,
+} from "./ensureUniqueRunningMutex";
+export {
     createRunningExecution,
     completeExecution,
     markExecutionCancelled,
@@ -19,6 +30,8 @@ export {
     HISTORY_WINDOW_DAYS,
     STALE_RUNNING_HOURS,
     defaultSinceDate,
+    isSyncAlreadyRunningError,
+    SyncAlreadyRunningError,
 } from "./syncHistoryService";
 export {
     createSyncProgressHeartbeat,

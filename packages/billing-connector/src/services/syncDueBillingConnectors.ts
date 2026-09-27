@@ -13,6 +13,7 @@ import {
 import {
     createRunningExecution,
     createSyncProgressHeartbeat,
+    isSyncAlreadyRunningError,
     sweepStaleRunning,
 } from "../syncHistory";
 import { finalizeSyncHistoryAfterRun } from "../syncHistory/finalizeSyncHistoryAfterRun";
@@ -127,8 +128,24 @@ export async function syncDueBillingConnectors(
                 syncMode: connector.sync_mode,
                 startedAt,
             });
-        } catch {
-            // History write must not block the sync (same as Nest accept path).
+        } catch (error) {
+            if (isSyncAlreadyRunningError(error)) {
+                skipped += 1;
+                const payload = {
+                    event: "billing_connector_sync_skipped_already_running",
+                    accountId: connector.account_id,
+                    connectorId: connector.id,
+                    provider: connector.provider,
+                    trigger: "scheduled",
+                    existingExecutionId: error.existingExecutionId,
+                    attemptedExecutionId: executionId,
+                };
+                options?.onLog?.(
+                    `[account ${connector.account_id}] Skipping scheduled sync — another sync is already RUNNING ${JSON.stringify(payload)}`
+                );
+                continue;
+            }
+            // Other history write failures must not block the sync (same as Nest accept path).
         }
 
         try {
