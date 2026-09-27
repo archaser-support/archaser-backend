@@ -9,6 +9,13 @@ STACK_NAME="archaser-alert-sns"
 REGION="${AWS_REGION:-eu-north-1}"
 ENVIRONMENT="${ENVIRONMENT:-production}"
 ALERT_EMAIL="${ALERT_EMAIL:-nilotpal@archaser.com}"
+if [ -z "${GRAFANA_BASE_URL:-}" ]; then
+    if [ "$ENVIRONMENT" = "staging" ]; then
+        GRAFANA_BASE_URL="https://grafana.staging.archaser.com"
+    else
+        GRAFANA_BASE_URL="https://grafana.production.archaser.com"
+    fi
+fi
 CLICKUP_CHAT_PARAMS=()
 if [ -n "${CLICKUP_CHAT_TOKEN:-}" ]; then
     CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatToken,ParameterValue=${CLICKUP_CHAT_TOKEN}")
@@ -22,6 +29,7 @@ fi
 if [ -n "${CLICKUP_CHAT_ENABLED:-}" ]; then
     CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatEnabled,ParameterValue=${CLICKUP_CHAT_ENABLED}")
 fi
+CLICKUP_CHAT_PARAMS+=("ParameterKey=GrafanaBaseUrl,ParameterValue=${GRAFANA_BASE_URL}")
 
 echo "========================================="
 echo "ARChaser SNS Alert Infrastructure Setup"
@@ -32,6 +40,7 @@ echo "  Stack Name:  $STACK_NAME"
 echo "  Region:      $REGION"
 echo "  Environment: $ENVIRONMENT"
 echo "  Alert Email: $ALERT_EMAIL"
+echo "  Grafana URL: $GRAFANA_BASE_URL"
 if [ -n "${CLICKUP_CHAT_TOKEN:-}" ] && [ -n "${CLICKUP_CHAT_CHANNEL_ID:-}" ]; then
     echo "  ClickUp Chat: configured (token not printed)"
 else
@@ -44,6 +53,13 @@ if ! command -v aws &> /dev/null; then
     echo "❌ Error: AWS CLI is not installed. Please install it first."
     exit 1
 fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+chmod +x ./package-lambda.sh
+./package-lambda.sh
+ZIP_PATH="$SCRIPT_DIR/dist/alert-webhook.zip"
+FUNCTION_NAME="archaser-alert-webhook-${ENVIRONMENT}"
 
 # Check if the stack already exists
 STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION 2>/dev/null || echo "false")
@@ -78,6 +94,19 @@ else
     aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $REGION
 fi
 
+echo ""
+echo "📤 Uploading Lambda package to $FUNCTION_NAME ..."
+aws lambda update-function-code \
+    --function-name "$FUNCTION_NAME" \
+    --zip-file "fileb://$ZIP_PATH" \
+    --region "$REGION" \
+    >/dev/null
+
+aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME" --region "$REGION" 2>/dev/null \
+  || aws lambda wait function-updated --function-name "$FUNCTION_NAME" --region "$REGION" 2>/dev/null \
+  || true
+
+echo "✅ Lambda code updated"
 echo ""
 echo "✅ Stack deployment complete!"
 echo ""
