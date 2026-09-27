@@ -112,7 +112,7 @@ CRITICAL_FIRING_PAYLOAD=$(cat <<EOF
         "description": "The application cannot connect to PostgreSQL."
       },
       "startsAt": "2026-06-29T10:00:00Z",
-      "generatorURL": "https://grafana.archaser.com/alerting/list"
+      "generatorURL": "https://grafana.production.archaser.com/alerting/list"
     }
   ],
   "groupLabels": {
@@ -143,7 +143,7 @@ CRITICAL_RESOLVED_PAYLOAD=$(cat <<EOF
       },
       "startsAt": "2026-06-29T10:00:00Z",
       "endsAt": "2026-06-29T10:15:00Z",
-      "generatorURL": "https://grafana.archaser.com/alerting/list"
+      "generatorURL": "https://grafana.production.archaser.com/alerting/list"
     }
   ],
   "groupLabels": {

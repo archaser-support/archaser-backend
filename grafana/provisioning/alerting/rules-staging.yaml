@@ -135,8 +135,9 @@ groups:
         execErrState: Error
         for: 5m
         annotations:
-          summary: "Stuck activities detected"
-          description: "Activities with SCHEDULED status have passed their schedule_time by more than 2 hours. Check Activity Workflow Manager cron job."
+          alert_details_type: "stuck_activities"
+          summary: "Stuck activities detected ({{ $values.A.Value }})"
+          description: "SCHEDULED system-generated activities are more than 2 hours past schedule_time. Email lists account/customer/activity IDs. Check Activity Workflow Manager Phase 1 (send due activities)."
         labels:
           severity: high
           type: activities
@@ -179,8 +180,9 @@ groups:
         execErrState: Error
         for: 30m
         annotations:
+          alert_details_type: "no_system_activities_24h"
           summary: 'No system-generated activities created in over {{ $values.B.Value }} hours'
-          description: "The system has not created any automated activities in more than 24 hours. Check Activity Workflow Manager and Process Automated Collection Periods cron jobs."
+          description: "No automated activities created in >24h. Email includes last system activity and last runs of Activity Workflow Manager / Process Automated Collection Periods."
         labels:
           severity: high
           type: activities
@@ -222,8 +224,9 @@ groups:
         execErrState: Error
         for: 10m
         annotations:
-          summary: "Cron jobs are overdue"
-          description: "Cron jobs have not run when they were scheduled. Check cron manager for issues."
+          alert_details_type: "cron_jobs_overdue"
+          summary: "Cron jobs are overdue ({{ $values.A.Value }})"
+          description: "Active cron jobs are 5+ minutes past next_run_at. Email lists overdue job names, last/next run, and failure counts."
         labels:
           severity: medium
           type: cron
@@ -265,8 +268,9 @@ groups:
         execErrState: Error
         for: 5m
         annotations:
-          summary: "Cron jobs have not run in 24 hours"
-          description: "Some cron jobs have not executed in the last 24 hours. This may indicate cron manager issues."
+          alert_details_type: "cron_jobs_not_run_24h"
+          summary: "Cron jobs have not run in 24 hours ({{ $values.A.Value }})"
+          description: "Active cron jobs have last_run_at older than 24h (or never). Email lists job names, last/next run, and failure counts."
         labels:
           severity: high
           type: cron
@@ -354,8 +358,9 @@ groups:
         execErrState: Error
         for: 30m
         annotations:
-          summary: "Automated periods have no scheduled activities"
-          description: "Automated collection periods exist without any scheduled activities for over 24 hours."
+          alert_details_type: "periods_without_activities"
+          summary: "Automated periods have no scheduled activities ({{ $values.A.Value }})"
+          description: "Open Automated periods with next_activity_date null/stale (>24h) and no SCHEDULED automated activity. Email lists accounts/customers plus likely_cause."
         labels:
           severity: high
           type: collection
@@ -397,8 +402,9 @@ groups:
         execErrState: Error
         for: 15m
         annotations:
-          summary: "Collection periods have overdue activity creation"
-          description: "Collection periods with create_next_activity=true have passed their next_activity_date."
+          alert_details_type: "overdue_activity_creation"
+          summary: "Collection periods have overdue activity creation ({{ $values.A.Value }} periods)"
+          description: "create_next_activity=true and next_activity_date is in the past. Email includes affected accounts/customers plus likely_cause (import freeze, no active user, credit-only, stuck no contacts, or workflow backlog). Check Activity Workflow Manager cron; drilldown panel Overdue Activity Creation."
         labels:
           severity: high
           type: collection
@@ -440,8 +446,9 @@ groups:
         execErrState: Error
         for: 1h
         annotations:
-          summary: "Collection periods stuck due to no contacts"
-          description: "Automated collection periods cannot proceed because customers have no valid contacts."
+          alert_details_type: "automation_stuck_no_contacts"
+          summary: "Collection periods stuck due to no contacts ({{ $values.A.Value }})"
+          description: "Customers with automation_stuck_no_contacts=true. Email lists account/customer/open period. Add valid contacts then clear the stuck flag."
         labels:
           severity: medium
           type: collection
@@ -486,8 +493,9 @@ groups:
         execErrState: Error
         for: 30m
         annotations:
-          summary: "High number of emails bounced in the last 24 hours"
-          description: "High number of email bounces detected. Check email service configuration and contact data quality."
+          alert_details_type: "high_email_bounces"
+          summary: "High number of emails bounced in the last 24 hours ({{ $values.A.Value }})"
+          description: "Email activities with status BOUNCED in the last 24h. Email lists account/customer/activity. Check addresses and SMTP/SES reputation."
         labels:
           severity: medium
           type: email
@@ -529,8 +537,9 @@ groups:
         execErrState: Error
         for: 30m
         annotations:
-          summary: "High number of SMS failures in the last 24 hours"
-          description: "High number of SMS failures detected. Check SMS vendor configuration."
+          alert_details_type: "high_sms_failures"
+          summary: "High number of SMS failures in the last 24 hours ({{ $values.A.Value }})"
+          description: "SMS activities with status FAILED in the last 24h. Email lists account/customer/activity. Check SMS vendor config and mobile numbers."
         labels:
           severity: medium
           type: sms
@@ -629,7 +638,7 @@ groups:
         for: 1m
         annotations:
           summary: PostgreSQL FATAL or PANIC in server logs
-          description: "Staging FATAL/PANIC in RDS Postgres logs. Dashboard: /d/archaser-postgres-logs-stag/postgres-logs-staging"
+          description: "Staging FATAL/PANIC in RDS Postgres logs. Dashboard: https://grafana.staging.archaser.com/d/archaser-postgres-logs-stag/postgres-logs-staging"
         labels:
           severity: critical
           type: database
@@ -674,7 +683,7 @@ groups:
         for: 5m
         annotations:
           summary: Elevated PostgreSQL ERROR volume
-          description: "Staging ERROR-rate spike in RDS Postgres logs. Dashboard: /d/archaser-postgres-logs-stag/postgres-logs-staging"
+          description: "Staging ERROR-rate spike in RDS Postgres logs. Dashboard: https://grafana.staging.archaser.com/d/archaser-postgres-logs-stag/postgres-logs-staging"
         labels:
           severity: high
           type: database
@@ -727,7 +736,7 @@ groups:
         for: 5m
         annotations:
           summary: Repeated ERP authentication failures (staging)
-          description: "Priority/auth errors exceeded threshold. Check credentials. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging — filter Loki by account_id."
+          description: "Priority/auth errors exceeded threshold. Check credentials. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging — filter Loki by account_id."
         labels:
           severity: critical
           type: billing_connector
@@ -770,7 +779,7 @@ groups:
         for: 10m
         annotations:
           summary: One or more billing connectors in Error status (staging)
-          description: "Connector circuit breaker or connection failure. Admin → Billing integration. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "Connector circuit breaker or connection failure. Admin → Billing integration. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: critical
           type: billing_connector
@@ -813,7 +822,7 @@ groups:
         for: 15m
         annotations:
           summary: Incremental connector(s) without success in 24h (staging)
-          description: "Check schedule, Loki finish lines, and Mongo sync history. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "Check schedule, Loki finish lines, and Mongo sync history. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: high
           type: billing_connector
@@ -856,7 +865,7 @@ groups:
         for: 5m
         annotations:
           summary: Incremental sync FAILED or TIMEOUT (staging)
-          description: "Inspect Loki finish/error lines and error_type. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "Inspect Loki finish/error lines and error_type. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: high
           type: billing_connector
@@ -899,7 +908,7 @@ groups:
         for: 30m
         annotations:
           summary: Active backfill checkpoint older than 24h (staging)
-          description: "Resume or reset backfill; check worker/cron Sync Billing Connectors. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "Resume or reset backfill; check worker/cron Sync Billing Connectors. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: warning
           type: billing_connector
@@ -942,7 +951,7 @@ groups:
         for: 10m
         annotations:
           summary: Stale RUNNING sync execution(s) in Mongo (staging)
-          description: "collection connector_sync_executions. Sweeper should TIMEOUT; check MONGODB_URI on API. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "collection connector_sync_executions. Sweeper should TIMEOUT; check MONGODB_URI on API. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: warning
           type: billing_connector
@@ -985,7 +994,7 @@ groups:
         for: 15m
         annotations:
           summary: Repeated incremental PARTIAL syncs (staging)
-          description: "Partial imports often mean mapping/validation issues. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "Partial imports often mean mapping/validation issues. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: warning
           type: billing_connector
@@ -1028,7 +1037,7 @@ groups:
         for: 10m
         annotations:
           summary: ERP rate_limit or 5xx error spike (staging)
-          description: "Backoff / Priority health. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "Backoff / Priority health. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: warning
           type: billing_connector
@@ -1071,7 +1080,7 @@ groups:
         for: 10m
         annotations:
           summary: Import validation error spike (staging)
-          description: "Review field mappings / required fields. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "Review field mappings / required fields. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: warning
           type: billing_connector
@@ -1114,7 +1123,7 @@ groups:
         for: 15m
         annotations:
           summary: Stuck billing_connector import jobs (staging)
-          description: "ImportJob pending/processing >1h with metadata.source=billing_connector. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "ImportJob pending/processing >1h with metadata.source=billing_connector. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: warning
           type: billing_connector
@@ -1157,7 +1166,7 @@ groups:
         for: 30m
         annotations:
           summary: Sync-enabled connector(s) with incomplete mappings (staging)
-          description: "Complete required field mappings before relying on sync. Dashboard: /d/archaser-billing-connector-stag/billing-connector-staging"
+          description: "Complete required field mappings before relying on sync. Dashboard: https://grafana.staging.archaser.com/d/archaser-billing-connector-stag/billing-connector-staging"
         labels:
           severity: warning
           type: billing_connector
