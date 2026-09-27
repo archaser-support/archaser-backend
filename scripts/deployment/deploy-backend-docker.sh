@@ -495,8 +495,8 @@ if [[ "$NO_GRAFANA" != "true" ]]; then
             )
         elif [[ "$ENVIRONMENT" == "production" ]]; then
             MONITORING_ENV_VARS+=(
-                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}"
-                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.portal.archaser.com}"
+                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.production.archaser.com/}"
+                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.production.archaser.com}"
             )
         fi
         if ! env "${MONITORING_ENV_VARS[@]}" docker_compose \
