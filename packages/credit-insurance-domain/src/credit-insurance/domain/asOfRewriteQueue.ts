@@ -300,6 +300,31 @@ export type DrainAsOfRewriteResult = {
     skippedForBackfill: number;
 };
 
+export type RewriteCustomerAsOfRangeInput = {
+    accountId: number;
+    customerIds: number[];
+    fromDate: Date;
+    toDate: Date;
+};
+
+export type RewriteCustomerAsOfRangeResult = {
+    daysRewritten: number;
+    /** True when fromDate > toDate (e.g. future start); nothing rewritten. */
+    skipped: boolean;
+};
+
+export class AdminBackfillBlockingRewriteError extends Error {
+    readonly accountId: number;
+
+    constructor(accountId: number) {
+        super(
+            `Credit as-of backfill is running for account ${accountId}; try again later`
+        );
+        this.name = "AdminBackfillBlockingRewriteError";
+        this.accountId = accountId;
+    }
+}
+
 type DrainWriters = {
     syncCustomerPolicyTrendSnapshotForAccount: (
         accountId: number,
@@ -322,6 +347,96 @@ type DrainWriters = {
         }
     ) => Promise<unknown>;
 };
+
+/**
+ * Synchronously rewrite Customer Policy Trend snapshots for one or more
+ * customers from fromDate through toDate (inclusive UTC days).
+ *
+ * Option B interactive path: CPT only — does not rewrite credit dashboard
+ * snapshots (those stay on overnight tip / queue drain).
+ *
+ * No-ops when fromDate > toDate. Throws AdminBackfillBlockingRewriteError when
+ * an account CREDIT_ASOF_BACKFILL job is running or paused.
+ */
+export async function rewriteCustomerAsOfRange(
+    input: RewriteCustomerAsOfRangeInput,
+    options?: {
+        dbClient?: PrismaClientLike;
+        syncCustomerPolicyTrendSnapshotForAccount?: DrainWriters["syncCustomerPolicyTrendSnapshotForAccount"];
+    }
+): Promise<RewriteCustomerAsOfRangeResult> {
+    const db = options?.dbClient ?? prisma;
+    const customerIds = (input.customerIds ?? []).filter(Number.isFinite);
+    if (customerIds.length === 0) {
+        return { daysRewritten: 0, skipped: true };
+    }
+
+    const fromDate = toDayStartUtc(input.fromDate);
+    const toDate = toDayStartUtc(input.toDate);
+    if (toDate < fromDate) {
+        return { daysRewritten: 0, skipped: true };
+    }
+
+    const blocking = await db.$queryRaw<Array<{ account_id: number }>>`
+        SELECT account_id
+        FROM "AccountBackgroundJob"
+        WHERE account_id = ${input.accountId}
+          AND job_kind = ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL}
+          AND status IN ('running', 'paused')
+        LIMIT 1
+    `;
+    if (blocking.length > 0) {
+        throw new AdminBackfillBlockingRewriteError(input.accountId);
+    }
+
+    const syncCpt =
+        options?.syncCustomerPolicyTrendSnapshotForAccount ??
+        (
+            await import("./customerPolicyTrendService")
+        ).syncCustomerPolicyTrendSnapshotForAccount;
+
+    const {
+        buildCreditAsOfBackfillRunContext,
+        ensureCapacityGapsForBackfillRun,
+    } = await import("./creditAsOfBackfillRunContext");
+    let runContext = await buildCreditAsOfBackfillRunContext(input.accountId, {
+        dbClient: db,
+        customerIds,
+        replayFromDate: fromDate,
+        replayToDate: toDate,
+    });
+    runContext = await ensureCapacityGapsForBackfillRun(runContext, {
+        dbClient: db,
+    });
+
+    const {
+        loadAsOfOpenInvoiceLedgerRange,
+        deriveAsOfOpenInvoiceCandidatesFromLedger,
+    } = await import("./asOfOpenArLedgerPreload");
+    const ledger = await loadAsOfOpenInvoiceLedgerRange(
+        input.accountId,
+        toDate,
+        { dbClient: db }
+    );
+
+    let daysRewritten = 0;
+    for (const day of enumerateUtcDays(fromDate, toDate)) {
+        const asOfLines = deriveAsOfOpenInvoiceCandidatesFromLedger(
+            ledger,
+            day
+        );
+        await syncCpt(input.accountId, {
+            snapshotDate: day,
+            customerIds,
+            asOfLines,
+            mepBreachStartDate: runContext.mepBreachStartDate,
+            runContext,
+        });
+        daysRewritten += 1;
+    }
+
+    return { daysRewritten, skipped: false };
+}
 
 export async function drainAsOfRewriteQueue(options?: {
     maxItems?: number;

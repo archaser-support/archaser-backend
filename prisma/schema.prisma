@@ -905,6 +905,10 @@ model CustomerPolicy {
   outdated_dcl                          Boolean               @default(false)
   cost_percent                          Decimal?              @db.Decimal(10, 3)
   registration_fee_percent              Decimal?              @db.Decimal(10, 3)
+  /// UTC calendar day this version becomes effective (rewrite floor for as-of snapshots).
+  policy_change_start_date                    DateTime              @db.Date
+  /// active = live row; pending = future scheduled (slice 02); inactive = historical/cancelled.
+  status                                customer_policy_status @default(inactive)
   is_active                             Boolean               @default(false)
   capacity_gap_amount                   Float?
   capacity_gap_amount_date              DateTime?             @db.Date
@@ -929,6 +933,7 @@ model CustomerPolicy {
   @@index([customer_id], map: "idx_customer_policy_customer_id")
   @@index([insurance_policy_id], map: "idx_customer_policy_insurance_policy_id")
   @@index([customer_id, is_active], map: "idx_customer_policy_customer_active")
+  @@index([customer_id, status], map: "idx_customer_policy_customer_status")
 }
 
 /// Daily snapshot of active customer policy limits and open-AR usage (credit dashboard trends).
@@ -2677,6 +2682,13 @@ enum contact_status {
 enum customer_limit_type {
   DCL
   Named
+}
+
+/// CustomerPolicy version lifecycle (keep is_active in sync: active⇒true; pending/inactive⇒false).
+enum customer_policy_status {
+  active
+  pending
+  inactive
 }
 
 enum insurance_policy_kind {

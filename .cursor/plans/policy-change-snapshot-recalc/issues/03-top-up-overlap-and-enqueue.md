@@ -1,6 +1,6 @@
 # 03 — Top-up overlap guard + rewrite enqueue audit
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** —
 **User stories:** 17, 18, 19, 20, 21, 22
@@ -12,12 +12,12 @@ Harden customer top-ups: on create, if the top-up insurance policy has `allow_co
 
 ## Acceptance criteria
 
-- [ ] Create rejects same-product date overlap when `allow_concurrent_top_ups` is false (clear error)
-- [ ] Create allows overlap when concurrent is true; allows overlap across different top-up policies
-- [ ] API create/cancel still enqueue rewrite from `start_date` (no regression)
-- [ ] Checkpoint/import (or other in-scope writers) enqueue rewrite after top-up inserts using earliest affected `start_date`
-- [ ] Existing overlapping rows are not auto-fixed
-- [ ] Any new user-facing error strings include EN+HE
+- [x] Create rejects same-product date overlap when `allow_concurrent_top_ups` is false (clear error)
+- [x] Create allows overlap when concurrent is true; allows overlap across different top-up policies
+- [x] API create/cancel still enqueue rewrite from `start_date` (no regression)
+- [x] Checkpoint/import (or other in-scope writers) enqueue rewrite after top-up inserts using earliest affected `start_date`
+- [x] Existing overlapping rows are not auto-fixed
+- [x] Any new user-facing error strings include EN+HE
 
 ## How to test
 
