@@ -14,6 +14,7 @@ import {
     deriveExcludedFromPolicy,
     isAllowedPolicyExclusionReason,
     normalizePolicyExclusionReason,
+    startOfTodayUtc,
 } from "@archaser/credit-insurance-domain";
 
 const LEGACY_MONTH_END_HEADERS = [
@@ -546,6 +547,8 @@ export class ImportPolicyService {
                 data: {
                     customer_id: customer.id,
                     is_active: true,
+                    status: "active",
+                    policy_change_start_date: startOfTodayUtc(),
                     created_by: context.userId,
                     ...patch,
                 } as never,
@@ -561,12 +564,18 @@ export class ImportPolicyService {
             await this.db.$transaction(async (tx) => {
                 await tx.customerPolicy.updateMany({
                     where: { customer_id: customer.id, is_active: true },
-                    data: { is_active: false, modified_by: context.userId },
+                    data: {
+                        is_active: false,
+                        status: "inactive",
+                        modified_by: context.userId,
+                    },
                 });
                 await tx.customerPolicy.create({
                     data: {
                         customer_id: customer.id,
                         is_active: true,
+                        status: "active",
+                        policy_change_start_date: startOfTodayUtc(),
                         created_by: context.userId,
                         ...patch,
                     } as never,

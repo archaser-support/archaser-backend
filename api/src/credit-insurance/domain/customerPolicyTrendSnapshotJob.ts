@@ -1,4 +1,5 @@
 import {
+    activateDuePendingCustomerPolicies,
     drainAsOfRewriteQueue,
     takeCustomerPolicyTrendSnapshots,
 } from "@archaser/credit-insurance-domain";
@@ -11,15 +12,37 @@ import {
  * registering this entrypoint in Nest/worker; never schedule both.
  */
 export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies: {
+    activatePending?: typeof activateDuePendingCustomerPolicies;
     takeSnapshots?: typeof takeCustomerPolicyTrendSnapshots;
     drainQueue?: typeof drainAsOfRewriteQueue;
 } = {}): Promise<{
+    pendingActivation: Awaited<
+        ReturnType<typeof activateDuePendingCustomerPolicies>
+    >;
     snapshot: Awaited<ReturnType<typeof takeCustomerPolicyTrendSnapshots>>;
     drain: Awaited<ReturnType<typeof drainAsOfRewriteQueue>>;
 }> {
+    const activatePending =
+        dependencies.activatePending ?? activateDuePendingCustomerPolicies;
     const takeSnapshots =
         dependencies.takeSnapshots ?? takeCustomerPolicyTrendSnapshots;
     const drainQueue = dependencies.drainQueue ?? drainAsOfRewriteQueue;
+
+    let pendingActivation:
+        | Awaited<ReturnType<typeof activateDuePendingCustomerPolicies>>
+        | undefined;
+    let pendingActivationError: unknown;
+    try {
+        pendingActivation = await activatePending();
+        if (pendingActivation.failures > 0) {
+            pendingActivationError = new Error(
+                `Pending policy activation completed with ${pendingActivation.failures} failures`
+            );
+        }
+    } catch (error) {
+        pendingActivationError = error;
+    }
+
     let snapshot:
         | Awaited<ReturnType<typeof takeCustomerPolicyTrendSnapshots>>
         | undefined;
@@ -51,8 +74,15 @@ export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies:
     if (snapshotError) {
         throw snapshotError;
     }
+    if (pendingActivationError) {
+        throw pendingActivationError;
+    }
     if (drainError) {
         throw drainError;
     }
-    return { snapshot: snapshot!, drain: drain! };
+    return {
+        pendingActivation: pendingActivation!,
+        snapshot: snapshot!,
+        drain: drain!,
+    };
 }
