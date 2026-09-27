@@ -5,14 +5,33 @@ This directory contains the infrastructure setup for integrating AWS SNS with Gr
 ## Architecture
 
 ```
-Grafana Alert → Webhook → API Gateway → Lambda
+Grafana Alert → Webhook → API Gateway → Lambda (infrastructure/sns/lambda/)
                                           ↓
                     ┌─────────────────────┼─────────────────────┐
                     │                     │                     │
                  SES Email            SNS Topic           ClickUp Chat
                (HTML Template)            ↓                (ARchaser)
                                     Slack / others
+                                          +
+                            GET /api/alert-details (Nest AlertDetailsModule)
 ```
+
+### Lambda source layout
+
+Real Lambda code lives in `infrastructure/sns/lambda/` (not inline in CloudFormation):
+
+| File | Role |
+|------|------|
+| `handler.js` | Webhook entry: cooldown, SES, SNS, ClickUp |
+| `resolveAlertType.js` | Maps alert → `/api/alert-details?type=` via `annotations.alert_details_type`, then UID/name normalize |
+| `fetchAlertDetails.js` | Calls Nest alert-details API |
+| `grafanaLinks.js` | Drilldown host/slug rewrite |
+| `emailTemplates.js` | HTML/plain email + ClickUp post |
+| `clickupChat.js` | Chat intent builder |
+
+`deploy.sh` runs `package-lambda.sh` (zips `lambda/` → `dist/alert-webhook.zip`) then `aws lambda update-function-code`. CloudFormation keeps a stub ZipFile so stack create/update stays valid before the upload.
+
+Prefer Grafana rule annotation `alert_details_type: "<type>"` (see `grafana/provisioning/alerting/rules-*.yaml`). Fallback: normalize rule UID / alertname.
 
 ClickUp Chat is additive. Email and Slack stay on. Empty `CLICKUP_CHAT_TOKEN` or `CLICKUP_CHAT_CHANNEL_ID` skips Chat (`clickupStatus: skipped_unconfigured`).
 
@@ -22,6 +41,7 @@ ClickUp Chat is additive. Email and Slack stay on. Empty `CLICKUP_CHAT_TOKEN` or
 - ✅ **SNS Fan-out** - Easy integration with Slack, SMS, and other channels
 - ✅ **Custom Formatting** - Full control over email design
 - ✅ **Plain Text Fallback** - For email clients that don't support HTML
+- ✅ **Alert details enrichment** - Nest `AlertDetailsModule` at `/api/alert-details`
 
 ---
 
@@ -107,7 +127,7 @@ curl -X POST "YOUR_WEBHOOK_URL" \
         "summary": "Test alert from manual cURL",
         "description": "This is a test to verify the integration works"
       },
-      "generatorURL": "https://grafana.archaser.com"
+      "generatorURL": "https://grafana.production.archaser.com"
     }],
     "groupLabels": { "alertname": "TestAlert" }
   }'
@@ -215,20 +235,13 @@ Add or remove fields in the alert details section:
 
 ### Deploying Template Changes
 
-After modifying the template, update the stack:
+After editing files under `lambda/`, redeploy with the script (packages + uploads code):
 
 ```bash
-aws cloudformation update-stack \
-  --stack-name archaser-alert-sns \
-  --template-body file://cloudformation-sns.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region eu-north-1
-
-# Wait for update to complete
-aws cloudformation wait stack-update-complete \
-  --stack-name archaser-alert-sns \
-  --region eu-north-1
+./deploy.sh production   # or staging
 ```
+
+CloudFormation alone only ships a stub handler — `deploy.sh` must run `update-function-code` for real email/ClickUp behavior.
 
 ---
 
