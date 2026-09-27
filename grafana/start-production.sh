@@ -33,8 +33,8 @@ MONITORING_ENV=production \
 GRAFANA_HOST_PORT=3201 \
 PROMETHEUS_HOST_PORT=9091 \
 LOKI_HOST_PORT=3101 \
-GRAFANA_ROOT_URL=https://grafana.portal.archaser.com/ \
-GRAFANA_DOMAIN=grafana.portal.archaser.com \
+GRAFANA_ROOT_URL=https://grafana.production.archaser.com/ \
+GRAFANA_DOMAIN=grafana.production.archaser.com \
 BACKEND_DOCKER_NETWORK="$NETWORK_NAME" \
 docker compose --project-name archaser-monitoring-production \
   --env-file "$ENV_FILE" \
