@@ -1,6 +1,6 @@
 # 02 — Pending future policy + cancel + cron activation + UI
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-immediate-policy-change-rewrite](01-immediate-policy-change-rewrite.md)
 **User stories:** 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 27
@@ -12,12 +12,12 @@ Support **future** `policy_change_date`: create at most one `pending` row withou
 
 ## Acceptance criteria
 
-- [ ] Future save creates `pending` only; active row unchanged; no rewrite enqueue on save
-- [ ] Second Policies save (immediate, future, or clear) while pending exists returns a clear conflict error
-- [ ] Cancel-pending sets pending → `inactive` and unlocks saves; row remains in history
-- [ ] CPT daily cron activates due pending before tip + drain and enqueues rewrite
-- [ ] UI shows pending indicator + cancel action; EN+HE updated together
-- [ ] At most one pending per customer enforced in save logic (and DB guard if practical)
+- [x] Future save creates `pending` only; active row unchanged; no rewrite enqueue on save
+- [x] Second Policies save (immediate, future, or clear) while pending exists returns a clear conflict error
+- [x] Cancel-pending sets pending → `inactive` and unlocks saves; row remains in history
+- [x] CPT daily cron activates due pending before tip + drain and enqueues rewrite
+- [x] UI shows pending indicator + cancel action; EN+HE updated together
+- [x] At most one pending per customer enforced in save logic (and DB guard if practical)
 
 ## How to test
 

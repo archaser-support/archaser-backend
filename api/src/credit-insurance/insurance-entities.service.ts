@@ -9,6 +9,7 @@ import {
     enqueueAsOfRewrite,
     ensureCustomerCapacityGapStored,
     freezeCustomerPolicyGapOnDeactivation,
+    startOfTodayUtc,
     syncCustomerInsuranceFields,
 } from "@archaser/credit-insurance-domain";
 import { AccessScopeService } from "../auth/access-scope.service";
@@ -101,6 +102,8 @@ function buildCustomerPolicyVersionFromPolicyPush(args: {
     return {
         customer_id: oldRow.customer_id,
         is_active: true,
+        status: "active",
+        policy_change_start_date: startOfTodayUtc(),
         created_by: userId,
         modified_by: userId,
         insurance_policy_id: oldRow.insurance_policy_id,
@@ -433,6 +436,7 @@ export class InsuranceEntitiesService {
                                 where: { id: oldRow.id },
                                 data: {
                                     is_active: false,
+                                    status: "inactive",
                                     modified_by: userInfo.userId,
                                 },
                             });
