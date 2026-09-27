@@ -11,6 +11,10 @@ import {
     STALE_RUNNING_HOURS,
     type SyncHistoryStore,
 } from "./store";
+import {
+    isSyncAlreadyRunningError,
+    SyncAlreadyRunningError,
+} from "./syncAlreadyRunningError";
 import type {
     CompleteExecutionInput,
     CreateRunningExecutionInput,
@@ -229,6 +233,11 @@ export {
     HISTORY_WINDOW_DAYS,
     STALE_RUNNING_HOURS,
     defaultSinceDate,
+};
+
+export {
+    isSyncAlreadyRunningError,
+    SyncAlreadyRunningError,
 };
 
 export type {
