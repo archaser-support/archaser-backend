@@ -78,6 +78,15 @@ ConnectorSyncExecutionSchema.index(
     { execution_id: 1 },
     { unique: true, sparse: true }
 );
+/** At most one RUNNING document per account (hard mutex across replicas). */
+ConnectorSyncExecutionSchema.index(
+    { account_id: 1 },
+    {
+        unique: true,
+        name: "uniq_account_running_sync",
+        partialFilterExpression: { status: "RUNNING" },
+    }
+);
 ConnectorSyncExecutionSchema.index({ connector_id: 1, started_at: -1 });
 ConnectorSyncExecutionSchema.index({ account_id: 1, started_at: -1 });
 ConnectorSyncExecutionSchema.index({ status: 1, started_at: 1 });

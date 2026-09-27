@@ -1,6 +1,6 @@
 # 02 — Deploy cleanup of twin RUNNING rows + index ensure
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** [01-unique-running-mutex](01-unique-running-mutex.md)
 **User stories:** 6, 9, 10
@@ -12,10 +12,10 @@ Ship a one-time / idempotent deploy-safe cleanup for sync history: for each acco
 
 ## Acceptance criteria
 
-- [ ] Cleanup keeps newest RUNNING per account; older twins become TIMEOUT with an explicit cleanup message
-- [ ] Unique index ensure runs after cleanup and succeeds when twins are gone
-- [ ] Re-running cleanup/index ensure is idempotent
-- [ ] Document how/when ops runs this (script or startup ensure path consistent with existing sync-history index setup)
+- [x] Cleanup keeps newest RUNNING per account; older twins become TIMEOUT with an explicit cleanup message
+- [x] Unique index ensure runs after cleanup and succeeds when twins are gone
+- [x] Re-running cleanup/index ensure is idempotent
+- [x] Document how/when ops runs this (script or startup ensure path consistent with existing sync-history index setup)
 
 ## How to test
 

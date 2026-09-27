@@ -165,7 +165,7 @@ describe("SyncHistoryStore.listRunningAccountIds", () => {
         await store.createRunning({
             executionId: "run-b",
             connectorId: 2,
-            accountId: 10,
+            accountId: 15,
             provider: "PRIORITY",
             trigger: "manual",
             syncMode: "backfill",
@@ -181,7 +181,7 @@ describe("SyncHistoryStore.listRunningAccountIds", () => {
         await store.completeIfRunning("run-c", { status: "SUCCESS" });
 
         const accountIds = await store.listRunningAccountIds();
-        expect(accountIds.sort((a, b) => a - b)).toEqual([10]);
+        expect(accountIds.sort((a, b) => a - b)).toEqual([10, 15]);
     });
 });
 
