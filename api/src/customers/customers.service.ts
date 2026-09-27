@@ -1,9 +1,11 @@
 import {
     BadRequestException,
+    ConflictException,
     ForbiddenException,
     Injectable,
     Logger,
     NotFoundException,
+    ServiceUnavailableException,
 } from "@nestjs/common";
 import {
     AccessScopeService,
@@ -18,9 +20,10 @@ import { serializeBigInt } from "../common/serialize-bigint";
 import {
     bindCreditInsurancePrisma,
     enrichCustomerTopUpFields,
-    enqueueAsOfRewrite,
+    AdminBackfillBlockingRewriteError,
     ensureCustomerCapacityGapStored,
     resolveCustomerHeaderOpenArAmounts,
+    rewriteCustomerAsOfRange,
 } from "@archaser/credit-insurance-domain";
 import {
     createPromiseToPayScheduledActivities,
@@ -545,6 +548,9 @@ export class CustomersService {
 
         const activeCustomerPolicy =
             customerPolicies.find((policy) => policy.is_active) ?? null;
+        const pendingCustomerPolicy =
+            customerPolicies.find((policy) => policy.status === "pending") ??
+            null;
         const topUpFields = await enrichCustomerTopUpFields(
             id,
             accountId,
@@ -572,6 +578,7 @@ export class CustomersService {
             },
             customerPolicies,
             activeCustomerPolicy,
+            pendingCustomerPolicy,
         });
     }
 
@@ -616,6 +623,23 @@ export class CustomersService {
             });
         }
 
+        return this.getById(user, id);
+    }
+
+    /**
+     * Cancel the customer's single pending future policy change (soft inactive).
+     * Unlocks Policies-tab saves; no rewrite.
+     */
+    async cancelPendingPolicyChange(user: JwtPayload, id: number) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const { effectiveUserId } = await this.assertCustomerInAccount(
+            userInfo,
+            id
+        );
+        await this.customerPolicy.cancelPendingPolicyChange({
+            customerId: id,
+            userId: effectiveUserId,
+        });
         return this.getById(user, id);
     }
 
@@ -1045,7 +1069,11 @@ export class CustomersService {
 
         const policy = await this.db.insurancePolicy.findFirst({
             where: { id: insurancePolicyId, account_id: accountId },
-            select: { id: true, policy_kind: true },
+            select: {
+                id: true,
+                policy_kind: true,
+                allow_concurrent_top_ups: true,
+            },
         });
         if (!policy) {
             throw new NotFoundException({
@@ -1056,6 +1084,25 @@ export class CustomersService {
             throw new BadRequestException({
                 error: "Insurance policy is not a top-up policy",
             });
+        }
+
+        if (policy.allow_concurrent_top_ups === false) {
+            const overlapping = await this.db.customerTopUp.findFirst({
+                where: {
+                    customer_id: id,
+                    insurance_policy_id: insurancePolicyId,
+                    cancelled_at: null,
+                    start_date: { lte: endDate },
+                    end_date: { gte: startDate },
+                },
+                select: { id: true },
+            });
+            if (overlapping) {
+                throw new ConflictException({
+                    error: "This top-up overlaps an existing top-up for the same product. Concurrent top-ups are not allowed for this policy.",
+                    code: "TOP_UP_DATE_OVERLAP",
+                });
+            }
         }
 
         const topUp = await this.db.customerTopUp.create({
@@ -1074,12 +1121,7 @@ export class CustomersService {
                 modified_by: effectiveUserId,
             } as never,
         });
-        await enqueueAsOfRewrite({
-            accountId,
-            customerIds: [id],
-            fromDate: startDate,
-            toDate: new Date(),
-        });
+        await this.rewriteCustomerCptFromDate(accountId, id, startDate);
         await ensureCustomerCapacityGapStored(id);
 
         return serializeBigInt(topUp);
@@ -1114,15 +1156,47 @@ export class CustomersService {
                 modified_by: effectiveUserId,
             } as never,
         });
-        await enqueueAsOfRewrite({
+        await this.rewriteCustomerCptFromDate(
             accountId,
-            customerIds: [id],
-            fromDate: cancelled.start_date,
-            toDate: new Date(),
-        });
+            id,
+            cancelled.start_date
+        );
         await ensureCustomerCapacityGapStored(id);
 
         return serializeBigInt(cancelled);
+    }
+
+    /**
+     * Option B: await CPT rewrite in-request for interactive top-up writes.
+     * Dashboard snapshots stay on overnight tip / queue drain.
+     */
+    private async rewriteCustomerCptFromDate(
+        accountId: number,
+        customerId: number,
+        fromDate: Date
+    ): Promise<void> {
+        try {
+            await rewriteCustomerAsOfRange({
+                accountId,
+                customerIds: [customerId],
+                fromDate,
+                toDate: new Date(),
+            });
+        } catch (error) {
+            if (error instanceof AdminBackfillBlockingRewriteError) {
+                throw new ConflictException({
+                    error: error.message,
+                    code: "CREDIT_ASOF_BACKFILL_IN_PROGRESS",
+                });
+            }
+            throw new ServiceUnavailableException({
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "Failed to update customer policy trend history",
+                code: "CUSTOMER_POLICY_TREND_REWRITE_FAILED",
+            });
+        }
     }
 
     async stuckActivities(user: JwtPayload, id: number) {
