@@ -18,6 +18,7 @@ import {
     decryptCredentials,
     getRunningSync,
     isPriorityEntityImportType,
+    isSyncAlreadyRunningError,
     listDurableSyncHistoryRuns,
     listMergedInProcessSyncRuns,
     normalizeInvoicePaidTolerance,
@@ -995,6 +996,39 @@ export class AccountsNestedService {
 
         const syncMode = mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
         const trigger = mode === "backfill" ? "backfill" : "manual";
+        try {
+            await createInProcessSyncHistoryStub({
+                executionId,
+                accountId,
+                connectorId: connector.id,
+                provider: connector.provider,
+                trigger: trigger as "backfill" | "manual",
+                syncMode,
+                startedAt,
+                onError: (message) => this.logger.error(message),
+            });
+        } catch (error) {
+            if (isSyncAlreadyRunningError(error)) {
+                this.logger.log(
+                    `[account ${accountId}] Skipping manual sync — another sync is already RUNNING ${JSON.stringify(
+                        {
+                            event: "billing_connector_sync_skipped_already_running",
+                            accountId,
+                            connectorId: connector.id,
+                            provider: connector.provider,
+                            trigger,
+                            existingExecutionId: error.existingExecutionId,
+                            attemptedExecutionId: executionId,
+                        }
+                    )}`
+                );
+                throw new ConflictException({
+                    error: "A sync is already running for this account",
+                    code: "SYNC_IN_PROGRESS",
+                });
+            }
+            throw error;
+        }
         const runningSummary: ConnectorSyncRunSummary = {
             id: executionId,
             trigger,
@@ -1031,17 +1065,6 @@ export class AccountsNestedService {
             runningSummary,
         });
         upsertSyncRun(accountId, runningSummary);
-
-        await createInProcessSyncHistoryStub({
-            executionId,
-            accountId,
-            connectorId: connector.id,
-            provider: connector.provider,
-            trigger: trigger as "backfill" | "manual",
-            syncMode,
-            startedAt,
-            onError: (message) => this.logger.error(message),
-        });
 
         const onLog = (message: string) => {
             this.logger.log(`[account ${accountId}] ${message}`);

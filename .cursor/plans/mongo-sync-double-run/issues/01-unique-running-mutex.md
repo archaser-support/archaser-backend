@@ -1,6 +1,6 @@
 # 01 — Unique RUNNING + conflict skip (cron & manual)
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1, 2, 3, 4, 5, 7, 8, 11, 12, 13, 14, 15
