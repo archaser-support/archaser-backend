@@ -1,6 +1,6 @@
 # 01 — Immediate policy_change_date + rewrite enqueue + date UI
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 1, 2, 3, 4, 13, 15, 16, 23, 24, 25, 26
@@ -12,12 +12,12 @@ Add `policy_change_date` and `status` (`active` | `pending` | `inactive`) on cus
 
 ## Acceptance criteria
 
-- [ ] Schema + migration: status from `is_active`; `policy_change_date` = `created_at` UTC day for existing rows
-- [ ] Immediate save requires `policy_change_date` ≥ primary insurance policy `start_date` and ≤ UTC today
-- [ ] Successful immediate save leaves one `active` row, prior row `inactive`, `is_active` consistent
-- [ ] `enqueueAsOfRewrite` called for that customer with `fromDate = policy_change_date`
-- [ ] Policies tab shows required date control defaulting to UTC today; EN+HE strings updated together
-- [ ] Days before `policy_change_date` are not required to change in this slice’s manual check; on/after days update after drain
+- [x] Schema + migration: status from `is_active`; `policy_change_date` = `created_at` UTC day for existing rows
+- [x] Immediate save requires `policy_change_date` ≥ primary insurance policy `start_date` and ≤ UTC today
+- [x] Successful immediate save leaves one `active` row, prior row `inactive`, `is_active` consistent
+- [x] `enqueueAsOfRewrite` called for that customer with `fromDate = policy_change_date`
+- [x] Policies tab shows required date control defaulting to UTC today; EN+HE strings updated together
+- [x] Days before `policy_change_date` are not required to change in this slice’s manual check; on/after days update after drain
 
 ## How to test
 
