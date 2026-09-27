@@ -1,7 +1,29 @@
 #!/usr/bin/env bash
-
-# Setup script for Single-EC2 Nginx configuration:
-# Enables both api.staging.archaser.com and api.production.archaser.com on one host.
+# Shared API EC2 nginx bootstrap — staging + production on one host.
+#
+# Installs the current split site configs from nginx/ (same set used in prod):
+#   archaser-staging-api.conf
+#   archaser-production-api.conf
+#   archaser-staging-grafana.conf
+#   archaser-production-grafana.conf
+#   archaser-portainer.conf
+#
+# Does NOT enable:
+#   archaser-single-ec2-api.conf  (legacy; conflicts with the split API sites)
+#   archaser-staging.conf / archaser-production.conf  (legacy Next / marketing)
+#   archaser-staging-amplify-cutover.conf
+#
+# Run on the API EC2 as ubuntu (passwordless sudo):
+#   cd /home/ubuntu/api
+#   bash scripts/deployment/setup-single-ec2-nginx.sh
+#   bash scripts/deployment/setup-single-ec2-nginx.sh --email you@archaser.com
+#   bash scripts/deployment/setup-single-ec2-nginx.sh --skip-certs
+#
+# Prerequisites:
+#   DNS A records for the domains below already point at this host (HTTP-01).
+#   Ports 80/443 free.
+#
+# Idempotent: safe to re-run; skips certbot when certs exist unless --force-certs.
 
 if [ -z "${BASH_VERSION:-}" ]; then
     exec /usr/bin/env bash "$0" "$@"
@@ -12,20 +34,44 @@ set -euo pipefail
 EMAIL=""
 SKIP_CERTS="false"
 FORCE_CERTS="false"
-
 USE_STANDALONE="false"
+WITH_PORTAINER="true"
+
+# Primary cert names must match ssl_certificate paths in the repo nginx/*.conf files.
+CERT_STAGING_API="api.staging.archaser.com"
+CERT_PROD_API="api.portal.archaser.com"
+CERT_STAGING_GRAFANA="grafana.staging.archaser.com"
+CERT_PROD_GRAFANA="grafana.portal.archaser.com"
+CERT_PORTAINER="portainer.archaser.com"
 
 usage() {
     cat <<'EOF'
 Usage:
   bash scripts/deployment/setup-single-ec2-nginx.sh [options]
 
+Installs all shared-EC2 nginx site configs from nginx/ and issues Let's Encrypt
+certs for the hostnames those configs reference.
+
 Options:
   --email <addr>       Let's Encrypt registration / renewal notices
   --skip-certs         Install nginx site configs only (no certbot)
   --force-certs        Re-issue certs even if they already exist
-  --standalone         Use certbot standalone mode instead of webroot
+  --standalone         Use certbot standalone (stops nginx during issue)
+  --no-portainer       Skip portainer.archaser.com site + cert
   -h, --help           Show help
+
+Enabled sites (from repo nginx/):
+  archaser-staging-api.conf
+  archaser-production-api.conf
+  archaser-staging-grafana.conf
+  archaser-production-grafana.conf
+  archaser-portainer.conf          (unless --no-portainer)
+
+Disabled / never enabled (conflict or out of scope on this box):
+  archaser-single-ec2-api.conf
+  archaser-staging.conf
+  archaser-production.conf
+  archaser-staging-amplify-cutover.conf
 EOF
 }
 
@@ -36,6 +82,22 @@ log() {
 die() {
     echo "Error: $1" >&2
     exit 1
+}
+
+require_sudo() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+        die "Do not run as root. Run as ubuntu (uses sudo)."
+    fi
+    if ! command -v sudo >/dev/null 2>&1; then
+        die "sudo is required"
+    fi
+    if ! sudo -n true 2>/dev/null; then
+        die "Passwordless sudo required for ubuntu user."
+    fi
+}
+
+run() {
+    sudo env "$@"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -56,83 +118,114 @@ while [[ $# -gt 0 ]]; do
             USE_STANDALONE="true"
             shift
             ;;
+        --no-portainer)
+            WITH_PORTAINER="false"
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
             ;;
         *)
-            echo "Unknown argument: $1"
-            usage
-            exit 1
+            die "Unknown option: $1 (see --help)"
             ;;
     esac
 done
 
-if [[ "$EUID" -eq 0 ]]; then
-    die "Do not run directly as root. Run as ubuntu (uses passwordless sudo)."
-fi
-
-require_sudo() {
-    if ! sudo -n true 2>/dev/null; then
-        die "Passwordless sudo required for ubuntu user."
-    fi
-}
-
 require_sudo
 
-log "Installing Nginx, OpenSSL, and Certbot dependencies..."
-sudo apt-get update -qq
-sudo apt-get install -y -qq nginx certbot python3-certbot-nginx openssl curl
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT_CANDIDATES=(
+    "$(cd "$SCRIPT_DIR/../.." && pwd)"
+    "$(cd "$SCRIPT_DIR/../../.." && pwd)"
+    "$(pwd)"
+)
 
-# Ensure webroot directory exists for Let's Encrypt HTTP-01 challenge
-sudo mkdir -p /var/www/html
-sudo chmod 755 /var/www/html
+BACKEND_DIR=""
+NGINX_SRC=""
+for root in "${ROOT_CANDIDATES[@]}"; do
+    if [[ -d "$root/nginx" && -f "$root/nginx/archaser-staging-api.conf" ]]; then
+        BACKEND_DIR="$root"
+        NGINX_SRC="$root/nginx"
+        break
+    fi
+    if [[ -d "$root/backend/nginx" && -f "$root/backend/nginx/archaser-staging-api.conf" ]]; then
+        BACKEND_DIR="$root/backend"
+        NGINX_SRC="$root/backend/nginx"
+        break
+    fi
+done
 
-# Clean up any dummy self-signed cert directories if force certs or non-certbot dummy certs present
-cleanup_dummy_cert() {
-    local domain="$1"
-    local cert_file="/etc/letsencrypt/live/$domain/fullchain.pem"
-    if [[ -f "$cert_file" ]]; then
-        if sudo openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null | grep -q "CN = $domain"; then
-            local is_letsencrypt
-            is_letsencrypt="$(sudo openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null | grep -i "Let's Encrypt" || true)"
-            if [[ -z "$is_letsencrypt" ]]; then
-                log "Removing temporary self-signed certificate for $domain..."
-                sudo rm -rf "/etc/letsencrypt/live/$domain" "/etc/letsencrypt/archive/$domain" "/etc/letsencrypt/renewal/$domain.conf"
-            fi
-        fi
+[[ -n "$NGINX_SRC" ]] || die "Could not find nginx/archaser-staging-api.conf (run from the api/backend checkout)"
+
+# site file name in sites-available/enabled → source file under nginx/
+SITE_MAP=(
+    "archaser-staging-api.conf:archaser-staging-api.conf"
+    "archaser-production-api.conf:archaser-production-api.conf"
+    "archaser-staging-grafana.conf:archaser-staging-grafana.conf"
+    "archaser-production-grafana.conf:archaser-production-grafana.conf"
+)
+if [[ "$WITH_PORTAINER" == "true" ]]; then
+    SITE_MAP+=("archaser-portainer.conf:archaser-portainer.conf")
+fi
+
+cert_exists() {
+    local name="$1"
+    [[ -f "/etc/letsencrypt/live/$name/fullchain.pem" && -f "/etc/letsencrypt/live/$name/privkey.pem" ]]
+}
+
+cert_covers_name() {
+    local cert_name="$1"
+    local expect_cn="$2"
+    local cert="/etc/letsencrypt/live/$cert_name/fullchain.pem"
+    [[ -f "$cert" ]] || return 1
+    sudo openssl x509 -in "$cert" -noout -text 2>/dev/null \
+        | grep -E "DNS:${expect_cn}(,|$)|CN[[:space:]]*=[[:space:]]*${expect_cn}" >/dev/null
+}
+
+ensure_ssl_params() {
+    run mkdir -p /etc/letsencrypt
+    if [[ ! -f /etc/letsencrypt/ssl-dhparams.pem ]]; then
+        log "Creating /etc/letsencrypt/ssl-dhparams.pem (one-time)"
+        run openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048
+    fi
+    if [[ ! -f /etc/letsencrypt/options-ssl-nginx.conf ]]; then
+        log "Writing /etc/letsencrypt/options-ssl-nginx.conf"
+        run tee /etc/letsencrypt/options-ssl-nginx.conf >/dev/null <<'SSL_OPTS'
+ssl_session_cache shared:le_nginx_SSL:10m;
+ssl_session_timeout 1440m;
+ssl_session_tickets off;
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers off;
+ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";
+SSL_OPTS
     fi
 }
 
-cleanup_dummy_cert "api.staging.archaser.com"
-cleanup_dummy_cert "api.production.archaser.com"
+write_http_bootstrap_all() {
+    local out="/etc/nginx/sites-available/archaser-acme-bootstrap"
+    local names=(
+        "$CERT_STAGING_API"
+        api.production.archaser.com
+        "$CERT_PROD_API"
+        "$CERT_STAGING_GRAFANA"
+        grafana.production.archaser.com
+        "$CERT_PROD_GRAFANA"
+    )
+    if [[ "$WITH_PORTAINER" == "true" ]]; then
+        names+=(portainer.archaser.com portainer.staging.archaser.com)
+    fi
 
-# Ensure ssl parameters exist
-sudo mkdir -p /etc/letsencrypt
-if [[ ! -f /etc/letsencrypt/options-ssl-nginx.conf ]]; then
-    log "Creating default /etc/letsencrypt/options-ssl-nginx.conf..."
-    sudo curl -sSL https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf -o /etc/letsencrypt/options-ssl-nginx.conf || true
-fi
-
-if [[ ! -f /etc/letsencrypt/ssl-dhparams.pem ]]; then
-    log "Generating /etc/letsencrypt/ssl-dhparams.pem..."
-    sudo openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048 >/dev/null 2>&1 || true
-fi
-
-if [[ "$SKIP_CERTS" == "false" ]]; then
-    if [[ "$USE_STANDALONE" == "true" ]]; then
-        log "Stopping Nginx to run Certbot in Standalone mode..."
-        sudo systemctl stop nginx || true
-    else
-        log "Setting up temporary HTTP-01 challenge listener on Port 80 for Certbot..."
-        cat <<'HTTP_CONF' | sudo tee /etc/nginx/sites-available/archaser-single-ec2-api >/dev/null
-server {
-    listen 80;
-    listen [::]:80;
-    server_name api.staging.archaser.com api.production.archaser.com;
+    {
+        echo "server {"
+        echo "    listen 80 default_server;"
+        echo "    listen [::]:80 default_server;"
+        echo -n "    server_name"
+        for n in "${names[@]}"; do
+            echo -n " $n"
+        done
+        echo ";"
+        cat <<'EOF'
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -140,135 +233,177 @@ server {
     }
 
     location / {
-        return 200 "Certbot bootstrapping...";
+        return 200 "archaser shared-EC2 nginx ACME bootstrap\n";
         add_header Content-Type text/plain;
     }
 }
-HTTP_CONF
+EOF
+    } | run tee "$out" >/dev/null
 
-        sudo rm -f /etc/nginx/sites-enabled/default \
-                    /etc/nginx/sites-enabled/archaser-staging-api* \
-                    /etc/nginx/sites-enabled/archaser-production-api* \
-                    /etc/nginx/sites-enabled/archaser-staging* \
-                    /etc/nginx/sites-enabled/archaser-production* \
-                    /etc/nginx/sites-enabled/archaser
-        sudo ln -sf /etc/nginx/sites-available/archaser-single-ec2-api /etc/nginx/sites-enabled/archaser-single-ec2-api
-        sudo nginx -t
-        sudo systemctl restart nginx || sudo systemctl start nginx
+    run ln -sfn "$out" /etc/nginx/sites-enabled/archaser-acme-bootstrap
+}
+
+disable_conflicting_sites() {
+    log "Disabling legacy / conflicting site links"
+    run rm -f \
+        /etc/nginx/sites-enabled/default \
+        /etc/nginx/sites-enabled/000-default \
+        /etc/nginx/sites-enabled/archaser-single-ec2-api \
+        /etc/nginx/sites-enabled/archaser-single-ec2-api.conf \
+        /etc/nginx/sites-enabled/archaser-staging \
+        /etc/nginx/sites-enabled/archaser-staging.conf \
+        /etc/nginx/sites-enabled/archaser-production \
+        /etc/nginx/sites-enabled/archaser \
+        /etc/nginx/sites-enabled/archaser-staging-amplify-cutover.conf \
+        /etc/nginx/sites-enabled/archaser-acme-bootstrap \
+        2>/dev/null || true
+}
+
+install_repo_sites() {
+    local entry site_name src_name src
+    log "Installing nginx site configs from $NGINX_SRC"
+    for entry in "${SITE_MAP[@]}"; do
+        site_name="${entry%%:*}"
+        src_name="${entry##*:}"
+        src="$NGINX_SRC/$src_name"
+        [[ -f "$src" ]] || die "Missing site template: $src"
+        run cp "$src" "/etc/nginx/sites-available/$site_name"
+        run ln -sfn "/etc/nginx/sites-available/$site_name" "/etc/nginx/sites-enabled/$site_name"
+        log "Enabled $site_name"
+    done
+}
+
+issue_cert() {
+    local cert_name="$1"
+    shift
+    local domains=("$@")
+    local cmd=(certbot certonly --non-interactive --agree-tos --cert-name "$cert_name")
+    local d
+
+    if [[ "$USE_STANDALONE" == "true" ]]; then
+        cmd+=(--standalone)
+    else
+        cmd+=(--webroot -w /var/www/html)
+    fi
+    for d in "${domains[@]}"; do
+        cmd+=(-d "$d")
+    done
+    if [[ "$FORCE_CERTS" == "true" ]]; then
+        cmd+=(--force-renewal)
+    fi
+    if [[ -n "$EMAIL" ]]; then
+        cmd+=(--email "$EMAIL")
+    else
+        cmd+=(--register-unsafely-without-email)
     fi
 
-    issue_cert() {
-        local domain="$1"
-        local cert_file="/etc/letsencrypt/live/$domain/fullchain.pem"
-        
-        if [[ -f "$cert_file" ]]; then
-            if sudo openssl x509 -in "$cert_file" -noout -checkend 86400 2>/dev/null; then
-                log "Found valid existing SSL certificate for $domain."
-                if [[ "$FORCE_CERTS" != "true" ]]; then
-                    log "✅ Skipping cert re-issuance (valid cert active at $cert_file)"
-                    return 0
-                fi
-            fi
-        fi
-
-        log "Requesting official Let's Encrypt SSL certificate for $domain..."
-        local cmd=(sudo certbot certonly)
+    if [[ "$USE_STANDALONE" == "true" ]]; then
+        run systemctl stop nginx || true
+    fi
+    if run "${cmd[@]}"; then
+        log "Issued/refreshed cert lineage: $cert_name (${domains[*]})"
         if [[ "$USE_STANDALONE" == "true" ]]; then
-            cmd+=(--standalone)
-        else
-            cmd+=(--webroot -w /var/www/html)
+            run systemctl start nginx || true
         fi
-        cmd+=(-d "$domain" --cert-name "$domain" --non-interactive --agree-tos)
-        if [[ "$FORCE_CERTS" == "true" ]]; then
-            cmd+=(--force-renewal)
-        fi
-        if [[ -n "$EMAIL" ]]; then
-            cmd+=(--email "$EMAIL")
-        else
-            cmd+=(--register-unsafely-without-email)
-        fi
+        return 0
+    fi
+    if [[ "$USE_STANDALONE" == "true" ]]; then
+        run systemctl start nginx || true
+    fi
+    die "Certbot failed for $cert_name (${domains[*]}). Check DNS A records and SG 80/443."
+}
 
-        if "${cmd[@]}"; then
-            log "✅ Successfully issued valid Let's Encrypt certificate for $domain"
+ensure_cert() {
+    local cert_name="$1"
+    shift
+    local domains=("$@")
+    local primary="${domains[0]}"
+
+    if [[ "$FORCE_CERTS" != "true" ]] && cert_exists "$cert_name" && cert_covers_name "$cert_name" "$primary"; then
+        if sudo openssl x509 -in "/etc/letsencrypt/live/$cert_name/fullchain.pem" -noout -checkend 86400 2>/dev/null; then
+            log "Valid cert already present for $cert_name — skipping"
             return 0
         fi
+    fi
+    issue_cert "$cert_name" "${domains[@]}"
+}
 
-        # Fallback: check if rate limits or webroot failed, but an existing valid cert exists under any lineage
-        local alt_cert
-        alt_cert="$(sudo find /etc/letsencrypt/live/ -type f -path "*/${domain}*/fullchain.pem" 2>/dev/null | head -n 1)"
-        if [[ -n "$alt_cert" && -f "$alt_cert" ]]; then
-            local alt_dir
-            alt_dir="$(dirname "$alt_cert")"
-            log "⚠️ Certbot rate-limited or failed. Reusing existing valid certificate from $alt_dir for $domain..."
-            sudo mkdir -p "/etc/letsencrypt/live/$domain"
-            sudo ln -sf "$alt_dir/fullchain.pem" "/etc/letsencrypt/live/$domain/fullchain.pem"
-            sudo ln -sf "$alt_dir/privkey.pem" "/etc/letsencrypt/live/$domain/privkey.pem"
-            return 0
-        fi
+# --- 1) Packages ------------------------------------------------------------
+log "Installing nginx, certbot, openssl"
+run apt-get update -qq
+run DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx certbot python3-certbot-nginx openssl curl
 
-        if [[ "$USE_STANDALONE" == "false" ]]; then
-            log "Webroot challenge failed for $domain. Attempting Standalone mode fallback..."
-            sudo systemctl stop nginx || true
-            local standalone_cmd=(sudo certbot certonly --standalone -d "$domain" --cert-name "$domain" --non-interactive --agree-tos)
-            if [[ "$FORCE_CERTS" == "true" ]]; then
-                standalone_cmd+=(--force-renewal)
-            fi
-            if [[ -n "$EMAIL" ]]; then
-                standalone_cmd+=(--email "$EMAIL")
-            else
-                standalone_cmd+=(--register-unsafely-without-email)
-            fi
-            if "${standalone_cmd[@]}"; then
-                log "✅ Successfully issued certificate for $domain using Standalone mode!"
-                return 0
-            fi
+run mkdir -p /var/www/html/.well-known/acme-challenge
+run chown -R www-data:www-data /var/www/html
+ensure_ssl_params
 
-            alt_cert="$(sudo find /etc/letsencrypt/live/ -type f -path "*/${domain}*/fullchain.pem" 2>/dev/null | head -n 1)"
-            if [[ -n "$alt_cert" && -f "$alt_cert" ]]; then
-                local alt_dir
-                alt_dir="$(dirname "$alt_cert")"
-                log "⚠️ Standalone failed. Reusing existing valid certificate from $alt_dir for $domain..."
-                sudo mkdir -p "/etc/letsencrypt/live/$domain"
-                sudo ln -sf "$alt_dir/fullchain.pem" "/etc/letsencrypt/live/$domain/fullchain.pem"
-                sudo ln -sf "$alt_dir/privkey.pem" "/etc/letsencrypt/live/$domain/privkey.pem"
-                return 0
-            fi
-        fi
-
-        echo "❌ Certbot issuance failed for $domain."
-        echo "Please check:"
-        echo " 1. DNS A record for $domain points to this EC2 public IP."
-        echo " 2. AWS Security Group / Firewall allows HTTP (port 80) and HTTPS (port 443)."
-        exit 1
-    }
-
-    issue_cert "api.staging.archaser.com"
-    issue_cert "api.production.archaser.com"
+# --- 2) ACME bootstrap (HTTP only) ------------------------------------------
+disable_conflicting_sites
+if [[ "$SKIP_CERTS" == "false" && "$USE_STANDALONE" == "false" ]]; then
+    log "Installing temporary HTTP ACME bootstrap"
+    write_http_bootstrap_all
+    run nginx -t
+    run systemctl enable nginx
+    run systemctl restart nginx
 fi
 
-log "Copying full single EC2 Nginx SSL configuration..."
-CONF_SRC="$BACKEND_DIR/nginx/archaser-single-ec2-api.conf"
-
-if [[ ! -f "$CONF_SRC" ]]; then
-    die "Nginx config not found at $CONF_SRC"
+# --- 3) Certificates --------------------------------------------------------
+if [[ "$SKIP_CERTS" == "true" ]]; then
+    log "Skipping certbot (--skip-certs)"
+else
+    ensure_cert "$CERT_STAGING_API" "$CERT_STAGING_API"
+    ensure_cert "$CERT_PROD_API" "$CERT_PROD_API" "api.production.archaser.com"
+    ensure_cert "$CERT_STAGING_GRAFANA" "$CERT_STAGING_GRAFANA"
+    ensure_cert "$CERT_PROD_GRAFANA" "$CERT_PROD_GRAFANA" "grafana.production.archaser.com"
+    if [[ "$WITH_PORTAINER" == "true" ]]; then
+        ensure_cert "$CERT_PORTAINER" "$CERT_PORTAINER" "portainer.staging.archaser.com"
+    fi
 fi
 
-sudo cp "$CONF_SRC" /etc/nginx/sites-available/archaser-single-ec2-api
-sudo rm -f /etc/nginx/sites-enabled/default \
-            /etc/nginx/sites-enabled/archaser-staging-api* \
-            /etc/nginx/sites-enabled/archaser-production-api* \
-            /etc/nginx/sites-enabled/archaser-staging* \
-            /etc/nginx/sites-enabled/archaser-production* \
-            /etc/nginx/sites-enabled/archaser
-sudo ln -sf /etc/nginx/sites-available/archaser-single-ec2-api /etc/nginx/sites-enabled/archaser-single-ec2-api
+# --- 4) Full TLS sites from repo --------------------------------------------
+disable_conflicting_sites
+install_repo_sites
 
-log "Testing Nginx SSL configuration syntax..."
-sudo nginx -t
+missing=0
+for name in "$CERT_STAGING_API" "$CERT_PROD_API" "$CERT_STAGING_GRAFANA" "$CERT_PROD_GRAFANA"; do
+    if ! cert_exists "$name"; then
+        echo "Warning: cert missing for $name — corresponding HTTPS server will fail until issued."
+        missing=1
+    fi
+done
+if [[ "$WITH_PORTAINER" == "true" ]] && ! cert_exists "$CERT_PORTAINER"; then
+    echo "Warning: cert missing for $CERT_PORTAINER"
+    missing=1
+fi
 
-log "Starting Nginx with official SSL certs..."
-sudo systemctl restart nginx || sudo systemctl start nginx
+log "Testing nginx configuration"
+if ! run nginx -t; then
+    if [[ "$missing" -eq 1 ]]; then
+        die "nginx -t failed (often missing cert files). Re-run without --skip-certs after DNS points here."
+    fi
+    die "nginx -t failed"
+fi
 
-log "Active certificates on this server:"
-sudo certbot certificates || true
+run systemctl enable nginx
+run systemctl reload nginx || run systemctl restart nginx
 
-log "Single-EC2 Nginx setup completed successfully! Real SSL certificates are now active."
+log "Active certificates"
+run certbot certificates || true
+
+log "Enabled sites"
+run ls -la /etc/nginx/sites-enabled/
+
+log "Done — shared EC2 nginx sites installed from $NGINX_SRC"
+echo "  Staging API:      https://$CERT_STAGING_API"
+echo "  Production API:   https://$CERT_PROD_API (also api.production.archaser.com)"
+echo "  Staging Grafana:  https://$CERT_STAGING_GRAFANA"
+echo "  Production Grafana: https://$CERT_PROD_GRAFANA"
+if [[ "$WITH_PORTAINER" == "true" ]]; then
+    echo "  Portainer:        https://$CERT_PORTAINER"
+fi
+echo
+echo "Compose project names on this host (always pass -p):"
+echo "  docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml …"
+echo "  docker compose -p archaser-backend-production -f docker-compose.backend.production.yml …"
+echo
+echo "DNS for each hostname above must point at this EC2 (not CloudFront) for TLS to work."

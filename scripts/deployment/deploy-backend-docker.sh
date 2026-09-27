@@ -551,8 +551,8 @@ if [[ "$NO_GRAFANA" != "true" ]]; then
             )
         elif [[ "$ENVIRONMENT" == "production" ]]; then
             MONITORING_ENV_VARS+=(
-                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.production.archaser.com/}"
-                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.production.archaser.com}"
+                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}"
+                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.portal.archaser.com}"
             )
         fi
         if ! env "${MONITORING_ENV_VARS[@]}" docker_compose \
@@ -580,7 +580,8 @@ fi
 
 log "Deployment complete"
 if [[ "$ENVIRONMENT" == "staging" ]]; then
-    log "Staging reverse proxy: bash scripts/deployment/setup-staging-nginx.sh [--with-monitoring]"
+    log "Shared EC2 nginx: bash scripts/deployment/setup-single-ec2-nginx.sh"
+    log "Staging-only nginx: bash scripts/deployment/setup-staging-nginx.sh [--with-monitoring]"
     log "Grafana URL: https://grafana.staging.archaser.com (containers on 127.0.0.1:3200)"
     log "Do not run deploy-staging.sh (Next UI) on this box"
 fi
