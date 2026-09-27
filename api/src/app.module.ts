@@ -24,6 +24,7 @@ import { MetricsModule } from "./metrics/metrics.module";
 import { OperationsModule } from "./operations/operations.module";
 import { PermissionsModule } from "./permissions/permissions.module";
 import { PlatformLeavesModule } from "./platform-leaves/platform-leaves.module";
+import { AlertDetailsModule } from "./alert-details/alert-details.module";
 import { PortalModule } from "./portal/portal.module";
 import { QueueModule } from "./queue/queue.module";
 import { RealtimeModule } from "./realtime/realtime.module";
@@ -78,6 +79,7 @@ import { UserPreferencesModule } from "./user-preferences/user-preferences.modul
         CommunicationIntelligenceModule,
         ReferenceDataModule,
         PlatformLeavesModule,
+        AlertDetailsModule,
         ImportModule,
         BillingConnectorModule,
         CreditInsuranceModule,

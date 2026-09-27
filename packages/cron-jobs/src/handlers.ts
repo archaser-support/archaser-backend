@@ -6,6 +6,7 @@ import {
 } from "@archaser/billing-connector";
 import {
     bindCreditInsurancePrisma,
+    activateDuePendingCustomerPolicies,
     drainAsOfRewriteQueue,
     syncAllCustomerPolicyGapAmounts,
     takeCreditDashboardDailySnapshots,
@@ -152,6 +153,27 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
     timed("Customer Policy Trend Daily Snapshot", async () => {
         bindCreditInsurancePrisma(prisma);
 
+        // Activate due pending customer policies before today's tip + drain so
+        // the tip reflects newly activated limits and rewrite covers from the
+        // change date.
+        let pendingActivation:
+            | Awaited<ReturnType<typeof activateDuePendingCustomerPolicies>>
+            | undefined;
+        let pendingActivationError: Error | undefined;
+        try {
+            pendingActivation = await activateDuePendingCustomerPolicies();
+            if (pendingActivation.failures > 0) {
+                pendingActivationError = new Error(
+                    `Pending policy activation: ${pendingActivation.activated} activated, ${pendingActivation.failures} failures`
+                );
+            }
+        } catch (error: unknown) {
+            pendingActivationError =
+                error instanceof Error
+                    ? error
+                    : new Error("Pending customer policy activation failed");
+        }
+
         let todayResult:
             | Awaited<ReturnType<typeof takeCustomerPolicyTrendSnapshots>>
             | undefined;
@@ -221,6 +243,9 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
         if (todayError) {
             throw todayError;
         }
+        if (pendingActivationError) {
+            throw pendingActivationError;
+        }
         if (drainError) {
             throw drainError;
         }
@@ -229,8 +254,11 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
         }
 
         return {
-            message: `Customer policy trend snapshots: ${todayResult!.rowsUpserted} rows across ${todayResult!.accountsProcessed} accounts; AR post-ingest retries: ${retryResult?.itemsProcessed ?? 0}`,
-            summary: todayResult,
+            message: `Customer policy trend snapshots: ${todayResult!.rowsUpserted} rows across ${todayResult!.accountsProcessed} accounts; pending activated: ${pendingActivation?.activated ?? 0}; AR post-ingest retries: ${retryResult?.itemsProcessed ?? 0}`,
+            summary: {
+                ...todayResult,
+                pendingActivation,
+            },
         };
     });
 

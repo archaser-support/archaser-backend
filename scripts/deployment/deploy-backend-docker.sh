@@ -27,6 +27,13 @@ Options:
 Examples:
   bash scripts/deployment/deploy-backend-docker.sh --env staging
   bash scripts/deployment/deploy-backend-docker.sh --env production --no-grafana
+
+Manual compose on the shared EC2 (always pass the deploy project name):
+  docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml …
+  docker compose -p archaser-backend-production -f docker-compose.backend.production.yml …
+
+Staging MONGODB_URI must use database path /archaser_staging (not /archaser).
+Production MONGODB_URI must use database path /archaser (not /archaser_staging).
 EOF
 }
 
@@ -135,6 +142,54 @@ backend_compose() {
         --env-file "$ENV_TARGET" \
         -f "$COMPOSE_BACKEND" \
         "$@"
+}
+
+# Database name is the URI path (…/dbname?…). appName= is not the database.
+mongo_database_from_uri() {
+    local uri="$1"
+    uri="${uri%%#*}"
+    uri="${uri%%\?*}"
+    uri="${uri%/}"
+    local db="${uri##*/}"
+    if [[ -z "$db" || "$db" == *"@"* || "$db" == *"mongodb"* ]]; then
+        echo ""
+        return 0
+    fi
+    echo "$db"
+}
+
+# Fail deploy before recreate when env Mongo DB does not match the environment.
+assert_mongo_database_for_environment() {
+    local env_file="$1"
+    local environment="$2"
+    local line uri db expected
+
+    line="$(grep -E '^[[:space:]]*(export[[:space:]]+)?MONGODB_URI=' "$env_file" | tail -n1 || true)"
+    if [[ -z "$line" ]]; then
+        echo "Error: MONGODB_URI is missing from $env_file"
+        exit 1
+    fi
+    uri="$(printf '%s\n' "$line" | sed -E 's/^[[:space:]]*(export[[:space:]]+)?MONGODB_URI=//')"
+    uri="${uri%\"}"
+    uri="${uri#\"}"
+    uri="${uri%\'}"
+    uri="${uri#\'}"
+    uri="$(printf '%s' "$uri" | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')"
+
+    db="$(mongo_database_from_uri "$uri")"
+    if [[ "$environment" == "staging" ]]; then
+        expected="archaser_staging"
+    else
+        expected="archaser"
+    fi
+
+    if [[ "$db" != "$expected" ]]; then
+        echo "Error: $environment MONGODB_URI database path must be /$expected (got '/${db:-<empty>}')."
+        echo "Update $env_file so the URI ends with /$expected?... then re-run deploy."
+        echo "Do not use appName= as the database name — only the path after the host matters."
+        exit 1
+    fi
+    log "MONGODB_URI database for $environment: $db"
 }
 
 # Older manual runs used the checkout directory name (e.g. project "api") as --project-name.
@@ -426,6 +481,7 @@ sync_git_checkout
 log "Preparing env files"
 cp "$ENV_SOURCE" "$ENV_TARGET"
 cp "$ENV_SOURCE" "$ROOT_DIR/.env"
+assert_mongo_database_for_environment "$ENV_TARGET" "$ENVIRONMENT"
 
 if [[ "$SKIP_INSTALL" != "true" ]]; then
     log "Installing dependencies (npm ci)"
@@ -465,6 +521,11 @@ if [[ "$SKIP_BUILD" != "true" ]]; then
 else
     log "Skipping backend builds (--skip-build)"
 fi
+
+# After this environment's env file is loaded and Prisma client generation.
+# Failure exits before recreate_backend_stack, so the previous containers stay up.
+log "Applying SQL migrations for $ENVIRONMENT"
+node "$ROOT_DIR/scripts/deployment/apply-sql-migrations.js"
 
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
 recreate_backend_stack
@@ -519,7 +580,8 @@ fi
 
 log "Deployment complete"
 if [[ "$ENVIRONMENT" == "staging" ]]; then
-    log "Staging reverse proxy: bash scripts/deployment/setup-staging-nginx.sh [--with-monitoring]"
+    log "Shared EC2 nginx: bash scripts/deployment/setup-single-ec2-nginx.sh"
+    log "Staging-only nginx: bash scripts/deployment/setup-staging-nginx.sh [--with-monitoring]"
     log "Grafana URL: https://grafana.staging.archaser.com (containers on 127.0.0.1:3200)"
     log "Do not run deploy-staging.sh (Next UI) on this box"
 fi
