@@ -144,8 +144,16 @@ export {
     getPendingAsOfRewriteWindow,
     isAdminBackfillBlockingDrain,
     resolveRewriteDrainStart,
+    rewriteCustomerAsOfRange,
+    AdminBackfillBlockingRewriteError,
     type PendingAsOfRewriteWindow,
+    type RewriteCustomerAsOfRangeInput,
+    type RewriteCustomerAsOfRangeResult,
 } from "./credit-insurance/domain/asOfRewriteQueue";
+export {
+    activateDuePendingCustomerPolicies,
+    type ActivateDuePendingCustomerPoliciesResult,
+} from "./credit-insurance/domain/activateDuePendingCustomerPolicies";
 export {
     ACCOUNT_BACKGROUND_JOB_KIND,
     type AccountBackgroundJobKind,
@@ -292,6 +300,7 @@ export {
 export {
     isPrimaryPolicyAssignable,
     startOfTodayUtc,
+    toUtcDateOnly,
 } from "./credit-insurance/domain/shared/insurancePolicyLifecycle";
 export {
     deriveExcludedFromPolicy,

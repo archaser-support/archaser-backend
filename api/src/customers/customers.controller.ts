@@ -67,6 +67,17 @@ export class CustomersController {
         return this.customers.update(user, id, body);
     }
 
+    @Post(":id/policies/cancel-pending")
+    @ApiOperation({
+        summary: "Cancel pending future customer policy change (Nest-native)",
+    })
+    async cancelPendingPolicy(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        return this.customers.cancelPendingPolicyChange(user, id);
+    }
+
     @Get(":id/activity")
     @ApiOperation({ summary: "Customer activity feed (Nest-native)" })
     async activity(
