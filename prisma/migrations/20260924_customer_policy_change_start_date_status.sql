@@ -4,9 +4,7 @@
 --   status = active when is_active, else inactive
 --   policy_change_start_date = UTC calendar day of created_at
 --
--- Run: psql "$DATABASE_URL" -f prisma/migrations/20260924_customer_policy_change_start_date_status.sql
-
-BEGIN;
+-- Deploy applies this file in one transaction (omit BEGIN/COMMIT).
 
 DO $$ BEGIN
     CREATE TYPE "customer_policy_status" AS ENUM ('active', 'pending', 'inactive');
@@ -79,5 +77,3 @@ CREATE UNIQUE INDEX IF NOT EXISTS unique_customer_policy_one_pending
 CREATE UNIQUE INDEX IF NOT EXISTS unique_customer_policy_one_status_active
     ON "CustomerPolicy" (customer_id)
     WHERE status = 'active';
-
-COMMIT;
