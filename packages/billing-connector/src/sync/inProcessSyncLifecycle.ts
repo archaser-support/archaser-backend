@@ -22,6 +22,7 @@ import {
     createRunningExecution,
     createSyncProgressHeartbeat,
     finalizeSyncHistoryAfterRun,
+    isSyncAlreadyRunningError,
     listExecutionsForAccount,
     markExecutionCancelled,
     sweepStaleRunning,
@@ -81,6 +82,10 @@ export async function createInProcessSyncHistoryStub(params: {
             startedAt: params.startedAt,
         });
     } catch (error) {
+        // Uniqueness conflict must abort accept (caller skips ingest).
+        if (isSyncAlreadyRunningError(error)) {
+            throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         params.onError?.(
             `[account ${params.accountId}] Failed to create sync history stub ${params.executionId}: ${message}`

@@ -60,6 +60,7 @@ import {
     createRunningExecution,
     createSyncProgressHeartbeat,
     finalizeSyncHistoryAfterRun,
+    isSyncAlreadyRunningError,
     markExecutionCancelled,
     listExecutionsForAccount,
     findLastSuccessfulExecutionForConnector,
@@ -1327,6 +1328,42 @@ export class BillingConnectorApiService {
         }
         const syncMode = mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
         const trigger = mode === "backfill" ? "backfill" : "manual";
+        try {
+            await createRunningExecution({
+                executionId,
+                accountId,
+                connectorId: connector.id,
+                provider: connector.provider,
+                trigger: trigger as "backfill" | "manual",
+                syncMode,
+                startedAt,
+            });
+        } catch (error) {
+            if (isSyncAlreadyRunningError(error)) {
+                this.logger.log(
+                    `[account ${accountId}] Skipping manual sync — another sync is already RUNNING ${JSON.stringify(
+                        {
+                            event: "billing_connector_sync_skipped_already_running",
+                            accountId,
+                            connectorId: connector.id,
+                            provider: connector.provider,
+                            trigger,
+                            existingExecutionId: error.existingExecutionId,
+                            attemptedExecutionId: executionId,
+                        }
+                    )}`
+                );
+                throw new ConflictException({
+                    error: "A sync is already running for this account",
+                    code: "SYNC_IN_PROGRESS",
+                });
+            }
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] Failed to create sync history stub ${executionId}: ${message}`
+            );
+        }
         const runningSummary: ConnectorSyncRunSummary = {
             id: executionId,
             trigger,
@@ -1361,23 +1398,6 @@ export class BillingConnectorApiService {
             trigger,
         });
         upsertSyncRun(accountId, runningSummary);
-        try {
-            await createRunningExecution({
-                executionId,
-                accountId,
-                connectorId: connector.id,
-                provider: connector.provider,
-                trigger: trigger as "backfill" | "manual",
-                syncMode,
-                startedAt,
-            });
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : String(error);
-            this.logger.error(
-                `[account ${accountId}] Failed to create sync history stub ${executionId}: ${message}`
-            );
-        }
         const onLog = (message: string) => {
             this.logger.log(`[account ${accountId}] ${message}`);
         };
