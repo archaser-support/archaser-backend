@@ -479,10 +479,43 @@ export class BillingConnectorApiService {
             connector.modified_at
         );
         const preset = cronToPreset(connector.sync_cron_expression);
-        const pendingArPostIngestCustomers =
-            await countPendingArPostIngestCustomers(connector.account_id, {
-                dbClient: this.db as never,
-            });
+        // Best-effort: missing table / DB blip must not 500 the config GET.
+        let pendingArPostIngestCustomers = 0;
+        try {
+            pendingArPostIngestCustomers =
+                await countPendingArPostIngestCustomers(connector.account_id, {
+                    dbClient: this.db as never,
+                });
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `[account ${connector.account_id}] Pending AR post-ingest count skipped: ${message}`
+            );
+        }
+
+        // Prefer Mongo last SUCCESS; fall back to Prisma watermarks when Mongo
+        // is down / over quota (same pattern as listMergedInProcessSyncRuns).
+        let lastSyncAt: string | null = null;
+        try {
+            lastSyncAt =
+                watermarkFromSuccessfulExecution(
+                    await findLastSuccessfulExecutionForConnector(connector.id)
+                )?.toISOString() ?? null;
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `[account ${connector.account_id}] Mongo last SUCCESS for last_sync_at skipped: ${message}`
+            );
+        }
+        if (!lastSyncAt) {
+            lastSyncAt =
+                pickAccountLastSyncDate(
+                    parseEnabledEntities(connector.enabled_entities),
+                    connector.ConnectorSyncState ?? []
+                )?.toISOString() ?? null;
+        }
 
         return {
             id: connector.id,
@@ -543,15 +576,7 @@ export class BillingConnectorApiService {
             modified_at: connector.modified_at.toISOString(),
             schedule_summary: describeSchedule(connector.sync_cron_expression),
             next_scheduled_sync_at_utc: nextScheduled?.toISOString() ?? null,
-            last_sync_at:
-                watermarkFromSuccessfulExecution(
-                    await findLastSuccessfulExecutionForConnector(connector.id)
-                )?.toISOString() ??
-                pickAccountLastSyncDate(
-                    parseEnabledEntities(connector.enabled_entities),
-                    connector.ConnectorSyncState ?? []
-                )?.toISOString() ??
-                null,
+            last_sync_at: lastSyncAt,
             schedule_preset: preset.schedule_preset,
             daily_time_utc: preset.daily_time_utc,
             weekly_day: preset.weekly_day,
