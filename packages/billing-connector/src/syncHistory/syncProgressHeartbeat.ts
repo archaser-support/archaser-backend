@@ -5,6 +5,7 @@ import {
     listAwaitingPostIngestDrainExecutions,
     touchExecutionProgress,
 } from "./syncHistoryService";
+import { requestConnectorSyncCancel } from "../sync/connectorSyncCancelRegistry";
 
 export type TouchAwaitingPostIngestDrainProgressOptions = {
     progressAt?: Date;
@@ -30,10 +31,16 @@ export function createSyncProgressHeartbeat(executionId: string): (
         }
         lastTouchMs = nowMs;
         try {
-            await touchExecutionProgress(executionId, {
+            const updated = await touchExecutionProgress(executionId, {
                 progressAt: new Date(nowMs),
                 entityStats,
             });
+            // Nest (or sweeper) already TIMED OUT / cancelled this execution —
+            // propagate into the in-process cancel registry so the worker loop
+            // stops even when cancel was issued from another process.
+            if (updated == null) {
+                requestConnectorSyncCancel(executionId);
+            }
         } catch {
             // Best-effort — history must not block sync progress.
         }
