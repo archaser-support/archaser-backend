@@ -500,7 +500,7 @@ export async function listDurableSyncHistoryRuns(
                 `[account ${accountId}] Stale RUNNING sweep skipped: ${sweepMessage}`
             );
         }
-        const docs = await listExecutionsForAccount(accountId);
+        const docs = await listExecutionsForAccount(accountId, { limit: 50 });
         return docs.map(syncHistoryExecutionToSummary);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
