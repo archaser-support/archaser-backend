@@ -150,6 +150,18 @@ function dateLeIso(date: Date): string {
     return date.toISOString();
 }
 
+/**
+ * Priority Edm.DateTimeOffset rejects bare `YYYY-MM-DD` in $filter
+ * ("Invalid DateTimeOffset format … expected yyyy-mm-ddThh:mm:ss+hh:mm").
+ * Expand unquoted date-only bounds (common in pull_filters floors) to Zulu ISO.
+ */
+function expandBareODataDateLiterals(filter: string): string {
+    return filter.replace(
+        /(\b(?:ge|gt|le|lt)\s+)(\d{4}-\d{2}-\d{2})(?!T)/gi,
+        (_match, op: string, day: string) => `${op}${day}T00:00:00.000Z`
+    );
+}
+
 function columnSampleCacheKey(
     entity: ImportType,
     entitySet?: string | null,
@@ -358,7 +370,7 @@ export class PriorityProviderClient implements BillingProviderClient {
             keysetFilter
         );
         if (combinedFilter) {
-            params.$filter = combinedFilter;
+            params.$filter = expandBareODataDateLiterals(combinedFilter);
         }
 
         const url = `${collectionUrl}?${buildQueryString(params)}`;
@@ -520,6 +532,14 @@ export class PriorityProviderClient implements BillingProviderClient {
             names.add(name);
         }
         for (const name of DATE_FIELD_FALLBACKS) {
+            // CUSTOMERS / CUSTPERSONNEL often lack UDATE — inventing it here
+            // puts UDATE into $select after a failed column sample and 400s the pull.
+            if (
+                name === "UDATE" &&
+                (entity === "Customer" || entity === "Contact")
+            ) {
+                continue;
+            }
             names.add(name);
         }
         for (const name of KEYSET_TIE_BREAKER_FIELDS) {

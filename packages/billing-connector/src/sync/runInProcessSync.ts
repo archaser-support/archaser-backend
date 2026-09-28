@@ -392,6 +392,22 @@ function resolveInitialSyncMode(options: RunInProcessSyncOptions): string {
     return "UNKNOWN";
 }
 
+/**
+ * Explicit option wins; otherwise mirror connector.sync_mode.
+ * Schedule/queue callers historically omitted `mode`, which made
+ * `options.mode === "incremental"` false and forced BACKFILL windows
+ * from `backfill_start_date` (date-only floors → Priority DateTimeOffset 400).
+ */
+function resolveRunSyncMode(
+    optionsMode: RunInProcessSyncOptions["mode"],
+    connectorSyncMode: string
+): "backfill" | "incremental" {
+    if (optionsMode === "incremental" || optionsMode === "backfill") {
+        return optionsMode;
+    }
+    return connectorSyncMode === "BACKFILL" ? "backfill" : "incremental";
+}
+
 export async function runInProcessSync(
     options: RunInProcessSyncOptions
 ): Promise<RunInProcessSyncResult> {
@@ -447,7 +463,8 @@ async function reconcileSyncModeAfterInProcessRun(
             return;
         }
         const customerScoped =
-            options.mode === "backfill" &&
+            resolveRunSyncMode(options.mode, connector.sync_mode) ===
+                "backfill" &&
             parseCustomerIdForClearBeforeImport(options.customerId) != null;
         await persistReconciledConnectorSyncMode({
             prisma: options.prisma,
@@ -607,9 +624,9 @@ async function runInProcessSyncBody(
 
         obsRuntime.connectorId = connector.id;
         obsRuntime.provider = connector.provider;
-        if (obsRuntime.syncMode === "UNKNOWN") {
-            obsRuntime.syncMode = connector.sync_mode;
-        }
+        const mode = resolveRunSyncMode(options.mode, connector.sync_mode);
+        obsRuntime.syncMode =
+            mode === "incremental" ? "INCREMENTAL" : "BACKFILL";
         if (!obsRuntime.startEmitted) {
             obsRuntime.startEmitted = true;
             emitBillingConnectorSyncStart(
@@ -636,20 +653,20 @@ async function runInProcessSyncBody(
             connector.enabled_entities
         );
         log(
-            `Starting ${options.mode ?? trigger}${dryRun ? " preview" : ""} for account ${accountId} (${enabled.join(", ")}${
+            `Starting ${mode}${dryRun ? " preview" : ""} for account ${accountId} (${enabled.join(", ")}${
                 extensionKey ? `; extension ${extensionKey}` : ""
             })`
         );
 
         const clearRequested =
             !dryRun &&
-            options.mode === "backfill" &&
+            mode === "backfill" &&
             Array.isArray(options.clearBeforeImport) &&
             options.clearBeforeImport.length > 0
                 ? options.clearBeforeImport
                 : [];
         const scopedCustomerId =
-            !dryRun && options.mode === "backfill"
+            !dryRun && mode === "backfill"
                 ? parseCustomerIdForClearBeforeImport(options.customerId)
                 : null;
         let runtimeCustomerNumber: string | null = null;
@@ -814,7 +831,7 @@ async function runInProcessSyncBody(
                 };
             }
             const cacheSyncMode: ImportCacheSyncMode =
-                options.mode === "incremental" ? "INCREMENTAL" : "BACKFILL";
+                mode === "incremental" ? "INCREMENTAL" : "BACKFILL";
             const loaded = await loadImportCachesForReplay({
                 accountId,
                 executionId: useCachedExecutionId,
@@ -1007,7 +1024,7 @@ async function runInProcessSyncBody(
 
         // -------- Staged extension path --------
         if (extensionKey && extension) {
-            const isIncremental = options.mode === "incremental";
+            const isIncremental = mode === "incremental";
             let windows = options.windows;
             if (!windows) {
                 if (isIncremental) {
@@ -1128,10 +1145,7 @@ async function runInProcessSyncBody(
                 entitySets: connector.entity_sets,
                 dateFieldByType,
                 overlapMinutes: connector.sync_overlap_minutes,
-                syncMode:
-                    options.mode === "incremental"
-                        ? "INCREMENTAL"
-                        : "BACKFILL",
+                syncMode: mode === "incremental" ? "INCREMENTAL" : "BACKFILL",
                 executionId: options.executionId ?? null,
                 providerLabel: connector.provider,
                 timeZone: connector.time_zone,
@@ -1273,7 +1287,7 @@ async function runInProcessSyncBody(
         const arAffectedPaymentIds = new Set<number>();
         const paymentAffectedCustomerIds = new Set<number>();
         let invoicePostIngestRan = false;
-        const isLegacyIncremental = options.mode === "incremental";
+        const isLegacyIncremental = mode === "incremental";
         const legacyHistorySince = isLegacyIncremental
             ? watermarkFromSuccessfulExecution(
                   await findLastSuccessfulExecutionForConnector(connector.id)
@@ -1556,9 +1570,7 @@ async function runInProcessSyncBody(
                           )
                         : (pullResult.records as Record<string, unknown>[]);
                 const cacheSyncMode: ImportCacheSyncMode =
-                    options.mode === "incremental"
-                        ? "INCREMENTAL"
-                        : "BACKFILL";
+                    mode === "incremental" ? "INCREMENTAL" : "BACKFILL";
                 // Best-effort: ERP import already succeeded. Mongo full / write
                 // errors must not fail the sync (cache is a reference only).
                 await trySaveEntityImportCache(
@@ -1651,7 +1663,7 @@ async function runInProcessSyncBody(
             await maybeRunPostSyncCtpCatchUp({
                 prisma,
                 accountId,
-                mode: options.mode ?? "incremental",
+                mode,
                 status: "SUCCESS",
                 onLog: log,
                 onStep: (state) => setTailStep(CTP_ENTITY_STATS_KEY, state),

@@ -68,6 +68,7 @@ import {
     sweepStaleRunning,
     syncHistoryExecutionToSummary,
     listMergedInProcessSyncRuns,
+    cancelInProcessSyncRun,
     createBillingConnectorMetricsSinkFromProm,
     resolveSyncExecutionStatus,
     resolveSyncErrorType,
@@ -1830,11 +1831,8 @@ export class BillingConnectorApiService {
     async cancelSync(user: JwtPayload, accountId: number) {
         await this.assertAccess(user, accountId, "manage_billing_connector");
         const running = getRunningSync(accountId);
-        if (!running) {
-            return { result: { cancelled: false, execution_id: null } };
-        }
-        const cancelledAt = new Date();
-        if (running.mode === "preview") {
+        if (running?.mode === "preview") {
+            const cancelledAt = new Date();
             completePreviewJob({
                 accountId,
                 executionId: running.executionId,
@@ -1868,38 +1866,12 @@ export class BillingConnectorApiService {
                 },
             };
         }
-        requestConnectorSyncCancel(running.executionId);
-        const existing = listSyncRuns(accountId).find(
-            (run: ConnectorSyncRunSummary) => run.id === running.executionId
-        );
-        if (existing) {
-            const startedMs = new Date(existing.started_at).getTime();
-            upsertSyncRun(accountId, {
-                ...existing,
-                status: "TIMEOUT",
-                completed_at: cancelledAt.toISOString(),
-                duration_seconds: Math.max(
-                    1,
-                    Math.round((cancelledAt.getTime() - startedMs) / 1000)
-                ),
-                error_message: "Sync stopped by operator",
-                error_type: "cancelled",
-            });
-        }
-        try {
-            await markExecutionCancelled(running.executionId, {
-                errorMessage: "Sync stopped by operator",
-            });
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : String(error);
-            this.logger.error(
-                `[account ${accountId}] Failed to mark sync history cancelled ${running.executionId}: ${message}`
-            );
-        }
-        return {
-            result: { cancelled: true, execution_id: running.executionId },
-        };
+        // Handles Nest-owned runs and worker/cron Mongo RUNNING orphans.
+        const result = await cancelInProcessSyncRun({
+            accountId,
+            onError: (message) => this.logger.error(message),
+        });
+        return { result };
     }
 
     async listSyncRuns(user: JwtPayload, accountId: number, limitRaw?: string) {

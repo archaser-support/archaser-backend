@@ -155,6 +155,10 @@ export async function syncDueBillingConnectors(
                 accountId: connector.account_id,
                 trigger: "scheduled",
                 executionId,
+                mode:
+                    connector.sync_mode === "BACKFILL"
+                        ? "backfill"
+                        : "incremental",
                 onLog: options?.onLog,
                 observability: options?.observability,
                 onProgress: (patch) => {
