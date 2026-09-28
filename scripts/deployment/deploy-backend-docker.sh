@@ -320,14 +320,43 @@ ensure_build_tooling() {
 
 # Never `npx prisma` — unpinned npx installs Prisma 7, which rejects `url = env("DATABASE_URL")`.
 # Never `npm i prisma` during generate — Prisma 6.19 auto-install OOMs (SIGKILL) on 4GB EC2.
+# With PRISMA_GENERATE_SKIP_AUTOINSTALL=1, a missing or nested-only @prisma/client fails
+# as "Could not resolve @prisma/client" — assert root install (and heal) before generate.
 generate_prisma_client() {
     export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
     local prisma_js="$ROOT_DIR/node_modules/prisma/build/index.js"
+    local client_pkg="$ROOT_DIR/node_modules/@prisma/client/package.json"
     if [[ ! -f "$prisma_js" ]]; then
         echo "Error: prisma CLI missing after npm ci: $prisma_js"
         echo "npm ci --include=dev must install the prisma devDependency."
         exit 1
     fi
+    if [[ ! -f "$client_pkg" ]]; then
+        log "@prisma/client missing after npm ci — installing @prisma/client@6.4.1 at workspace root"
+        # Client package only (small). Do not install the prisma CLI here — that OOMs on 4GB hosts.
+        npm install --no-save --no-audit --no-fund --ignore-scripts @prisma/client@6.4.1
+        if [[ ! -f "$client_pkg" ]]; then
+            echo "Error: @prisma/client still missing after install: $client_pkg"
+            echo "Check disk space and that package-lock includes @prisma/client."
+            exit 1
+        fi
+    fi
+    # Nested node_modules/prisma without a sibling @prisma/client makes Prisma resolve
+    # from the nested folder and fail even when root @prisma/client is installed.
+    local nest
+    for nest in \
+        packages/*/node_modules \
+        api/node_modules \
+        worker/node_modules \
+        connectors/node_modules \
+        sms/node_modules \
+        reports/node_modules
+    do
+        if [[ -d "$ROOT_DIR/$nest/prisma" && ! -f "$ROOT_DIR/$nest/@prisma/client/package.json" ]]; then
+            log "Removing $nest/prisma (no sibling @prisma/client — breaks prisma generate)"
+            rm -rf "$ROOT_DIR/$nest/prisma"
+        fi
+    done
     PRISMA_GENERATE_SKIP_AUTOINSTALL=1 \
     PRISMA_SKIP_POSTINSTALL_GENERATE=1 \
     NODE_OPTIONS="--max-old-space-size=384" \
