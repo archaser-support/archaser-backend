@@ -150,6 +150,23 @@ function dateLeIso(date: Date): string {
     return date.toISOString();
 }
 
+/** Priority date-only columns (Edm.Date / date strings) — ISO DateTimeOffset literals 400 or are ignored. */
+const DATE_ONLY_PULL_FIELDS = new Set([
+    "RECONDATE",
+    "FNCDATE",
+    "BALDATE",
+    "IVDATE",
+    "PAYDATE",
+    "CURDATE",
+]);
+
+function odataDateBoundLiteral(dateField: string, iso: string): string {
+    if (DATE_ONLY_PULL_FIELDS.has(dateField)) {
+        return iso.slice(0, 10);
+    }
+    return iso;
+}
+
 function columnSampleCacheKey(
     entity: ImportType,
     entitySet?: string | null,
@@ -347,8 +364,8 @@ export class PriorityProviderClient implements BillingProviderClient {
         const dateFilter =
             dateField && dateBound
                 ? andODataFilters(
-                      `${dateField} ge ${dateGeIso(dateBound, overlapMinutes)}`,
-                      `${dateField} le ${nowIso}`
+                      `${dateField} ge ${odataDateBoundLiteral(dateField, dateGeIso(dateBound, overlapMinutes))}`,
+                      `${dateField} le ${odataDateBoundLiteral(dateField, nowIso)}`
                   )
                 : null;
         assertFilterFieldsExist(options.filter, columns);
@@ -520,6 +537,14 @@ export class PriorityProviderClient implements BillingProviderClient {
             names.add(name);
         }
         for (const name of DATE_FIELD_FALLBACKS) {
+            // CUSTOMERS / CUSTPERSONNEL often lack UDATE — inventing it here
+            // puts UDATE into $select after a failed column sample and 400s the pull.
+            if (
+                name === "UDATE" &&
+                (entity === "Customer" || entity === "Contact")
+            ) {
+                continue;
+            }
             names.add(name);
         }
         for (const name of KEYSET_TIE_BREAKER_FIELDS) {

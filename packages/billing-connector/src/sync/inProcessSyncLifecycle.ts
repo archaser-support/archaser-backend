@@ -337,6 +337,7 @@ export async function cancelInProcessSyncRun(params: {
                 return { cancelled: false, execution_id: null };
             }
             const cancelledAt = new Date();
+            requestConnectorSyncCancel(orphan.execution_id);
             await markExecutionCancelled(orphan.execution_id, {
                 errorMessage: "Sync stopped by operator",
             });
@@ -415,16 +416,13 @@ export async function listMergedInProcessSyncRuns(
         });
         const byId = new Map(memoryRuns.map((run) => [run.id, run]));
 
-        // Live RUNNING: only trust Mongo when it matches the in-process worker
-        // (otherwise stale after restart). Prefer in-memory progress over Mongo
-        // heartbeats (flushed ~60s) so the panel does not show stale zeros.
+        // Live RUNNING from Mongo: always surface so Admin can Stop cron/worker
+        // owned runs (Nest has no in-process registry entry for those). When
+        // this process owns the execution, prefer in-memory progress over Mongo
+        // heartbeats (flushed ~60s) so the panel does not flash stale zeros.
         const activeFromMongo = mongoRuns
             .filter((doc) => doc.status === "RUNNING")
-            .map(syncHistoryExecutionToSummary)
-            .filter(
-                (run) =>
-                    inProcess != null && run.id === inProcess.executionId
-            );
+            .map(syncHistoryExecutionToSummary);
         for (const run of activeFromMongo) {
             const existing = byId.get(run.id);
             if (
@@ -434,14 +432,26 @@ export async function listMergedInProcessSyncRuns(
             ) {
                 continue;
             }
-            byId.set(run.id, {
-                ...run,
-                ...(existing ?? {}),
-                cutover_options:
-                    existing?.cutover_options ?? run.cutover_options,
-                cutover_summary:
-                    existing?.cutover_summary ?? run.cutover_summary,
-            });
+            const ownedHere =
+                inProcess != null && run.id === inProcess.executionId;
+            if (ownedHere && existing) {
+                byId.set(run.id, {
+                    ...run,
+                    ...existing,
+                    cutover_options:
+                        existing.cutover_options ?? run.cutover_options,
+                    cutover_summary:
+                        existing.cutover_summary ?? run.cutover_summary,
+                });
+            } else {
+                byId.set(run.id, {
+                    ...run,
+                    cutover_options:
+                        existing?.cutover_options ?? run.cutover_options,
+                    cutover_summary:
+                        existing?.cutover_summary ?? run.cutover_summary,
+                });
+            }
         }
 
         // Finished runs: hydrate from Mongo so the progress step panel survives
