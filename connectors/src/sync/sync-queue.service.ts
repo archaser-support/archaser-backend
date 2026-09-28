@@ -45,10 +45,18 @@ export class SyncQueueService implements OnModuleInit, OnModuleDestroy {
             "billing-connector-sync",
             async (job) => {
                 const accountId = Number(job.data.accountId);
+                const connector = await this.db.billingConnector.findUnique({
+                    where: { account_id: accountId },
+                    select: { sync_mode: true },
+                });
                 return runInProcessSync({
                     prisma: this.db,
                     accountId,
                     trigger: String(job.data.trigger || "queue"),
+                    mode:
+                        connector?.sync_mode === "BACKFILL"
+                            ? "backfill"
+                            : "incremental",
                     onLog: (message) =>
                         this.logger.log(`[account ${accountId}] ${message}`),
                 });
