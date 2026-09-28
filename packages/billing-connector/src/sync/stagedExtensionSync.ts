@@ -251,11 +251,31 @@ function emptyPaymentLinkProgress(): PaymentLinkProgress {
     };
 }
 
+/**
+ * Client-side window guard after OData pull. Prefer UDATE when present; IDG
+ * payment feeds often omit it, so fall back to recon/document date fields
+ * (RECONDATE / FNCDATE / …). Missing all dates: include only when the window
+ * has no end (open-ended incremental) — same as before.
+ */
+function recordWindowTimestamp(record: Record<string, unknown>): unknown {
+    return (
+        record.UDATE ??
+        record.udate ??
+        record.updated_at ??
+        record.RECONDATE ??
+        record.FNCDATE ??
+        record.BALDATE ??
+        record.PAYDATE ??
+        record.IVDATE ??
+        record.CURDATE
+    );
+}
+
 function recordInWindow(
     record: Record<string, unknown>,
     window: ExtensionSyncWindow
 ): boolean {
-    const raw = record.UDATE ?? record.udate ?? record.updated_at;
+    const raw = recordWindowTimestamp(record);
     if (!raw) {
         // No timestamp — include when window is open-ended on the high side.
         return window.end == null;
