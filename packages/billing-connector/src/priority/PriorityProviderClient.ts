@@ -150,21 +150,16 @@ function dateLeIso(date: Date): string {
     return date.toISOString();
 }
 
-/** Priority date-only columns (Edm.Date / date strings) — ISO DateTimeOffset literals 400 or are ignored. */
-const DATE_ONLY_PULL_FIELDS = new Set([
-    "RECONDATE",
-    "FNCDATE",
-    "BALDATE",
-    "IVDATE",
-    "PAYDATE",
-    "CURDATE",
-]);
-
-function odataDateBoundLiteral(dateField: string, iso: string): string {
-    if (DATE_ONLY_PULL_FIELDS.has(dateField)) {
-        return iso.slice(0, 10);
-    }
-    return iso;
+/**
+ * Priority Edm.DateTimeOffset rejects bare `YYYY-MM-DD` in $filter
+ * ("Invalid DateTimeOffset format … expected yyyy-mm-ddThh:mm:ss+hh:mm").
+ * Expand unquoted date-only bounds (common in pull_filters floors) to Zulu ISO.
+ */
+function expandBareODataDateLiterals(filter: string): string {
+    return filter.replace(
+        /(\b(?:ge|gt|le|lt)\s+)(\d{4}-\d{2}-\d{2})(?!T)/gi,
+        (_match, op: string, day: string) => `${op}${day}T00:00:00.000Z`
+    );
 }
 
 function columnSampleCacheKey(
@@ -364,8 +359,8 @@ export class PriorityProviderClient implements BillingProviderClient {
         const dateFilter =
             dateField && dateBound
                 ? andODataFilters(
-                      `${dateField} ge ${odataDateBoundLiteral(dateField, dateGeIso(dateBound, overlapMinutes))}`,
-                      `${dateField} le ${odataDateBoundLiteral(dateField, nowIso)}`
+                      `${dateField} ge ${dateGeIso(dateBound, overlapMinutes)}`,
+                      `${dateField} le ${nowIso}`
                   )
                 : null;
         assertFilterFieldsExist(options.filter, columns);
@@ -375,7 +370,7 @@ export class PriorityProviderClient implements BillingProviderClient {
             keysetFilter
         );
         if (combinedFilter) {
-            params.$filter = combinedFilter;
+            params.$filter = expandBareODataDateLiterals(combinedFilter);
         }
 
         const url = `${collectionUrl}?${buildQueryString(params)}`;
