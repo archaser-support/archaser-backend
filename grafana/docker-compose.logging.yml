@@ -111,6 +111,9 @@ services:
         condition: service_started
     networks:
       - archaser-network
+      # Resolve compose hostname `mongo` for Billing Connector sync-history panels
+      # (staging Nest stack; production Atlas URI still works when hostname is external).
+      - backend
     restart: unless-stopped
 
   prometheus:

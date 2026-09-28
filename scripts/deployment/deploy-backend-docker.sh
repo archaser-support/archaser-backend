@@ -32,7 +32,12 @@ Manual compose on the shared EC2 (always pass the deploy project name):
   docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml …
   docker compose -p archaser-backend-production -f docker-compose.backend.production.yml …
 
-Staging MONGODB_URI must use database path /archaser_staging (not /archaser).
+Staging Mongo is compose-local on the Nest stack. Set Nest .env (and Grafana) to:
+  MONGODB_URI=mongodb://mongo:27017/archaser_staging
+Database path must be /archaser_staging (not /archaser). Compose also overrides
+MONGODB_URI on api/worker/connectors to that URI. After deploy, re-run
+grafana/start-staging.sh so the Mongo datasource picks up the new host.
+
 Production MONGODB_URI must use database path /archaser (not /archaser_staging).
 EOF
 }
