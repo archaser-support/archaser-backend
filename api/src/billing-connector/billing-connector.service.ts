@@ -1926,7 +1926,9 @@ export class BillingConnectorApiService {
                     `[account ${accountId}] Stale RUNNING sweep skipped: ${sweepMessage}`
                 );
             }
-            const docs = await listExecutionsForAccount(accountId);
+            const docs = await listExecutionsForAccount(accountId, {
+                limit: 50,
+            });
             return {
                 runs: docs.map(syncHistoryExecutionToSummary),
             };
