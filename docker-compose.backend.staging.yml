@@ -6,8 +6,11 @@
 #   docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml …
 # Running without -p from ~/api creates a conflicting project named "api".
 #
-# Mongo is compose-local (fresh volume; not Atlas). Compose overrides MONGODB_URI on
-# api / worker / connectors to mongodb://mongo:27017/archaser_staging.
+# Mongo is compose-local (fresh volume; not Atlas). One Mongo serves both envs:
+#   staging DB  → archaser_staging
+#   production DB → archaser  (production Nest joins network archaser-mongo-shared)
+# Compose overrides MONGODB_URI on api / worker / connectors to
+# mongodb://mongo:27017/archaser_staging.
 # On the EC2 host, also set Nest .env (deploy validates DB path) to the same URI, then:
 #   docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml up -d
 #   cd grafana && ./start-staging.sh   # refresh Mongo datasource for Grafana
@@ -29,6 +32,9 @@ services:
     image: mongo:7
     volumes:
       - archaser-mongo-staging-data:/data/db
+    networks:
+      - default
+      - archaser-mongo-shared
     restart: unless-stopped
     healthcheck:
       test:
@@ -193,3 +199,8 @@ services:
 volumes:
   archaser-redis-staging-data:
   archaser-mongo-staging-data:
+
+networks:
+  # Shared with production Nest (same Mongo, DB path /archaser).
+  archaser-mongo-shared:
+    name: archaser-mongo-shared

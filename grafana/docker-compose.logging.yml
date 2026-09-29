@@ -112,8 +112,9 @@ services:
     networks:
       - archaser-network
       # Resolve compose hostname `mongo` for Billing Connector sync-history panels
-      # (staging Nest stack; production Atlas URI still works when hostname is external).
+      # (shared Docker Mongo: staging DB archaser_staging, production DB archaser).
       - backend
+      - mongo_shared
     restart: unless-stopped
 
   prometheus:
@@ -166,3 +167,7 @@ networks:
   backend:
     external: true
     name: ${BACKEND_DOCKER_NETWORK:-archaser-backend-staging_default}
+  # Same Docker Mongo as Nest (optional for Atlas-only; required for local mongo hostname).
+  mongo_shared:
+    external: true
+    name: ${MONGO_DOCKER_NETWORK:-archaser-mongo-shared}

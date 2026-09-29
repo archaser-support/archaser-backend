@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 NETWORK_NAME="${BACKEND_DOCKER_NETWORK_PRODUCTION:-archaser-backend-production_default}"
+MONGO_NETWORK_NAME="${MONGO_DOCKER_NETWORK:-archaser-mongo-shared}"
 # Do not `docker network create` here — an unlabeled network breaks
 # `docker compose --project-name archaser-backend-production up` (missing
 # com.docker.compose.network=default). Nest deploy owns creating this network;
@@ -13,6 +14,12 @@ if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
   echo "ERROR: backend network '$NETWORK_NAME' is missing."
   echo "Deploy the Nest production stack first (scripts/deployment/deploy-backend-docker.sh --env production),"
   echo "then re-run this script."
+  exit 1
+fi
+if ! docker network inspect "$MONGO_NETWORK_NAME" >/dev/null 2>&1; then
+  echo "ERROR: shared Mongo network '$MONGO_NETWORK_NAME' is missing."
+  echo "Bring up staging mongo first (creates the shared network):"
+  echo "  docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml up -d mongo"
   exit 1
 fi
 
@@ -36,6 +43,7 @@ LOKI_HOST_PORT=3101 \
 GRAFANA_ROOT_URL=https://grafana.production.archaser.com/ \
 GRAFANA_DOMAIN=grafana.production.archaser.com \
 BACKEND_DOCKER_NETWORK="$NETWORK_NAME" \
+MONGO_DOCKER_NETWORK="$MONGO_NETWORK_NAME" \
 docker compose --project-name archaser-monitoring-production \
   --env-file "$ENV_FILE" \
   -f docker-compose.logging.yml up -d
