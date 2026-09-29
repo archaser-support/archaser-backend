@@ -35,14 +35,14 @@ Examples (run on the API EC2):
   export ATLAS_MONGODB_URI='mongodb+srv://user:pass@cluster.../'
   bash scripts/deployment/sync-atlas-mongo-to-ec2.sh --env staging --yes
 
-  # Prod Atlas DB into staging Docker DB name:
-  bash scripts/deployment/sync-atlas-mongo-to-ec2.sh --env staging \
-    --source-db archaser --target-db archaser_staging --yes
+  # Production Atlas DB into shared Docker DB archaser:
+  bash scripts/deployment/sync-atlas-mongo-to-ec2.sh --env production --yes
 
 Notes:
   - Needs Docker. Uses the mongo:7 image for dump (no host mongodump install).
-  - Staging compose Mongo URI path must stay /archaser_staging.
-  - Production compose (if used) must stay /archaser.
+  - Staging and production share ONE compose Mongo (staging owns the service).
+  - Staging DB path: /archaser_staging. Production DB path: /archaser.
+  - --env production restores into that shared Mongo as db archaser.
   - --drop replaces collections in the target DB only.
 EOF
 }
@@ -117,22 +117,28 @@ if [[ -z "$APP_DIR" ]]; then
     APP_DIR="/home/ubuntu/api"
 fi
 
-if [[ -f "$APP_DIR/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
-    ROOT_DIR="$APP_DIR"
-    COMPOSE_FILE="$APP_DIR/docker-compose.backend.$ENVIRONMENT.yml"
-elif [[ -f "$APP_DIR/backend/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
-    ROOT_DIR="$APP_DIR/backend"
-    COMPOSE_FILE="$APP_DIR/backend/docker-compose.backend.$ENVIRONMENT.yml"
+# Shared Mongo lives on the staging compose project (one container, two DBs).
+MONGO_ENV="staging"
+MONGO_COMPOSE_FILE=""
+if [[ -f "$APP_DIR/docker-compose.backend.$MONGO_ENV.yml" ]]; then
+    MONGO_COMPOSE_FILE="$APP_DIR/docker-compose.backend.$MONGO_ENV.yml"
+elif [[ -f "$APP_DIR/backend/docker-compose.backend.$MONGO_ENV.yml" ]]; then
+    MONGO_COMPOSE_FILE="$APP_DIR/backend/docker-compose.backend.$MONGO_ENV.yml"
 else
-    echo "Error: compose file not found under $APP_DIR"
+    echo "Error: staging compose file not found under $APP_DIR (shared Mongo)."
     exit 1
 fi
 
+if [[ ! -f "$APP_DIR/docker-compose.backend.$ENVIRONMENT.yml" ]] \
+    && [[ ! -f "$APP_DIR/backend/docker-compose.backend.$ENVIRONMENT.yml" ]]; then
+    echo "Error: compose file for --env $ENVIRONMENT not found under $APP_DIR"
+    exit 1
+fi
+
+MONGO_PROJECT="archaser-backend-staging"
 if [[ "$ENVIRONMENT" == "staging" ]]; then
-    PROJECT="archaser-backend-staging"
     DEFAULT_DB="archaser_staging"
 else
-    PROJECT="archaser-backend-production"
     DEFAULT_DB="archaser"
 fi
 
@@ -155,12 +161,12 @@ require_cmd() {
 
 require_cmd docker
 
-log "Ensuring compose Mongo is up ($PROJECT)"
-docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d mongo
+log "Ensuring shared compose Mongo is up ($MONGO_PROJECT)"
+docker compose -p "$MONGO_PROJECT" -f "$MONGO_COMPOSE_FILE" up -d mongo
 
-MONGO_CID="$(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" ps -q mongo)"
+MONGO_CID="$(docker compose -p "$MONGO_PROJECT" -f "$MONGO_COMPOSE_FILE" ps -q mongo)"
 if [[ -z "$MONGO_CID" ]]; then
-    echo "Error: could not resolve mongo container for project $PROJECT"
+    echo "Error: could not resolve mongo container for project $MONGO_PROJECT"
     exit 1
 fi
 
@@ -211,7 +217,7 @@ log "Dump contains $BSON_COUNT .bson files"
 
 if [[ "$ASSUME_YES" != "true" ]]; then
     echo
-    echo "About to REPLACE local Docker DB '$TARGET_DB' (project=$PROJECT) with Atlas '$SOURCE_DB'."
+    echo "About to REPLACE local Docker DB '$TARGET_DB' (shared mongo project=$MONGO_PROJECT) with Atlas '$SOURCE_DB'."
     read -r -p "Continue? [y/N] " answer
     if [[ ! "$answer" =~ ^[Yy]$ ]]; then
         echo "Aborted."
