@@ -32,9 +32,14 @@ export class BillingConnectorController {
     @ApiUnauthorizedResponse({ description: "Missing Bearer or session cookie" })
     async get(
         @CurrentUser() user: JwtPayload,
-        @Param("accountId", ParseIntPipe) accountId: number
+        @Param("accountId", ParseIntPipe) accountId: number,
+        @Query("include_entity_set_catalog") includeEntitySetCatalog?: string
     ) {
-        return this.service.getConfig(user, accountId);
+        return this.service.getConfig(user, accountId, {
+            includeEntitySetCatalog:
+                includeEntitySetCatalog === "1" ||
+                includeEntitySetCatalog === "true",
+        });
     }
 
     @Put()

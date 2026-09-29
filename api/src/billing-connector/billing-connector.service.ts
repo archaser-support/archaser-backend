@@ -600,7 +600,11 @@ export class BillingConnectorApiService {
         };
     }
 
-    async getConfig(user: JwtPayload, accountId: number) {
+    async getConfig(
+        user: JwtPayload,
+        accountId: number,
+        options?: { includeEntitySetCatalog?: boolean }
+    ) {
         await this.assertAccess(user, accountId, "view_billing_connector");
         const connector = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
@@ -616,8 +620,15 @@ export class BillingConnectorApiService {
         }
         const repairedSyncMode = await this.repairSyncModeIfNeeded(connector);
         connector.sync_mode = repairedSyncMode as typeof connector.sync_mode;
+        const config = await this.toPublicConfig(connector);
+        // Default omit the Priority $metadata name list — it can be thousands of
+        // strings and freezes the admin tab when polled. Load on demand via
+        // include_entity_set_catalog=1 or the refresh-entity-sets action.
+        if (!options?.includeEntitySetCatalog) {
+            config.entity_set_catalog = [];
+        }
         return serializeBigInt({
-            config: await this.toPublicConfig(connector),
+            config,
         });
     }
 
