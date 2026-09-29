@@ -173,6 +173,8 @@ for _ in $(seq 1 30); do
 done
 
 DUMP_HOST_DIR="$(mktemp -d /tmp/archaser-mongo-sync.XXXXXX)"
+# mongo image runs as non-root; host mktemp dirs are 700 → permission denied in /backup
+chmod 777 "$DUMP_HOST_DIR"
 cleanup() {
     rm -rf "$DUMP_HOST_DIR"
 }
