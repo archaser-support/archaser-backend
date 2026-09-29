@@ -176,13 +176,22 @@ DUMP_HOST_DIR="$(mktemp -d /tmp/archaser-mongo-sync.XXXXXX)"
 # mongo image runs as non-root; host mktemp dirs are 700 → permission denied in /backup
 chmod 777 "$DUMP_HOST_DIR"
 cleanup() {
-    rm -rf "$DUMP_HOST_DIR"
+    # Dump files are owned by the mongo image user; remove via the same image.
+    if [[ -d "$DUMP_HOST_DIR" ]]; then
+        docker run --rm \
+            -v "$DUMP_HOST_DIR:/backup" \
+            "$MONGO_IMAGE" \
+            bash -c 'rm -rf /backup/*' >/dev/null 2>&1 || true
+        rm -rf "$DUMP_HOST_DIR" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 
 log "Dumping Atlas db=$SOURCE_DB → $DUMP_HOST_DIR"
 # Ephemeral mongo:7 runs mongodump so the host does not need Database Tools.
+# Match host uid/gid so leftover files are deletable without sudo.
 docker run --rm \
+    --user "$(id -u):$(id -g)" \
     -v "$DUMP_HOST_DIR:/backup" \
     "$MONGO_IMAGE" \
     mongodump \
