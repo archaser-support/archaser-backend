@@ -324,5 +324,51 @@ export function lightenPaymentPullODataFilter(
     return lighten(trimmed);
 }
 
+/**
+ * Drop AND-conjuncts that reference UDATE. CUSTOMERS / CUSTPERSONNEL have no
+ * UDATE — keep CTYPE2NAME and other rules; date floors belong on Invoice /
+ * Payment pull windows instead.
+ */
+export function stripUdateFromPullFilterOData(
+    filter: string | null | undefined
+): string | null {
+    if (filter == null) {
+        return null;
+    }
+    const trimmed = filter.trim();
+    if (!trimmed) {
+        return null;
+    }
+    if (!/\bUDATE\b/i.test(trimmed)) {
+        return trimmed;
+    }
+
+    const strip = (expr: string): string | null => {
+        const unwrapped = unwrapBalancedOuterParens(expr);
+        const parts = splitTopLevelAnd(unwrapped);
+        if (parts.length <= 1) {
+            return /\bUDATE\b/i.test(unwrapped) ? null : unwrapped;
+        }
+        const kept: string[] = [];
+        for (const part of parts) {
+            if (/\bUDATE\b/i.test(part)) {
+                const nested = unwrapBalancedOuterParens(part);
+                const nestedParts = splitTopLevelAnd(nested);
+                if (nestedParts.length > 1) {
+                    const nestedKept = strip(part);
+                    if (nestedKept) {
+                        kept.push(nestedKept);
+                    }
+                }
+                continue;
+            }
+            kept.push(part);
+        }
+        return andODataFilters(...kept);
+    };
+
+    return strip(trimmed);
+}
+
 /** @deprecated Prefer {@link lightenPaymentPullODataFilter}. */
 export const lightenPaymentPreviewODataFilter = lightenPaymentPullODataFilter;
