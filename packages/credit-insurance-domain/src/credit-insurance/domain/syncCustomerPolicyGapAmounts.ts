@@ -13,14 +13,15 @@ import {
 } from "./customerPolicyTypes";
 import {
     resolveApprovedLimitInAccountCurrency,
-    sumInvoiceCapacityGapForCustomerPolicy,
+    sumInvoiceCapacityGapForCustomersPolicy,
     type CurrencyRateRow,
 } from "./invoiceCapacityGapAmounts";
 import {
-    fetchOpenReceivableCurrencyRowsForCustomer,
-    fetchOpenReceivableForCustomer,
+    fetchOpenReceivableCurrencyRowsForCustomers,
+    fetchOpenReceivableForCustomers,
     topOpenReceivableCurrencyBuckets,
 } from "./openReceivableByCustomerCurrency";
+import { resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
 import {
     hasActiveLinkedPolicy,
     isUncoveredExposureCustomer,
@@ -101,7 +102,7 @@ type UninsuredWriteFields = Pick<
  */
 async function resolveUninsuredFields(params: {
     accountId: number;
-    customerId: number;
+    customerIds: readonly number[];
     policyFields: { approved_limit: unknown; outdated_dcl: boolean };
     limitCurrency: string | null;
     accountCurrency: string | null;
@@ -114,8 +115,8 @@ async function resolveUninsuredFields(params: {
             ? new Prisma.Decimal(String(params.policyFields.approved_limit))
             : null;
 
-    const currencyRows = await fetchOpenReceivableCurrencyRowsForCustomer(
-        params.customerId,
+    const currencyRows = await fetchOpenReceivableCurrencyRowsForCustomers(
+        params.customerIds,
         params.accountId,
         params.dbClient
     );
@@ -163,6 +164,8 @@ async function resolveUninsuredFields(params: {
 /**
  * Aggregate capacity gap onto CustomerPolicy rows.
  * `capacity_gap_amount` = max(0, open AR − effective limit) in account currency.
+ * Linked parent/child pools use group open AR vs the shared root effective limit and
+ * persist the same shared gap on every member so headers match.
  * Invoice gaps are a live waterfall cache; Σ gaps should match the card in single-currency cases.
  */
 export async function syncCustomerPolicyGapAmountsForCustomer(
@@ -173,6 +176,8 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
         customerPolicyRowId?: number;
         skipInvoiceFlags?: boolean;
         dbClient?: DbClient;
+        poolMemberIds?: readonly number[];
+        poolRootCustomerId?: number;
     }
 ): Promise<{ missingRate: boolean }> {
     const dbClient = options?.dbClient ?? defaultPrisma;
@@ -199,7 +204,43 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
         return { missingRate: false };
     }
 
-    const policyRows = customer.CustomerPolicy;
+    // Freeze-on-deactivation targets a single historical row — keep solo scope.
+    const freezeSingleRow = options?.customerPolicyRowId != null;
+
+    const pool = freezeSingleRow
+        ? { rootCustomerId: customerId, memberIds: [customerId] }
+        : options?.poolMemberIds != null && options.poolRootCustomerId != null
+          ? {
+                rootCustomerId: options.poolRootCustomerId,
+                memberIds: [...options.poolMemberIds],
+            }
+          : await resolveCreditPoolMemberIds(
+                customerId,
+                customer.account_id,
+                dbClient
+            );
+    const memberIds = pool.memberIds;
+    const rootCustomerId = pool.rootCustomerId;
+
+    // Use the caller's policy rows when freezing; otherwise load root active policy
+    // as the canonical source for limit / exclusion, then write gaps to all members.
+    let policyRows = customer.CustomerPolicy;
+    if (!freezeSingleRow && rootCustomerId !== customerId) {
+        const root = await dbClient.customer.findUnique({
+            where: { id: rootCustomerId },
+            select: {
+                CustomerPolicy: {
+                    where: { is_active: true },
+                    select: {
+                        ...POLICY_GAP_SELECT,
+                        is_active: true,
+                    },
+                },
+            },
+        });
+        policyRows = root?.CustomerPolicy ?? [];
+    }
+
     if (policyRows.length === 0) {
         return { missingRate: false };
     }
@@ -213,26 +254,48 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
         exclusionReason: activePolicyRow.policy_exclusion_reason,
     });
 
+    const membersToWrite = freezeSingleRow ? [customerId] : memberIds;
+
     if (uncovered) {
-        for (const policyRow of policyRows) {
-            if (policyRow.insurance_policy_id == null) {
-                continue;
+        for (const memberId of membersToWrite) {
+            const memberPolicies = freezeSingleRow
+                ? policyRows
+                : (
+                      await dbClient.customer.findUnique({
+                          where: { id: memberId },
+                          select: {
+                              CustomerPolicy: {
+                                  where: { is_active: true },
+                                  select: {
+                                      id: true,
+                                      insurance_policy_id: true,
+                                  },
+                              },
+                          },
+                      })
+                  )?.CustomerPolicy ?? [];
+            for (const policyRow of memberPolicies) {
+                if (policyRow.insurance_policy_id == null) {
+                    continue;
+                }
+                await dbClient.customerPolicy.update({
+                    where: { id: policyRow.id },
+                    data: {
+                        ...nullGapPayload(),
+                        retained_capacity_gap: null,
+                    },
+                });
             }
-            await dbClient.customerPolicy.update({
-                where: { id: policyRow.id },
-                data: {
-                    ...nullGapPayload(),
-                    retained_capacity_gap: null,
-                },
-            });
         }
         if (!options?.skipInvoiceFlags && !options?.customerPolicyRowId) {
             const { syncInvoiceCapacityGapFlagsForCustomer } = await import(
                 "./syncInvoiceCapacityGapFlags"
             );
-            await syncInvoiceCapacityGapFlagsForCustomer(customerId, {
-                dbClient,
-            });
+            for (const memberId of membersToWrite) {
+                await syncInvoiceCapacityGapFlagsForCustomer(memberId, {
+                    dbClient,
+                });
+            }
         }
         return { missingRate: false };
     }
@@ -249,19 +312,36 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
         }
 
         if (policyFields.outdated_dcl === true) {
-            await dbClient.customerPolicy.update({
-                where: { id: policyRow.id },
-                data: {
-                    ...nullGapPayload(),
-                    retained_capacity_gap: null,
-                },
-            });
+            for (const memberId of membersToWrite) {
+                const memberPolicies = freezeSingleRow
+                    ? [policyRow]
+                    : (
+                          await dbClient.customer.findUnique({
+                              where: { id: memberId },
+                              select: {
+                                  CustomerPolicy: {
+                                      where: { is_active: true },
+                                      select: { id: true },
+                                  },
+                              },
+                          })
+                      )?.CustomerPolicy ?? [];
+                for (const row of memberPolicies) {
+                    await dbClient.customerPolicy.update({
+                        where: { id: row.id },
+                        data: {
+                            ...nullGapPayload(),
+                            retained_capacity_gap: null,
+                        },
+                    });
+                }
+            }
             continue;
         }
 
-        const summed = await sumInvoiceCapacityGapForCustomerPolicy(
+        const summed = await sumInvoiceCapacityGapForCustomersPolicy(
             customer.account_id,
-            customerId,
+            membersToWrite,
             policyId,
             dbClient
         );
@@ -287,14 +367,14 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
 
         const openAr =
             options?.openAr ??
-            (await fetchOpenReceivableForCustomer(
+            (await fetchOpenReceivableForCustomers(
                 customer.account_id,
-                customerId,
+                membersToWrite,
                 policyId,
                 dbClient
             ));
         const baseApprovedLimit = Number(policyFields.approved_limit ?? 0);
-        const resolved = await resolveEffectiveApprovedLimit(customerId, {
+        const resolved = await resolveEffectiveApprovedLimit(rootCustomerId, {
             baseApprovedLimit: policyFields.approved_limit,
             baseApprovedLimitCurrency: limitCurrency,
             outdatedDcl: Boolean(policyFields.outdated_dcl),
@@ -315,7 +395,7 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
         const effectiveLimitInAccount =
             await resolveApprovedLimitInAccountCurrency(
                 customer.account_id,
-                customerId,
+                rootCustomerId,
                 policyId,
                 effectiveLimitInLimitCcy,
                 limitCurrency,
@@ -339,7 +419,7 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
         // computation. Capacity gap card is AR − effective limit.
         const uninsuredFields = await resolveUninsuredFields({
             accountId: customer.account_id,
-            customerId,
+            customerIds: membersToWrite,
             policyFields,
             limitCurrency,
             accountCurrency,
@@ -351,30 +431,53 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
             missingRate = true;
         }
 
-        await dbClient.customerPolicy.update({
-            where: { id: policyRow.id },
-            data: {
-                ...uninsuredFields.data,
-                capacity_gap_amount: capacityGapKpi,
-                capacity_gap_amount1:
-                    limitCurrency && accountCurrency && limitCurrency === accountCurrency
-                        ? capacityGapKpi
-                        : gapLimitKpi,
-                capacity_gap_currency1: limitCurrency,
-                capacity_gap_amount2: null,
-                capacity_gap_currency2: null,
-                retained_capacity_gap: kpi.retainedCapacityGap,
-            },
-        });
+        const gapWriteData = {
+            ...uninsuredFields.data,
+            capacity_gap_amount: capacityGapKpi,
+            capacity_gap_amount1:
+                limitCurrency &&
+                accountCurrency &&
+                limitCurrency === accountCurrency
+                    ? capacityGapKpi
+                    : gapLimitKpi,
+            capacity_gap_currency1: limitCurrency,
+            capacity_gap_amount2: null,
+            capacity_gap_currency2: null,
+            retained_capacity_gap: kpi.retainedCapacityGap,
+        };
+
+        for (const memberId of membersToWrite) {
+            const memberPolicies = freezeSingleRow
+                ? [policyRow]
+                : (
+                      await dbClient.customer.findUnique({
+                          where: { id: memberId },
+                          select: {
+                              CustomerPolicy: {
+                                  where: { is_active: true },
+                                  select: { id: true },
+                              },
+                          },
+                      })
+                  )?.CustomerPolicy ?? [];
+            for (const row of memberPolicies) {
+                await dbClient.customerPolicy.update({
+                    where: { id: row.id },
+                    data: gapWriteData,
+                });
+            }
+        }
     }
 
     if (!options?.skipInvoiceFlags && !options?.customerPolicyRowId) {
         const { syncInvoiceCapacityGapFlagsForCustomer } = await import(
             "./syncInvoiceCapacityGapFlags"
         );
-        await syncInvoiceCapacityGapFlagsForCustomer(customerId, {
-            dbClient,
-        });
+        for (const memberId of membersToWrite) {
+            await syncInvoiceCapacityGapFlagsForCustomer(memberId, {
+                dbClient,
+            });
+        }
     }
 
     return { missingRate };
@@ -408,6 +511,8 @@ export async function syncAllCustomerPolicyGapAmounts(options?: {
     const customers = await prisma.customer.findMany({
         where: {
             collection_status: "Active",
+            // Linked children are covered when their pool root is synced.
+            parent_customer_id: null,
             Account: {
                 has_credit_insurance: true,
                 ...(excludeAccountIds?.size

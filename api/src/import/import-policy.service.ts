@@ -14,6 +14,7 @@ import {
     deriveExcludedFromPolicy,
     isAllowedPolicyExclusionReason,
     normalizePolicyExclusionReason,
+    remirrorCreditPoolAfterPolicyMutation,
     startOfTodayUtc,
 } from "@archaser/credit-insurance-domain";
 
@@ -586,6 +587,20 @@ export class ImportPolicyService {
         // Import writes the assignment only. Derived insurance fields (gap flags,
         // MEP breach, zero-limit alerts) cost seconds per customer and dominated
         // import time; the scheduled recalculation jobs pick them up instead.
+        // Remirror descendants from the pool root so import stays aligned with UI.
+        try {
+            await remirrorCreditPoolAfterPolicyMutation(
+                customer.id,
+                context.accountId,
+                {
+                    dbClient: this.db,
+                    userId: context.userId,
+                    skipInsuranceSync: true,
+                }
+            );
+        } catch {
+            // Import row already succeeded; remirror can catch up on next link/edit.
+        }
         return { success: true, action, customerId: customer.id };
     }
 }
