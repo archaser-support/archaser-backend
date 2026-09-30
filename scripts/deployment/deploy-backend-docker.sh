@@ -151,9 +151,25 @@ ensure_deploy_swap() {
 }
 
 # Cap V8 so nest/tsc cannot grow until the OS OOM-kills Node (exit 137).
+# Nest (@archaser/api) needs a larger heap than package tsc — use swap headroom.
 deploy_build_heap_mb() {
-    local mem_mb
+    local mem_mb workspace="${1:-}"
     mem_mb="$(host_mem_mb)"
+    if [[ "$workspace" == "@archaser/api" ]]; then
+        # nest build OOMs around ~780MB; prefer 1536–2048 when swap exists.
+        local swap_mb
+        swap_mb="$(host_swap_mb)"
+        if (( swap_mb >= 2048 )); then
+            echo 2048
+        elif (( swap_mb >= 1024 )); then
+            echo 1536
+        elif (( mem_mb > 0 && mem_mb < 4096 )); then
+            echo 1024
+        else
+            echo 2048
+        fi
+        return 0
+    fi
     if (( mem_mb > 0 && mem_mb < 2048 )); then
         echo 512
     elif (( mem_mb > 0 && mem_mb < 4096 )); then
@@ -456,8 +472,8 @@ generate_prisma_client() {
 
 run_workspace_build() {
     local workspace="$1"
-    local heap_mb
-    heap_mb="$(deploy_build_heap_mb)"
+    local heap_mb code
+    heap_mb="$(deploy_build_heap_mb "$workspace")"
     export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
     log "Building $workspace (Node heap ${heap_mb}MB)"
     if [[ "$workspace" == "@archaser/api" ]]; then
@@ -467,12 +483,17 @@ run_workspace_build() {
         fi
         log "Host memory before nest build: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
     fi
-    if ! NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm run build -w "$workspace"; then
-        local code=$?
+    # Capture exit code before `if !` — otherwise $? inside the failure branch is 0.
+    set +e
+    NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
+        npm run build -w "$workspace"
+    code=$?
+    set -e
+    if [[ "$code" -ne 0 ]]; then
         echo "Error: build failed for $workspace (exit ${code})."
-        if [[ "$code" -eq 137 ]]; then
-            echo "Exit 137 = process was Killed (host OOM). Add/enlarge swap or stop other containers, then re-run deploy."
+        if [[ "$code" -eq 137 || "$code" -eq 134 ]]; then
+            echo "Exit ${code} = Node OOM during build. Free RAM/swap or raise nest heap, then re-run deploy."
+            echo "Do not start the stack with a failed @archaser/api build — CORS/API errors usually follow."
         fi
         return "$code"
     fi
@@ -488,16 +509,20 @@ npm_ci_low_memory() {
         heap_mb=1024
     fi
     log "npm ci (heap ${heap_mb}MB, maxsockets 1, prefer-offline, ignore-scripts)"
+    log "Host memory before npm ci: ${mem_mb}MB RAM, $(host_swap_mb)MB swap — this step can take 10–25 min with little output"
     # Ignore scripts so prisma/husky do not spawn extra Node during peak install.
     # Prisma generate still runs later in this script.
+    # --loglevel info gives periodic package lines so CI does not look hung.
     if NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts; then
+        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts --loglevel info; then
+        log "npm ci completed"
         return 0
     fi
 
     log "npm ci failed (likely memory pressure) — retrying npm install with conservative settings"
     NODE_OPTIONS="--max-old-space-size=384" \
-        npm install --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts
+        npm install --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts --loglevel info
+    log "npm install retry finished"
 }
 
 ENVIRONMENT=""
@@ -684,22 +709,21 @@ if [[ "$NO_GRAFANA" != "true" ]]; then
         for c in archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail; do
             "${DOCKER[@]}" rm -f "$c" >/dev/null 2>&1 || true
         done
-        MONITORING_ENV_VARS=(
-            MONITORING_ENV="$ENVIRONMENT"
-            BACKEND_DOCKER_NETWORK="${BACKEND_PROJECT}_default"
-        )
+        MONITORING_ENV="$ENVIRONMENT"
+        BACKEND_DOCKER_NETWORK="${BACKEND_PROJECT}_default"
         if [[ "$ENVIRONMENT" == "staging" ]]; then
-            MONITORING_ENV_VARS+=(
-                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
-                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.staging.archaser.com}"
-            )
+            GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
+            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.staging.archaser.com}"
         elif [[ "$ENVIRONMENT" == "production" ]]; then
-            MONITORING_ENV_VARS+=(
-                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}"
-                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.portal.archaser.com}"
-            )
+            GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}"
+            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.portal.archaser.com}"
         fi
-        if ! env "${MONITORING_ENV_VARS[@]}" docker_compose \
+        # `env VAR=… docker_compose` fails — docker_compose is a bash function, not a binary.
+        if ! MONITORING_ENV="$MONITORING_ENV" \
+            BACKEND_DOCKER_NETWORK="$BACKEND_DOCKER_NETWORK" \
+            GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-}" \
+            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-}" \
+            docker_compose \
             --project-name "$MONITORING_PROJECT" \
             --env-file "$ENV_TARGET" \
             -f "$COMPOSE_MONITORING" \
