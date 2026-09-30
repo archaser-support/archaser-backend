@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma, type DbClient } from "../domain-db";
+import { resolveTopUpOwnerCustomerId } from "./parentCustomerCreditInheritance";
 
 export type TopUpRowForResolution = {
     id: number;
@@ -322,9 +323,16 @@ export async function resolveEffectiveApprovedLimit(
         return emptyEffectiveLimitResult({ baseLimit, baseCurrency });
     }
 
+    // Linked children ignore their own top-ups; shared effective limit uses the
+    // credit-pool root's active top-ups only.
+    const topUpOwnerCustomerId = await resolveTopUpOwnerCustomerId(
+        customerId,
+        dbClient
+    );
+
     const activeTopUps = await dbClient.customerTopUp.findMany({
         where: {
-            customer_id: customerId,
+            customer_id: topUpOwnerCustomerId,
             cancelled_at: null,
             start_date: { lte: asOfUtcDay },
             end_date: { gte: asOfUtcDay },
@@ -377,9 +385,14 @@ export async function resolveTopUpTotalsForAsOfDates(
         if (day > maxDay) maxDay = day;
     }
 
+    const topUpOwnerCustomerId = await resolveTopUpOwnerCustomerId(
+        customerId,
+        dbClient
+    );
+
     const candidateTopUps = await dbClient.customerTopUp.findMany({
         where: {
-            customer_id: customerId,
+            customer_id: topUpOwnerCustomerId,
             cancelled_at: null,
             start_date: { lte: maxDay },
             end_date: { gte: minDay },
