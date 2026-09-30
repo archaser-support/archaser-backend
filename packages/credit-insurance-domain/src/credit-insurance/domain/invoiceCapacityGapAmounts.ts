@@ -432,44 +432,10 @@ export async function sumInvoiceCapacityGapForCustomerPolicy(
     hasMissingSnapshots: boolean;
     missingRate: boolean;
 }> {
-    return sumInvoiceCapacityGapForCustomersPolicy(
-        accountId,
-        [customerId],
-        policyId,
-        dbClient
-    );
-}
-
-/** Sum stored invoice gap fields across a credit pool for one primary policy. */
-export async function sumInvoiceCapacityGapForCustomersPolicy(
-    accountId: number,
-    customerIds: readonly number[],
-    policyId: number,
-    dbClient: DbClient = defaultPrisma
-): Promise<{
-    gapBase: number;
-    gapLimit: number;
-    limitCurrency: string | null;
-    hasMissingSnapshots: boolean;
-    missingRate: boolean;
-}> {
-    if (customerIds.length === 0) {
-        return {
-            gapBase: 0,
-            gapLimit: 0,
-            limitCurrency: null,
-            hasMissingSnapshots: false,
-            missingRate: false,
-        };
-    }
-
     const invoices = (await dbClient.invoice.findMany({
         where: {
             account_id: accountId,
-            customer_id:
-                customerIds.length === 1
-                    ? customerIds[0]
-                    : { in: [...customerIds] },
+            customer_id: customerId,
             policy_id: policyId,
             status: { in: [invoice_status.Due, invoice_status.Overdue] },
         },
@@ -545,8 +511,6 @@ export async function sumCustomerPolicyCapacityGapForAccount(
     const customerScope: import("@prisma/client").Prisma.CustomerWhereInput = {
         account_id: accountId,
         collection_status: { in: ["Active", "Inactive"] },
-        // Linked children mirror the root gap — sum roots only for KPI totals.
-        parent_customer_id: null,
     };
     const businessUnitFilter = options?.businessUnitFilter;
     const scopedCustomerWhere =

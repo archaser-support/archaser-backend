@@ -106,42 +106,6 @@ export function customersScopedForCreditDashboardWithBusinessUnit(
     );
 }
 
-/**
- * Linked children share the root's credit pool — omit them from portfolio /
- * credit-dashboard KPI totals so each pool is counted once at the root.
- * Do not use on Customers grid / global search scopes.
- */
-export function excludeLinkedChildCustomersFilter(): Prisma.CustomerWhereInput {
-    return { parent_customer_id: null };
-}
-
-/** AND {@link excludeLinkedChildCustomersFilter} onto a customer scope. */
-export function withExcludeLinkedChildCustomers(
-    customerScope: Prisma.CustomerWhereInput
-): Prisma.CustomerWhereInput {
-    return {
-        AND: [customerScope, excludeLinkedChildCustomersFilter()],
-    };
-}
-
-/**
- * Where clause for portfolio / KPI root customer ID materialization.
- * Always excludes linked children; optionally ANDs a dashboard BU filter.
- */
-export function portfolioRootCustomerIdsWhere(
-    accountId: number,
-    businessUnitFilter?: Prisma.CustomerWhereInput
-): Prisma.CustomerWhereInput {
-    const hasBu =
-        businessUnitFilter != null &&
-        Object.keys(businessUnitFilter).length > 0;
-    return {
-        account_id: accountId,
-        ...excludeLinkedChildCustomersFilter(),
-        ...(hasBu ? { AND: [businessUnitFilter!] } : {}),
-    };
-}
-
 export function applyBusinessUnitFilterToInvoiceWhere(
     where: Prisma.InvoiceWhereInput,
     businessUnitFilter?: Prisma.CustomerWhereInput
