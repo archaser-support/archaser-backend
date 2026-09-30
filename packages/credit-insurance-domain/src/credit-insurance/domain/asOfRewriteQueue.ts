@@ -356,7 +356,9 @@ type DrainWriters = {
  * snapshots (those stay on overnight tip / queue drain).
  *
  * No-ops when fromDate > toDate. Throws AdminBackfillBlockingRewriteError when
- * an account CREDIT_ASOF_BACKFILL job is running or paused.
+ * an account CREDIT_ASOF_BACKFILL job is **running**. Paused jobs do not block
+ * interactive customer CPT (ops Pause unlocks the customer UI); overnight drain
+ * still skips paused via {@link isAdminBackfillBlockingDrain}.
  */
 export async function rewriteCustomerAsOfRange(
     input: RewriteCustomerAsOfRangeInput,
@@ -382,7 +384,7 @@ export async function rewriteCustomerAsOfRange(
         FROM "AccountBackgroundJob"
         WHERE account_id = ${input.accountId}
           AND job_kind = ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL}
-          AND status IN ('running', 'paused')
+          AND status = 'running'
         LIMIT 1
     `;
     if (blocking.length > 0) {
