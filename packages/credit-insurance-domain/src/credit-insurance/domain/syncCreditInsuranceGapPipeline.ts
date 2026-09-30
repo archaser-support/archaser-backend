@@ -1,5 +1,6 @@
 import { type DbClient, prisma as defaultPrisma } from "../domain-db";
 
+import { resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
 import { syncCustomerPolicyGapAmountsForCustomer } from "./syncCustomerPolicyGapAmounts";
 import { syncInvoiceCapacityGapAmountsForCustomer } from "./syncInvoiceCapacityGapAmounts";
 import { syncInvoiceCapacityGapFlagsForCustomer } from "./syncInvoiceCapacityGapFlags";
@@ -7,6 +8,9 @@ import { syncInvoiceCapacityGapFlagsForCustomer } from "./syncInvoiceCapacityGap
 /**
  * Single orchestration entry for credit-insurance capacity gap sync.
  * Order: live invoice waterfall (assessed + gaps) → policy AR−effective card → in_capacity_gap flags.
+ *
+ * Parent/child pools: invoice waterfall and policy card run once for the whole
+ * pool (shared effective limit vs group open AR); flags refresh on every member.
  */
 export async function syncCreditInsuranceGapPipelineForCustomer(
     customerId: number,
@@ -18,11 +22,35 @@ export async function syncCreditInsuranceGapPipelineForCustomer(
         rateDate?: Date;
     }
 ): Promise<{ missingRate: boolean }> {
+    const dbClient = options?.dbClient ?? defaultPrisma;
+
+    const customer = await dbClient.customer.findUnique({
+        where: { id: customerId },
+        select: {
+            account_id: true,
+            Account: { select: { has_credit_insurance: true } },
+        },
+    });
+    if (!customer?.Account?.has_credit_insurance) {
+        return { missingRate: false };
+    }
+
+    const pool = await resolveCreditPoolMemberIds(
+        customerId,
+        customer.account_id,
+        dbClient
+    );
+    const poolOpts = {
+        poolMemberIds: pool.memberIds,
+        poolRootCustomerId: pool.rootCustomerId,
+    };
+
     const { missingRate: invoiceMissing } =
         await syncInvoiceCapacityGapAmountsForCustomer(customerId, {
             invoiceIds: options?.invoiceIds,
-            dbClient: options?.dbClient,
+            dbClient,
             rateDate: options?.rateDate,
+            ...poolOpts,
         });
 
     let policyMissing = false;
@@ -30,18 +58,21 @@ export async function syncCreditInsuranceGapPipelineForCustomer(
         const policyResult = await syncCustomerPolicyGapAmountsForCustomer(
             customerId,
             {
-                dbClient: options?.dbClient,
+                dbClient,
                 rateDate: options?.rateDate,
                 skipInvoiceFlags: true,
+                ...poolOpts,
             }
         );
         policyMissing = policyResult.missingRate;
     }
 
     if (!options?.skipFlags) {
-        await syncInvoiceCapacityGapFlagsForCustomer(customerId, {
-            dbClient: options?.dbClient,
-        });
+        for (const memberId of pool.memberIds) {
+            await syncInvoiceCapacityGapFlagsForCustomer(memberId, {
+                dbClient,
+            });
+        }
     }
 
     return { missingRate: invoiceMissing || policyMissing };

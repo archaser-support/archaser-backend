@@ -33,6 +33,11 @@ export {
 } from "./credit-insurance/domain/creditDashboardInvoiceMembership";
 export { customersScopedForCreditDashboard } from "./credit-insurance/domain/customerPolicyQueryHelpers";
 export {
+    excludeLinkedChildCustomersFilter,
+    portfolioRootCustomerIdsWhere,
+    withExcludeLinkedChildCustomers,
+} from "./credit-insurance/domain/customerPolicyQueryHelpers";
+export {
     resolveCreditCustomerMembershipIds,
     zeroLimitWarningMembershipWhere,
 } from "./credit-insurance/domain/creditDashboardCustomerMembership";
@@ -537,3 +542,16 @@ export {
     ensureCustomerCapacityGapStored,
     syncCreditInsuranceGapPipelineForCustomer,
 } from "./credit-insurance/domain/syncCreditInsuranceGapPipeline";
+export { syncInvoiceCapacityGapAmountsForCustomer } from "./credit-insurance/domain/syncInvoiceCapacityGapAmounts";
+export {
+    accountHasCreditInsurance,
+    isLinkedCreditChild,
+    listDescendantCustomerIds,
+    onParentCustomerIdChanged,
+    remirrorCreditPoolAfterPolicyMutation,
+    remirrorDescendantsFromRoot,
+    resolveCreditPoolMemberIds,
+    resolveCustomerCreditPoolRoot,
+    resolveTopUpOwnerCustomerId,
+    type ParentCustomerCreditInheritanceOptions,
+} from "./credit-insurance/domain/parentCustomerCreditInheritance";

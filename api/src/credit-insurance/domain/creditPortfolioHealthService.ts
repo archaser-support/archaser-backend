@@ -12,6 +12,7 @@ import {
     isPendingReviewExclusion,
     longestExactValueStreakWindow,
     normalizePolicyExclusionReason,
+    portfolioRootCustomerIdsWhere,
     type TermsBreachByReasonSnapshotKey,
     UTILIZATION_DISTRIBUTION_BIN_KEYS,
     assignUtilizationDistributionBin,
@@ -1722,14 +1723,9 @@ async function resolveScopedCustomerIds(
     accountId: number,
     businessUnitFilter?: Prisma.CustomerWhereInput
 ): Promise<number[] | null> {
-    if (!businessUnitFilter || Object.keys(businessUnitFilter).length === 0) {
-        return null;
-    }
+    // Always materialize roots only — linked children share the root pool.
     const rows = await prisma.customer.findMany({
-        where: {
-            account_id: accountId,
-            AND: [businessUnitFilter],
-        },
+        where: portfolioRootCustomerIdsWhere(accountId, businessUnitFilter),
         select: { id: true },
     });
     return rows.map((row) => row.id);
