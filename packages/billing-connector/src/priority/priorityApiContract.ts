@@ -313,7 +313,6 @@ export const PRIORITY_ENTITY_ENDPOINTS: Record<
             "PHONE",
             "CELLPHONE",
             "POSITIONDES",
-            "UDATE",
         ],
         defaultOrderBy: "KLINE",
         notes:

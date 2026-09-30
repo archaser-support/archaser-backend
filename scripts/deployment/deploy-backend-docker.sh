@@ -62,12 +62,13 @@ host_swap_mb() {
 }
 
 # EC2 builds can OOM during npm install / nest build when swap is small.
-# Prefer 4G swap on hosts under 8GB RAM (nest build is the peak).
+# Prefer more swap on hosts under 8GB RAM, but never abort deploy if the disk
+# is full — fall back to whatever swap is already active.
 ensure_deploy_swap() {
     if [[ ! -r /proc/meminfo ]]; then
         return 0
     fi
-    local mem_mb swap_mb want_mb swapfile
+    local mem_mb swap_mb want_mb swapfile free_mb
     mem_mb="$(host_mem_mb)"
     swap_mb="$(host_swap_mb)"
     want_mb=2048
@@ -78,22 +79,72 @@ ensure_deploy_swap() {
     if (( swap_mb >= want_mb )); then
         return 0
     fi
+
+    # Re-enable known deploy swap files; remove incomplete ENOSPC leftovers.
+    for swapfile in /swapfile.archaser-deploy-4g /swapfile.archaser-deploy; do
+        if [[ ! -f "$swapfile" ]]; then
+            continue
+        fi
+        if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true 2>/dev/null; then
+            continue
+        fi
+        if sudo swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$swapfile"; then
+            continue
+        fi
+        if sudo swapon "$swapfile" 2>/dev/null; then
+            continue
+        fi
+        log "Removing unusable swap file $swapfile (frees disk from a prior failed create)"
+        sudo rm -f "$swapfile" 2>/dev/null || true
+    done
+    swap_mb="$(host_swap_mb)"
+    if (( swap_mb >= 1024 )); then
+        log "Using existing swap: ${swap_mb}MB (wanted ${want_mb}MB)"
+        return 0
+    fi
+
+    if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true 2>/dev/null; then
+        echo "Warning: ${mem_mb}MB RAM and ${swap_mb}MB swap — nest build may be OOM-killed (exit 137)."
+        return 0
+    fi
+
+    free_mb="$(df -Pm / 2>/dev/null | awk 'NR==2 {print $4}')"
+    free_mb="${free_mb:-0}"
+    # Need the swap file plus ~256MB headroom; otherwise skip create.
+    if (( free_mb < want_mb + 256 )); then
+        # Try a smaller 2G file if 4G does not fit.
+        if (( want_mb > 2048 && free_mb >= 2048 + 256 )); then
+            want_mb=2048
+            log "Only ${free_mb}MB free on / — creating 2048MB swap instead of 4096MB"
+        else
+            echo "Warning: not enough disk for ${want_mb}MB swap (${free_mb}MB free on /). Continuing with ${swap_mb}MB swap."
+            echo "Free disk on the EC2 host (docker system prune, old logs) then re-run deploy if nest build OOMs."
+            return 0
+        fi
+    fi
+
     swapfile="/swapfile.archaser-deploy"
     if (( want_mb >= 4096 )); then
         swapfile="/swapfile.archaser-deploy-4g"
     fi
-    if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true 2>/dev/null; then
-        echo "Warning: ${mem_mb}MB RAM and ${swap_mb}MB swap — nest build may be OOM-killed (exit 137)."
-        echo "Add swap, then re-run:"
-        echo "  sudo fallocate -l ${want_mb}M $swapfile && sudo chmod 600 $swapfile && sudo mkswap $swapfile && sudo swapon $swapfile"
+    if [[ -f "$swapfile" ]]; then
+        sudo swapon "$swapfile" 2>/dev/null || true
+        log "Host memory after swap: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
         return 0
     fi
-    if [[ ! -f "$swapfile" ]]; then
-        log "Creating ${want_mb}MB deploy swap at $swapfile"
-        sudo fallocate -l "${want_mb}M" "$swapfile" || \
-            sudo dd if=/dev/zero of="$swapfile" bs=1M count="$want_mb" status=none
-        sudo chmod 600 "$swapfile"
-        sudo mkswap "$swapfile" >/dev/null
+
+    log "Creating ${want_mb}MB deploy swap at $swapfile (${free_mb}MB free on /)"
+    if ! sudo fallocate -l "${want_mb}M" "$swapfile" 2>/dev/null; then
+        if ! sudo dd if=/dev/zero of="$swapfile" bs=1M count="$want_mb" status=none 2>/dev/null; then
+            sudo rm -f "$swapfile" 2>/dev/null || true
+            echo "Warning: could not create ${want_mb}MB swap (disk full?). Continuing with $(host_swap_mb)MB swap."
+            return 0
+        fi
+    fi
+    if ! sudo chmod 600 "$swapfile" 2>/dev/null || ! sudo mkswap "$swapfile" >/dev/null 2>&1; then
+        sudo rm -f "$swapfile" 2>/dev/null || true
+        echo "Warning: swapfile setup failed. Continuing with $(host_swap_mb)MB swap."
+        return 0
     fi
     sudo swapon "$swapfile" 2>/dev/null || true
     log "Host memory after swap: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
