@@ -1,6 +1,7 @@
 import {
     BadRequestException,
     ConflictException,
+    ForbiddenException,
     Injectable,
     NotFoundException,
     ServiceUnavailableException,
@@ -17,8 +18,10 @@ import {
     ensureCustomerCapacityGapStored,
     freezeCustomerPolicyGapOnDeactivation,
     isAllowedPolicyExclusionReason,
+    isLinkedCreditChild,
     isPrimaryPolicyAssignable,
     normalizePolicyExclusionReason,
+    remirrorCreditPoolAfterPolicyMutation,
     rewriteCustomerAsOfRange,
     startOfTodayUtc,
     syncCustomerInsuranceFields,
@@ -371,6 +374,13 @@ export class CustomerPolicyService {
             return "noop";
         }
 
+        if (await isLinkedCreditChild(args.customerId, this.db)) {
+            throw new ForbiddenException({
+                error: "Customer policy can only be edited on the credit pool root",
+                code: "LINKED_CHILD_POLICY_LOCKED",
+            });
+        }
+
         await this.assertNoPendingPolicyChange(args.customerId);
 
         const payload = parseCustomerPolicyTabPayload(args.body);
@@ -390,6 +400,7 @@ export class CustomerPolicyService {
             }
             await this.clearActivePolicy(args.customerId, activeRow.id, args.userId);
             await this.runPostSaveSync(args.customerId, payload);
+            await this.remirrorPoolAfterMutation(args);
             return "clear";
         }
 
@@ -450,6 +461,7 @@ export class CustomerPolicyService {
                 } as never,
             });
             // Pending must not alter live insurance fields or enqueue rewrite.
+            await this.remirrorPoolAfterMutation(args);
             return "pending";
         }
 
@@ -474,6 +486,7 @@ export class CustomerPolicyService {
                 args.customerId,
                 changeDate
             );
+            await this.remirrorPoolAfterMutation(args);
             return "create";
         }
 
@@ -519,6 +532,7 @@ export class CustomerPolicyService {
                 args.customerId,
                 changeDate
             );
+            await this.remirrorPoolAfterMutation(args);
             return "switch";
         }
 
@@ -565,6 +579,7 @@ export class CustomerPolicyService {
             args.customerId,
             changeDate
         );
+        await this.remirrorPoolAfterMutation(args);
         return "version";
     }
 
@@ -574,8 +589,15 @@ export class CustomerPolicyService {
      */
     async cancelPendingPolicyChange(args: {
         customerId: number;
+        accountId: number;
         userId: string;
     }): Promise<{ id: number }> {
+        if (await isLinkedCreditChild(args.customerId, this.db)) {
+            throw new ForbiddenException({
+                error: "Customer policy can only be edited on the credit pool root",
+                code: "LINKED_CHILD_POLICY_LOCKED",
+            });
+        }
         const pending = await this.db.customerPolicy.findFirst({
             where: { customer_id: args.customerId, status: "pending" },
             select: { id: true },
@@ -594,7 +616,24 @@ export class CustomerPolicyService {
                 modified_by: args.userId,
             },
         });
+        await this.remirrorPoolAfterMutation({
+            customerId: args.customerId,
+            accountId: args.accountId,
+            userId: args.userId,
+        });
         return { id: pending.id };
+    }
+
+    private async remirrorPoolAfterMutation(args: {
+        customerId: number;
+        accountId: number;
+        userId: string;
+    }): Promise<void> {
+        await remirrorCreditPoolAfterPolicyMutation(
+            args.customerId,
+            args.accountId,
+            { dbClient: this.db, userId: args.userId }
+        );
     }
 
     private async assertNoPendingPolicyChange(
