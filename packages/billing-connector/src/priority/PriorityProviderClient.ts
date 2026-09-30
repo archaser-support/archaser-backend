@@ -34,6 +34,7 @@ import {
 import { PAYMENT_ALWAYS_SELECT_SOURCES } from "./prioritySelectFields";
 import {
     expandPaymentFncPatNameOrFilters,
+    stripUdateFromPullFilterOData,
 } from "../services/billingConnectorPullFilterCompile";
 import {
     discoverPriorityFields,
@@ -231,6 +232,19 @@ export class PriorityProviderClient implements BillingProviderClient {
             throw new Error(`Unsupported entity: ${entity}`);
         }
 
+        // CUSTOMERS / CUSTPERSONNEL have no UDATE — drop it before column
+        // sample and $filter. Keep CTYPE2NAME / other rules; date floors belong
+        // on Invoice / Payment windows.
+        if (
+            (entity === "Customer" || entity === "Contact") &&
+            odataFilterFieldNames(options.filter).includes("UDATE")
+        ) {
+            options = {
+                ...options,
+                filter: stripUdateFromPullFilterOData(options.filter),
+            };
+        }
+
         const pageSizeRequested =
             options.pageSize ?? PRIORITY_RATE_LIMITS.recommendedPageSize;
         const isIdgPayment =
@@ -363,17 +377,6 @@ export class PriorityProviderClient implements BillingProviderClient {
                       `${dateField} le ${nowIso}`
                   )
                 : null;
-        if (
-            (entity === "Customer" || entity === "Contact") &&
-            odataFilterFieldNames(options.filter).includes("UDATE")
-        ) {
-            throw new Error(
-                `${entity} pull filters cannot use UDATE — Priority ` +
-                    `${entity === "Customer" ? "CUSTOMERS" : "CUSTPERSONNEL"} ` +
-                    `has no UDATE field. Remove the UDATE rule (keep CTYPE2NAME / other ` +
-                    `customer fields). Put date floors on Invoice or Payment instead.`
-            );
-        }
         assertFilterFieldsExist(options.filter, columns);
         const combinedFilter = andODataFilters(
             options.filter,

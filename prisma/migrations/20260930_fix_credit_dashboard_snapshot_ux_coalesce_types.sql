@@ -6,8 +6,6 @@
 -- Postgres requires an exact expression match (error 42P10).
 -- Recreate the index with integer COALESCE to match int4 columns and the app SQL.
 
-BEGIN;
-
 DROP INDEX IF EXISTS "ux_credit_dashboard_daily_snapshot_scope_day";
 
 CREATE UNIQUE INDEX "ux_credit_dashboard_daily_snapshot_scope_day"
@@ -17,5 +15,3 @@ ON "CreditDashboardDailySnapshot" (
     COALESCE(business_unit_id, 0),
     snapshot_date
 );
-
-COMMIT;

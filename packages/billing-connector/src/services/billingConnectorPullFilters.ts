@@ -4,6 +4,7 @@ import {
     andODataFilters,
     compileEntityPullFilter,
     escapeODataStringLiteral,
+    stripUdateFromPullFilterOData,
 } from "./billingConnectorPullFilterCompile";
 
 export type PullFilterOperator =
@@ -118,6 +119,40 @@ function normalizeConfig(
     return null;
 }
 
+/**
+ * CUSTOMERS / CUSTPERSONNEL have no UDATE. Drop UDATE rules / conjuncts and
+ * keep CTYPE2NAME (and other) filters. Date floors belong on Invoice/Payment.
+ */
+export function sanitizeCustomerContactPullFilter(
+    config: EntityPullFilterConfig | null | undefined
+): EntityPullFilterConfig | null {
+    if (!config) {
+        return null;
+    }
+    if (config.mode === "rules") {
+        const rules = config.rules.filter(
+            (rule) => rule.field.trim().toUpperCase() !== "UDATE"
+        );
+        return rules.length > 0 ? { mode: "rules", rules } : null;
+    }
+    const odata = stripUdateFromPullFilterOData(config.odata);
+    return odata ? { mode: "advanced", odata } : null;
+}
+
+function normalizeConfigForEntity(
+    importType: ImportType,
+    value: unknown
+): EntityPullFilterConfig | null {
+    const normalized = normalizeConfig(value);
+    if (
+        (importType === "Customer" || importType === "Contact") &&
+        normalized
+    ) {
+        return sanitizeCustomerContactPullFilter(normalized);
+    }
+    return normalized;
+}
+
 export function parsePullFiltersMap(raw: unknown): PullFiltersMap {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
         return {};
@@ -127,7 +162,7 @@ export function parsePullFiltersMap(raw: unknown): PullFiltersMap {
         if (!isImportType(key)) {
             continue;
         }
-        const normalized = normalizeConfig(value);
+        const normalized = normalizeConfigForEntity(key, value);
         if (normalized) {
             out[key] = normalized;
         }
@@ -148,7 +183,7 @@ export function mergePullFiltersPatch(
         if (!(key in patch)) {
             continue;
         }
-        const normalized = normalizeConfig(patch[key]);
+        const normalized = normalizeConfigForEntity(key, patch[key]);
         if (normalized) {
             next[key] = normalized;
         } else {
