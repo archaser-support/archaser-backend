@@ -4,7 +4,7 @@ import {
     andODataFilters,
     compileEntityPullFilter,
     escapeODataStringLiteral,
-    stripUdateFromPullFilterOData,
+    stripFieldFromPullFilterOData,
 } from "./billingConnectorPullFilterCompile";
 
 export type PullFilterOperator =
@@ -120,22 +120,40 @@ function normalizeConfig(
 }
 
 /**
- * CUSTOMERS / CUSTPERSONNEL have no UDATE. Drop UDATE rules / conjuncts and
- * keep CTYPE2NAME (and other) filters. Date floors belong on Invoice/Payment.
+ * Fields that exist on CUSTOMERS but not on CUSTPERSONNEL. Drop from Contact
+ * pull filters (CTYPE2NAME belongs on Customer; Contact scopes via CUSTNAME /
+ * imported customers).
+ */
+const CONTACT_STRIP_FIELDS = ["UDATE", "CTYPE2NAME", "CTYPE2CODE", "CDES", "CUSTDES"] as const;
+
+/**
+ * CUSTOMERS / CUSTPERSONNEL have no UDATE. Customer keeps CTYPE2NAME; Contact
+ * also drops CUSTOMERS-only fields. Date floors belong on Invoice/Payment.
  */
 export function sanitizeCustomerContactPullFilter(
-    config: EntityPullFilterConfig | null | undefined
+    config: EntityPullFilterConfig | null | undefined,
+    importType: "Customer" | "Contact" = "Customer"
 ): EntityPullFilterConfig | null {
     if (!config) {
         return null;
     }
+    const stripFields =
+        importType === "Contact"
+            ? CONTACT_STRIP_FIELDS
+            : (["UDATE"] as const);
+    const stripSet = new Set(
+        stripFields.map((name) => name.toUpperCase())
+    );
     if (config.mode === "rules") {
         const rules = config.rules.filter(
-            (rule) => rule.field.trim().toUpperCase() !== "UDATE"
+            (rule) => !stripSet.has(rule.field.trim().toUpperCase())
         );
         return rules.length > 0 ? { mode: "rules", rules } : null;
     }
-    const odata = stripUdateFromPullFilterOData(config.odata);
+    let odata: string | null = config.odata;
+    for (const field of stripFields) {
+        odata = stripFieldFromPullFilterOData(odata, field);
+    }
     return odata ? { mode: "advanced", odata } : null;
 }
 
@@ -148,7 +166,7 @@ function normalizeConfigForEntity(
         (importType === "Customer" || importType === "Contact") &&
         normalized
     ) {
-        return sanitizeCustomerContactPullFilter(normalized);
+        return sanitizeCustomerContactPullFilter(normalized, importType);
     }
     return normalized;
 }

@@ -325,12 +325,13 @@ export function lightenPaymentPullODataFilter(
 }
 
 /**
- * Drop AND-conjuncts that reference UDATE. CUSTOMERS / CUSTPERSONNEL have no
- * UDATE — keep CTYPE2NAME and other rules; date floors belong on Invoice /
- * Payment pull windows instead.
+ * Drop AND-conjuncts that reference `fieldName` (case-insensitive identifier).
+ * Used to remove UDATE from CUSTOMERS/CUSTPERSONNEL filters and CUSTOMERS-only
+ * fields (e.g. CTYPE2NAME) from Contact filters.
  */
-export function stripUdateFromPullFilterOData(
-    filter: string | null | undefined
+export function stripFieldFromPullFilterOData(
+    filter: string | null | undefined,
+    fieldName: string
 ): string | null {
     if (filter == null) {
         return null;
@@ -339,7 +340,12 @@ export function stripUdateFromPullFilterOData(
     if (!trimmed) {
         return null;
     }
-    if (!/\bUDATE\b/i.test(trimmed)) {
+    const token = fieldName.trim();
+    if (!token || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(token)) {
+        return trimmed;
+    }
+    const fieldRe = new RegExp(`\\b${token}\\b`, "i");
+    if (!fieldRe.test(trimmed)) {
         return trimmed;
     }
 
@@ -347,11 +353,11 @@ export function stripUdateFromPullFilterOData(
         const unwrapped = unwrapBalancedOuterParens(expr);
         const parts = splitTopLevelAnd(unwrapped);
         if (parts.length <= 1) {
-            return /\bUDATE\b/i.test(unwrapped) ? null : unwrapped;
+            return fieldRe.test(unwrapped) ? null : unwrapped;
         }
         const kept: string[] = [];
         for (const part of parts) {
-            if (/\bUDATE\b/i.test(part)) {
+            if (fieldRe.test(part)) {
                 const nested = unwrapBalancedOuterParens(part);
                 const nestedParts = splitTopLevelAnd(nested);
                 if (nestedParts.length > 1) {
@@ -368,6 +374,17 @@ export function stripUdateFromPullFilterOData(
     };
 
     return strip(trimmed);
+}
+
+/**
+ * Drop AND-conjuncts that reference UDATE. CUSTOMERS / CUSTPERSONNEL have no
+ * UDATE — keep CTYPE2NAME and other Customer rules; date floors belong on
+ * Invoice / Payment pull windows instead.
+ */
+export function stripUdateFromPullFilterOData(
+    filter: string | null | undefined
+): string | null {
+    return stripFieldFromPullFilterOData(filter, "UDATE");
 }
 
 /** @deprecated Prefer {@link lightenPaymentPullODataFilter}. */
