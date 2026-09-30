@@ -1176,14 +1176,21 @@ export class CustomersService {
         fromDate: Date
     ): Promise<void> {
         try {
-            await rewriteCustomerAsOfRange({
-                accountId,
-                customerIds: [customerId],
-                fromDate,
-                toDate: new Date(),
-            });
+            await rewriteCustomerAsOfRange(
+                {
+                    accountId,
+                    customerIds: [customerId],
+                    fromDate,
+                    toDate: new Date(),
+                },
+                { dbClient: this.db }
+            );
         } catch (error) {
-            if (error instanceof AdminBackfillBlockingRewriteError) {
+            if (
+                error instanceof AdminBackfillBlockingRewriteError ||
+                (error instanceof Error &&
+                    error.name === "AdminBackfillBlockingRewriteError")
+            ) {
                 throw new ConflictException({
                     error: error.message,
                     code: "CREDIT_ASOF_BACKFILL_IN_PROGRESS",
