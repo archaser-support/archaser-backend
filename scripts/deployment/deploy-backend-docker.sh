@@ -61,34 +61,142 @@ host_swap_mb() {
     awk '/SwapTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0
 }
 
-# EC2 builds can OOM during npm install even on ~4GB RAM when swap is 0.
-# Ensure at least 2GB swap for deploy stability.
+# EC2 builds can OOM during npm install / nest build when swap is small.
+# Prefer more swap on hosts under 8GB RAM, but never abort deploy if the disk
+# is full — fall back to whatever swap is already active.
 ensure_deploy_swap() {
     if [[ ! -r /proc/meminfo ]]; then
         return 0
     fi
-    local mem_mb swap_mb
+    local mem_mb swap_mb want_mb swapfile free_mb
     mem_mb="$(host_mem_mb)"
     swap_mb="$(host_swap_mb)"
-    log "Host memory: ${mem_mb}MB RAM, ${swap_mb}MB swap"
+    want_mb=2048
+    if (( mem_mb > 0 && mem_mb < 8192 )); then
+        want_mb=4096
+    fi
+    log "Host memory: ${mem_mb}MB RAM, ${swap_mb}MB swap (want >= ${want_mb}MB swap)"
+    if (( swap_mb >= want_mb )); then
+        return 0
+    fi
+
+    # Re-enable known deploy swap files; remove incomplete ENOSPC leftovers.
+    for swapfile in /swapfile.archaser-deploy-4g /swapfile.archaser-deploy; do
+        if [[ ! -f "$swapfile" ]]; then
+            continue
+        fi
+        if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true 2>/dev/null; then
+            continue
+        fi
+        if sudo swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$swapfile"; then
+            continue
+        fi
+        if sudo swapon "$swapfile" 2>/dev/null; then
+            continue
+        fi
+        log "Removing unusable swap file $swapfile (frees disk from a prior failed create)"
+        sudo rm -f "$swapfile" 2>/dev/null || true
+    done
+    swap_mb="$(host_swap_mb)"
     if (( swap_mb >= 1024 )); then
+        log "Using existing swap: ${swap_mb}MB (wanted ${want_mb}MB)"
         return 0
     fi
-    local swapfile="/swapfile.archaser-deploy"
+
     if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true 2>/dev/null; then
-        echo "Warning: ${mem_mb}MB RAM and ${swap_mb}MB swap — npm ci may be OOM-killed."
-        echo "Add swap, then re-run:"
-        echo "  sudo fallocate -l 2G $swapfile && sudo chmod 600 $swapfile && sudo mkswap $swapfile && sudo swapon $swapfile"
+        echo "Warning: ${mem_mb}MB RAM and ${swap_mb}MB swap — nest build may be OOM-killed (exit 137)."
         return 0
     fi
-    if [[ ! -f "$swapfile" ]]; then
-        log "Creating 2G deploy swap at $swapfile"
-        sudo fallocate -l 2G "$swapfile" || sudo dd if=/dev/zero of="$swapfile" bs=1M count=2048 status=none
-        sudo chmod 600 "$swapfile"
-        sudo mkswap "$swapfile" >/dev/null
+
+    free_mb="$(df -Pm / 2>/dev/null | awk 'NR==2 {print $4}')"
+    free_mb="${free_mb:-0}"
+    # Need the swap file plus ~256MB headroom; otherwise skip create.
+    if (( free_mb < want_mb + 256 )); then
+        # Try a smaller 2G file if 4G does not fit.
+        if (( want_mb > 2048 && free_mb >= 2048 + 256 )); then
+            want_mb=2048
+            log "Only ${free_mb}MB free on / — creating 2048MB swap instead of 4096MB"
+        else
+            echo "Warning: not enough disk for ${want_mb}MB swap (${free_mb}MB free on /). Continuing with ${swap_mb}MB swap."
+            echo "Free disk on the EC2 host (docker system prune, old logs) then re-run deploy if nest build OOMs."
+            return 0
+        fi
+    fi
+
+    swapfile="/swapfile.archaser-deploy"
+    if (( want_mb >= 4096 )); then
+        swapfile="/swapfile.archaser-deploy-4g"
+    fi
+    if [[ -f "$swapfile" ]]; then
+        sudo swapon "$swapfile" 2>/dev/null || true
+        log "Host memory after swap: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+        return 0
+    fi
+
+    log "Creating ${want_mb}MB deploy swap at $swapfile (${free_mb}MB free on /)"
+    if ! sudo fallocate -l "${want_mb}M" "$swapfile" 2>/dev/null; then
+        if ! sudo dd if=/dev/zero of="$swapfile" bs=1M count="$want_mb" status=none 2>/dev/null; then
+            sudo rm -f "$swapfile" 2>/dev/null || true
+            echo "Warning: could not create ${want_mb}MB swap (disk full?). Continuing with $(host_swap_mb)MB swap."
+            return 0
+        fi
+    fi
+    if ! sudo chmod 600 "$swapfile" 2>/dev/null || ! sudo mkswap "$swapfile" >/dev/null 2>&1; then
+        sudo rm -f "$swapfile" 2>/dev/null || true
+        echo "Warning: swapfile setup failed. Continuing with $(host_swap_mb)MB swap."
+        return 0
     fi
     sudo swapon "$swapfile" 2>/dev/null || true
     log "Host memory after swap: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+}
+
+# Cap V8 so nest/tsc cannot grow until the OS OOM-kills Node (exit 137).
+# Nest (@archaser/api) needs a larger heap than package tsc — use swap headroom.
+deploy_build_heap_mb() {
+    local mem_mb workspace="${1:-}"
+    mem_mb="$(host_mem_mb)"
+    if [[ "$workspace" == "@archaser/api" ]]; then
+        # nest build OOMs around ~780MB; prefer 1536–2048 when swap exists.
+        local swap_mb
+        swap_mb="$(host_swap_mb)"
+        if (( swap_mb >= 2048 )); then
+            echo 2048
+        elif (( swap_mb >= 1024 )); then
+            echo 1536
+        elif (( mem_mb > 0 && mem_mb < 4096 )); then
+            echo 1024
+        else
+            echo 2048
+        fi
+        return 0
+    fi
+    if (( mem_mb > 0 && mem_mb < 2048 )); then
+        echo 512
+    elif (( mem_mb > 0 && mem_mb < 4096 )); then
+        echo 768
+    elif (( mem_mb > 0 && mem_mb < 8192 )); then
+        echo 1536
+    else
+        echo 3072
+    fi
+}
+
+# Running Nest/worker containers often leave too little RAM for nest build on
+# small EC2 hosts. Stack is recreated after builds anyway.
+stop_backend_for_build() {
+    local mem_mb
+    mem_mb="$(host_mem_mb)"
+    if (( mem_mb <= 0 || mem_mb >= 8192 )); then
+        return 0
+    fi
+    log "Stopping backend containers before build to free RAM (${mem_mb}MB host)"
+    backend_compose stop >/dev/null 2>&1 || \
+        backend_compose down --remove-orphans >/dev/null 2>&1 || true
+    sync || true
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+    fi
+    log "Host memory after stop: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
 }
 
 DOCKER=(docker)
@@ -364,8 +472,31 @@ generate_prisma_client() {
 
 run_workspace_build() {
     local workspace="$1"
+    local heap_mb code
+    heap_mb="$(deploy_build_heap_mb "$workspace")"
     export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
-    npm run build -w "$workspace"
+    log "Building $workspace (Node heap ${heap_mb}MB)"
+    if [[ "$workspace" == "@archaser/api" ]]; then
+        sync || true
+        if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+        fi
+        log "Host memory before nest build: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+    fi
+    # Capture exit code before `if !` — otherwise $? inside the failure branch is 0.
+    set +e
+    NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
+        npm run build -w "$workspace"
+    code=$?
+    set -e
+    if [[ "$code" -ne 0 ]]; then
+        echo "Error: build failed for $workspace (exit ${code})."
+        if [[ "$code" -eq 137 || "$code" -eq 134 ]]; then
+            echo "Exit ${code} = Node OOM during build. Free RAM/swap or raise nest heap, then re-run deploy."
+            echo "Do not start the stack with a failed @archaser/api build — CORS/API errors usually follow."
+        fi
+        return "$code"
+    fi
 }
 
 npm_ci_low_memory() {
@@ -378,16 +509,20 @@ npm_ci_low_memory() {
         heap_mb=1024
     fi
     log "npm ci (heap ${heap_mb}MB, maxsockets 1, prefer-offline, ignore-scripts)"
+    log "Host memory before npm ci: ${mem_mb}MB RAM, $(host_swap_mb)MB swap — this step can take 10–25 min with little output"
     # Ignore scripts so prisma/husky do not spawn extra Node during peak install.
     # Prisma generate still runs later in this script.
+    # --loglevel info gives periodic package lines so CI does not look hung.
     if NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts; then
+        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts --loglevel info; then
+        log "npm ci completed"
         return 0
     fi
 
     log "npm ci failed (likely memory pressure) — retrying npm install with conservative settings"
     NODE_OPTIONS="--max-old-space-size=384" \
-        npm install --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts
+        npm install --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts --loglevel info
+    log "npm install retry finished"
 }
 
 ENVIRONMENT=""
@@ -536,6 +671,7 @@ fi
 if [[ "$SKIP_BUILD" != "true" ]]; then
     log "Building backend workspaces"
     ensure_build_tooling
+    stop_backend_for_build
     run_workspace_build @archaser/database
     run_workspace_build @archaser/auth
     run_workspace_build @archaser/sms-send
@@ -573,22 +709,21 @@ if [[ "$NO_GRAFANA" != "true" ]]; then
         for c in archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail; do
             "${DOCKER[@]}" rm -f "$c" >/dev/null 2>&1 || true
         done
-        MONITORING_ENV_VARS=(
-            MONITORING_ENV="$ENVIRONMENT"
-            BACKEND_DOCKER_NETWORK="${BACKEND_PROJECT}_default"
-        )
+        MONITORING_ENV="$ENVIRONMENT"
+        BACKEND_DOCKER_NETWORK="${BACKEND_PROJECT}_default"
         if [[ "$ENVIRONMENT" == "staging" ]]; then
-            MONITORING_ENV_VARS+=(
-                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
-                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.staging.archaser.com}"
-            )
+            GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
+            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.staging.archaser.com}"
         elif [[ "$ENVIRONMENT" == "production" ]]; then
-            MONITORING_ENV_VARS+=(
-                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}"
-                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.portal.archaser.com}"
-            )
+            GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}"
+            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.portal.archaser.com}"
         fi
-        if ! env "${MONITORING_ENV_VARS[@]}" docker_compose \
+        # `env VAR=… docker_compose` fails — docker_compose is a bash function, not a binary.
+        if ! MONITORING_ENV="$MONITORING_ENV" \
+            BACKEND_DOCKER_NETWORK="$BACKEND_DOCKER_NETWORK" \
+            GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-}" \
+            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-}" \
+            docker_compose \
             --project-name "$MONITORING_PROJECT" \
             --env-file "$ENV_TARGET" \
             -f "$COMPOSE_MONITORING" \

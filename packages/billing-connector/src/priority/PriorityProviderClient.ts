@@ -34,6 +34,8 @@ import {
 import { PAYMENT_ALWAYS_SELECT_SOURCES } from "./prioritySelectFields";
 import {
     expandPaymentFncPatNameOrFilters,
+    stripFieldFromPullFilterOData,
+    stripUdateFromPullFilterOData,
 } from "../services/billingConnectorPullFilterCompile";
 import {
     discoverPriorityFields,
@@ -229,6 +231,31 @@ export class PriorityProviderClient implements BillingProviderClient {
     async pull(entity: ImportType, options: PullOptions): Promise<PullPage> {
         if (!isPriorityEntityImportType(entity)) {
             throw new Error(`Unsupported entity: ${entity}`);
+        }
+
+        // CUSTOMERS / CUSTPERSONNEL have no UDATE — drop it before column
+        // sample and $filter. Contact also drops CUSTOMERS-only fields
+        // (CTYPE2NAME etc.); date floors belong on Invoice / Payment windows.
+        if (entity === "Customer" || entity === "Contact") {
+            let filter = options.filter ?? null;
+            if (odataFilterFieldNames(filter).includes("UDATE")) {
+                filter = stripUdateFromPullFilterOData(filter);
+            }
+            if (entity === "Contact") {
+                for (const field of [
+                    "CTYPE2NAME",
+                    "CTYPE2CODE",
+                    "CDES",
+                    "CUSTDES",
+                ]) {
+                    if (odataFilterFieldNames(filter).includes(field)) {
+                        filter = stripFieldFromPullFilterOData(filter, field);
+                    }
+                }
+            }
+            if (filter !== options.filter) {
+                options = { ...options, filter };
+            }
         }
 
         const pageSizeRequested =
@@ -483,6 +510,18 @@ export class PriorityProviderClient implements BillingProviderClient {
             filter: sampleFilter,
         });
         if (!sampled.ok) {
+            const tableName = entitySet?.trim() ||
+                (isPriorityEntityImportType(entity)
+                    ? getPriorityEntityEndpoint(entity).path
+                    : entity);
+            if (sampled.statusCode === 404) {
+                throw new Error(
+                    `Priority table not found (HTTP 404) for ${entity} ` +
+                        `(${tableName}). Enable that form for API in Priority ` +
+                        `(Limited Access / API Forms), or pick the correct ` +
+                        `table under entity sets.`
+                );
+            }
             const filterPreview = (options?.filter ?? "").slice(0, 280);
             this.config.onLog?.(
                 `[column-sample] entity=${entity} entitySet=${entitySet?.trim() || "default"} failed: ${sampled.error ?? "unknown"} filterLen=${(options?.filter ?? "").length} filterPreview=${filterPreview} — using fallback columns`
@@ -610,11 +649,21 @@ export class PriorityProviderClient implements BillingProviderClient {
             const body = await response.text().catch(() => "");
             const summary = summarizePriorityHttpErrorBody(response.status, body);
             this.config.onLog?.(
-                `Priority HTTP ${response.status} after ${elapsedMs}ms: ${summary}`
+                `Priority HTTP ${response.status} after ${elapsedMs}ms: ${summary} url=${url.slice(0, 400)}`
             );
-            const error = new Error(
-                `Priority returned ${response.status}: ${summary}`
-            ) as Error & { statusCode?: number };
+            let message = `Priority returned ${response.status}: ${summary}`;
+            if (response.status === 404) {
+                const tableMatch = url.match(
+                    /\/([A-Za-z_][A-Za-z0-9_]*)(?:\?|$)/
+                );
+                const table = tableMatch?.[1];
+                message += table
+                    ? ` — table ${table} was not found. Enable it for API in Priority, or change the Contact/entity-set table name.`
+                    : ` — OData path not found. Enable the form for API in Priority, or change the entity-set table name.`;
+            }
+            const error = new Error(message) as Error & {
+                statusCode?: number;
+            };
             error.statusCode = response.status;
             throw error;
         }
