@@ -61,34 +61,75 @@ host_swap_mb() {
     awk '/SwapTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0
 }
 
-# EC2 builds can OOM during npm install even on ~4GB RAM when swap is 0.
-# Ensure at least 2GB swap for deploy stability.
+# EC2 builds can OOM during npm install / nest build when swap is small.
+# Prefer 4G swap on hosts under 8GB RAM (nest build is the peak).
 ensure_deploy_swap() {
     if [[ ! -r /proc/meminfo ]]; then
         return 0
     fi
-    local mem_mb swap_mb
+    local mem_mb swap_mb want_mb swapfile
     mem_mb="$(host_mem_mb)"
     swap_mb="$(host_swap_mb)"
-    log "Host memory: ${mem_mb}MB RAM, ${swap_mb}MB swap"
-    if (( swap_mb >= 1024 )); then
+    want_mb=2048
+    if (( mem_mb > 0 && mem_mb < 8192 )); then
+        want_mb=4096
+    fi
+    log "Host memory: ${mem_mb}MB RAM, ${swap_mb}MB swap (want >= ${want_mb}MB swap)"
+    if (( swap_mb >= want_mb )); then
         return 0
     fi
-    local swapfile="/swapfile.archaser-deploy"
+    swapfile="/swapfile.archaser-deploy"
+    if (( want_mb >= 4096 )); then
+        swapfile="/swapfile.archaser-deploy-4g"
+    fi
     if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true 2>/dev/null; then
-        echo "Warning: ${mem_mb}MB RAM and ${swap_mb}MB swap — npm ci may be OOM-killed."
+        echo "Warning: ${mem_mb}MB RAM and ${swap_mb}MB swap — nest build may be OOM-killed (exit 137)."
         echo "Add swap, then re-run:"
-        echo "  sudo fallocate -l 2G $swapfile && sudo chmod 600 $swapfile && sudo mkswap $swapfile && sudo swapon $swapfile"
+        echo "  sudo fallocate -l ${want_mb}M $swapfile && sudo chmod 600 $swapfile && sudo mkswap $swapfile && sudo swapon $swapfile"
         return 0
     fi
     if [[ ! -f "$swapfile" ]]; then
-        log "Creating 2G deploy swap at $swapfile"
-        sudo fallocate -l 2G "$swapfile" || sudo dd if=/dev/zero of="$swapfile" bs=1M count=2048 status=none
+        log "Creating ${want_mb}MB deploy swap at $swapfile"
+        sudo fallocate -l "${want_mb}M" "$swapfile" || \
+            sudo dd if=/dev/zero of="$swapfile" bs=1M count="$want_mb" status=none
         sudo chmod 600 "$swapfile"
         sudo mkswap "$swapfile" >/dev/null
     fi
     sudo swapon "$swapfile" 2>/dev/null || true
     log "Host memory after swap: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+}
+
+# Cap V8 so nest/tsc cannot grow until the OS OOM-kills Node (exit 137).
+deploy_build_heap_mb() {
+    local mem_mb
+    mem_mb="$(host_mem_mb)"
+    if (( mem_mb > 0 && mem_mb < 2048 )); then
+        echo 512
+    elif (( mem_mb > 0 && mem_mb < 4096 )); then
+        echo 768
+    elif (( mem_mb > 0 && mem_mb < 8192 )); then
+        echo 1536
+    else
+        echo 3072
+    fi
+}
+
+# Running Nest/worker containers often leave too little RAM for nest build on
+# small EC2 hosts. Stack is recreated after builds anyway.
+stop_backend_for_build() {
+    local mem_mb
+    mem_mb="$(host_mem_mb)"
+    if (( mem_mb <= 0 || mem_mb >= 8192 )); then
+        return 0
+    fi
+    log "Stopping backend containers before build to free RAM (${mem_mb}MB host)"
+    backend_compose stop >/dev/null 2>&1 || \
+        backend_compose down --remove-orphans >/dev/null 2>&1 || true
+    sync || true
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+    fi
+    log "Host memory after stop: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
 }
 
 DOCKER=(docker)
@@ -364,8 +405,26 @@ generate_prisma_client() {
 
 run_workspace_build() {
     local workspace="$1"
+    local heap_mb
+    heap_mb="$(deploy_build_heap_mb)"
     export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
-    npm run build -w "$workspace"
+    log "Building $workspace (Node heap ${heap_mb}MB)"
+    if [[ "$workspace" == "@archaser/api" ]]; then
+        sync || true
+        if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+        fi
+        log "Host memory before nest build: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+    fi
+    if ! NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
+        npm run build -w "$workspace"; then
+        local code=$?
+        echo "Error: build failed for $workspace (exit ${code})."
+        if [[ "$code" -eq 137 ]]; then
+            echo "Exit 137 = process was Killed (host OOM). Add/enlarge swap or stop other containers, then re-run deploy."
+        fi
+        return "$code"
+    fi
 }
 
 npm_ci_low_memory() {
@@ -536,6 +595,7 @@ fi
 if [[ "$SKIP_BUILD" != "true" ]]; then
     log "Building backend workspaces"
     ensure_build_tooling
+    stop_backend_for_build
     run_workspace_build @archaser/database
     run_workspace_build @archaser/auth
     run_workspace_build @archaser/sms-send
