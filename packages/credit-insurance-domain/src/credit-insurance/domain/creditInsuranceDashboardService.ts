@@ -26,7 +26,6 @@ import {
     invoiceLinkedPolicyTextSearchOr,
     policyDisplayFromCustomerRow,
     policyDisplayFromInvoiceRow,
-    withExcludeLinkedChildCustomers,
     withInvoiceCustomerPolicyFilter,
 } from "./customerPolicyQueryHelpers";
 import {
@@ -1282,10 +1281,7 @@ export async function getCreditDashboardSummary(
         asOfTermsFlagsApplied?: boolean;
     }
 ): Promise<CreditDashboardSummary> {
-    // KPI totals count each shared parent/child pool once at the root.
-    const whereCust = withExcludeLinkedChildCustomers(
-        customersScoped(accountId, policyId, businessUnitFilter)
-    );
+    const whereCust = customersScoped(accountId, policyId, businessUnitFilter);
     const useScopedTermsBreachAgg = hasDashboardBusinessUnitScope(
         businessUnitFilter
     );
@@ -1442,7 +1438,6 @@ export async function getCreditDashboardSummary(
     WHERE i.account_id = ${accountId}
       AND c.account_id = ${accountId}
       AND c.collection_status IN ('Active', 'Inactive')
-      AND c.parent_customer_id IS NULL
       AND i.policy_id = ${policyId}
       AND i.status IN ('Due', 'Overdue')
       AND i.amount >= 0
@@ -1471,12 +1466,8 @@ export async function getCreditDashboardSummary(
           COUNT(*) FILTER (WHERE i.ctv_outdated_dcl = true)::int AS cnt_outdated_dcl,
           COUNT(*) FILTER (WHERE i.ctv_invoice_after_policy_end = true)::int AS cnt_after_policy_end
      FROM "Invoice" i
-    INNER JOIN "Customer" c ON c.id = i.customer_id
     INNER JOIN "Account" a ON a.id = i.account_id
     WHERE i.account_id = ${accountId}
-      AND c.account_id = ${accountId}
-      AND c.collection_status IN ('Active', 'Inactive')
-      AND c.parent_customer_id IS NULL
       AND i.status IN ('Due', 'Overdue')
       AND i.amount >= 0
       AND (
@@ -1492,8 +1483,7 @@ export async function getCreditDashboardSummary(
                     reportingCountdownOpenWhere(accountId, windowDays),
                     policyId
                 ),
-                // Reuse KPI customer scope (excludes linked children).
-                whereCust
+                businessUnitFilter
             ),
             select: {
                 customer_id: true,

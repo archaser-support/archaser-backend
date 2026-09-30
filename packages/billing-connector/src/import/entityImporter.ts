@@ -1,5 +1,4 @@
 import type { PrismaClient } from "@prisma/client";
-import { onParentCustomerIdChanged } from "@archaser/credit-insurance-domain";
 import {
     mapErpRecord,
     parseErpDateOnly,
@@ -560,19 +559,6 @@ async function importCustomerBatch(
         }
 
         if (parentUpdates.length > 0) {
-            const previousParents = await prisma.customer.findMany({
-                where: {
-                    id: { in: parentUpdates.map((update) => update.id) },
-                },
-                select: { id: true, parent_customer_id: true },
-            });
-            const previousParentById = new Map(
-                previousParents.map((row) => [
-                    row.id,
-                    row.parent_customer_id ?? null,
-                ])
-            );
-
             await commitOps(
                 prisma,
                 parentUpdates.map((update) =>
@@ -583,27 +569,6 @@ async function importCustomerBatch(
                     })
                 )
             );
-
-            // Same connect side-effect path as UI/API (credit inheritance).
-            for (const update of parentUpdates) {
-                const previousParentId =
-                    previousParentById.get(update.id) ?? null;
-                if (previousParentId === update.parentId) {
-                    continue;
-                }
-                try {
-                    await onParentCustomerIdChanged({
-                        accountId,
-                        customerId: update.id,
-                        previousParentId,
-                        nextParentId: update.parentId,
-                        dbClient: prisma,
-                        skipInsuranceSync: true,
-                    });
-                } catch {
-                    // Parent FK already written; remirror can catch up later.
-                }
-            }
         }
     }
 

@@ -1733,19 +1733,19 @@ export async function getCustomerPolicyUsageTrend(
 
     const dateStr = normalizeDateString(snapshotDate);
 
-    const scopedCustomerIds = (
-        await prisma.customer.findMany({
-            where: {
-                account_id: accountId,
-                parent_customer_id: null,
-                ...(options?.businessUnitFilter &&
-                Object.keys(options.businessUnitFilter).length > 0
-                    ? { AND: [options.businessUnitFilter] }
-                    : {}),
-            },
-            select: { id: true },
-        })
-    ).map((row) => row.id);
+    const scopedCustomerIds =
+        options?.businessUnitFilter &&
+        Object.keys(options.businessUnitFilter).length > 0
+            ? (
+                  await prisma.customer.findMany({
+                      where: {
+                          account_id: accountId,
+                          AND: [options.businessUnitFilter],
+                      },
+                      select: { id: true },
+                  })
+              ).map((row) => row.id)
+            : null;
 
     if (scopedCustomerIds?.length === 0) {
         return {
@@ -1941,11 +1941,9 @@ export async function getCustomerPolicyPortfolioTrend(
                 )
             )::bigint AS over_limit_count
         FROM "CustomerPolicyTrend" t
-        INNER JOIN "Customer" c ON c.id = t.customer_id
         WHERE t.account_id = ${accountId}
           AND t.snapshot_date >= ${fromDateUtc}::date
           AND t.snapshot_date <= ${toDateUtc}::date
-          AND c.parent_customer_id IS NULL
           AND (
             ${options?.policyId ?? null}::int IS NULL
             OR t.insurance_policy_id = ${options?.policyId ?? null}

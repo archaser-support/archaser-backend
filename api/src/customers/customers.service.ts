@@ -22,11 +22,7 @@ import {
     enrichCustomerTopUpFields,
     AdminBackfillBlockingRewriteError,
     ensureCustomerCapacityGapStored,
-    isLinkedCreditChild,
-    onParentCustomerIdChanged,
-    resolveCreditPoolMemberIds,
     resolveCustomerHeaderOpenArAmounts,
-    resolveEffectiveApprovedLimit,
     rewriteCustomerAsOfRange,
 } from "@archaser/credit-insurance-domain";
 import {
@@ -45,13 +41,6 @@ import {
     applyCustomerNameUpdate,
     buildCustomerUncheckedUpdateData,
 } from "./customer-update.mapper";
-import {
-    buildClaimCountsByCustomer,
-    buildCollectionAggregatedData,
-    buildCreditAggregatedBlock,
-    customerDisplayNameFromParts,
-    type AggregatedDataChildInput,
-} from "./domain/customerAggregatedData";
 import { SystemEmailService } from "../email/system-email.service";
 import {
     pickDisputeOutreachContact,
@@ -495,21 +484,7 @@ export class CustomersService {
                         username: true,
                     },
                 },
-                ParentCustomer: {
-                    select: {
-                        id: true,
-                        customer_number: true,
-                        type: true,
-                        Person: {
-                            select: {
-                                first_name: true,
-                                last_name: true,
-                                full_name: true,
-                            },
-                        },
-                        Company: { select: { name: true } },
-                    },
-                },
+                ParentCustomer: true,
                 // The Log Activity promise-to-pay picker derives its selectable
                 // window and per-cycle cap from these two account settings.
                 Account: {
@@ -627,37 +602,10 @@ export class CustomersService {
         const policyPayloadPresent = hasPolicyPayloadInBody(body);
         const customerUpdateData = buildCustomerUncheckedUpdateData(body);
 
-        const parentLinkChanging = Object.prototype.hasOwnProperty.call(
-            customerUpdateData,
-            "parent_customer_id"
-        );
-        let previousParentId: number | null = null;
-        if (parentLinkChanging) {
-            const before = await this.db.customer.findUnique({
-                where: { id },
-                select: { parent_customer_id: true },
-            });
-            previousParentId = before?.parent_customer_id ?? null;
-        }
-
         await this.db.customer.update({
             where: { id },
             data: customerUpdateData,
         });
-
-        if (parentLinkChanging) {
-            const nextParentId =
-                (customerUpdateData.parent_customer_id as number | null) ??
-                null;
-            await onParentCustomerIdChanged({
-                accountId,
-                customerId: id,
-                previousParentId,
-                nextParentId,
-                userId: effectiveUserId,
-                dbClient: this.db,
-            });
-        }
 
         await applyCustomerNameUpdate(
             this.db,
@@ -684,11 +632,12 @@ export class CustomersService {
      */
     async cancelPendingPolicyChange(user: JwtPayload, id: number) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
-        const { accountId, effectiveUserId } =
-            await this.assertCustomerInAccount(userInfo, id);
+        const { effectiveUserId } = await this.assertCustomerInAccount(
+            userInfo,
+            id
+        );
         await this.customerPolicy.cancelPendingPolicyChange({
             customerId: id,
-            accountId,
             userId: effectiveUserId,
         });
         return this.getById(user, id);
@@ -1064,13 +1013,6 @@ export class CustomersService {
         const { accountId, effectiveUserId } =
             await this.assertCustomerInAccount(userInfo, id);
 
-        if (await isLinkedCreditChild(id, this.db)) {
-            throw new ForbiddenException({
-                error: "Top-ups can only be created on the credit pool root customer",
-                code: "LINKED_CHILD_TOP_UP_LOCKED",
-            });
-        }
-
         const insurancePolicyId = Number(body.insurancePolicyId);
         if (!Number.isInteger(insurancePolicyId) || insurancePolicyId <= 0) {
             throw new BadRequestException({
@@ -1195,13 +1137,6 @@ export class CustomersService {
             userInfo,
             id
         );
-
-        if (await isLinkedCreditChild(id, this.db)) {
-            throw new ForbiddenException({
-                error: "Top-ups can only be managed on the credit pool root customer",
-                code: "LINKED_CHILD_TOP_UP_LOCKED",
-            });
-        }
 
         const topUp = await this.db.customerTopUp.findFirst({
             where: { id: topUpId, customer_id: id },
@@ -2605,312 +2540,43 @@ export class CustomersService {
         const accountId = this.accessScope.getEffectiveAccountId(userInfo);
         const customer = await this.db.customer.findFirst({
             where: { id: customerId, account_id: accountId },
-            select: { id: true },
-        });
-        if (!customer) {
-            throw new NotFoundException({ error: "Customer not found" });
-        }
-
-        const directChildren = await this.db.customer.findMany({
-            where: { parent_customer_id: customerId, account_id: accountId },
             select: {
                 id: true,
-                customer_number: true,
-                type: true,
                 total_due_amount: true,
                 total_overdue_amount: true,
                 no_of_due_invoices: true,
                 number_of_overdue_invoices: true,
-                customer_due_amount1: true,
-                customer_due_currency1: true,
-                customer_due_amount2: true,
-                customer_due_currency2: true,
-                customer_overdue_amount1: true,
-                customer_overdue_currency1: true,
-                customer_overdue_amount2: true,
-                customer_overdue_currency2: true,
-                Person: {
-                    select: {
-                        first_name: true,
-                        last_name: true,
-                        full_name: true,
-                    },
-                },
-                Company: { select: { name: true } },
             },
-            orderBy: { id: "asc" },
         });
-
-        if (directChildren.length === 0) {
+        if (!customer) {
+            throw new NotFoundException({ error: "Customer not found" });
+        }
+        const childCount = await this.db.customer.count({
+            where: { parent_customer_id: customerId },
+        });
+        if (childCount === 0) {
             throw new NotFoundException({
                 error: "Customer has no child customers",
                 code: "NO_CHILD_CUSTOMERS",
             });
         }
-
-        const account = await this.db.account.findUnique({
-            where: { id: accountId },
-            select: {
-                currency: true,
-                has_credit_insurance: true,
-                has_collection: true,
+        const children = await this.db.customer.aggregate({
+            where: { parent_customer_id: customerId, account_id: accountId },
+            _sum: {
+                total_due_amount: true,
+                total_overdue_amount: true,
+                no_of_due_invoices: true,
+                number_of_overdue_invoices: true,
             },
+            _count: { _all: true },
         });
-        const hasCreditInsurance = account?.has_credit_insurance === true;
-        const hasCollection = account?.has_collection !== false;
-        const accountCurrency = account?.currency ?? "USD";
-
-        const childInputs: AggregatedDataChildInput[] = directChildren.map(
-            (child) => ({
-                id: child.id,
-                customer_number: child.customer_number,
-                type: child.type,
-                name: customerDisplayNameFromParts({
-                    companyName: child.Company?.name,
-                    personFullName: child.Person?.full_name,
-                    personFirstName: child.Person?.first_name,
-                    personLastName: child.Person?.last_name,
-                    customerNumber: child.customer_number,
-                }),
-                total_due_amount: child.total_due_amount,
-                total_overdue_amount: child.total_overdue_amount,
-                no_of_due_invoices: child.no_of_due_invoices,
-                number_of_overdue_invoices: child.number_of_overdue_invoices,
-                customer_due_amount1: child.customer_due_amount1,
-                customer_due_currency1: child.customer_due_currency1,
-                customer_due_amount2: child.customer_due_amount2,
-                customer_due_currency2: child.customer_due_currency2,
-                customer_overdue_amount1: child.customer_overdue_amount1,
-                customer_overdue_currency1: child.customer_overdue_currency1,
-                customer_overdue_amount2: child.customer_overdue_amount2,
-                customer_overdue_currency2: child.customer_overdue_currency2,
-            })
-        );
-
-        const childIds = childInputs.map((c) => c.id);
-        let paidExtras: {
-            total_paid_amount?: number | null;
-            customer_total_paid_amount1?: number | null;
-            customer_total_paid_amount2?: number | null;
-            total_collection_periods?: number | null;
-            active_collection_periods?: number | null;
-            id?: number;
-        } = {};
-
-        if (hasCollection) {
-            const [storedAgg, collectionPeriods, paymentGroups] =
-                await Promise.all([
-                    this.db.customerAggregatedData.findUnique({
-                        where: { customer_id: customerId },
-                        select: { id: true },
-                    }),
-                    this.db.customerCollectionPeriod.findMany({
-                        where: { customer_id: { in: childIds } },
-                        select: { id: true, period_end_date: true },
-                    }),
-                    this.db.invoicePayment.groupBy({
-                        by: ["customer_currency"],
-                        where: {
-                            customer_id: { in: childIds },
-                            invoice_id: { gt: 0 },
-                        },
-                        _sum: {
-                            amount: true,
-                            customer_amount: true,
-                        },
-                    }),
-                ]);
-
-            let totalPaid = 0;
-            const paidByCurrency = new Map<string, number>();
-            for (const row of paymentGroups) {
-                totalPaid += Number(row._sum.amount ?? 0) || 0;
-                const currency = row.customer_currency?.trim();
-                const customerAmount = Number(row._sum.customer_amount ?? 0);
-                if (currency && Number.isFinite(customerAmount) && customerAmount) {
-                    paidByCurrency.set(
-                        currency,
-                        (paidByCurrency.get(currency) || 0) + customerAmount
-                    );
-                }
-            }
-            const paidSorted = Array.from(paidByCurrency.entries()).sort(
-                (a, b) => b[1] - a[1]
-            );
-            paidExtras = {
-                id: storedAgg?.id ?? 0,
-                total_paid_amount: totalPaid,
-                customer_total_paid_amount1: paidSorted[0]?.[1] ?? null,
-                customer_total_paid_amount2: paidSorted[1]?.[1] ?? null,
-                total_collection_periods: collectionPeriods.length,
-                active_collection_periods: collectionPeriods.filter(
-                    (p) => p.period_end_date == null
-                ).length,
-            };
-        }
-
-        const collection = buildCollectionAggregatedData(
-            customerId,
-            childInputs,
-            paidExtras
-        );
-
-        let credit: ReturnType<typeof buildCreditAggregatedBlock> | null = null;
-        if (hasCreditInsurance) {
-            const { rootCustomerId, memberIds } =
-                await resolveCreditPoolMemberIds(customerId, accountId);
-            const members = await this.db.customer.findMany({
-                where: { id: { in: memberIds }, account_id: accountId },
-                select: {
-                    id: true,
-                    customer_number: true,
-                    type: true,
-                    parent_customer_id: true,
-                    Person: {
-                        select: {
-                            first_name: true,
-                            last_name: true,
-                            full_name: true,
-                        },
-                    },
-                    Company: { select: { name: true } },
-                },
-                orderBy: { id: "asc" },
-            });
-
-            const activePolicy = await this.db.customerPolicy.findFirst({
-                where: {
-                    customer_id: rootCustomerId,
-                    is_active: true,
-                },
-                select: {
-                    approved_limit: true,
-                    approved_limit_currency: true,
-                    outdated_dcl: true,
-                    excluded_from_policy: true,
-                    insurance_policy_id: true,
-                    capacity_gap_amount: true,
-                    uninsured_amount: true,
-                    capacity_gap_amount1: true,
-                    capacity_gap_currency1: true,
-                    capacity_gap_amount2: true,
-                    capacity_gap_currency2: true,
-                    uninsured_amount1: true,
-                    uninsured_currency1: true,
-                    uninsured_amount2: true,
-                    uninsured_currency2: true,
-                },
-            });
-
-            let effectiveLimit: number | null = null;
-            if (activePolicy) {
-                const resolved = await resolveEffectiveApprovedLimit(
-                    rootCustomerId,
-                    {
-                        baseApprovedLimit: activePolicy.approved_limit,
-                        baseApprovedLimitCurrency:
-                            activePolicy.approved_limit_currency,
-                        outdatedDcl: activePolicy.outdated_dcl ?? false,
-                        excludedFromPolicy:
-                            activePolicy.excluded_from_policy ?? false,
-                        parentPrimaryPolicyId:
-                            activePolicy.insurance_policy_id ?? undefined,
-                    }
-                );
-                effectiveLimit =
-                    resolved.effectiveApprovedLimit != null
-                        ? Number(resolved.effectiveApprovedLimit)
-                        : activePolicy.approved_limit != null
-                          ? Number(activePolicy.approved_limit)
-                          : null;
-            }
-
-            const claims = await this.db.claim.findMany({
-                where: {
-                    account_id: accountId,
-                    customer_id: { in: memberIds },
-                },
-                select: { customer_id: true, status: true },
-            });
-            const claimCounts = buildClaimCountsByCustomer(
-                claims.map((c) => ({
-                    customer_id: c.customer_id,
-                    status: String(c.status),
-                }))
-            );
-
-            credit = buildCreditAggregatedBlock(
-                {
-                    root_customer_id: rootCustomerId,
-                    approved_limit:
-                        activePolicy?.approved_limit != null
-                            ? Number(activePolicy.approved_limit)
-                            : null,
-                    approved_limit_currency:
-                        activePolicy?.approved_limit_currency ?? null,
-                    effective_limit: effectiveLimit,
-                    capacity_gap_amount:
-                        activePolicy?.capacity_gap_amount != null
-                            ? Number(activePolicy.capacity_gap_amount)
-                            : null,
-                    uninsured_amount:
-                        activePolicy?.uninsured_amount != null
-                            ? Number(activePolicy.uninsured_amount)
-                            : null,
-                    capacity_gap_amount1:
-                        activePolicy?.capacity_gap_amount1 != null
-                            ? Number(activePolicy.capacity_gap_amount1)
-                            : null,
-                    capacity_gap_currency1:
-                        activePolicy?.capacity_gap_currency1 ?? null,
-                    capacity_gap_amount2:
-                        activePolicy?.capacity_gap_amount2 != null
-                            ? Number(activePolicy.capacity_gap_amount2)
-                            : null,
-                    capacity_gap_currency2:
-                        activePolicy?.capacity_gap_currency2 ?? null,
-                    uninsured_amount1:
-                        activePolicy?.uninsured_amount1 != null
-                            ? Number(activePolicy.uninsured_amount1)
-                            : null,
-                    uninsured_currency1:
-                        activePolicy?.uninsured_currency1 ?? null,
-                    uninsured_amount2:
-                        activePolicy?.uninsured_amount2 != null
-                            ? Number(activePolicy.uninsured_amount2)
-                            : null,
-                    uninsured_currency2:
-                        activePolicy?.uninsured_currency2 ?? null,
-                },
-                members.map((m) => ({
-                    id: m.id,
-                    customer_number: m.customer_number,
-                    type: m.type,
-                    parent_customer_id: m.parent_customer_id,
-                    name: customerDisplayNameFromParts({
-                        companyName: m.Company?.name,
-                        personFullName: m.Person?.full_name,
-                        personFirstName: m.Person?.first_name,
-                        personLastName: m.Person?.last_name,
-                        customerNumber: m.customer_number,
-                    }),
-                })),
-                claimCounts
-            );
-        }
-
         return serializeBigInt({
-            aggregatedData: collection.aggregatedData,
-            childCustomers: collection.childCustomers,
-            totalDueAmount: collection.totalDueAmount,
-            accountCurrency,
-            customerTotalDueAmount1: collection.customerTotalDueAmount1,
-            customerTotalDueCurrency1: collection.customerTotalDueCurrency1,
-            customerTotalDueAmount2: collection.customerTotalDueAmount2,
-            customerTotalDueCurrency2: collection.customerTotalDueCurrency2,
-            has_collection: hasCollection,
-            has_credit_insurance: hasCreditInsurance,
-            credit,
+            customerId,
+            childCount: children._count._all,
+            totalDueAmount: children._sum.total_due_amount ?? 0,
+            totalOverdueAmount: children._sum.total_overdue_amount ?? 0,
+            dueInvoiceCount: children._sum.no_of_due_invoices ?? 0,
+            overdueInvoiceCount: children._sum.number_of_overdue_invoices ?? 0,
         });
     }
 }

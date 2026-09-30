@@ -17,7 +17,6 @@ import {
     invoiceOutstandingInLimitCurrency,
 } from "./invoiceInsuranceFields";
 import { applyOpenArVatBasis } from "./openArVatBasis";
-import { resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
 import {
     hasActiveLinkedPolicy,
     isUncoveredExposureCustomer,
@@ -85,11 +84,9 @@ function isCapacityGapAlreadyZero(inv: {
 }
 
 /**
- * Persist live waterfall `limit_assessed_*` + dual-currency capacity gap for one
- * customer — or the full credit pool when the customer is in a parent/child tree.
+ * Persist live waterfall `limit_assessed_*` + dual-currency capacity gap for one customer.
  *
  * Always reallocates over the full open Due/Overdue set (oldest `invoice_date`, then id).
- * Linked pools use one shared effective limit against combined open invoices.
  * `invoiceIds` is ignored for allocation — gaps are interdependent under the waterfall.
  */
 export async function syncInvoiceCapacityGapAmountsForCustomer(
@@ -98,9 +95,6 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
         invoiceIds?: number[];
         rateDate?: Date;
         dbClient?: DbClient;
-        /** When set, skip pool resolution (caller already resolved members). */
-        poolMemberIds?: readonly number[];
-        poolRootCustomerId?: number;
     }
 ): Promise<{ missingRate: boolean }> {
     void options?.invoiceIds;
@@ -127,25 +121,10 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
         return { missingRate: false };
     }
 
-    const pool =
-        options?.poolMemberIds != null && options.poolRootCustomerId != null
-            ? {
-                  rootCustomerId: options.poolRootCustomerId,
-                  memberIds: [...options.poolMemberIds],
-              }
-            : await resolveCreditPoolMemberIds(
-                  customerId,
-                  customer.account_id,
-                  dbClient
-              );
-    const memberIds = pool.memberIds;
-    const rootCustomerId = pool.rootCustomerId;
-
     const amountsIncludeVat = customer.Account.amounts_include_vat !== false;
 
-    // Shared limit / exclusion come from the pool root (mirrors match while linked).
     const activePolicy = await dbClient.customerPolicy.findFirst({
-        where: { customer_id: rootCustomerId, is_active: true },
+        where: { customer_id: customerId, is_active: true },
         select: {
             insurance_policy_id: true,
             policy_exclusion_reason: true,
@@ -166,8 +145,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
 
     const invoices = (await dbClient.invoice.findMany({
         where: {
-            customer_id:
-                memberIds.length === 1 ? memberIds[0] : { in: memberIds },
+            customer_id: customerId,
             account_id: customer.account_id,
         },
         select: {
@@ -228,7 +206,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
         Number(baseApprovedLimit) > 0 &&
         policyId != null
     ) {
-        const resolved = await resolveEffectiveApprovedLimit(rootCustomerId, {
+        const resolved = await resolveEffectiveApprovedLimit(customerId, {
             baseApprovedLimit,
             baseApprovedLimitCurrency: limitCurrency,
             outdatedDcl: Boolean(activePolicy?.outdated_dcl),
