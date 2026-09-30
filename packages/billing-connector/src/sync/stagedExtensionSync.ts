@@ -1408,7 +1408,12 @@ export async function runStagedExtensionSync(
                         select: odataSelectFieldsFromMapping({
                             mappingRules: rules,
                             extraFields: [
-                                "UDATE",
+                                // CUSTOMERS / CUSTPERSONNEL often lack UDATE —
+                                // requesting it in $select returns Priority 400.
+                                ...(entityType === "Customer" ||
+                                entityType === "Contact"
+                                    ? []
+                                    : ["UDATE"]),
                                 ...(typeof options.extension
                                     .extraSelectFields === "function"
                                     ? options.extension.extraSelectFields({

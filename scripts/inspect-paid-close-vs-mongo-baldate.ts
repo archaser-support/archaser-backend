@@ -1,15 +1,19 @@
 /**
  * Compare Paid Invoice.close_date (Postgres) vs BALDATE from Mongo import cache.
+ * Also reports MAX(RECONDATE) from the same payment (and invoice) cache rows.
  *
  * Mongo source: connector_import_entity_cache Payment rows (and _rawRecord),
  * keyed by invoice number (FNCIREF1 / PAY_INVOICE_NUMBER / invoice_number / IVNUM).
- * Per invoice: MAX(BALDATE) across cached payment lines.
+ * Per invoice: MAX(BALDATE) and MAX(RECONDATE) across cached lines.
+ * Invoice-cache RECONDATE fills gaps when payment lines have no RECONDATE.
  *
  * Usage:
  *   npx tsx scripts/inspect-paid-close-vs-mongo-baldate.ts --account 10149
  *   npx tsx scripts/inspect-paid-close-vs-mongo-baldate.ts --account 10149 --sample 20
+ *   npx tsx scripts/inspect-paid-close-vs-mongo-baldate.ts --account 10149 --csv /tmp/out.csv
  */
 import "dotenv/config";
+import { writeFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
 
 import { parseErpDateOnly } from "../packages/billing-connector/src/utils/connectorFieldUtils";
@@ -25,6 +29,7 @@ const CHUNK = 2000;
 function parseArgs(argv: string[]): {
     accountId: number;
     sample: number;
+    csvPath: string | null;
 } {
     const index = argv.indexOf("--account");
     const raw = index === -1 ? null : argv[index + 1];
@@ -40,7 +45,13 @@ function parseArgs(argv: string[]): {
     if (!Number.isInteger(sample) || sample < 0) {
         throw new Error("--sample <n> must be a non-negative integer");
     }
-    return { accountId, sample };
+    const csvIndex = argv.indexOf("--csv");
+    const csvPath =
+        csvIndex === -1 ? null : (argv[csvIndex + 1]?.trim() || null);
+    if (csvIndex !== -1 && !csvPath) {
+        throw new Error("--csv <path> requires a file path");
+    }
+    return { accountId, sample, csvPath };
 }
 
 function day(value: Date | null | undefined): string | null {
@@ -84,31 +95,73 @@ function invoiceNumbersFromPaymentRow(
     return Array.from(out);
 }
 
-function balDateFromPaymentRow(
+function invoiceNumberFromInvoiceRow(
     row: Record<string, unknown>
+): string | null {
+    const raw =
+        row._rawRecord && typeof row._rawRecord === "object"
+            ? (row._rawRecord as Record<string, unknown>)
+            : {};
+    return (
+        asTrimmed(row.IVNUM) ??
+        asTrimmed(row.invoice_number) ??
+        asTrimmed(raw.IVNUM) ??
+        asTrimmed(raw.invoice_number)
+    );
+}
+
+function fieldDateFromRow(
+    row: Record<string, unknown>,
+    field: "BALDATE" | "RECONDATE"
 ): Date | null {
     const raw =
         row._rawRecord && typeof row._rawRecord === "object"
             ? (row._rawRecord as Record<string, unknown>)
             : {};
     return (
-        parseErpDateOnly(row.BALDATE) ??
-        parseErpDateOnly(raw.BALDATE) ??
+        parseErpDateOnly(row[field]) ??
+        parseErpDateOnly(raw[field]) ??
         null
     );
 }
 
-async function loadMaxBalDateByInvoice(
-    accountId: number
-): Promise<{
-    byInvoice: Map<string, Date>;
+function setMaxDate(
+    map: Map<string, Date>,
+    invoiceNumber: string,
+    value: Date | null
+): void {
+    if (!value) {
+        return;
+    }
+    const existing = map.get(invoiceNumber);
+    if (!existing || value > existing) {
+        map.set(invoiceNumber, value);
+    }
+}
+
+async function loadMongoDatesByInvoice(accountId: number): Promise<{
+    balByInvoice: Map<string, Date>;
+    reconByInvoice: Map<string, Date>;
     paymentDocs: number;
     paymentRows: number;
     rowsWithBalDate: number;
+    rowsWithReconDate: number;
+    invoiceDocs: number;
+    invoiceRowsWithReconDate: number;
 }> {
     await ensureMongoConnection();
     const collection = mongoose.connection.collection(COLLECTION);
-    const cursor = collection.find(
+
+    const balByInvoice = new Map<string, Date>();
+    const reconByInvoice = new Map<string, Date>();
+    let paymentDocs = 0;
+    let paymentRows = 0;
+    let rowsWithBalDate = 0;
+    let rowsWithReconDate = 0;
+    let invoiceDocs = 0;
+    let invoiceRowsWithReconDate = 0;
+
+    const paymentCursor = collection.find(
         {
             account_id: accountId,
             import_type: "Payment",
@@ -116,19 +169,11 @@ async function loadMaxBalDateByInvoice(
         {
             projection: {
                 rows: 1,
-                execution_id: 1,
-                cache_day: 1,
-                chunk_index: 1,
             },
         }
     );
 
-    const byInvoice = new Map<string, Date>();
-    let paymentDocs = 0;
-    let paymentRows = 0;
-    let rowsWithBalDate = 0;
-
-    for await (const doc of cursor) {
+    for await (const doc of paymentCursor) {
         paymentDocs += 1;
         const rows = Array.isArray(doc.rows) ? doc.rows : [];
         for (const row of rows) {
@@ -137,35 +182,92 @@ async function loadMaxBalDateByInvoice(
             }
             paymentRows += 1;
             const record = row as Record<string, unknown>;
-            const balDate = balDateFromPaymentRow(record);
-            if (!balDate) {
+            const balDate = fieldDateFromRow(record, "BALDATE");
+            const reconDate = fieldDateFromRow(record, "RECONDATE");
+            if (balDate) {
+                rowsWithBalDate += 1;
+            }
+            if (reconDate) {
+                rowsWithReconDate += 1;
+            }
+            if (!balDate && !reconDate) {
                 continue;
             }
-            rowsWithBalDate += 1;
             for (const invoiceNumber of invoiceNumbersFromPaymentRow(record)) {
-                const existing = byInvoice.get(invoiceNumber);
-                if (!existing || balDate > existing) {
-                    byInvoice.set(invoiceNumber, balDate);
-                }
+                setMaxDate(balByInvoice, invoiceNumber, balDate);
+                setMaxDate(reconByInvoice, invoiceNumber, reconDate);
             }
         }
     }
 
-    return { byInvoice, paymentDocs, paymentRows, rowsWithBalDate };
+    const invoiceCursor = collection.find(
+        {
+            account_id: accountId,
+            import_type: "Invoice",
+        },
+        {
+            projection: {
+                rows: 1,
+            },
+        }
+    );
+
+    for await (const doc of invoiceCursor) {
+        invoiceDocs += 1;
+        const rows = Array.isArray(doc.rows) ? doc.rows : [];
+        for (const row of rows) {
+            if (!row || typeof row !== "object") {
+                continue;
+            }
+            const record = row as Record<string, unknown>;
+            const invoiceNumber = invoiceNumberFromInvoiceRow(record);
+            if (!invoiceNumber) {
+                continue;
+            }
+            const reconDate = fieldDateFromRow(record, "RECONDATE");
+            if (!reconDate) {
+                continue;
+            }
+            invoiceRowsWithReconDate += 1;
+            setMaxDate(reconByInvoice, invoiceNumber, reconDate);
+        }
+    }
+
+    return {
+        balByInvoice,
+        reconByInvoice,
+        paymentDocs,
+        paymentRows,
+        rowsWithBalDate,
+        rowsWithReconDate,
+        invoiceDocs,
+        invoiceRowsWithReconDate,
+    };
+}
+
+function csvEscape(value: string): string {
+    if (/[",\n\r]/.test(value)) {
+        return `"${value.replace(/"/g, '""')}"`;
+    }
+    return value;
 }
 
 async function main(): Promise<void> {
-    const { accountId, sample } = parseArgs(process.argv.slice(2));
+    const { accountId, sample, csvPath } = parseArgs(process.argv.slice(2));
     const prisma = new PrismaClient();
 
     try {
-        const mongo = await loadMaxBalDateByInvoice(accountId);
-        console.log(LOG, "mongo payment cache", {
+        const mongo = await loadMongoDatesByInvoice(accountId);
+        console.log(LOG, "mongo cache", {
             accountId,
             paymentDocs: mongo.paymentDocs,
             paymentRows: mongo.paymentRows,
             rowsWithBalDate: mongo.rowsWithBalDate,
-            distinctInvoiceNumbersWithBalDate: mongo.byInvoice.size,
+            rowsWithReconDate: mongo.rowsWithReconDate,
+            distinctInvoiceNumbersWithBalDate: mongo.balByInvoice.size,
+            distinctInvoiceNumbersWithReconDate: mongo.reconByInvoice.size,
+            invoiceDocs: mongo.invoiceDocs,
+            invoiceRowsWithReconDate: mongo.invoiceRowsWithReconDate,
         });
 
         let scanned = 0;
@@ -181,8 +283,9 @@ async function main(): Promise<void> {
         type DiffRow = {
             id: number;
             invoiceNumber: string;
-            closeDate: string | null;
+            closeDate: string;
             balDate: string;
+            reconDate: string | null;
             daysDiff: number;
         };
         const diffs: DiffRow[] = [];
@@ -220,7 +323,7 @@ async function main(): Promise<void> {
                 }
                 withCloseDate += 1;
 
-                const balDate = mongo.byInvoice.get(invoiceNumber);
+                const balDate = mongo.balByInvoice.get(invoiceNumber);
                 if (!balDate) {
                     continue;
                 }
@@ -248,6 +351,7 @@ async function main(): Promise<void> {
                     invoiceNumber,
                     closeDate: closeDay,
                     balDate: balDay,
+                    reconDate: day(mongo.reconByInvoice.get(invoiceNumber)),
                     daysDiff,
                 });
             }
@@ -267,6 +371,8 @@ async function main(): Promise<void> {
             closeDiffersFromBalDate: different,
             closeAfterBalDate: closeAfterBal,
             closeBeforeBalDate: closeBeforeBal,
+            diffsWithReconDate: diffs.filter((row) => row.reconDate != null)
+                .length,
             unpaidCoverageNote:
                 "Only invoices present in Mongo Payment cache (TTL-limited) are compared",
         });
@@ -279,6 +385,23 @@ async function main(): Promise<void> {
             for (const row of diffs.slice(0, sample)) {
                 console.log(row);
             }
+        }
+
+        if (csvPath) {
+            const header =
+                "id,invoice_number,close_date,baldate,recondate,days_diff";
+            const body = diffs.map((row) =>
+                [
+                    String(row.id),
+                    csvEscape(row.invoiceNumber),
+                    row.closeDate,
+                    row.balDate,
+                    row.reconDate ?? "",
+                    String(row.daysDiff),
+                ].join(",")
+            );
+            writeFileSync(csvPath, [header, ...body].join("\n") + "\n", "utf8");
+            console.log(LOG, "wrote csv", { path: csvPath, rows: diffs.length });
         }
     } finally {
         await prisma.$disconnect();
