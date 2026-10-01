@@ -36,8 +36,13 @@ if [[ -d "$MONGO_DS" ]]; then
   rm -rf "$MONGO_DS"
 fi
 
-echo "==> Rendering MongoDB Grafana datasource from MONGODB_URI in $ENV_FILE..."
-python3 "$SCRIPT_DIR/scripts/render-mongodb-datasource.py" --env-file "$ENV_FILE"
+# Nest production compose overrides MONGODB_URI to docker DNS mongo:27017/archaser.
+# Prefer that for Grafana (same archaser-mongo-shared network) so Billing Connector
+# panels work. Override with GRAFANA_MONGODB_URI only for Atlas / non-docker Mongo.
+GRAFANA_MONGO_URI="${GRAFANA_MONGODB_URI:-mongodb://mongo:27017/archaser}"
+echo "==> Rendering MongoDB Grafana datasource → $GRAFANA_MONGO_URI"
+MONGODB_URI="$GRAFANA_MONGO_URI" \
+  python3 "$SCRIPT_DIR/scripts/render-mongodb-datasource.py"
 if [[ ! -f "$MONGO_DS" ]]; then
   echo "ERROR: mongodb.generated.yaml missing after render."
   exit 1
