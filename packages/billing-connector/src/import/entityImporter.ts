@@ -44,6 +44,11 @@ export interface EntityImportBatchResult {
     errors: string[];
     cancelled?: boolean;
     rowResults?: EntityImportRowResult[];
+    /**
+     * Customer import only: Archaser rows inserted in this batch (not updates).
+     * Used to enqueue pending-history on INCREMENTAL sync.
+     */
+    createdCustomers?: Array<{ id: number; customer_number: string }>;
 }
 
 export interface EntityImportBatchOptions {
@@ -472,6 +477,17 @@ async function importCustomerBatch(
             createdByNumber.set(customer.customer_number, customer.id);
         }
     }
+    result.createdCustomers = createdCustomers
+        .filter(
+            (
+                customer
+            ): customer is { id: number; customer_number: string } =>
+                Boolean(customer.customer_number)
+        )
+        .map((customer) => ({
+            id: customer.id,
+            customer_number: customer.customer_number,
+        }));
     if (updates.length > 0) {
         await commitOps(
             prisma,

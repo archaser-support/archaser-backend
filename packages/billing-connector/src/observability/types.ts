@@ -71,6 +71,7 @@ export interface BillingConnectorSyncLogFields {
     sync_execution_id: string | null;
     execution_id: string | null;
     entity_type?: string | null;
+    customer_id?: number | null;
     duration_seconds?: number;
     entity_stats?: string;
     message?: string;
