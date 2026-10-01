@@ -21,6 +21,7 @@ import {
     bindCreditInsurancePrisma,
     enrichCustomerTopUpFields,
     AdminBackfillBlockingRewriteError,
+    CreditPoolParentHistoryConflictError,
     computeCreditPoolDashboardRollup,
     ensureCustomerCapacityGapStored,
     fetchAtRiskInvoiceInputsByCustomerMap,
@@ -915,7 +916,13 @@ export class CustomersService {
                             }
                         );
                     }
-                    if (error instanceof AdminBackfillBlockingRewriteError) {
+                    if (
+                        error instanceof AdminBackfillBlockingRewriteError ||
+                        error instanceof CreditPoolParentHistoryConflictError ||
+                        (error instanceof Error &&
+                            error.name ===
+                                "CreditPoolParentHistoryConflictError")
+                    ) {
                         throw await this.conflictWhenCreditAsOfBackfillRunning(
                             accountId,
                             error.message
@@ -1540,7 +1547,8 @@ export class CustomersService {
             );
             if (
                 parentHistory.status === "running" ||
-                parentHistory.status === "paused"
+                parentHistory.status === "paused" ||
+                parentHistory.status === "syncing"
             ) {
                 creditHistoryRefresh =
                     parentHistory as unknown as Record<string, unknown>;
