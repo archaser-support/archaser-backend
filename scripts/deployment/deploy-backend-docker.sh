@@ -36,8 +36,9 @@ Staging and production share ONE compose Mongo (staging owns the service/volume)
   Staging:  MONGODB_URI=mongodb://mongo:27017/archaser_staging
   Production: MONGODB_URI=mongodb://mongo:27017/archaser
 Compose overrides those URIs on api/worker/connectors. Production joins network
-archaser-mongo-shared (created when staging mongo is up). After deploy, re-run
-grafana/start-staging.sh or start-production.sh so the Mongo datasource updates.
+archaser-mongo-shared (created when staging mongo is up). Monitoring is started
+via grafana/start-staging.sh or start-production.sh (renders Mongo datasource,
+sets host ports 3200/3201).
 EOF
 }
 
@@ -354,10 +355,6 @@ recreate_backend_stack() {
     fi
 }
 
-monitoring_stack_exists() {
-    "${DOCKER[@]}" ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'archaser-loki'
-}
-
 # EC2 checkout must match remote before build. Without this, `npm run build` compiles stale sources.
 sync_git_checkout() {
     if [[ "$SKIP_GIT_PULL" == "true" ]]; then
@@ -614,17 +611,13 @@ fi
 ENV_SOURCE="$BACKEND_DIR/.env.$ENVIRONMENT"
 ENV_TARGET="$BACKEND_DIR/.env"
 COMPOSE_BACKEND="$BACKEND_DIR/docker-compose.backend.$ENVIRONMENT.yml"
-COMPOSE_MONITORING="$BACKEND_DIR/grafana/docker-compose.logging.yml"
 
 if [[ "$ENVIRONMENT" == "staging" ]]; then
     BACKEND_PROJECT="archaser-backend-staging"
-    MONITORING_PROJECT="archaser-monitoring-staging"
 elif [[ "$ENVIRONMENT" == "production" ]]; then
     BACKEND_PROJECT="archaser-backend-production"
-    MONITORING_PROJECT="archaser-monitoring-production"
 else
     BACKEND_PROJECT="archaser-backend"
-    MONITORING_PROJECT="archaser-monitoring"
 fi
 
 require_cmd docker
@@ -700,38 +693,20 @@ log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
 recreate_backend_stack
 
 if [[ "$NO_GRAFANA" != "true" ]]; then
-    if [[ ! -f "$COMPOSE_MONITORING" ]]; then
-        log "Monitoring compose not found; skipping"
+    GRAFANA_START="$BACKEND_DIR/grafana/start-${ENVIRONMENT}.sh"
+    if [[ ! -f "$GRAFANA_START" ]]; then
+        log "Monitoring start script not found ($GRAFANA_START); skipping"
     else
-        # Always `up -d` so compose/config changes (Loki schema, datasources, root URL) apply.
-        # Name conflicts happen when an earlier `docker compose` used a different --project-name.
+        # Prefer start-*.sh over raw compose: it renders mongodb.generated.yaml
+        # (missing file → Docker bind-mounts a directory → Grafana crash-loop → 502)
+        # and sets GRAFANA_HOST_PORT 3200 (staging) / 3201 (production).
         log "Starting/updating monitoring stack (Grafana + Loki + Prometheus + Promtail)"
         for c in archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail; do
             "${DOCKER[@]}" rm -f "$c" >/dev/null 2>&1 || true
         done
-        MONITORING_ENV="$ENVIRONMENT"
-        BACKEND_DOCKER_NETWORK="${BACKEND_PROJECT}_default"
-        if [[ "$ENVIRONMENT" == "staging" ]]; then
-            GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
-            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.staging.archaser.com}"
-        elif [[ "$ENVIRONMENT" == "production" ]]; then
-            GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}"
-            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.portal.archaser.com}"
-        fi
-        # `env VAR=… docker_compose` fails — docker_compose is a bash function, not a binary.
-        if ! MONITORING_ENV="$MONITORING_ENV" \
-            BACKEND_DOCKER_NETWORK="$BACKEND_DOCKER_NETWORK" \
-            GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-}" \
-            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-}" \
-            docker_compose \
-            --project-name "$MONITORING_PROJECT" \
-            --env-file "$ENV_TARGET" \
-            -f "$COMPOSE_MONITORING" \
-            up -d --remove-orphans; then
+        if ! bash "$GRAFANA_START"; then
             echo "Warning: monitoring stack failed to start; Nest stack is already up."
-            if monitoring_stack_exists; then
-                log "Partial monitoring containers still present — check: docker logs archaser-loki"
-            fi
+            echo "Check: docker logs archaser-grafana-${ENVIRONMENT} --tail 50"
         fi
     fi
 else
