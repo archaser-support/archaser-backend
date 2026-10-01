@@ -1,5 +1,10 @@
 import type { PrismaClient } from "@prisma/client";
 import {
+    INVOICE_PAID_TOLERANCE,
+    isInvoiceFullyCoveredByFuturePayments,
+    resolveInvoicePaidTolerance,
+} from "@archaser/billing-connector";
+import {
     bindCreditInsurancePrisma,
     sweepReportingBreachForOverdueInvoiceIds,
     syncCustomerInsuranceFields,
@@ -145,6 +150,77 @@ async function createOpenCollectionPeriods(
     }
 
     return { created, skippedCreditOnly };
+}
+
+/**
+ * Keep customers that still have at least one Overdue invoice not fully covered
+ * by linked future-dated payments (Paid-close math). Due→Overdue already ran.
+ */
+async function filterCustomersEligibleForCollectionOpen(
+    prisma: PrismaClient,
+    customerIds: number[],
+    asOf: Date = new Date()
+): Promise<number[]> {
+    if (customerIds.length === 0) {
+        return [];
+    }
+
+    const overdueInvoices = await prisma.invoice.findMany({
+        where: {
+            customer_id: { in: customerIds },
+            status: "Overdue",
+        },
+        select: {
+            id: true,
+            customer_id: true,
+            account_id: true,
+            customer_net_amount: true,
+            InvoicePayment: {
+                select: {
+                    payment_date: true,
+                    customer_amount: true,
+                },
+            },
+        },
+    });
+
+    const accountIds = Array.from(
+        new Set(overdueInvoices.map((invoice) => invoice.account_id))
+    );
+    const toleranceByAccount = new Map<number, number>();
+    await Promise.all(
+        accountIds.map(async (accountId) => {
+            toleranceByAccount.set(
+                accountId,
+                await resolveInvoicePaidTolerance(prisma, accountId)
+            );
+        })
+    );
+
+    const eligibleCustomerIds = new Set<number>();
+    for (const invoice of overdueInvoices) {
+        if (invoice.customer_id == null) {
+            continue;
+        }
+        if (eligibleCustomerIds.has(invoice.customer_id)) {
+            continue;
+        }
+        const paidTolerance =
+            toleranceByAccount.get(invoice.account_id) ??
+            INVOICE_PAID_TOLERANCE;
+        if (
+            !isInvoiceFullyCoveredByFuturePayments(
+                invoice,
+                invoice.InvoicePayment,
+                paidTolerance,
+                asOf
+            )
+        ) {
+            eligibleCustomerIds.add(invoice.customer_id);
+        }
+    }
+
+    return customerIds.filter((id) => eligibleCustomerIds.has(id));
 }
 
 /**
@@ -331,16 +407,21 @@ export async function handleOverdueInvoices(
         processStats.customersActivated = customersToActivate.length;
     }
 
-    const customersNeedingCollectionPeriod = affectedCustomerIds.filter(
-        (id) => {
+    const customersNeedingCollectionPeriodCandidates =
+        affectedCustomerIds.filter((id) => {
             const amounts = outstandingMap.get(id);
             if (!amounts) return false;
             if ((amounts.no_of_overdue_invoices ?? 0) <= 0) return false;
             if ((amounts.total_outstanding_amount ?? 0) <= 0) return false;
             if (openPeriodCustomerIds.has(id)) return false;
             return true;
-        }
-    );
+        });
+
+    const customersNeedingCollectionPeriod =
+        await filterCustomersEligibleForCollectionOpen(
+            prisma,
+            customersNeedingCollectionPeriodCandidates
+        );
 
     if (customersNeedingCollectionPeriod.length > 0) {
         const withInvoices = await prisma.customer.findMany({

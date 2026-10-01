@@ -531,6 +531,7 @@ export {
     bulkLinkDeferredPayments,
     linkDeferredPaymentAndRecalc,
     linkDeferredPaymentsAndRecalcBatch,
+    paymentsEffectiveAsOf,
     recalculateInvoicesFromLinkedPayments,
     resolveInvoicePaidRecalcOptions,
     type BulkDeferredPaymentLink,
@@ -557,6 +558,12 @@ export {
     normalizeInvoicePaidTolerance,
     resolveInvoicePaidTolerance,
 } from "./invoice/invoicePaidTolerance";
+
+export {
+    isInvoiceFullyCoveredByFuturePayments,
+    type FutureCoverInvoice,
+    type FutureCoverPayment,
+} from "./invoice/invoiceFuturePaymentCover";
 
 export {
     calendarDateFromTimestamp,
