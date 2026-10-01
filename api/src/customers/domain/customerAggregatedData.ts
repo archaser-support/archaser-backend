@@ -37,10 +37,14 @@ export type AggregatedDataMemberClaimCounts = {
 
 export type AggregatedDataCreditKpisInput = {
     root_customer_id: number;
+    /** @deprecated Prefer rollup totals; kept for dual-currency gap slots. */
     approved_limit: number | null;
     approved_limit_currency: string | null;
     effective_limit: number | null;
+    /** Shared / root policy capacity gap (pool total). */
     capacity_gap_amount: number | null;
+    /** Pool at-risk over all member invoices (root-owned total). */
+    at_risk_exposure: number | null;
     uninsured_amount: number | null;
     capacity_gap_amount1: number | null;
     capacity_gap_currency1: string | null;
@@ -58,6 +62,19 @@ export type AggregatedDataCreditMemberInput = {
     type: "Person" | "Company";
     name: string;
     parent_customer_id: number | null;
+    /** Account-currency open Due (denormalized). */
+    total_due_amount: number | null;
+    /** Account-currency open Overdue (denormalized). */
+    total_overdue_amount: number | null;
+    /** Open invoice capacity-gap attribution for this member (account currency). */
+    capacity_gap_amount: number | null;
+    /** At-risk exposure for this member (account currency). */
+    at_risk_exposure: number | null;
+    number_of_overdue_invoices?: number | null;
+    no_of_due_invoices?: number | null;
+    /** Prefer ungated oldest overdue date when present. */
+    oldest_invoice_overdue_date_all?: Date | string | null;
+    oldest_invoice_overdue_date?: Date | string | null;
 };
 
 function num(value: number | null | undefined): number {
@@ -285,6 +302,16 @@ export function buildCreditAggregatedBlock(
 ) {
     let openClaimsCount = 0;
     let totalClaimsCount = 0;
+    let totalDueAmount = 0;
+    let totalOverdueAmount = 0;
+    let numberOfOverdueInvoices = 0;
+    let numberOfDueInvoices = 0;
+    let oldestOverdueMs: number | null = null;
+
+    const rootId = kpis.root_customer_id;
+    const rootPolicyGap = Math.max(0, num(kpis.capacity_gap_amount));
+    const poolAtRisk = Math.max(0, num(kpis.at_risk_exposure));
+
     const memberRows = members.map((member) => {
         const counts = claimCountsByCustomer.get(member.id) ?? {
             customer_id: member.id,
@@ -293,12 +320,48 @@ export function buildCreditAggregatedBlock(
         };
         openClaimsCount += counts.open_claims_count;
         totalClaimsCount += counts.total_claims_count;
+
+        const totalDue = num(member.total_due_amount);
+        const totalOverdue = num(member.total_overdue_amount);
+        const totalAr = totalDue + totalOverdue;
+        const isRoot = member.id === rootId;
+        // Pool capacity gap is root-only; children always show 0.
+        const capacityGap = isRoot
+            ? rootPolicyGap
+            : 0;
+        // Root shows pool at-risk; children show terms-breach-only (caller).
+        const atRiskExposure = isRoot
+            ? poolAtRisk
+            : Math.max(0, num(member.at_risk_exposure));
+
+        totalDueAmount += totalDue;
+        totalOverdueAmount += totalOverdue;
+        numberOfOverdueInvoices += num(member.number_of_overdue_invoices);
+        numberOfDueInvoices += num(member.no_of_due_invoices);
+
+        const oldestRaw =
+            member.oldest_invoice_overdue_date_all ??
+            member.oldest_invoice_overdue_date ??
+            null;
+        if (oldestRaw != null) {
+            const ms = new Date(oldestRaw).getTime();
+            if (Number.isFinite(ms)) {
+                oldestOverdueMs =
+                    oldestOverdueMs == null ? ms : Math.min(oldestOverdueMs, ms);
+            }
+        }
+
         return {
             id: member.id,
             customer_number: member.customer_number,
             name: member.name,
             type: member.type,
             parent_customer_id: member.parent_customer_id,
+            total_due_amount: totalDue,
+            total_overdue_amount: totalOverdue,
+            total_ar: totalAr,
+            capacity_gap_amount: capacityGap,
+            at_risk_exposure: atRiskExposure,
             open_claims_count: counts.open_claims_count,
             total_claims_count: counts.total_claims_count,
         };
@@ -309,7 +372,17 @@ export function buildCreditAggregatedBlock(
         approved_limit: kpis.approved_limit,
         approved_limit_currency: kpis.approved_limit_currency,
         effective_limit: kpis.effective_limit,
-        capacity_gap_amount: kpis.capacity_gap_amount,
+        total_due_amount: totalDueAmount,
+        total_overdue_amount: totalOverdueAmount,
+        total_ar: totalDueAmount + totalOverdueAmount,
+        number_of_overdue_invoices: numberOfOverdueInvoices,
+        no_of_due_invoices: numberOfDueInvoices,
+        oldest_invoice_overdue_date:
+            oldestOverdueMs != null
+                ? new Date(oldestOverdueMs).toISOString()
+                : null,
+        capacity_gap_amount: rootPolicyGap,
+        at_risk_exposure: poolAtRisk,
         uninsured_amount: kpis.uninsured_amount,
         capacity_gap_amount1: kpis.capacity_gap_amount1,
         capacity_gap_currency1: kpis.capacity_gap_currency1,

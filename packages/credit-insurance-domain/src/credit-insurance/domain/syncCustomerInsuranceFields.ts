@@ -49,6 +49,8 @@ type SyncCoreResult = {
     accountId: number | null;
     previousBlock: boolean;
     overdueBlock: boolean;
+    /** Invoice-derived block for this customer only (ignores rolled-up shell OR). */
+    ownOverdueBlock: boolean;
 };
 
 async function syncCustomerInsuranceFieldsCore(
@@ -204,12 +206,20 @@ async function syncCustomerInsuranceFieldsCore(
 
     const previousBlock = customerRow?.overdue_block === true;
 
+    // Shell parents (have children) never derive overdue_block from their own
+    // invoices — rollupCreditPoolBreachToRoot ORs leaf MEP onto them. Writing
+    // the invoice-derived false here would wipe the parent notification.
+    const childCount = await dbClient.customer.count({
+        where: { parent_customer_id: customerId },
+    });
+    const isShellParent = childCount > 0;
+
     await dbClient.customer.update({
         where: { id: customerId },
         data: {
             oldest_invoice_overdue_date: oldestDue,
             oldest_invoice_overdue_date_all: oldestDueAll,
-            overdue_block: overdueBlock,
+            ...(isShellParent ? {} : { overdue_block: overdueBlock }),
         },
     });
 
@@ -230,7 +240,9 @@ async function syncCustomerInsuranceFieldsCore(
     return {
         accountId: customerRow?.account_id ?? null,
         previousBlock,
-        overdueBlock,
+        // Shells keep the prior rolled-up flag until rollup recomputes.
+        overdueBlock: isShellParent ? previousBlock : overdueBlock,
+        ownOverdueBlock: overdueBlock,
     };
 }
 
@@ -294,4 +306,34 @@ export async function syncCustomerInsuranceFields(
     }
 
     await syncCreditInsuranceGapPipelineForCustomer(customerId, { invoiceIds });
+
+    if (coreResult.accountId != null) {
+        const { resolveCustomerCreditPoolRoot } = await import(
+            "./parentCustomerCreditInheritance"
+        );
+        const { rollupCreditPoolBreachToRoot } = await import(
+            "./rollupCreditPoolBreachToRoot"
+        );
+        const rootId = await resolveCustomerCreditPoolRoot(customerId);
+        const leafOwn =
+            customerId === rootId
+                ? undefined
+                : new Map([[customerId, coreResult.ownOverdueBlock]]);
+        await rollupCreditPoolBreachToRoot({
+            customerId,
+            accountId: coreResult.accountId,
+            rootOwnOverdueBlock:
+                customerId === rootId
+                    ? coreResult.ownOverdueBlock
+                    : undefined,
+            leafOwnOverdueBlockById: leafOwn,
+        });
+        const { rollupCreditPoolOpenArAfterMemberChange } = await import(
+            "./rollupCreditPoolOpenArToRoot"
+        );
+        await rollupCreditPoolOpenArAfterMemberChange({
+            customerId,
+            accountId: coreResult.accountId,
+        });
+    }
 }

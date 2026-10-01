@@ -429,5 +429,51 @@ export async function recalculateCustomerAmounts(
         }
     });
 
+    // Shell parents store rolled-up descendant AR for header cards / CTP usage.
+    try {
+        const { rollupCreditPoolOpenArAfterMemberChange } = await import(
+            "@archaser/credit-insurance-domain"
+        );
+        const accountRows = await db.customer.findMany({
+            where: { id: { in: uniqueIds } },
+            select: { id: true, account_id: true, parent_customer_id: true },
+        });
+        const rollupTargets = new Set<number>();
+        for (const row of accountRows) {
+            rollupTargets.add(row.id);
+            if (row.parent_customer_id != null) {
+                rollupTargets.add(row.parent_customer_id);
+            }
+        }
+        const accountByCustomer = new Map(
+            accountRows.map((r) => [r.id, r.account_id])
+        );
+        for (const targetId of rollupTargets) {
+            const accountId = accountByCustomer.get(targetId);
+            if (accountId == null) {
+                const parent = await db.customer.findUnique({
+                    where: { id: targetId },
+                    select: { account_id: true },
+                });
+                if (parent?.account_id == null) {
+                    continue;
+                }
+                await rollupCreditPoolOpenArAfterMemberChange({
+                    customerId: targetId,
+                    accountId: parent.account_id,
+                    dbClient: db as never,
+                });
+                continue;
+            }
+            await rollupCreditPoolOpenArAfterMemberChange({
+                customerId: targetId,
+                accountId,
+                dbClient: db as never,
+            });
+        }
+    } catch {
+        // Non-fatal: individual customer amounts already persisted.
+    }
+
     return result;
 }

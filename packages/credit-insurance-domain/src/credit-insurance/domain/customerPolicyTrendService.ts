@@ -1604,6 +1604,35 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         customerIds: options?.customerIds,
     });
 
+    // Shell parents: persist pool AR / gap / at-risk onto root CTP for this day.
+    try {
+        const { customerIdsWithChildren } = await import(
+            "./creditPoolShellGuards"
+        );
+        const { overlayPoolCapacityGapAndAtRiskOnTrends } = await import(
+            "./syncCreditPoolPolicyTrendsAfterParentChange"
+        );
+        const writtenCustomerIds =
+            options?.customerIds?.length && options.customerIds.length > 0
+                ? options.customerIds
+                : upsertRows.map((row) => row.customerId);
+        const shellIds = await customerIdsWithChildren(
+            writtenCustomerIds,
+            prisma
+        );
+        if (shellIds.size > 0) {
+            await overlayPoolCapacityGapAndAtRiskOnTrends({
+                accountId,
+                rootCustomerIds: [...shellIds],
+                fromDate: snapshotDate,
+                toDate: snapshotDate,
+                dbClient: prisma,
+            });
+        }
+    } catch {
+        // Non-fatal: per-customer CTP rows already upserted.
+    }
+
     return upserted;
 }
 

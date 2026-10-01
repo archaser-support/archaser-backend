@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { customerIdsWithChildren } from "@archaser/credit-insurance-domain";
 import { collectPaymentReferenceAliases } from "../payment/connectorPaymentSynthetics";
 import { recalculateInvoicesFromLinkedPayments } from "../invoice/linkDeferredPaymentAndRecalc";
 import { parseErpDateOnly } from "../utils/connectorFieldUtils";
@@ -335,6 +336,7 @@ export async function importPayments(
     }
 
     const customerIds = [...new Set(winners.map((row) => row.customerId))];
+    const shellParents = await customerIdsWithChildren(customerIds, prisma);
     const invoiceNumbers = [
         ...new Set(
             winners
@@ -517,6 +519,15 @@ export async function importPayments(
     };
 
     for (const winner of winners) {
+        if (shellParents.has(winner.customerId)) {
+            results[winner.index] = {
+                index: winner.index,
+                success: false,
+                message:
+                    "Customers with children cannot have invoices or payments",
+            };
+            continue;
+        }
         const key = `${winner.customerId}::${winner.effectiveReference}`;
         const existingPayment = matchExistingPayment(
             existingByCustomer.get(winner.customerId) ?? [],

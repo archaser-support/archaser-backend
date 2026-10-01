@@ -27,6 +27,7 @@ import {
     isUncoveredExposureCustomer,
 } from "./policyExclusion";
 import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
+import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
 import { syncCreditInsuranceGapPipelineForCustomer } from "./syncCreditInsuranceGapPipeline";
 
 const POLICY_GAP_SELECT = {
@@ -48,13 +49,6 @@ const POLICY_GAP_SELECT = {
     outdated_dcl: true,
     retained_capacity_gap: true,
 } satisfies Prisma.CustomerPolicySelect;
-
-function startOfTodayUtc(): Date {
-    const now = new Date();
-    return new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-    );
-}
 
 function normalizeCurrency(code: string | null | undefined): string | null {
     const value = code?.trim().toUpperCase();
@@ -460,10 +454,18 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
                           },
                       })
                   )?.CustomerPolicy ?? [];
+            // Pool capacity gap is root-only; linked children store null/0.
+            const memberGapData =
+                freezeSingleRow || memberId === rootCustomerId
+                    ? gapWriteData
+                    : {
+                          ...nullGapPayload(),
+                          retained_capacity_gap: null,
+                      };
             for (const row of memberPolicies) {
                 await dbClient.customerPolicy.update({
                     where: { id: row.id },
-                    data: gapWriteData,
+                    data: memberGapData,
                 });
             }
         }

@@ -603,6 +603,42 @@ export async function runCreditAsOfBackfillJob(
         }
 
         await flushCheckpoint(true);
+
+        // After full history rewrite, re-apply credit-pool shell overlays so
+        // parent Dashboard / Portfolio charts keep leaf AR under each shell.
+        try {
+            const shellRows = await db.customer.findMany({
+                where: {
+                    account_id: accountId,
+                    ChildCustomers: { some: {} },
+                },
+                select: { id: true },
+            });
+            if (shellRows.length > 0 && job.from_date && job.to_date) {
+                const { overlayPoolCapacityGapAndAtRiskOnTrends } =
+                    await import("./syncCreditPoolPolicyTrendsAfterParentChange");
+                await overlayPoolCapacityGapAndAtRiskOnTrends({
+                    accountId,
+                    rootCustomerIds: shellRows.map((row) => row.id),
+                    fromDate: toUtcDayStart(job.from_date),
+                    toDate: toUtcDayStart(job.to_date),
+                    dbClient: db,
+                });
+            }
+        } catch (overlayError) {
+            // Do not fail the Generate job; live today overlay already ran on parent save.
+            console.error(
+                "[ParentCustomerCredit] post-backfill pool overlay failed",
+                {
+                    accountId,
+                    errorMessage:
+                        overlayError instanceof Error
+                            ? overlayError.message
+                            : String(overlayError),
+                }
+            );
+        }
+
         await db.$executeRaw`
             UPDATE "AccountBackgroundJob"
             SET status = 'complete',
