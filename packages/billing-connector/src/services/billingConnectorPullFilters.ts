@@ -4,6 +4,7 @@ import {
     andODataFilters,
     compileEntityPullFilter,
     escapeODataStringLiteral,
+    stripFieldFromPullFilterOData,
 } from "./billingConnectorPullFilterCompile";
 
 export type PullFilterOperator =
@@ -118,6 +119,58 @@ function normalizeConfig(
     return null;
 }
 
+/**
+ * Fields that exist on CUSTOMERS but not on CUSTPERSONNEL. Drop from Contact
+ * pull filters (CTYPE2NAME belongs on Customer; Contact scopes via CUSTNAME /
+ * imported customers).
+ */
+const CONTACT_STRIP_FIELDS = ["UDATE", "CTYPE2NAME", "CTYPE2CODE", "CDES", "CUSTDES"] as const;
+
+/**
+ * CUSTOMERS / CUSTPERSONNEL have no UDATE. Customer keeps CTYPE2NAME; Contact
+ * also drops CUSTOMERS-only fields. Date floors belong on Invoice/Payment.
+ */
+export function sanitizeCustomerContactPullFilter(
+    config: EntityPullFilterConfig | null | undefined,
+    importType: "Customer" | "Contact" = "Customer"
+): EntityPullFilterConfig | null {
+    if (!config) {
+        return null;
+    }
+    const stripFields =
+        importType === "Contact"
+            ? CONTACT_STRIP_FIELDS
+            : (["UDATE"] as const);
+    const stripSet = new Set(
+        stripFields.map((name) => name.toUpperCase())
+    );
+    if (config.mode === "rules") {
+        const rules = config.rules.filter(
+            (rule) => !stripSet.has(rule.field.trim().toUpperCase())
+        );
+        return rules.length > 0 ? { mode: "rules", rules } : null;
+    }
+    let odata: string | null = config.odata;
+    for (const field of stripFields) {
+        odata = stripFieldFromPullFilterOData(odata, field);
+    }
+    return odata ? { mode: "advanced", odata } : null;
+}
+
+function normalizeConfigForEntity(
+    importType: ImportType,
+    value: unknown
+): EntityPullFilterConfig | null {
+    const normalized = normalizeConfig(value);
+    if (
+        (importType === "Customer" || importType === "Contact") &&
+        normalized
+    ) {
+        return sanitizeCustomerContactPullFilter(normalized, importType);
+    }
+    return normalized;
+}
+
 export function parsePullFiltersMap(raw: unknown): PullFiltersMap {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
         return {};
@@ -127,7 +180,7 @@ export function parsePullFiltersMap(raw: unknown): PullFiltersMap {
         if (!isImportType(key)) {
             continue;
         }
-        const normalized = normalizeConfig(value);
+        const normalized = normalizeConfigForEntity(key, value);
         if (normalized) {
             out[key] = normalized;
         }
@@ -148,7 +201,7 @@ export function mergePullFiltersPatch(
         if (!(key in patch)) {
             continue;
         }
-        const normalized = normalizeConfig(patch[key]);
+        const normalized = normalizeConfigForEntity(key, patch[key]);
         if (normalized) {
             next[key] = normalized;
         } else {
