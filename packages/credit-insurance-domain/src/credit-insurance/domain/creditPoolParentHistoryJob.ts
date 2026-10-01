@@ -18,11 +18,17 @@ import {
     type CreditAsOfBackfillStatus,
 } from "./creditAsOfBackfillJob";
 import {
+    CreditPoolParentHistoryConflictError,
+    enrichParentHistoryJobView,
+} from "./creditPoolParentChangeProgress";
+import {
     elapsedMsSince,
 } from "./creditPoolParentChangeTiming";
 import { customerIdsWithChildren } from "./creditPoolShellGuards";
 import { createCreditPoolMembershipCache } from "./parentCustomerCreditInheritance";
 import { toUtcDateOnly } from "./shared/insurancePolicyLifecycle";
+
+export { CreditPoolParentHistoryConflictError };
 
 const PARENT_HISTORY_JOB_KIND =
     ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_POOL_PARENT_HISTORY;
@@ -67,6 +73,7 @@ function normalizeStatus(
     raw: string | null | undefined
 ): CreditAsOfBackfillStatus {
     if (
+        raw === "syncing" ||
         raw === "running" ||
         raw === "paused" ||
         raw === "failed" ||
@@ -79,21 +86,25 @@ function normalizeStatus(
 
 function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
     if (!row) {
-        return {
-            status: "idle",
-            fromDate: null,
-            toDate: null,
-            checkpointDate: null,
-            daysTotal: 0,
-            daysDone: 0,
-            lastError: null,
-            requestedBy: null,
-            startedAt: null,
-            updatedAt: null,
-            avgSecondsPerDay: null,
-            estimatedSecondsRemaining: null,
-            pendingRewrite: null,
-        };
+        return enrichParentHistoryJobView(
+            {
+                status: "idle",
+                fromDate: null,
+                toDate: null,
+                checkpointDate: null,
+                daysTotal: 0,
+                daysDone: 0,
+                lastError: null,
+                requestedBy: null,
+                startedAt: null,
+                updatedAt: null,
+                avgSecondsPerDay: null,
+                estimatedSecondsRemaining: null,
+                pendingRewrite: null,
+            },
+            null,
+            null
+        );
     }
     const daysTotal = Number(row.days_total ?? 0);
     const daysDone = Number(row.days_done ?? 0);
@@ -112,21 +123,25 @@ function jobView(row: JobRow | null): CreditAsOfBackfillJobView {
         estimatedSecondsRemaining =
             avgSecondsPerDay * (daysTotal - daysDone);
     }
-    return {
-        status,
-        fromDate: toYmd(row.from_date),
-        toDate: toYmd(row.to_date),
-        checkpointDate: toYmd(row.checkpoint_date),
-        daysTotal,
-        daysDone,
-        lastError: row.last_error,
-        requestedBy: row.requested_by,
-        startedAt: row.started_at?.toISOString() ?? null,
-        updatedAt: row.updated_at?.toISOString() ?? null,
-        avgSecondsPerDay,
-        estimatedSecondsRemaining,
-        pendingRewrite: null,
-    };
+    return enrichParentHistoryJobView(
+        {
+            status,
+            fromDate: toYmd(row.from_date),
+            toDate: toYmd(row.to_date),
+            checkpointDate: toYmd(row.checkpoint_date),
+            daysTotal,
+            daysDone,
+            lastError: row.last_error,
+            requestedBy: row.requested_by,
+            startedAt: row.started_at?.toISOString() ?? null,
+            updatedAt: row.updated_at?.toISOString() ?? null,
+            avgSecondsPerDay,
+            estimatedSecondsRemaining,
+            pendingRewrite: null,
+        },
+        row.run_token,
+        row.status
+    );
 }
 
 async function loadJob(
@@ -161,15 +176,6 @@ export async function getCreditPoolParentHistoryJobStatus(
 ): Promise<CreditAsOfBackfillJobView> {
     const db = options?.dbClient ?? defaultPrisma;
     return jobView(await loadJob(accountId, db));
-}
-
-export class CreditPoolParentHistoryConflictError extends Error {
-    constructor(
-        message = "A parent-link credit history refresh is already running for this account"
-    ) {
-        super(message);
-        this.name = "CreditPoolParentHistoryConflictError";
-    }
 }
 
 async function dispatchRunner(accountId: number): Promise<void> {
@@ -211,7 +217,11 @@ export async function startCreditPoolParentHistoryJob(args: {
     }
 
     const existing = await loadJob(args.accountId, db);
-    if (existing?.status === "running") {
+    // `syncing` is the same Save request handing off to history — allow.
+    if (
+        existing?.status === "running" ||
+        existing?.status === "paused"
+    ) {
         throw new CreditPoolParentHistoryConflictError();
     }
 
