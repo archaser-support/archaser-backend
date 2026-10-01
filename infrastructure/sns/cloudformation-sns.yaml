@@ -57,7 +57,7 @@ Parameters:
     Default: ''
     Description: >-
       Grafana public base URL (no trailing slash). Empty uses Environment defaults:
-      production → https://grafana.production.archaser.com,
+      production → https://grafana.portal.archaser.com,
       staging → https://grafana.staging.archaser.com.
       Do not use https://grafana.archaser.com (that host serves the Next.js app).
 

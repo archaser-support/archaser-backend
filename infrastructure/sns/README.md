@@ -127,7 +127,7 @@ curl -X POST "YOUR_WEBHOOK_URL" \
         "summary": "Test alert from manual cURL",
         "description": "This is a test to verify the integration works"
       },
-      "generatorURL": "https://grafana.production.archaser.com"
+      "generatorURL": "https://grafana.portal.archaser.com"
     }],
     "groupLabels": { "alertname": "TestAlert" }
   }'
