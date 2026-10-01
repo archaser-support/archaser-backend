@@ -196,6 +196,14 @@ export {
     startCreditPoolParentHistoryJob,
 } from "./credit-insurance/domain/creditPoolParentHistoryJob";
 export {
+    PARENT_CHANGE_SYNC_STEPS,
+    beginCreditPoolParentChangeSyncProgress,
+    completeCreditPoolParentChangeSyncProgress,
+    failCreditPoolParentChangeSyncProgress,
+    setCreditPoolParentChangeSyncStep,
+    type ParentChangeSyncStep,
+} from "./credit-insurance/domain/creditPoolParentChangeProgress";
+export {
     asOfCustomerOverdueBlockAt,
     asOfTermsScopeKey,
     buildAsOfAtRiskInvoiceInputsByCustomerInAccountCurrencyFromLines,

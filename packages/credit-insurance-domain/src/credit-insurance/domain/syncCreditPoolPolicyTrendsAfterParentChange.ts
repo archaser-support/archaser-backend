@@ -402,6 +402,15 @@ export async function syncCreditPoolPolicyTrendsAfterParentChange(args: {
     const syncDaySpan = inclusiveUtcDaySpan(syncFromDate, toDate);
     const startedMs = Date.now();
 
+    const { setCreditPoolParentChangeSyncStep } = await import(
+        "./creditPoolParentChangeProgress"
+    );
+    await setCreditPoolParentChangeSyncStep({
+        accountId: args.accountId,
+        step: "ctp_today",
+        dbClient,
+    });
+
     const rewriteFn = args.rewriteCustomerAsOfRange ?? rewriteCustomerAsOfRange;
     let rewrite: { daysRewritten: number };
     try {
@@ -432,6 +441,11 @@ export async function syncCreditPoolPolicyTrendsAfterParentChange(args: {
     if (!args.skipPoolTrendOverlay) {
         const shellIds = await customerIdsWithChildren(customerIds, dbClient);
         if (shellIds.size > 0) {
+            await setCreditPoolParentChangeSyncStep({
+                accountId: args.accountId,
+                step: "ctp_overlay",
+                dbClient,
+            });
             const overlayStartedMs = Date.now();
             try {
                 await overlayPoolCapacityGapAndAtRiskOnTrends({
@@ -467,6 +481,11 @@ export async function syncCreditPoolPolicyTrendsAfterParentChange(args: {
             }));
 
     let creditDashboardDaysRewritten = 0;
+    await setCreditPoolParentChangeSyncStep({
+        accountId: args.accountId,
+        step: "cdp_today",
+        dbClient,
+    });
     const cdpStartedMs = Date.now();
     try {
         creditDashboardDaysRewritten = await rewriteCdp({
@@ -491,11 +510,18 @@ export async function syncCreditPoolPolicyTrendsAfterParentChange(args: {
 
     let asyncHistoryJob: import("./creditAsOfBackfillJob").CreditAsOfBackfillJobView | null =
         null;
+    // When skipAsyncHistoryJob, the caller starts history (and completes the
+    // syncing job) after breach / open-AR rollups.
     if (
         historyMode === "today_plus_async" &&
         !args.skipAsyncHistoryJob &&
         daySpan > syncDaySpan
     ) {
+        await setCreditPoolParentChangeSyncStep({
+            accountId: args.accountId,
+            step: "history",
+            dbClient,
+        });
         const jobStartedMs = Date.now();
         try {
             const { startCreditPoolParentHistoryJob } = await import(
@@ -522,7 +548,25 @@ export async function syncCreditPoolPolicyTrendsAfterParentChange(args: {
                     error instanceof Error ? error.message : String(error),
                 elapsedMs: elapsedMsSince(jobStartedMs),
             });
+            const { completeCreditPoolParentChangeSyncProgress } = await import(
+                "./creditPoolParentChangeProgress"
+            );
+            await completeCreditPoolParentChangeSyncProgress({
+                accountId: args.accountId,
+                dbClient,
+            });
         }
+    } else if (
+        historyMode === "today_plus_async" &&
+        !args.skipAsyncHistoryJob
+    ) {
+        const { completeCreditPoolParentChangeSyncProgress } = await import(
+            "./creditPoolParentChangeProgress"
+        );
+        await completeCreditPoolParentChangeSyncProgress({
+            accountId: args.accountId,
+            dbClient,
+        });
     }
 
     return {

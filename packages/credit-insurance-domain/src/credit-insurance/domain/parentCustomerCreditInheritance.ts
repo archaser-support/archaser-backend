@@ -564,103 +564,130 @@ export async function onParentCustomerIdChanged(args: {
         };
     }
 
-    // Fresh tree after parent FK write — share across remirror / sync / rollups.
-    const cache = createCreditPoolMembershipCache();
-
-    const options: ParentCustomerCreditInheritanceOptions & {
-        cache?: CreditPoolMembershipCache;
-    } = {
-        dbClient,
-        userId: args.userId,
-        skipInsuranceSync: args.skipInsuranceSync,
-        cache,
-    };
-
-    const remirroredRoots: number[] = [];
-    const mirroredCustomerIds: number[] = [];
-
-    if (args.nextParentId != null) {
-        // Connect / reparent: remirror entire new pool from its root.
-        const newRootId = await resolveCustomerCreditPoolRoot(
-            args.customerId,
-            dbClient,
-            cache
-        );
-        const result = await remirrorDescendantsFromRoot(
-            newRootId,
-            args.accountId,
-            options
-        );
-        remirroredRoots.push(newRootId);
-        mirroredCustomerIds.push(...result.mirroredCustomerIds);
-
-        // If we left an old mid-level tree, remirror that former subtree root
-        // only when the previous parent still exists as a distinct pool.
-        if (
-            args.previousParentId != null &&
-            args.previousParentId !== args.nextParentId
-        ) {
-            const oldRootId = await resolveCustomerCreditPoolRoot(
-                args.previousParentId,
-                dbClient,
-                cache
-            );
-            if (oldRootId !== newRootId) {
-                const oldResult = await remirrorDescendantsFromRoot(
-                    oldRootId,
-                    args.accountId,
-                    options
-                );
-                remirroredRoots.push(oldRootId);
-                mirroredCustomerIds.push(...oldResult.mirroredCustomerIds);
-            }
-        }
-    } else {
-        // Disconnect: leave last mirrored data on this customer; remirror its
-        // remaining descendants from it as the new root.
-        const result = await remirrorDescendantsFromRoot(
-            args.customerId,
-            args.accountId,
-            options
-        );
-        remirroredRoots.push(args.customerId);
-        mirroredCustomerIds.push(...result.mirroredCustomerIds);
-
-        if (args.previousParentId != null) {
-            const oldRootId = await resolveCustomerCreditPoolRoot(
-                args.previousParentId,
-                dbClient,
-                cache
-            );
-            if (oldRootId !== args.customerId) {
-                const oldResult = await remirrorDescendantsFromRoot(
-                    oldRootId,
-                    args.accountId,
-                    options
-                );
-                remirroredRoots.push(oldRootId);
-                mirroredCustomerIds.push(...oldResult.mirroredCustomerIds);
-            }
-        }
-    }
-
-    const { runCreditPoolParentChangeSideEffects } = await import(
-        "./runCreditPoolParentChangeSideEffects"
-    );
-    const sideEffects = await runCreditPoolParentChangeSideEffects({
+    const {
+        beginCreditPoolParentChangeSyncProgress,
+        failCreditPoolParentChangeSyncProgress,
+        setCreditPoolParentChangeSyncStep,
+    } = await import("./creditPoolParentChangeProgress");
+    await beginCreditPoolParentChangeSyncProgress({
         accountId: args.accountId,
-        customerId: args.customerId,
-        previousParentId: args.previousParentId,
-        nextParentId: args.nextParentId,
-        remirroredRoots,
-        dbClient,
-        cache,
         requestedBy: args.userId ?? null,
+        dbClient,
     });
 
-    return {
-        remirroredRoots,
-        mirroredCustomerIds,
-        asyncHistoryJob: sideEffects.asyncHistoryJob,
-    };
+    try {
+        // Fresh tree after parent FK write — share across remirror / sync / rollups.
+        const cache = createCreditPoolMembershipCache();
+
+        const options: ParentCustomerCreditInheritanceOptions & {
+            cache?: CreditPoolMembershipCache;
+        } = {
+            dbClient,
+            userId: args.userId,
+            skipInsuranceSync: args.skipInsuranceSync,
+            cache,
+        };
+
+        const remirroredRoots: number[] = [];
+        const mirroredCustomerIds: number[] = [];
+
+        await setCreditPoolParentChangeSyncStep({
+            accountId: args.accountId,
+            step: "remirror",
+            dbClient,
+        });
+
+        if (args.nextParentId != null) {
+            // Connect / reparent: remirror entire new pool from its root.
+            const newRootId = await resolveCustomerCreditPoolRoot(
+                args.customerId,
+                dbClient,
+                cache
+            );
+            const result = await remirrorDescendantsFromRoot(
+                newRootId,
+                args.accountId,
+                options
+            );
+            remirroredRoots.push(newRootId);
+            mirroredCustomerIds.push(...result.mirroredCustomerIds);
+
+            // If we left an old mid-level tree, remirror that former subtree root
+            // only when the previous parent still exists as a distinct pool.
+            if (
+                args.previousParentId != null &&
+                args.previousParentId !== args.nextParentId
+            ) {
+                const oldRootId = await resolveCustomerCreditPoolRoot(
+                    args.previousParentId,
+                    dbClient,
+                    cache
+                );
+                if (oldRootId !== newRootId) {
+                    const oldResult = await remirrorDescendantsFromRoot(
+                        oldRootId,
+                        args.accountId,
+                        options
+                    );
+                    remirroredRoots.push(oldRootId);
+                    mirroredCustomerIds.push(...oldResult.mirroredCustomerIds);
+                }
+            }
+        } else {
+            // Disconnect: leave last mirrored data on this customer; remirror its
+            // remaining descendants from it as the new root.
+            const result = await remirrorDescendantsFromRoot(
+                args.customerId,
+                args.accountId,
+                options
+            );
+            remirroredRoots.push(args.customerId);
+            mirroredCustomerIds.push(...result.mirroredCustomerIds);
+
+            if (args.previousParentId != null) {
+                const oldRootId = await resolveCustomerCreditPoolRoot(
+                    args.previousParentId,
+                    dbClient,
+                    cache
+                );
+                if (oldRootId !== args.customerId) {
+                    const oldResult = await remirrorDescendantsFromRoot(
+                        oldRootId,
+                        args.accountId,
+                        options
+                    );
+                    remirroredRoots.push(oldRootId);
+                    mirroredCustomerIds.push(...oldResult.mirroredCustomerIds);
+                }
+            }
+        }
+
+        const { runCreditPoolParentChangeSideEffects } = await import(
+            "./runCreditPoolParentChangeSideEffects"
+        );
+        const sideEffects = await runCreditPoolParentChangeSideEffects({
+            accountId: args.accountId,
+            customerId: args.customerId,
+            previousParentId: args.previousParentId,
+            nextParentId: args.nextParentId,
+            remirroredRoots,
+            dbClient,
+            cache,
+            requestedBy: args.userId ?? null,
+        });
+
+        return {
+            remirroredRoots,
+            mirroredCustomerIds,
+            asyncHistoryJob: sideEffects.asyncHistoryJob,
+        };
+    } catch (error) {
+        await failCreditPoolParentChangeSyncProgress({
+            accountId: args.accountId,
+            errorMessage:
+                error instanceof Error ? error.message : String(error),
+            dbClient,
+        });
+        throw error;
+    }
 }
