@@ -12,6 +12,7 @@ import { resolveInvoicePaymentCloseDates } from "./invoicePaymentCloseDates";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
 import { shrinkOrDeleteVirtualPaymentsForInvoiceIds } from "../payment/virtualPaymentTrim";
+import { paymentsEffectiveAsOf } from "./paymentsEffectiveAsOf";
 
 export type LinkDeferredPaymentAndRecalcResult = {
     invoicePayment: InvoicePayment;
@@ -26,10 +27,17 @@ export {
     resolveInvoicePaidTolerance,
 } from "./invoicePaidTolerance";
 
+export { paymentsEffectiveAsOf } from "./paymentsEffectiveAsOf";
+
 export type InvoicePaidRecalcOptions = {
     isForcePaidClose?: (payment: ExtensionLinkedPayment) => boolean;
     /** When set, skips a BillingConnector lookup inside the transaction. */
     paidTolerance?: number;
+    /**
+     * Payments with `payment_date` after this instant are ignored for
+     * outstanding / total_paid / Paid. Defaults to now.
+     */
+    asOf?: Date;
 };
 
 /** Default Prisma interactive tx timeout is 5s; replay recalc can exceed that under load. */
@@ -133,9 +141,15 @@ function buildInvoicePaidUpdate(
     modifiedAt: Date,
     paidTolerance: number
 ): Prisma.InvoiceUpdateInput {
-    const paymentDates = linkedPayments.map((payment) => payment.payment_date);
+    const effectivePayments = paymentsEffectiveAsOf(
+        linkedPayments,
+        options?.asOf ?? modifiedAt
+    );
+    const paymentDates = effectivePayments.map(
+        (payment) => payment.payment_date
+    );
 
-    if (hasForcePaidClose(linkedPayments, options?.isForcePaidClose)) {
+    if (hasForcePaidClose(effectivePayments, options?.isForcePaidClose)) {
         const totalPaid = invoice.net_amount ?? 0;
         const totalCustomerPaid = invoice.customer_net_amount ?? 0;
         const dates = resolveInvoicePaymentCloseDates({
@@ -160,7 +174,7 @@ function buildInvoicePaidUpdate(
     let totalPaid = 0;
     let totalCustomerPaid = 0;
 
-    for (const payment of linkedPayments) {
+    for (const payment of effectivePayments) {
         totalPaid += payment.amount ?? 0;
         totalCustomerPaid += payment.customer_amount ?? 0;
     }

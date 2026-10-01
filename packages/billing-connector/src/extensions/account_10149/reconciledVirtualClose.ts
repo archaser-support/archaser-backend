@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 
+import { paymentsEffectiveAsOf } from "../../invoice/paymentsEffectiveAsOf";
 import { resolveInvoicePaidTolerance } from "../../invoice/invoicePaidTolerance";
 import { commitOps } from "../../import/bulkWrite";
 import { findManyInChunks, PRISMA_IN_CHUNK } from "../../import/prismaInChunks";
@@ -8,9 +9,11 @@ import {
     buildVirtualPaymentReference,
     findExistingVirtualPayment,
     invoiceCustomerNet,
+    isVirtualPaymentMethod,
     needsVirtualForRemaining,
     resolveVirtualAmounts,
     sumRealCustomerPaidExcludingVirtual,
+    type VirtualLinkedPayment,
 } from "../../payment/virtualPaymentTrim";
 
 export {
@@ -32,10 +35,32 @@ export type ReconciledVirtualCloseByNumbersResult = {
 };
 
 /**
+ * True when linked real (non-virtual) cash still has `payment_date` after `asOf`.
+ * Recon virtual fill / Paid must wait until that covering cash is effective.
+ */
+export function hasFutureDatedRealCash(
+    linked: VirtualLinkedPayment[],
+    asOf: Date = new Date()
+): boolean {
+    const realPayments = linked.filter(
+        (payment) =>
+            !isVirtualPaymentMethod(payment.payment_method) &&
+            payment.payment_date != null
+    ) as Array<VirtualLinkedPayment & { payment_date: Date }>;
+    if (realPayments.length === 0) {
+        return false;
+    }
+    return (
+        paymentsEffectiveAsOf(realPayments, asOf).length < realPayments.length
+    );
+}
+
+/**
  * Account 10149: for reconciled IDG_ARFNCITEMS4 invoices, upsert/delete one
  * virtual payment per invoice so remaining (full or partial) closes.
  * Handles positive AR invoices and credit notes (negative net / remaining).
  * Leftover math is shared with {@link shrinkOrDeleteVirtualPaymentsForInvoiceIds}.
+ * Skips (and removes premature virtuals) while covering cash is still future-dated.
  * Callers then recalc paid totals.
  */
 export async function applyReconciledVirtualCloses(
@@ -48,6 +73,8 @@ export async function applyReconciledVirtualCloses(
     userId?: string,
     options?: {
         onProgress?: (progress: { processed: number; total: number }) => void;
+        /** Settle as-of; future-dated real cash blocks virtual upsert. */
+        asOf?: Date;
     }
 ): Promise<Set<number>> {
     const byInvoice = new Map<number, ReconciledVirtualCloseCandidate>();
@@ -115,6 +142,7 @@ export async function applyReconciledVirtualCloses(
     const updates: Array<{ id: number; data: Record<string, unknown> }> = [];
     const deleteIds: number[] = [];
     const now = new Date();
+    const asOf = options?.asOf ?? now;
 
     for (const candidate of byInvoice.values()) {
         const invoice = invoiceById.get(candidate.invoiceId);
@@ -126,6 +154,16 @@ export async function applyReconciledVirtualCloses(
             linked,
             candidate.invoiceNumber
         );
+
+        // Covering cash still in the future: do not upsert virtual / force close.
+        // Drop any premature virtual so as-of recalc cannot Paid-settle early.
+        if (hasFutureDatedRealCash(linked, asOf)) {
+            if (existingVirtual) {
+                touchedInvoiceIds.add(candidate.invoiceId);
+                deleteIds.push(existingVirtual.id);
+            }
+            continue;
+        }
 
         const { realCustomerPaid, latestRealPaymentDate } =
             sumRealCustomerPaidExcludingVirtual(linked, existingVirtual);
@@ -256,6 +294,8 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
     paymentDate: Date = new Date(),
     options?: {
         onProgress?: (progress: { processed: number; total: number }) => void;
+        /** Settle as-of; future-dated real cash blocks virtual upsert. */
+        asOf?: Date;
     }
 ): Promise<ReconciledVirtualCloseByNumbersResult> {
     const unique = Array.from(
@@ -321,6 +361,7 @@ export async function applyReconciledVirtualClosesForInvoiceNumbers(
         candidates,
         userId,
         {
+            asOf: options?.asOf,
             onProgress: ({ processed, total }) => {
                 // Map candidate progress onto the queued-number total so the
                 // Settle closed invoices row keeps moving during writes.
