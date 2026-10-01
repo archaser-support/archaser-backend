@@ -28,9 +28,17 @@ if [[ -f "../.env.production" ]]; then
   ENV_FILE="../.env.production"
 fi
 
+MONGO_DS="$SCRIPT_DIR/provisioning/datasources/mongodb.generated.yaml"
+# Docker creates a directory here if the file was missing at first `compose up`
+# (bind-mount of a non-existent path). Grafana then crash-loops → nginx 502.
+if [[ -d "$MONGO_DS" ]]; then
+  echo "==> Removing bind-mount leftover directory at $MONGO_DS"
+  rm -rf "$MONGO_DS"
+fi
+
 echo "==> Rendering MongoDB Grafana datasource from MONGODB_URI in $ENV_FILE..."
 python3 "$SCRIPT_DIR/scripts/render-mongodb-datasource.py" --env-file "$ENV_FILE"
-if [[ ! -f "$SCRIPT_DIR/provisioning/datasources/mongodb.generated.yaml" ]]; then
+if [[ ! -f "$MONGO_DS" ]]; then
   echo "ERROR: mongodb.generated.yaml missing after render."
   exit 1
 fi
