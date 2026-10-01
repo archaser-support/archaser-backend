@@ -1,0 +1,28 @@
+# Checked-in example. start-*.sh overwrites promtail-config.generated.yaml
+# from promtail-config.template.yaml via render-promtail-config.py.
+#
+# Do not mount this file — compose uses promtail-config.generated.yaml.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: pm2_logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: pm2
+          service: archaser-core
+          host: staging
+          environment: staging
+          source: pm2-logs
+          customer_id: system
+          __path__: /var/log/pm2/*.log

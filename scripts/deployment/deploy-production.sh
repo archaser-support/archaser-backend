@@ -212,12 +212,16 @@ if [ $START_STEP -le 4 ]; then
     echo '-> Reloading Application ($PM2_APP_NAME)...'
     pm2 restart backend/ecosystem.config.js --only $PM2_APP_NAME --env production || pm2 start backend/ecosystem.config.js --only $PM2_APP_NAME --env production
 
-    echo '-> Reloading Grafana so provisioned dashboards/alert rules pick up backend/grafana/ changes...'
-    if [ -f backend/grafana/docker-compose.logging.yml ]; then
-      # Dashboards remount from host; alert rule YAML is only re-read on Grafana start.
-      MONITORING_ENV=production docker compose --env-file backend/.env -f backend/grafana/docker-compose.logging.yml up -d grafana --force-recreate
+    echo '-> Reloading Grafana/monitoring so provisioned dashboards/alert rules and scrape config pick up backend/grafana/ changes...'
+    if [ -f backend/grafana/start-production.sh ]; then
+      # Prefer start-production.sh: correct project name, BACKEND_DOCKER_NETWORK,
+      # ports 3201/9091/3101, Mongo + Promtail render, Prometheus recreate.
+      bash backend/grafana/start-production.sh
+    elif [ -f backend/grafana/docker-compose.logging.yml ]; then
+      echo 'WARNING: start-production.sh missing; falling back to compose grafana recreate'
+      MONITORING_ENV=production docker compose --project-name archaser-monitoring-production --env-file backend/.env -f backend/grafana/docker-compose.logging.yml up -d grafana --force-recreate
     else
-      echo 'backend/grafana/docker-compose.logging.yml missing; skip Grafana reload'
+      echo 'backend/grafana missing; skip Grafana reload'
     fi
 
     echo '-> Cleanup...'
