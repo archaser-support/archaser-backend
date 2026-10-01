@@ -26,12 +26,23 @@ export {
 } from "./credit-insurance/domain/creditDashboardReportEnrichment";
 export { getLimitWarningReport } from "./credit-insurance/domain/creditInsuranceDashboardService";
 export {
+    isTermsBreachReasonField,
+    isTermsBreachReasonFilter,
     reportedInvoicesMembershipWhere,
     reportingCountdownMembershipWhere,
     resolveReportingCountdownWindowDays,
+    TERMS_BREACH_OR,
+    TERMS_BREACH_REASON_FIELDS,
     termsBreachMembershipWhere,
+    type TermsBreachReasonField,
+    type TermsBreachReasonFilter,
 } from "./credit-insurance/domain/creditDashboardInvoiceMembership";
 export { customersScopedForCreditDashboard } from "./credit-insurance/domain/customerPolicyQueryHelpers";
+export {
+    excludeLinkedChildCustomersFilter,
+    portfolioRootCustomerIdsWhere,
+    withExcludeLinkedChildCustomers,
+} from "./credit-insurance/domain/customerPolicyQueryHelpers";
 export {
     resolveCreditCustomerMembershipIds,
     zeroLimitWarningMembershipWhere,
@@ -58,6 +69,7 @@ export {
 
 // --- Worker / connector entry points (currently loaded dynamically; slice 04 switches them to these) ---
 export { syncCustomerInsuranceFields } from "./credit-insurance/domain/syncCustomerInsuranceFields";
+export { computeOwnCustomerOverdueBlock } from "./credit-insurance/domain/computeOwnCustomerOverdueBlock";
 export {
     refreshCtvSnapshotsForInvoiceIds,
     refreshInsuranceTargetDatesForInvoiceIds,
@@ -89,6 +101,7 @@ export {
     invoiceOutstandingInLimitCurrency,
     parseImportDateToLocalCalendarDate,
     shouldSetReportingBreach,
+    computeCustomerRiskExposure,
 } from "./credit-insurance/domain/invoiceInsuranceFields";
 export {
     stampInvoiceInsuranceFieldsAsOf,
@@ -176,6 +189,13 @@ export {
     type PendingRewriteWindowView,
 } from "./credit-insurance/domain/creditAsOfBackfillJob";
 export {
+    __resetCreditPoolParentHistoryRunnersForTests,
+    CreditPoolParentHistoryConflictError,
+    getCreditPoolParentHistoryJobStatus,
+    runCreditPoolParentHistoryJob,
+    startCreditPoolParentHistoryJob,
+} from "./credit-insurance/domain/creditPoolParentHistoryJob";
+export {
     asOfCustomerOverdueBlockAt,
     asOfTermsScopeKey,
     buildAsOfAtRiskInvoiceInputsByCustomerInAccountCurrencyFromLines,
@@ -234,7 +254,7 @@ export {
     getReportingCountdownOpenReport,
     getTermsBreachReport,
     getZeroLimitWarningReport,
-    isTermsBreachReasonFilter,
+    fetchAtRiskInvoiceInputsByCustomerMap,
     type CreditReportListOptions,
 } from "./credit-insurance/domain/creditInsuranceDashboardService";
 export {
@@ -537,3 +557,53 @@ export {
     ensureCustomerCapacityGapStored,
     syncCreditInsuranceGapPipelineForCustomer,
 } from "./credit-insurance/domain/syncCreditInsuranceGapPipeline";
+export { syncInvoiceCapacityGapAmountsForCustomer } from "./credit-insurance/domain/syncInvoiceCapacityGapAmounts";
+export {
+    accountHasCreditInsurance,
+    createCreditPoolMembershipCache,
+    isLinkedCreditChild,
+    listDescendantCustomerIds,
+    onParentCustomerIdChanged,
+    remirrorCreditPoolAfterPolicyMutation,
+    remirrorDescendantsFromRoot,
+    resolveCreditPoolMemberIds,
+    resolveCustomerCreditPoolRoot,
+    resolveTopUpOwnerCustomerId,
+    type CreditPoolMembershipCache,
+    type ParentCustomerCreditInheritanceOptions,
+} from "./credit-insurance/domain/parentCustomerCreditInheritance";
+export {
+    attributeAmountsToCreditPoolRoots,
+    attributeInvoiceCustomerIdsToCreditPoolRoots,
+    attributeListsToCreditPoolRoots,
+    attributePrismaInvoiceCustomersToCreditPoolRoots,
+    applyInvoiceReportCustomerIdScope,
+    expandCreditPoolRootsToMembers,
+    expandRootIdSetToPoolMembers,
+    resolveInvoiceReportCustomerIds,
+    type CreditPoolMemberAttribution,
+} from "./credit-insurance/domain/creditPoolInvoiceAttribution";
+export { syncCreditPoolPolicyTrendsAfterParentChange } from "./credit-insurance/domain/syncCreditPoolPolicyTrendsAfterParentChange";
+export { overlayPoolCapacityGapAndAtRiskOnTrends } from "./credit-insurance/domain/syncCreditPoolPolicyTrendsAfterParentChange";
+export {
+    assertCustomerHasNoChildren,
+    assertParentIsShell,
+    CreditPoolShellError,
+    customerIdsWithChildren,
+    SHELL_CUSTOMER_HAS_CHILDREN_NO_AR,
+    SHELL_PARENT_HAS_INVOICES_OR_PAYMENTS,
+} from "./credit-insurance/domain/creditPoolShellGuards";
+export {
+    computeCreditPoolDashboardRollup,
+    type CreditPoolDashboardKpis,
+    type CreditPoolDashboardMemberAr,
+    type CreditPoolDashboardPolicyFields,
+    type CreditPoolDashboardRollup,
+} from "./credit-insurance/domain/computeCreditPoolDashboardRollup";
+export { runCreditPoolParentChangeSideEffects } from "./credit-insurance/domain/runCreditPoolParentChangeSideEffects";
+export { rollupCreditPoolBreachToRoot } from "./credit-insurance/domain/rollupCreditPoolBreachToRoot";
+export {
+    rollupCreditPoolOpenArAfterMemberChange,
+    rollupCreditPoolOpenArToShell,
+    sumOpenArRollupFromMembers,
+} from "./credit-insurance/domain/rollupCreditPoolOpenArToRoot";

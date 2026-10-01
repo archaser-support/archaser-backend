@@ -1604,6 +1604,35 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         customerIds: options?.customerIds,
     });
 
+    // Shell parents: persist pool AR / gap / at-risk onto root CTP for this day.
+    try {
+        const { customerIdsWithChildren } = await import(
+            "./creditPoolShellGuards"
+        );
+        const { overlayPoolCapacityGapAndAtRiskOnTrends } = await import(
+            "./syncCreditPoolPolicyTrendsAfterParentChange"
+        );
+        const writtenCustomerIds =
+            options?.customerIds?.length && options.customerIds.length > 0
+                ? options.customerIds
+                : upsertRows.map((row) => row.customerId);
+        const shellIds = await customerIdsWithChildren(
+            writtenCustomerIds,
+            prisma
+        );
+        if (shellIds.size > 0) {
+            await overlayPoolCapacityGapAndAtRiskOnTrends({
+                accountId,
+                rootCustomerIds: [...shellIds],
+                fromDate: snapshotDate,
+                toDate: snapshotDate,
+                dbClient: prisma,
+            });
+        }
+    } catch {
+        // Non-fatal: per-customer CTP rows already upserted.
+    }
+
     return upserted;
 }
 
@@ -1733,19 +1762,19 @@ export async function getCustomerPolicyUsageTrend(
 
     const dateStr = normalizeDateString(snapshotDate);
 
-    const scopedCustomerIds =
-        options?.businessUnitFilter &&
-        Object.keys(options.businessUnitFilter).length > 0
-            ? (
-                  await prisma.customer.findMany({
-                      where: {
-                          account_id: accountId,
-                          AND: [options.businessUnitFilter],
-                      },
-                      select: { id: true },
-                  })
-              ).map((row) => row.id)
-            : null;
+    const scopedCustomerIds = (
+        await prisma.customer.findMany({
+            where: {
+                account_id: accountId,
+                parent_customer_id: null,
+                ...(options?.businessUnitFilter &&
+                Object.keys(options.businessUnitFilter).length > 0
+                    ? { AND: [options.businessUnitFilter] }
+                    : {}),
+            },
+            select: { id: true },
+        })
+    ).map((row) => row.id);
 
     if (scopedCustomerIds?.length === 0) {
         return {
@@ -1941,9 +1970,11 @@ export async function getCustomerPolicyPortfolioTrend(
                 )
             )::bigint AS over_limit_count
         FROM "CustomerPolicyTrend" t
+        INNER JOIN "Customer" c ON c.id = t.customer_id
         WHERE t.account_id = ${accountId}
           AND t.snapshot_date >= ${fromDateUtc}::date
           AND t.snapshot_date <= ${toDateUtc}::date
+          AND c.parent_customer_id IS NULL
           AND (
             ${options?.policyId ?? null}::int IS NULL
             OR t.insurance_policy_id = ${options?.policyId ?? null}
