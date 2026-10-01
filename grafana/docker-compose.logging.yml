@@ -10,7 +10,7 @@
 # Override if your backend project name differs:
 #   BACKEND_DOCKER_NETWORK=archaser-backend-staging_default
 #
-# Host ports (avoid Nest 3002–3006 / api 3010):
+# Host ports (avoid Nest 3002–3006 / api 3010):GF_SECURITY_ADMIN_PASSWORD 
 #   Grafana UI  → 127.0.0.1:3200  (override GRAFANA_HOST_PORT)
 #   Prometheus  → 127.0.0.1:9090
 #   Loki        → 3100 (VPC-private / Lambda push only)
@@ -143,7 +143,7 @@ services:
     image: grafana/promtail:3.4.2
     container_name: archaser-promtail-${MONITORING_ENV:-staging}
     volumes:
-      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
+      - ./promtail-config.generated.yaml:/etc/promtail/config.yml:ro
       - ${PM2_LOGS_HOST_PATH:-/home/ubuntu/logs}:/var/log/pm2:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

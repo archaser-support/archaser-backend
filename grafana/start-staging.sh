@@ -43,6 +43,18 @@ if [[ ! -f "$MONGO_DS" ]]; then
   exit 1
 fi
 
+PROMTAIL_CFG="$SCRIPT_DIR/promtail-config.generated.yaml"
+if [[ -d "$PROMTAIL_CFG" ]]; then
+  echo "==> Removing bind-mount leftover directory at $PROMTAIL_CFG"
+  rm -rf "$PROMTAIL_CFG"
+fi
+echo "==> Rendering Promtail config for MONITORING_ENV=staging..."
+python3 "$SCRIPT_DIR/scripts/render-promtail-config.py" --monitoring-env staging
+if [[ ! -f "$PROMTAIL_CFG" ]]; then
+  echo "ERROR: promtail-config.generated.yaml missing after render."
+  exit 1
+fi
+
 echo "==> Starting Staging Grafana/Monitoring Stack using $ENV_FILE..."
 MONITORING_ENV=staging \
 GRAFANA_HOST_PORT=3200 \
@@ -54,7 +66,7 @@ BACKEND_DOCKER_NETWORK="$NETWORK_NAME" \
 MONGO_DOCKER_NETWORK="$MONGO_NETWORK_NAME" \
 docker compose --project-name archaser-monitoring-staging \
   --env-file "$ENV_FILE" \
-  -f docker-compose.logging.yml up -d
+  -f docker-compose.logging.yml up -d --force-recreate prometheus promtail grafana
 
 echo "==> Checking status of archaser-grafana-staging..."
 sleep 3

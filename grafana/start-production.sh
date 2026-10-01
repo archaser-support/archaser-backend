@@ -43,6 +43,18 @@ if [[ ! -f "$MONGO_DS" ]]; then
   exit 1
 fi
 
+PROMTAIL_CFG="$SCRIPT_DIR/promtail-config.generated.yaml"
+if [[ -d "$PROMTAIL_CFG" ]]; then
+  echo "==> Removing bind-mount leftover directory at $PROMTAIL_CFG"
+  rm -rf "$PROMTAIL_CFG"
+fi
+echo "==> Rendering Promtail config for MONITORING_ENV=production..."
+python3 "$SCRIPT_DIR/scripts/render-promtail-config.py" --monitoring-env production
+if [[ ! -f "$PROMTAIL_CFG" ]]; then
+  echo "ERROR: promtail-config.generated.yaml missing after render."
+  exit 1
+fi
+
 echo "==> Starting Production Grafana/Monitoring Stack using $ENV_FILE..."
 # Host .env* often still has GRAFANA_ROOT_URL=https://grafana.archaser.com (or
 # grafana.production…). Strip those so shell exports below always win for
@@ -63,8 +75,20 @@ docker compose --project-name archaser-monitoring-production \
   --env-file "$FILTERED_ENV" \
   -f docker-compose.logging.yml up -d --force-recreate grafana
 
-# Ensure the rest of the stack is up (loki/prometheus/db/promtail) without
-# always recreating them.
+# Recreate prometheus + promtail so scrape ports / environment labels pick up
+# generated configs; leave loki/db volumes intact.
+MONITORING_ENV=production \
+GRAFANA_HOST_PORT=3201 \
+PROMETHEUS_HOST_PORT=9091 \
+LOKI_HOST_PORT=3101 \
+GRAFANA_ROOT_URL=https://grafana.portal.archaser.com/ \
+GRAFANA_DOMAIN=grafana.portal.archaser.com \
+BACKEND_DOCKER_NETWORK="$NETWORK_NAME" \
+MONGO_DOCKER_NETWORK="$MONGO_NETWORK_NAME" \
+docker compose --project-name archaser-monitoring-production \
+  --env-file "$FILTERED_ENV" \
+  -f docker-compose.logging.yml up -d --force-recreate prometheus promtail
+
 MONITORING_ENV=production \
 GRAFANA_HOST_PORT=3201 \
 PROMETHEUS_HOST_PORT=9091 \

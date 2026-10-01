@@ -591,7 +591,7 @@ groups:
           type: errors
 
   # ============================================================
-  # Billing Connector — Production
+  # Billing Connector — Production (parity with staging alerts 1–11)
   # ============================================================
   - orgId: 1
     name: Billing Connector - Production
@@ -608,7 +608,7 @@ groups:
               to: 0
             datasourceUid: Prometheus
             model:
-              expr: increase(archaser_billing_connector_errors_total{instance="Production", error_type="auth"}[1h])
+              expr: sum(increase(archaser_billing_connector_errors_total{instance="Production", error_type="auth"}[1h])) or vector(0)
               instant: true
               refId: A
           - refId: C
@@ -636,7 +636,7 @@ groups:
         for: 5m
         annotations:
           summary: Repeated ERP authentication failures
-          description: "Priority/auth errors exceeded threshold. Check credentials on affected accounts. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+          description: "Priority/auth errors exceeded threshold. Check credentials on affected accounts. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production — filter Loki by account_id."
         labels:
           severity: critical
           type: billing_connector
@@ -651,7 +651,7 @@ groups:
               to: 0
             datasourceUid: Prometheus
             model:
-              expr: archaser_billing_connector_connectors_in_error{instance="Production"}
+              expr: sum(archaser_billing_connector_connectors_in_error{instance="Production", nest_service="archaser-api"}) or vector(0)
               instant: true
               refId: A
           - refId: C
@@ -682,6 +682,393 @@ groups:
           description: "Connector circuit breaker or connection failure. Admin Account Details → Billing integration. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
         labels:
           severity: critical
+          type: billing_connector
+
+      - uid: bc-stale-incremental-prod
+        title: Billing Connector No Incremental Success 24h
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_billing_connector_stale_incremental_count{instance="Production", nest_service="archaser-api"} or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: Incremental connector(s) without success in 24h
+          description: "Check schedule, Loki finish lines, and Mongo sync history. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: high
+          type: billing_connector
+
+      - uid: bc-incr-failed-prod
+        title: Billing Connector Incremental FAILED or TIMEOUT
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: 'sum(increase(archaser_billing_connector_sync_total{instance="Production", sync_mode="INCREMENTAL", status=~"FAILED|TIMEOUT"}[1h])) or vector(0)'
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: Incremental sync FAILED or TIMEOUT
+          description: "Inspect Loki finish/error lines and error_type. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: high
+          type: billing_connector
+
+      - uid: bc-backfill-stale-prod
+        title: Billing Connector Backfill Checkpoint Stale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: (time() - archaser_billing_connector_last_checkpoint_timestamp{instance="Production", nest_service="archaser-api"}) or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 86400
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 30m
+        annotations:
+          summary: Active backfill checkpoint older than 24h
+          description: "Resume or reset backfill; check worker/cron Sync Billing Connectors. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-stale-running-prod
+        title: Billing Connector Stale RUNNING
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_billing_connector_stale_running_count{instance="Production", nest_service="archaser-api"} or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: Stale RUNNING sync execution(s) in Mongo
+          description: "collection connector_sync_executions. Sweeper should TIMEOUT; check MONGODB_URI on API. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-partial-storm-prod
+        title: Billing Connector Incremental PARTIAL Storm
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 21600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: sum(increase(archaser_billing_connector_sync_total{instance="Production", sync_mode="INCREMENTAL", status="PARTIAL"}[6h])) or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 2
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: Repeated incremental PARTIAL syncs
+          description: "Partial imports often mean mapping/validation issues. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-rate-limit-5xx-prod
+        title: Billing Connector rate_limit or 5xx Spike
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: 'sum(increase(archaser_billing_connector_errors_total{instance="Production", error_type=~"rate_limit|5xx"}[1h])) or vector(0)'
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 10
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: ERP rate_limit or 5xx error spike
+          description: "Backoff / Priority health. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-import-validation-prod
+        title: Billing Connector import_validation Spike
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: sum(increase(archaser_billing_connector_errors_total{instance="Production", error_type="import_validation"}[1h])) or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 50
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: Import validation error spike
+          description: "Review field mappings / required fields. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-import-jobs-stuck-prod
+        title: Billing Connector Import Jobs Stuck
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_import_jobs_stuck{instance="Production", nest_service="archaser-api", source="billing_connector"} or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: Stuck billing_connector import jobs
+          description: "ImportJob pending/processing >1h with metadata.source=billing_connector. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-sync-unmapped-prod
+        title: Billing Connector Sync Enabled Unmapped
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_billing_connector_sync_enabled_unmapped_count{instance="Production", nest_service="archaser-api"} or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 30m
+        annotations:
+          summary: Sync-enabled connector(s) with incomplete mappings
+          description: "Complete required field mappings before relying on sync. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
           type: billing_connector
 
   # ============================================================

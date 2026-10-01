@@ -97,3 +97,4 @@ backend/.scratch/
 
 # Grafana Mongo datasource rendered from MONGODB_URI (may contain secrets)
 grafana/provisioning/datasources/mongodb.generated.yaml
+grafana/promtail-config.generated.yaml

@@ -691,7 +691,7 @@ groups:
 
   # ============================================================
   # Billing Connector — Staging (alerts 1–11, silent via Staging folder)
-  # Production copy is follow-up after soak (Phase 5).
+  # Production parity: grafana/provisioning/alerting/rules-production.yaml
   # ============================================================
   - orgId: 1
     name: Billing Connector - Staging
