@@ -636,7 +636,7 @@ groups:
         for: 5m
         annotations:
           summary: Repeated ERP authentication failures
-          description: Priority/auth errors exceeded threshold. Check credentials on affected accounts. Dashboard: https://grafana.production.archaser.com/d/archaser-billing-connector-prod/billing-connector-production
+          description: Priority/auth errors exceeded threshold. Check credentials on affected accounts. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production
         labels:
           severity: critical
           type: billing_connector
@@ -679,7 +679,7 @@ groups:
         for: 10m
         annotations:
           summary: One or more billing connectors in Error status
-          description: Connector circuit breaker or connection failure. Admin Account Details → Billing integration. Dashboard: https://grafana.production.archaser.com/d/archaser-billing-connector-prod/billing-connector-production
+          description: Connector circuit breaker or connection failure. Admin Account Details → Billing integration. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production
         labels:
           severity: critical
           type: billing_connector
@@ -731,7 +731,7 @@ groups:
         for: 1m
         annotations:
           summary: PostgreSQL FATAL or PANIC in server logs
-          description: "One or more FATAL/PANIC lines in RDS Postgres logs (last 5m). Open dashboard: https://grafana.production.archaser.com/d/archaser-postgres-logs-prod/postgres-logs-production"
+          description: "One or more FATAL/PANIC lines in RDS Postgres logs (last 5m). Open dashboard: https://grafana.portal.archaser.com/d/archaser-postgres-logs-prod/postgres-logs-production"
         labels:
           severity: critical
           type: database
@@ -776,7 +776,7 @@ groups:
         for: 5m
         annotations:
           summary: Elevated PostgreSQL ERROR volume
-          description: "More than 20 ERROR-severity lines in RDS Postgres logs over 10m. Investigate https://grafana.production.archaser.com/d/archaser-postgres-logs-prod/postgres-logs-production"
+          description: "More than 20 ERROR-severity lines in RDS Postgres logs over 10m. Investigate https://grafana.portal.archaser.com/d/archaser-postgres-logs-prod/postgres-logs-production"
         labels:
           severity: high
           type: database

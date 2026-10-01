@@ -13,7 +13,7 @@ function grafanaBaseUrl(environment) {
   }
   return env === 'staging'
     ? 'https://grafana.staging.archaser.com'
-    : 'https://grafana.production.archaser.com';
+    : 'https://grafana.portal.archaser.com';
 }
 
 function grafanaDashboardPath(environment, alert) {
@@ -86,6 +86,7 @@ function rewriteGrafanaUrls(text, environment) {
   const baseUrl = grafanaBaseUrl(environment);
   return String(text)
     .replace(/https?:\/\/grafana\.archaser\.com/gi, baseUrl)
+    .replace(/https?:\/\/grafana\.production\.archaser\.com/gi, baseUrl)
     .replace(/https?:\/\/grafana\.portal\.archaser\.com/gi, baseUrl)
     .replace(
       /\/d\/alert-drilldown-prod\/alert-data-drilldown-production/gi,

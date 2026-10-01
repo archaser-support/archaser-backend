@@ -13,7 +13,7 @@ if [ -z "${GRAFANA_BASE_URL:-}" ]; then
     if [ "$ENVIRONMENT" = "staging" ]; then
         GRAFANA_BASE_URL="https://grafana.staging.archaser.com"
     else
-        GRAFANA_BASE_URL="https://grafana.production.archaser.com"
+        GRAFANA_BASE_URL="https://grafana.portal.archaser.com"
     fi
 fi
 CLICKUP_CHAT_PARAMS=()
