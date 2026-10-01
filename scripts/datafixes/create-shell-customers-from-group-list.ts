@@ -1,10 +1,9 @@
 /**
- * Staging datafix: create shell parents for remaining customer-group rows,
- * copy active policy from the main customer (force Named), then link all row
- * IDs as children via onParentCustomerIdChanged.
+ * Staging datafix: create shell parents for customer-group rows, copy active
+ * policy from the main customer (or another ID on the same row), force Named,
+ * then link all row IDs as children via onParentCustomerIdChanged.
  *
  * Account: 10149. Shell customer_number starts at 1002 (bumps if taken).
- * Skips the first 3 screenshot rows (already created by hand).
  *
  * Usage:
  *   npx tsx scripts/datafixes/create-shell-customers-from-group-list.ts
@@ -33,32 +32,20 @@ type GroupRow = {
     otherCustomerNumbers: string[];
 };
 
-/** Remaining screenshot rows after the first 3 (already done). */
+/**
+ * Retry set: rows that failed on the first apply (missing IDs or no policy on main).
+ * Policy source: main customer first, then other IDs on the same row.
+ */
 const ROWS: GroupRow[] = [
+    {
+        name: 'א.ל.מ סחר 0 2 בע"מ ח.פ. 511021495',
+        mainCustomerNumber: "107821693",
+        otherCustomerNumbers: ["107821686"],
+    },
     {
         name: 'פטקום אלקטריק בע"מ',
         mainCustomerNumber: "107134486",
         otherCustomerNumbers: ["10760077"],
-    },
-    {
-        name: "אוטופון תקשורת",
-        mainCustomerNumber: "107165472",
-        otherCustomerNumbers: ["107933273"],
-    },
-    {
-        name: "ווידיגאיט",
-        mainCustomerNumber: "10784030",
-        otherCustomerNumbers: ["107926601"],
-    },
-    {
-        name: "איי.די טאצ",
-        mainCustomerNumber: "107887603",
-        otherCustomerNumbers: ["107926119", "107932986"],
-    },
-    {
-        name: 'ת.ש פרו סלולר בע"מ',
-        mainCustomerNumber: "107898084",
-        otherCustomerNumbers: ["107902663"],
     },
     {
         name: "א.כ אינפיניטק בעמ",
@@ -66,29 +53,14 @@ const ROWS: GroupRow[] = [
         otherCustomerNumbers: ["107902693"],
     },
     {
-        name: "אוטופון תקשורת (חיפה)",
-        mainCustomerNumber: "107165474",
-        otherCustomerNumbers: ["107936575"],
-    },
-    {
         name: 'אלקטרה קמעונאות בע"מ',
         mainCustomerNumber: "107789795",
         otherCustomerNumbers: ["107789755"],
     },
     {
-        name: 'אייסל ג.מ.א בע"מ',
-        mainCustomerNumber: "10782790",
-        otherCustomerNumbers: ["107122538", "10780429"],
-    },
-    {
         name: 'לאסט פרייס בע"מ',
         mainCustomerNumber: "107892115",
         otherCustomerNumbers: ["107796878"],
-    },
-    {
-        name: 'סער טכנולוגיות (ז.ח) בע"מ',
-        mainCustomerNumber: "107133527",
-        otherCustomerNumbers: ["107940449"],
     },
 ];
 
@@ -332,18 +304,27 @@ async function main(): Promise<void> {
                 continue;
             }
 
-            const activePolicy = await prisma.customerPolicy.findFirst({
-                where: {
-                    customer_id: main.id,
-                    is_active: true,
-                },
-            });
-            if (!activePolicy) {
+            let activePolicy: CustomerPolicy | null = null;
+            let policySourceCustomerNumber: string | null = null;
+            for (const customerNumber of numbers) {
+                const candidate = byNumber.get(customerNumber)!;
+                const policy = await prisma.customerPolicy.findFirst({
+                    where: {
+                        customer_id: candidate.id,
+                        is_active: true,
+                    },
+                });
+                if (policy) {
+                    activePolicy = policy;
+                    policySourceCustomerNumber = customerNumber;
+                    break;
+                }
+            }
+            if (!activePolicy || policySourceCustomerNumber == null) {
                 skipped += 1;
-                console.log(LOG, "skip row — main has no active policy", {
+                console.log(LOG, "skip row — no active policy on any row customer", {
                     name: row.name,
-                    mainCustomerNumber: row.mainCustomerNumber,
-                    mainCustomerId: main.id,
+                    customerNumbers: numbers,
                 });
                 continue;
             }
@@ -357,6 +338,7 @@ async function main(): Promise<void> {
                 companyName,
                 mainCustomerNumber: row.mainCustomerNumber,
                 mainCustomerId: main.id,
+                policySourceCustomerNumber,
                 linkCustomerIds: children.map((c) => c.id),
                 linkCustomerNumbers: numbers,
                 currentParents: children.map((c) => ({
