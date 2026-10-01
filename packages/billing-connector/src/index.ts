@@ -154,6 +154,21 @@ export {
 } from "./sync/runInProcessSync";
 
 export {
+    buildPendingCustomerHistoryDrainOptions,
+    runSyncWithPendingCustomerHistoryPolicy,
+    scheduleContinuePendingCustomerHistoryDrainForAccount,
+    type RunSyncWithPendingCustomerHistoryPolicyOptions,
+    type ScheduleContinuePendingCustomerHistoryDrainForAccountParams,
+} from "./sync/runSyncWithPendingCustomerHistoryPolicy";
+
+export {
+    drainBlockingPendingCustomerHistory,
+    scheduleContinuePendingCustomerHistoryDrain,
+    type DrainPendingCustomerHistoryOptions,
+    type DrainPendingCustomerHistoryResult,
+} from "./sync/pendingCustomerHistoryDrain";
+
+export {
     assertCustomerRollupHostLoadable,
     isCustomerBalancesFinalRegistered,
     loadRecalculateCustomerAmountsModule,
@@ -324,6 +339,48 @@ export {
     type CustomerScopedInnerProgress,
     type CustomerScopedProgressInput,
 } from "./sync/customerScopedTailProgress";
+
+export {
+    clearCustomerScopedHistoryProgress,
+    createMemoryCustomerScopedHistoryProgressStore,
+    ensureCustomerScopedHistoryProgressOwner,
+    getCustomerScopedHistoryProgress,
+    getIncompleteCustomerScopedHistoryProgress,
+    isCustomerScopedHistoryComplete,
+    resetCustomerScopedHistoryProgressStoreForTests,
+    upsertCustomerScopedEntityCheckpoint,
+    useMemoryCustomerScopedHistoryProgressStoreForTests,
+    type CustomerScopedEntityCheckpoint,
+    type CustomerScopedHistoryProgress,
+    type CustomerScopedHistoryProgressStore,
+    type UpsertCustomerScopedEntityCheckpointInput,
+} from "./sync/customerScopedHistoryProgress";
+
+export {
+    clearPendingCustomerHistoryOnSuccess,
+    createMemoryPendingCustomerHistoryQueueStore,
+    enqueuePendingCustomerHistory,
+    enqueuePendingCustomerHistoryForCreates,
+    getPendingCustomerHistoryStatusSummary,
+    listBlockingPendingCustomerHistory,
+    listPendingCustomerHistoryRows,
+    markPendingCustomerHistoryInProgress,
+    PENDING_CUSTOMER_HISTORY_MAX_ATTEMPTS,
+    recordPendingCustomerHistoryFailure,
+    resetPendingCustomerHistoryQueueStoreForTests,
+    revertPendingCustomerHistoryToPending,
+    upsertPendingCustomerHistoryEntityCheckpoint,
+    useMemoryPendingCustomerHistoryQueueStoreForTests,
+    type EnqueuePendingCustomerHistoryForCreatesInput,
+    type EnqueuePendingCustomerHistoryForCreatesResult,
+    type EnqueuePendingCustomerHistoryInput,
+    type EnqueuePendingCustomerHistoryResult,
+    type PendingCustomerHistoryQueueStore,
+    type PendingCustomerHistoryRow,
+    type PendingCustomerHistoryStatus,
+    type PendingCustomerHistoryStatusSummary,
+    type RecordPendingCustomerHistoryFailureResult,
+} from "./sync/pendingCustomerHistoryQueue";
 
 export {
     runArPostIngestViaHost,
