@@ -1,0 +1,80 @@
+# Local development data stores (Postgres + Mongo + Redis).
+#
+# From backend/ (this repo):
+#   npm run docker:local:deps
+#   bash ./scripts/development/setup-local-docker.sh deps
+#   bash ./scripts/development/setup-local-docker.sh down
+#
+# Run Nest + Next on the host (not in Docker), e.g.:
+#   npm run dev:all          # backend/
+#   npm run dev              # frontend/
+#
+# Then point your local .env at the printed URLs (do not commit secrets).
+
+name: archaser-local-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: archaser-local-postgres
+    ports:
+      - "${LOCAL_POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${LOCAL_POSTGRES_USER:-archaser}
+      POSTGRES_PASSWORD: ${LOCAL_POSTGRES_PASSWORD:-archaser}
+      POSTGRES_DB: ${LOCAL_POSTGRES_DB:-archaser}
+    volumes:
+      - archaser-local-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER:-archaser}\" -h 127.0.0.1 || exit 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    container_name: archaser-local-mongo
+    ports:
+      - "${LOCAL_MONGO_PORT:-27017}:27017"
+    volumes:
+      - archaser-local-mongodata:/data/db
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mongosh",
+          "--quiet",
+          "--eval",
+          "db.adminCommand({ ping: 1 }).ok",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: archaser-local-redis
+    ports:
+      - "${LOCAL_REDIS_PORT:-6379}:6379"
+    volumes:
+      - archaser-local-redisdata:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  archaser-local-pgdata:
+  archaser-local-mongodata:
+  archaser-local-redisdata:
