@@ -2107,8 +2107,9 @@ export class BillingConnectorApiService {
                     backfill_records_pulled: 0,
                     backfill_last_checkpoint_at: null,
                     backfill_total_records: null,
-                    last_max_updated_at: null,
-                    last_successful_run_at: null,
+                    // Keep last_successful_run_at / last_max_updated_at — Reset
+                    // unlocks cutover options and backfill progress; it does not
+                    // mean "never synced".
                     last_attempt_at: null,
                     last_error: null,
                 },
@@ -2128,8 +2129,10 @@ export class BillingConnectorApiService {
                 backfill_records_pulled: 0,
                 backfill_last_checkpoint_at: null,
                 backfill_total_records: null,
-                last_max_updated_at: null,
-                last_successful_run_at: null,
+                // Keep last_successful_run_at / last_max_updated_at — Reset unlocks
+                // cutover options and backfill progress; it does not mean "never
+                // synced". Header last-sync and incremental watermarks stay until
+                // the next successful run updates them.
                 last_attempt_at: null,
                 last_error: null,
             },
