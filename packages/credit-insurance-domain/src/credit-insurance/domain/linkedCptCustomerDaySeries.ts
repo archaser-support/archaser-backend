@@ -174,6 +174,7 @@ export async function fetchLinkedCptCustomerDaySeries(
         LEFT JOIN "Person" p ON p.id = c.person_id
         LEFT JOIN "Company" co ON co.id = c.company_id
         WHERE t.account_id = ${options.accountId}
+          AND c.parent_customer_id IS NULL
           AND t.snapshot_date >= ${fromDateUtc}::date
           AND t.snapshot_date <= ${toDateUtc}::date
           AND t.insurance_policy_id IS NOT NULL

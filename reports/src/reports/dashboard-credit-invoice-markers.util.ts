@@ -2,6 +2,7 @@ import { ReportFilterDto } from "./dto/execute-report.dto";
 import {
     reportedInvoicesMembershipWhere,
     reportingCountdownMembershipWhere,
+    resolveInvoiceReportCustomerIds,
     resolveReportingCountdownWindowDays,
     termsBreachMembershipWhere,
 } from "@archaser/credit-insurance-domain";
@@ -108,6 +109,10 @@ export async function prepareDashboardCreditInvoiceMarkers(
         Number.isFinite(Number(customerIdFilter.value))
             ? Number(customerIdFilter.value)
             : undefined;
+    const customerIds = await resolveInvoiceReportCustomerIds(
+        options.accountId,
+        customerId
+    );
 
     const stripScopeFilters = (list: ReportFilterDto[]) =>
         list.filter(
@@ -125,7 +130,7 @@ export async function prepareDashboardCreditInvoiceMarkers(
                 termsBreachReason: parsed.termsBreachReason,
                 termsOverdueOnly: parsed.termsOverdueOnly,
                 policyId,
-                customerId,
+                customerIds,
             }) as PrismaWhere,
         };
     }
@@ -139,7 +144,7 @@ export async function prepareDashboardCreditInvoiceMarkers(
             primaryWhereExtras: reportingCountdownMembershipWhere(
                 options.accountId,
                 windowDays,
-                { policyId, customerId }
+                { policyId, customerIds }
             ) as PrismaWhere,
         };
     }
@@ -148,7 +153,7 @@ export async function prepareDashboardCreditInvoiceMarkers(
         filters: stripScopeFilters(rest),
         primaryWhereExtras: reportedInvoicesMembershipWhere(options.accountId, {
             policyId,
-            customerId,
+            customerIds,
         }) as PrismaWhere,
     };
 }

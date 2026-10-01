@@ -318,7 +318,7 @@ export class AdminBackfillBlockingRewriteError extends Error {
 
     constructor(accountId: number) {
         super(
-            `Credit as-of backfill is running for account ${accountId}; try again later`
+            `Credit history refresh is running for account ${accountId}; try again later`
         );
         this.name = "AdminBackfillBlockingRewriteError";
         this.accountId = accountId;
@@ -381,7 +381,10 @@ export async function rewriteCustomerAsOfRange(
         SELECT account_id
         FROM "AccountBackgroundJob"
         WHERE account_id = ${input.accountId}
-          AND job_kind = ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL}
+          AND job_kind IN (
+            ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL},
+            ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_POOL_PARENT_HISTORY}
+          )
           AND status IN ('running', 'paused')
         LIMIT 1
     `;
@@ -488,7 +491,10 @@ export async function drainAsOfRewriteQueue(options?: {
             SELECT account_id
             FROM "AccountBackgroundJob"
             WHERE account_id IN (${Prisma.join(accountIds)})
-              AND job_kind = ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL}
+              AND job_kind IN (
+                ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL},
+                ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_POOL_PARENT_HISTORY}
+              )
               AND status IN ('running', 'paused')
         `;
         blocking.forEach((row) => blockingAccountIds.add(row.account_id));

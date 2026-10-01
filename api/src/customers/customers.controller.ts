@@ -48,6 +48,16 @@ export class CustomersController {
         return this.customers.listOrStats(user, query);
     }
 
+    @Post()
+    @ApiOperation({ summary: "Create customer (Nest-native)" })
+    @ApiUnauthorizedResponse({ description: "Missing Bearer or session cookie" })
+    async create(
+        @CurrentUser() user: JwtPayload,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.customers.create(user, body);
+    }
+
     @Get(":id")
     @ApiOperation({ summary: "Customer detail (Nest-native)" })
     async byId(

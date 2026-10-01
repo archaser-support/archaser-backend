@@ -150,6 +150,7 @@ export async function fetchPolicyConcentrationSnapshots(
         LEFT JOIN "Company" co ON co.id = c.company_id
         LEFT JOIN "InsurancePolicy" ip ON ip.id = t.insurance_policy_id
         WHERE t.account_id = ${options.accountId}
+          AND c.parent_customer_id IS NULL
           AND t.insurance_policy_id IS NOT NULL
           AND NULLIF(TRIM(t.policy_exclusion_reason), '') IS NULL
           AND (
@@ -267,6 +268,12 @@ export async function fetchCustomerShareOfPolicyOpenAr(options: {
     customerId: number;
     policyId?: number;
     days?: number;
+    /**
+     * When set (shell parent Dashboard), treat open AR as the local pool —
+     * sum ranking rows for these ids (leaves + shell). Children excluded from
+     * portfolio cohorts still appear here when present on CTP.
+     */
+    customerIds?: readonly number[];
 }): Promise<{
     sharePct: number | null;
     policyId: number | null;
@@ -326,8 +333,32 @@ export async function fetchCustomerShareOfPolicyOpenAr(options: {
         };
     }
 
-    const self = snap.ranking.find((r) => r.customerId === options.customerId);
-    const customerOpenAr = self?.openAr ?? 0;
+    const scopeIds =
+        options.customerIds != null && options.customerIds.length > 0
+            ? [...new Set(options.customerIds.filter(Number.isFinite))]
+            : [options.customerId];
+    let customerOpenAr = 0;
+    for (const id of scopeIds) {
+        const row = snap.ranking.find((r) => r.customerId === id);
+        customerOpenAr += row?.openAr ?? 0;
+    }
+    // Shell CTP holds local-subtree pool AR after overlay; ranking may omit
+    // linked children (portfolio exclusion). Prefer the larger of the two.
+    if (scopeIds.length > 1) {
+        const shellCtp = await prisma.$queryRaw<
+            Array<{ usage_amount: number | null }>
+        >`
+            SELECT COALESCE(t.usage_amount, t.total_receivables, 0)::float8 AS usage_amount
+            FROM "CustomerPolicyTrend" t
+            WHERE t.account_id = ${options.accountId}
+              AND t.customer_id = ${options.customerId}
+              AND t.snapshot_date = ${snap.asOfDate}::date
+              AND t.insurance_policy_id = ${policyId}
+            LIMIT 1
+        `;
+        const shellAr = Math.max(0, Number(shellCtp[0]?.usage_amount ?? 0));
+        customerOpenAr = Math.max(customerOpenAr, shellAr);
+    }
     const sharePct = computeCustomerShareOfPolicyOpenAr(
         customerOpenAr,
         snap.totalOpenAr

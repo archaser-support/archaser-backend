@@ -4,8 +4,8 @@
  *
  * Credit side effects run only when the account has credit insurance.
  * Group capacity-gap / invoice waterfall lives in the gap pipeline; this module
- * mirrors policy settings (including gap snapshot fields) and triggers gap
- * recalculation after connect/disconnect remirrors.
+ * mirrors policy *settings* onto descendants. Capacity-gap snapshot fields on
+ * linked children are forced to 0 (pool gap lives on the root only).
  */
 import type { CustomerPolicy, Prisma } from "@prisma/client";
 
@@ -14,7 +14,23 @@ import { syncCustomerInsuranceFields } from "./syncCustomerInsuranceFields";
 
 const MAX_PARENT_WALK_DEPTH = 50;
 
-/** Settings (and header gap snapshot) copied from root → descendant mirrors. */
+/**
+ * Request-scoped memo for root / descendant walks so parent-change sync,
+ * attribution, and open-AR rollup do not re-query the same tree edges.
+ */
+export type CreditPoolMembershipCache = {
+    rootByCustomerId: Map<number, number>;
+    descendantsByCustomerId: Map<number, number[]>;
+};
+
+export function createCreditPoolMembershipCache(): CreditPoolMembershipCache {
+    return {
+        rootByCustomerId: new Map(),
+        descendantsByCustomerId: new Map(),
+    };
+}
+
+/** Settings copied from root → descendant mirrors. */
 const MIRROR_POLICY_FIELD_KEYS = [
     "insurance_policy_id",
     "customer_number_policy",
@@ -55,7 +71,29 @@ const MIRROR_POLICY_FIELD_KEYS = [
     "uninsured_currency2",
 ] as const;
 
+/**
+ * Gap card fields forced to null/0 on linked children (pool gap is root-only).
+ * Still listed in {@link MIRROR_POLICY_FIELD_KEYS} for snapshot compare keys.
+ */
+const CHILD_ZEROED_CAPACITY_GAP_FIELD_KEYS = [
+    "capacity_gap_amount",
+    "capacity_gap_amount_date",
+    "retained_capacity_gap",
+    "capacity_gap_amount1",
+    "capacity_gap_currency1",
+    "capacity_gap_amount2",
+    "capacity_gap_currency2",
+] as const;
+
 type MirrorPolicyFieldKey = (typeof MIRROR_POLICY_FIELD_KEYS)[number];
+
+function childZeroedCapacityGapWriteData(): Record<string, null> {
+    const data: Record<string, null> = {};
+    for (const key of CHILD_ZEROED_CAPACITY_GAP_FIELD_KEYS) {
+        data[key] = null;
+    }
+    return data;
+}
 
 export type ParentCustomerCreditInheritanceOptions = {
     dbClient?: DbClient;
@@ -110,6 +148,19 @@ function mirrorSnapshotsEqual(
     return true;
 }
 
+function expectedDescendantMirrorSnapshot(
+    rootRow: Partial<CustomerPolicy> | null | undefined
+): Record<MirrorPolicyFieldKey, string> | null {
+    const snap = policyMirrorSnapshot(rootRow);
+    if (!snap) {
+        return null;
+    }
+    for (const key of CHILD_ZEROED_CAPACITY_GAP_FIELD_KEYS) {
+        snap[key] = serializeComparable(null);
+    }
+    return snap;
+}
+
 function pickMirrorWriteData(
     source: CustomerPolicy,
     status: "active" | "pending",
@@ -122,6 +173,7 @@ function pickMirrorWriteData(
     for (const key of MIRROR_POLICY_FIELD_KEYS) {
         data[key] = source[key];
     }
+    Object.assign(data, childZeroedCapacityGapWriteData());
     if (userId) {
         data.created_by = userId;
         data.modified_by = userId;
@@ -134,24 +186,60 @@ function pickMirrorWriteData(
  */
 export async function resolveCustomerCreditPoolRoot(
     customerId: number,
-    dbClient: DbClient = prisma
+    dbClient: DbClient = prisma,
+    cache?: CreditPoolMembershipCache
 ): Promise<number> {
+    const cachedRoot = cache?.rootByCustomerId.get(customerId);
+    if (cachedRoot != null) {
+        return cachedRoot;
+    }
+
+    const path: number[] = [];
     let currentId = customerId;
     const seen = new Set<number>();
 
     for (let depth = 0; depth < MAX_PARENT_WALK_DEPTH; depth += 1) {
         if (seen.has(currentId)) {
+            if (cache) {
+                for (const id of path) {
+                    cache.rootByCustomerId.set(id, currentId);
+                }
+                cache.rootByCustomerId.set(currentId, currentId);
+            }
             return currentId;
         }
         seen.add(currentId);
+
+        const memoRoot = cache?.rootByCustomerId.get(currentId);
+        if (memoRoot != null) {
+            if (cache) {
+                for (const id of path) {
+                    cache.rootByCustomerId.set(id, memoRoot);
+                }
+            }
+            return memoRoot;
+        }
+
+        path.push(currentId);
         const row = await dbClient.customer.findUnique({
             where: { id: currentId },
             select: { parent_customer_id: true },
         });
         if (!row?.parent_customer_id) {
+            if (cache) {
+                for (const id of path) {
+                    cache.rootByCustomerId.set(id, currentId);
+                }
+            }
             return currentId;
         }
         currentId = row.parent_customer_id;
+    }
+    if (cache) {
+        for (const id of path) {
+            cache.rootByCustomerId.set(id, currentId);
+        }
+        cache.rootByCustomerId.set(currentId, currentId);
     }
     return currentId;
 }
@@ -162,8 +250,14 @@ export async function resolveCustomerCreditPoolRoot(
 export async function listDescendantCustomerIds(
     rootCustomerId: number,
     accountId: number,
-    dbClient: DbClient = prisma
+    dbClient: DbClient = prisma,
+    cache?: CreditPoolMembershipCache
 ): Promise<number[]> {
+    const cached = cache?.descendantsByCustomerId.get(rootCustomerId);
+    if (cached != null) {
+        return [...cached];
+    }
+
     const result: number[] = [];
     let frontier = [rootCustomerId];
     const seen = new Set<number>([rootCustomerId]);
@@ -186,6 +280,9 @@ export async function listDescendantCustomerIds(
             frontier.push(child.id);
         }
     }
+    if (cache) {
+        cache.descendantsByCustomerId.set(rootCustomerId, [...result]);
+    }
     return result;
 }
 
@@ -195,16 +292,19 @@ export async function listDescendantCustomerIds(
 export async function resolveCreditPoolMemberIds(
     customerId: number,
     accountId: number,
-    dbClient: DbClient = prisma
+    dbClient: DbClient = prisma,
+    cache?: CreditPoolMembershipCache
 ): Promise<{ rootCustomerId: number; memberIds: number[] }> {
     const rootCustomerId = await resolveCustomerCreditPoolRoot(
         customerId,
-        dbClient
+        dbClient,
+        cache
     );
     const descendants = await listDescendantCustomerIds(
         rootCustomerId,
         accountId,
-        dbClient
+        dbClient,
+        cache
     );
     return {
         rootCustomerId,
@@ -241,9 +341,10 @@ export async function isLinkedCreditChild(
  */
 export async function resolveTopUpOwnerCustomerId(
     customerId: number,
-    dbClient: DbClient = prisma
+    dbClient: DbClient = prisma,
+    cache?: CreditPoolMembershipCache
 ): Promise<number> {
-    return resolveCustomerCreditPoolRoot(customerId, dbClient);
+    return resolveCustomerCreditPoolRoot(customerId, dbClient, cache);
 }
 
 async function loadLivePolicies(
@@ -299,11 +400,11 @@ async function mirrorRootOntoOneDescendant(args: {
 
     const activeMatches = mirrorSnapshotsEqual(
         policyMirrorSnapshot(current.active),
-        policyMirrorSnapshot(rootActive)
+        expectedDescendantMirrorSnapshot(rootActive)
     );
     const pendingMatches = mirrorSnapshotsEqual(
         policyMirrorSnapshot(current.pending),
-        policyMirrorSnapshot(rootPending)
+        expectedDescendantMirrorSnapshot(rootPending)
     );
     const activeStatusOk =
         (rootActive == null && current.active == null) ||
@@ -361,13 +462,16 @@ async function mirrorRootOntoOneDescendant(args: {
 export async function remirrorDescendantsFromRoot(
     rootCustomerId: number,
     accountId: number,
-    options?: ParentCustomerCreditInheritanceOptions
+    options?: ParentCustomerCreditInheritanceOptions & {
+        cache?: CreditPoolMembershipCache;
+    }
 ): Promise<{ mirroredCustomerIds: number[] }> {
     const dbClient = options?.dbClient ?? prisma;
     const descendants = await listDescendantCustomerIds(
         rootCustomerId,
         accountId,
-        dbClient
+        dbClient,
+        options?.cache
     );
     if (descendants.length === 0) {
         return { mirroredCustomerIds: [] };
@@ -402,7 +506,9 @@ export async function remirrorDescendantsFromRoot(
 export async function remirrorCreditPoolAfterPolicyMutation(
     customerId: number,
     accountId: number,
-    options?: ParentCustomerCreditInheritanceOptions
+    options?: ParentCustomerCreditInheritanceOptions & {
+        cache?: CreditPoolMembershipCache;
+    }
 ): Promise<{ rootCustomerId: number; mirroredCustomerIds: number[] }> {
     const dbClient = options?.dbClient ?? prisma;
     if (!(await accountHasCreditInsurance(accountId, dbClient))) {
@@ -410,7 +516,8 @@ export async function remirrorCreditPoolAfterPolicyMutation(
     }
     const rootCustomerId = await resolveCustomerCreditPoolRoot(
         customerId,
-        dbClient
+        dbClient,
+        options?.cache
     );
     const { mirroredCustomerIds } = await remirrorDescendantsFromRoot(
         rootCustomerId,
@@ -423,6 +530,9 @@ export async function remirrorCreditPoolAfterPolicyMutation(
 /**
  * Single connect/disconnect side-effect path (UI, API, import/ERP).
  * Caller must already have written `parent_customer_id` on `customerId`.
+ *
+ * Pipeline: remirror → capacity gaps → CTP+CDP → breach rollup → open-AR rollup
+ * (see {@link runCreditPoolParentChangeSideEffects}). Failures throw.
  */
 export async function onParentCustomerIdChanged(args: {
     accountId: number;
@@ -435,19 +545,35 @@ export async function onParentCustomerIdChanged(args: {
 }): Promise<{
     remirroredRoots: number[];
     mirroredCustomerIds: number[];
+    asyncHistoryJob: import("./creditAsOfBackfillJob").CreditAsOfBackfillJobView | null;
 }> {
     const dbClient = args.dbClient ?? prisma;
+
     if (args.previousParentId === args.nextParentId) {
-        return { remirroredRoots: [], mirroredCustomerIds: [] };
+        return {
+            remirroredRoots: [],
+            mirroredCustomerIds: [],
+            asyncHistoryJob: null,
+        };
     }
     if (!(await accountHasCreditInsurance(args.accountId, dbClient))) {
-        return { remirroredRoots: [], mirroredCustomerIds: [] };
+        return {
+            remirroredRoots: [],
+            mirroredCustomerIds: [],
+            asyncHistoryJob: null,
+        };
     }
 
-    const options: ParentCustomerCreditInheritanceOptions = {
+    // Fresh tree after parent FK write — share across remirror / sync / rollups.
+    const cache = createCreditPoolMembershipCache();
+
+    const options: ParentCustomerCreditInheritanceOptions & {
+        cache?: CreditPoolMembershipCache;
+    } = {
         dbClient,
         userId: args.userId,
         skipInsuranceSync: args.skipInsuranceSync,
+        cache,
     };
 
     const remirroredRoots: number[] = [];
@@ -457,7 +583,8 @@ export async function onParentCustomerIdChanged(args: {
         // Connect / reparent: remirror entire new pool from its root.
         const newRootId = await resolveCustomerCreditPoolRoot(
             args.customerId,
-            dbClient
+            dbClient,
+            cache
         );
         const result = await remirrorDescendantsFromRoot(
             newRootId,
@@ -475,7 +602,8 @@ export async function onParentCustomerIdChanged(args: {
         ) {
             const oldRootId = await resolveCustomerCreditPoolRoot(
                 args.previousParentId,
-                dbClient
+                dbClient,
+                cache
             );
             if (oldRootId !== newRootId) {
                 const oldResult = await remirrorDescendantsFromRoot(
@@ -501,7 +629,8 @@ export async function onParentCustomerIdChanged(args: {
         if (args.previousParentId != null) {
             const oldRootId = await resolveCustomerCreditPoolRoot(
                 args.previousParentId,
-                dbClient
+                dbClient,
+                cache
             );
             if (oldRootId !== args.customerId) {
                 const oldResult = await remirrorDescendantsFromRoot(
@@ -515,21 +644,23 @@ export async function onParentCustomerIdChanged(args: {
         }
     }
 
-    // Recalculate shared / solo capacity gaps for every remirrored pool root
-    // (connect, disconnect, and reparent) so headers do not keep stale group numbers.
-    const uniqueRoots = [...new Set(remirroredRoots)];
-    if (uniqueRoots.length > 0) {
-        const { ensureCustomerCapacityGapStored } = await import(
-            "./syncCreditInsuranceGapPipeline"
-        );
-        for (const rootId of uniqueRoots) {
-            try {
-                await ensureCustomerCapacityGapStored(rootId, { dbClient });
-            } catch {
-                // Remirror already committed; overnight / next AR event can catch up.
-            }
-        }
-    }
+    const { runCreditPoolParentChangeSideEffects } = await import(
+        "./runCreditPoolParentChangeSideEffects"
+    );
+    const sideEffects = await runCreditPoolParentChangeSideEffects({
+        accountId: args.accountId,
+        customerId: args.customerId,
+        previousParentId: args.previousParentId,
+        nextParentId: args.nextParentId,
+        remirroredRoots,
+        dbClient,
+        cache,
+        requestedBy: args.userId ?? null,
+    });
 
-    return { remirroredRoots, mirroredCustomerIds };
+    return {
+        remirroredRoots,
+        mirroredCustomerIds,
+        asyncHistoryJob: sideEffects.asyncHistoryJob,
+    };
 }

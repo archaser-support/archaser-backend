@@ -23,18 +23,12 @@ import {
     isUncoveredExposureCustomer,
 } from "./policyExclusion";
 import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
+import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
 
 const OPEN_STATUSES: invoice_status[] = [
     invoice_status.Due,
     invoice_status.Overdue,
 ];
-
-function startOfTodayUtc(): Date {
-    const now = new Date();
-    return new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-    );
-}
 
 function normalizeCurrency(code: string | null | undefined): string | null {
     const value = code?.trim().toUpperCase();
@@ -172,6 +166,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
         },
         select: {
             id: true,
+            customer_id: true,
             status: true,
             policy_id: true,
             invoice_date: true,
@@ -187,6 +182,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
         },
     } as any)) as Array<{
         id: number;
+        customer_id: number;
         status: invoice_status;
         policy_id: number | null;
         invoice_date: Date | null;
@@ -374,34 +370,48 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
         const nextLimit = new Prisma.Decimal(computed.gapLimit);
         const nextAssessed = new Prisma.Decimal(allocation.limitAssessedAmount);
 
+        const writeGapOnInvoice = inv.customer_id === rootCustomerId;
+        const nextBaseForWrite = writeGapOnInvoice
+            ? nextBase
+            : new Prisma.Decimal(0);
+        const nextLimitForWrite = writeGapOnInvoice
+            ? nextLimit
+            : new Prisma.Decimal(0);
+
         const prevBase = inv.capacity_gap_amount;
         const prevLimit = inv.capacity_gap_amount_limit;
         const prevAssessed = inv.limit_assessed_amount;
         const prevAssessedCcy = normalizeCurrency(inv.limit_assessed_currency);
 
         const baseChanged =
-            (prevBase == null && nextBase != null) ||
-            (prevBase != null && nextBase == null) ||
+            (prevBase == null && nextBaseForWrite != null) ||
+            (prevBase != null && nextBaseForWrite == null) ||
             (prevBase != null &&
-                nextBase != null &&
-                !new Prisma.Decimal(prevBase).eq(nextBase));
+                nextBaseForWrite != null &&
+                !new Prisma.Decimal(prevBase).eq(nextBaseForWrite));
         const limitChanged =
             prevLimit == null ||
-            !new Prisma.Decimal(prevLimit).eq(nextLimit);
+            !new Prisma.Decimal(prevLimit).eq(nextLimitForWrite);
         const assessedChanged =
             prevAssessed == null ||
             !new Prisma.Decimal(prevAssessed).eq(nextAssessed) ||
             prevAssessedCcy !== limitCurrency;
 
         if (baseChanged || limitChanged || assessedChanged) {
+            // Waterfall order uses the full pool; gap amounts persist only on
+            // root invoices (linked children have no per-child capacity gap).
             pendingWrites.push({
                 id: inv.id,
                 limit_assessed_amount: nextAssessed.toNumber(),
                 limit_assessed_currency: limitCurrency,
                 capacity_gap_amount:
-                    nextBase != null ? nextBase.toNumber() : null,
-                capacity_gap_amount_limit: nextLimit.toNumber(),
-                capacity_gap_amount_date: computed.rateDate,
+                    nextBaseForWrite != null
+                        ? nextBaseForWrite.toNumber()
+                        : null,
+                capacity_gap_amount_limit: nextLimitForWrite.toNumber(),
+                capacity_gap_amount_date: writeGapOnInvoice
+                    ? computed.rateDate
+                    : null,
             });
         }
     }

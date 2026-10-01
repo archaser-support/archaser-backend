@@ -480,8 +480,8 @@ describe("parent customer group capacity gap + invoice waterfall", () => {
         ).toBe(50_000);
     });
 
-    it("persists the same shared capacity gap on root and linked descendants", async () => {
-        // Root limit 100k; parent AR 0; child A 60k; child B 50k → group gap 10k.
+    it("persists shared capacity gap on root only (linked children store 0)", async () => {
+        // Root limit 100k; parent AR 0; child A 60k; child B 50k → group gap 10k on root.
         const { db, policies } = createMemoryDb({
             customers: [
                 { id: 1, account_id: 10, parent_customer_id: null },
@@ -566,8 +566,8 @@ describe("parent customer group capacity gap + invoice waterfall", () => {
 
         expect(policies.map((p) => p.capacity_gap_amount)).toEqual([
             10_000,
-            10_000,
-            10_000,
+            null,
+            null,
         ]);
     });
 
@@ -653,8 +653,10 @@ describe("parent customer group capacity gap + invoice waterfall", () => {
                 },
             ])
         );
+        // Waterfall order is group-wide; gap amounts persist only on root invoices
+        // (both open invoices here belong to children → gaps forced to 0).
         expect(byId[201]).toEqual({ assessed: 60_000, gap: 0 });
-        expect(byId[202]).toEqual({ assessed: 40_000, gap: 10_000 });
+        expect(byId[202]).toEqual({ assessed: 40_000, gap: 0 });
     });
 
     it("includes root top-ups in the shared limit and ignores child top-ups", async () => {

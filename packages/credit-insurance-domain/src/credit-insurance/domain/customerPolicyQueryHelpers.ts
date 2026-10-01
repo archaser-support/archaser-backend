@@ -49,29 +49,32 @@ export function customersWithActiveCustomerPolicyFilter(): Prisma.CustomerWhereI
  * Credit dashboard customer scope: policy filter uses invoices + active policy;
  * portfolio ("All Policies") includes any live customer with open receivables
  * (Due/Overdue) or an active linked CustomerPolicy.
+ * Always omits linked children so each credit pool is listed once at the root
+ * (ViewBased markers + get*Report share this scope).
  */
 export function customersScopedForCreditDashboard(
     accountId: number,
     policyId?: number
 ): Prisma.CustomerWhereInput {
-    if (policyId != null) {
-        return customersScopedByPolicyInvoicesOrActive(accountId, policyId);
-    }
-    return {
-        account_id: accountId,
-        collection_status: { in: COLLECTION_LIVE },
-        OR: [
-            customersWithActiveCustomerPolicyFilter(),
-            {
-                Invoice: {
-                    some: {
-                        account_id: accountId,
-                        status: OPEN_RECEIVABLE_STATUSES,
-                    },
-                },
-            },
-        ],
-    };
+    const base: Prisma.CustomerWhereInput =
+        policyId != null
+            ? customersScopedByPolicyInvoicesOrActive(accountId, policyId)
+            : {
+                  account_id: accountId,
+                  collection_status: { in: COLLECTION_LIVE },
+                  OR: [
+                      customersWithActiveCustomerPolicyFilter(),
+                      {
+                          Invoice: {
+                              some: {
+                                  account_id: accountId,
+                                  status: OPEN_RECEIVABLE_STATUSES,
+                              },
+                          },
+                      },
+                  ],
+              };
+    return withExcludeLinkedChildCustomers(base);
 }
 
 export function hasDashboardBusinessUnitScope(

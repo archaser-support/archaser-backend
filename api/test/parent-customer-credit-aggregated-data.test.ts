@@ -114,6 +114,7 @@ describe("customerAggregatedData response shape", () => {
                 approved_limit_currency: "USD",
                 effective_limit: 1200,
                 capacity_gap_amount: 100,
+                at_risk_exposure: 115,
                 uninsured_amount: 25,
                 capacity_gap_amount1: 100,
                 capacity_gap_currency1: "USD",
@@ -131,6 +132,10 @@ describe("customerAggregatedData response shape", () => {
                     type: "Company",
                     name: "Root Co",
                     parent_customer_id: null,
+                    total_due_amount: 40,
+                    total_overdue_amount: 60,
+                    capacity_gap_amount: 70,
+                    at_risk_exposure: 80,
                 },
                 {
                     id: 2,
@@ -138,16 +143,21 @@ describe("customerAggregatedData response shape", () => {
                     type: "Company",
                     name: "Child Co",
                     parent_customer_id: 1,
+                    total_due_amount: 20,
+                    total_overdue_amount: 10,
+                    capacity_gap_amount: 30,
+                    at_risk_exposure: 25,
                 },
             ],
             counts
         );
 
         expect(credit.root_customer_id).toBe(1);
-        expect(credit.approved_limit).toBe(1000);
-        expect(credit.effective_limit).toBe(1200);
+        expect(credit.total_due_amount).toBe(60);
+        expect(credit.total_overdue_amount).toBe(70);
+        expect(credit.total_ar).toBe(130);
         expect(credit.capacity_gap_amount).toBe(100);
-        expect(credit.uninsured_amount).toBe(25);
+        expect(credit.at_risk_exposure).toBe(115);
         expect(credit.open_claims_count).toBe(2);
         expect(credit.total_claims_count).toBe(3);
         expect(credit.members).toEqual([
@@ -157,6 +167,11 @@ describe("customerAggregatedData response shape", () => {
                 name: "Root Co",
                 type: "Company",
                 parent_customer_id: null,
+                total_due_amount: 40,
+                total_overdue_amount: 60,
+                total_ar: 100,
+                capacity_gap_amount: 100,
+                at_risk_exposure: 115,
                 open_claims_count: 1,
                 total_claims_count: 1,
             },
@@ -166,6 +181,11 @@ describe("customerAggregatedData response shape", () => {
                 name: "Child Co",
                 type: "Company",
                 parent_customer_id: 1,
+                total_due_amount: 20,
+                total_overdue_amount: 10,
+                total_ar: 30,
+                capacity_gap_amount: 0,
+                at_risk_exposure: 25,
                 open_claims_count: 1,
                 total_claims_count: 2,
             },

@@ -113,6 +113,7 @@ export async function fetchUtilizationBinCptCustomers(options: {
         LEFT JOIN "Company" co ON co.id = c.company_id
         LEFT JOIN "InsurancePolicy" ip ON ip.id = t.insurance_policy_id
         WHERE t.account_id = ${options.accountId}
+          AND c.parent_customer_id IS NULL
           AND t.snapshot_date >= ${fromDateUtc}::date
           AND t.snapshot_date <= ${toDateUtc}::date
           AND t.insurance_policy_id IS NOT NULL

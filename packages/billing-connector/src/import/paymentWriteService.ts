@@ -1,4 +1,5 @@
 import type { Invoice, InvoicePayment, PrismaClient } from "@prisma/client";
+import { assertCustomerHasNoChildren } from "@archaser/credit-insurance-domain";
 import {
     recalculateInvoiceFromLinkedPayments,
 } from "../invoice/linkDeferredPaymentAndRecalc";
@@ -52,6 +53,7 @@ export async function createLinkedInvoicePayment(
     prisma: PrismaClient,
     data: CreatePaymentData
 ): Promise<{ invoicePayment: InvoicePayment; updatedInvoice: Invoice }> {
+    await assertCustomerHasNoChildren(data.customer_id, prisma);
     return prisma.$transaction(async (tx) => {
         let invoiceNumber =
             typeof data.invoice_number === "string"
@@ -95,6 +97,7 @@ export async function createDeferredInvoicePayment(
     prisma: PrismaClient,
     data: CreateDeferredPaymentData
 ): Promise<InvoicePayment> {
+    await assertCustomerHasNoChildren(data.customer_id, prisma);
     return prisma.invoicePayment.create({
         data: {
             invoice_id: null,
