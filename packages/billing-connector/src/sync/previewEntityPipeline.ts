@@ -54,12 +54,21 @@ export interface PreviewEntityResult {
  * Date cutover for preview samples — same role as live backfill
  * `createdOnOrAfter` / preferredDateField. Uses `gt` to match stored Invoice
  * filters and the Priority Postman shape for this account.
+ *
+ * Customer / Contact: never — CUSTOMERS / CUSTPERSONNEL have no UDATE, and
+ * live sync scopes them via pull_filters only (not a date window).
  */
 export function previewCutoverDateOData(params: {
     importType: ImportType;
     backfillStartDate: Date | string | null | undefined;
     pullDateField?: string | null;
 }): string | null {
+    if (
+        params.importType === "Customer" ||
+        params.importType === "Contact"
+    ) {
+        return null;
+    }
     const raw = params.backfillStartDate;
     if (raw == null) {
         return null;
@@ -78,12 +87,9 @@ export function previewCutoverDateOData(params: {
             ? "FNCDATE"
             : params.importType === "Invoice"
               ? "IVDATE"
-              : params.importType === "Customer" ||
-                  params.importType === "Contact"
-                ? "UDATE"
-                : null;
+              : null;
     const field = preferred || defaultField;
-    if (!field) {
+    if (!field || field.toUpperCase() === "UDATE") {
         return null;
     }
     // Match account 10149 Invoice / Postman literals (+03:00 Israel offset).

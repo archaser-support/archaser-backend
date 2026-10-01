@@ -7,6 +7,12 @@ import type { CreditDashboardSummary } from "./creditInsuranceDashboardService";
 /** Tunable chunk size for multi-row CreditDashboardDailySnapshot upserts. */
 export const CREDIT_DASHBOARD_SNAPSHOT_BATCH_UPSERT_CHUNK_SIZE = 12;
 
+/**
+ * ON CONFLICT target must match index ux_credit_dashboard_daily_snapshot_scope_day
+ * exactly (integer COALESCE on policy_id / business_unit_id — not ::bigint).
+ * See prisma/migrations/20260930_fix_credit_dashboard_snapshot_ux_coalesce_types.sql.
+ */
+
 export type CreditDashboardDailySnapshotUpsertRow = {
     accountId: number;
     policyId: number | null;

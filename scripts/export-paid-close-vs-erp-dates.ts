@@ -160,6 +160,11 @@ async function main(): Promise<void> {
             id: number;
             invoiceNumber: string;
             customerNumber: string;
+            amount: string;
+            totalPaid: string;
+            outstandingDebt: string;
+            customerAmount: string;
+            customerOutstandingDebt: string;
             closeDate: string | null;
             balDate: string | null;
             fncDate: string | null;
@@ -193,6 +198,11 @@ async function main(): Promise<void> {
                     invoice_number: true,
                     close_date: true,
                     customer_number: true,
+                    amount: true,
+                    total_paid: true,
+                    outstanding_debt: true,
+                    customer_amount: true,
+                    customer_outstanding_debt: true,
                     Customer: {
                         select: { customer_number: true },
                     },
@@ -235,6 +245,24 @@ async function main(): Promise<void> {
                     id: invoice.id,
                     invoiceNumber,
                     customerNumber,
+                    amount:
+                        invoice.amount != null ? String(invoice.amount) : "",
+                    totalPaid:
+                        invoice.total_paid != null
+                            ? String(invoice.total_paid)
+                            : "",
+                    outstandingDebt:
+                        invoice.outstanding_debt != null
+                            ? String(invoice.outstanding_debt)
+                            : "",
+                    customerAmount:
+                        invoice.customer_amount != null
+                            ? String(invoice.customer_amount)
+                            : "",
+                    customerOutstandingDebt:
+                        invoice.customer_outstanding_debt != null
+                            ? String(invoice.customer_outstanding_debt)
+                            : "",
                     closeDate,
                     balDate,
                     fncDate,
@@ -280,6 +308,11 @@ async function main(): Promise<void> {
             "id",
             "invoice_number",
             "customer_number",
+            "amount",
+            "total_paid",
+            "outstanding_debt",
+            "customer_amount",
+            "customer_outstanding_debt",
             "close_date",
             "baldate",
             "fncdate",
@@ -298,6 +331,11 @@ async function main(): Promise<void> {
                 String(row.id),
                 csvEscape(row.invoiceNumber),
                 csvEscape(row.customerNumber),
+                row.amount,
+                row.totalPaid,
+                row.outstandingDebt,
+                row.customerAmount,
+                row.customerOutstandingDebt,
                 row.closeDate ?? "",
                 row.balDate ?? "",
                 row.fncDate ?? "",
