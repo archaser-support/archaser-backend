@@ -16,6 +16,10 @@ import {
     parseEnabledEntitiesForSyncDate,
     pickAccountLastSyncDate,
 } from "../billing-connector/account-last-sync-date";
+import {
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
+} from "@archaser/billing-connector";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import { SystemEmailService } from "../email/system-email.service";
@@ -1315,8 +1319,9 @@ export class AccountAdminEntitiesService {
     }
 
     /**
-     * Derived from connector sync state — the header's freshness pill reads this
-     * for every user, so it must not require billing-connector permissions.
+     * Account header freshness pill. Prefer Mongo last SUCCESS (same as billing
+     * connector config) so Reset backfill — which clears Prisma entity watermarks —
+     * does not flash "Never synced" when a completed ERP sync still exists in history.
      */
     private async resolveAccountLastSyncDate(
         accountId: number
@@ -1324,6 +1329,7 @@ export class AccountAdminEntitiesService {
         const connector = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
             select: {
+                id: true,
                 enabled_entities: true,
                 ConnectorSyncState: {
                     select: {
@@ -1336,10 +1342,23 @@ export class AccountAdminEntitiesService {
         if (!connector) {
             return null;
         }
-        return pickAccountLastSyncDate(
+        const fromPrisma = pickAccountLastSyncDate(
             parseEnabledEntitiesForSyncDate(connector.enabled_entities),
             connector.ConnectorSyncState
         );
+        try {
+            const fromMongo = watermarkFromSuccessfulExecution(
+                await findLastSuccessfulExecutionForConnector(connector.id)
+            );
+            return fromMongo ?? fromPrisma;
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `[account ${accountId}] Mongo last SUCCESS for last_sync_date skipped: ${message}`
+            );
+            return fromPrisma;
+        }
     }
 
     async update(

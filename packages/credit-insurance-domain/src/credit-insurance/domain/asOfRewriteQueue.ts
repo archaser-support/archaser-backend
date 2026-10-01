@@ -356,7 +356,9 @@ type DrainWriters = {
  * snapshots (those stay on overnight tip / queue drain).
  *
  * No-ops when fromDate > toDate. Throws AdminBackfillBlockingRewriteError when
- * an account CREDIT_ASOF_BACKFILL job is running or paused.
+ * an account CREDIT_ASOF_BACKFILL job is **running**. Paused jobs do not block
+ * interactive customer CPT (ops Pause unlocks the customer UI); overnight drain
+ * still skips paused via {@link isAdminBackfillBlockingDrain}.
  */
 export async function rewriteCustomerAsOfRange(
     input: RewriteCustomerAsOfRangeInput,
@@ -377,8 +379,16 @@ export async function rewriteCustomerAsOfRange(
         return { daysRewritten: 0, skipped: true };
     }
 
-    const blocking = await db.$queryRaw<Array<{ account_id: number }>>`
-        SELECT account_id
+    const blockingJobs = await db.$queryRaw<
+        Array<{
+            account_id: number;
+            status: string;
+            units_done: number | null;
+            units_total: number | null;
+            updated_at: Date;
+        }>
+    >`
+        SELECT account_id, status, units_done, units_total, updated_at
         FROM "AccountBackgroundJob"
         WHERE account_id = ${input.accountId}
           AND job_kind IN (
@@ -388,8 +398,44 @@ export async function rewriteCustomerAsOfRange(
           AND status IN ('running', 'paused')
         LIMIT 1
     `;
-    if (blocking.length > 0) {
-        throw new AdminBackfillBlockingRewriteError(input.accountId);
+    const blockingJob = blockingJobs[0];
+    if (blockingJob) {
+        // Intentionally paused jobs must keep blocking interactive rewrite.
+        if (blockingJob.status === "paused") {
+            throw new AdminBackfillBlockingRewriteError(input.accountId);
+        }
+        const unitsDone = Number(blockingJob.units_done ?? 0);
+        const unitsTotal = Number(blockingJob.units_total ?? 0);
+        const updatedAt = new Date(blockingJob.updated_at);
+        const staleMs = 10 * 60 * 1000;
+        const finished =
+            unitsTotal > 0 && unitsDone >= unitsTotal;
+        const stale =
+            Number.isFinite(updatedAt.getTime()) &&
+            Date.now() - updatedAt.getTime() >= staleMs;
+        // Heal orphaned RUNNING rows (worker died / raced with a manual
+        // complete) so interactive customer CPT is not blocked forever.
+        if (finished || stale) {
+            await db.$executeRaw`
+                UPDATE "AccountBackgroundJob"
+                SET status = 'complete',
+                    units_done = CASE
+                        WHEN units_total IS NOT NULL AND units_total > 0
+                        THEN GREATEST(units_done, units_total)
+                        ELSE units_done
+                    END,
+                    last_error = NULL,
+                    updated_at = ${new Date()}
+                WHERE account_id = ${input.accountId}
+                  AND job_kind IN (
+                    ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL},
+                    ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_POOL_PARENT_HISTORY}
+                  )
+                  AND status = 'running'
+            `;
+        } else {
+            throw new AdminBackfillBlockingRewriteError(input.accountId);
+        }
     }
 
     const syncCpt =

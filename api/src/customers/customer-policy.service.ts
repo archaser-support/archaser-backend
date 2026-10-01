@@ -684,14 +684,21 @@ export class CustomerPolicyService {
     ): Promise<void> {
         // Option B: await CPT rewrite in-request; dashboard stays on overnight tip/drain.
         try {
-            await rewriteCustomerAsOfRange({
-                accountId,
-                customerIds: [customerId],
-                fromDate: policyChangeStartDate,
-                toDate: new Date(),
-            });
+            await rewriteCustomerAsOfRange(
+                {
+                    accountId,
+                    customerIds: [customerId],
+                    fromDate: policyChangeStartDate,
+                    toDate: new Date(),
+                },
+                { dbClient: this.db }
+            );
         } catch (error) {
-            if (error instanceof AdminBackfillBlockingRewriteError) {
+            if (
+                error instanceof AdminBackfillBlockingRewriteError ||
+                (error instanceof Error &&
+                    error.name === "AdminBackfillBlockingRewriteError")
+            ) {
                 throw new ConflictException({
                     error: error.message,
                     code: "CREDIT_ASOF_BACKFILL_IN_PROGRESS",
