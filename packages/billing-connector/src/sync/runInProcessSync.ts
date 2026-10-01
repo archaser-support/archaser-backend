@@ -40,6 +40,14 @@ import {
     resolveAccountCustomerById,
     type ClearBeforeImportEntity,
 } from "../purge/clearBeforeImport";
+import {
+    clearCustomerScopedHistoryProgress,
+    ensureCustomerScopedHistoryProgressOwner,
+    isCustomerScopedHistoryComplete,
+    upsertCustomerScopedEntityCheckpoint,
+    getCustomerScopedHistoryProgress,
+} from "./customerScopedHistoryProgress";
+import { enqueuePendingCustomerHistoryForCreates } from "./pendingCustomerHistoryQueue";
 import { isConnectorSyncCancelRequested } from "./connectorSyncCancelRegistry";
 import {
     BALANCES_ENTITY_STATS_KEY,
@@ -105,6 +113,10 @@ export interface RunInProcessSyncOptions extends ConnectorPostIngestDeferOptions
      * Ignored for incremental, preview/dryRun, and Resume (host must omit).
      */
     customerId?: number | null;
+    /** Override isolated customer-history progress store (tests). */
+    customerScopedHistoryProgressStore?: import("./customerScopedHistoryProgress").CustomerScopedHistoryProgressStore;
+    /** Override pending-history queue store (tests). */
+    pendingCustomerHistoryQueueStore?: import("./pendingCustomerHistoryQueue").PendingCustomerHistoryQueueStore;
     /**
      * Manual Start only: entity types to load from Mongo import cache
      * (skip ERP pull). Cron / scheduled sync must omit this.
@@ -540,6 +552,32 @@ async function runInProcessSyncBody(
     const importBatch = options.importBatch ?? importMappedEntityBatch;
     const log = (message: string) => emitSyncLog(onLog, message);
     const structuredLogs = options.observability?.structuredLogs !== false;
+    const maybeEnqueuePendingHistory = async (
+        entityType: ImportEntityType,
+        importResult: EntityImportBatchResult,
+        syncModeLabel: "BACKFILL" | "INCREMENTAL",
+        providerLabel: string,
+        connectorId: number
+    ) => {
+        if (entityType !== "Customer") {
+            return;
+        }
+        const created = importResult.createdCustomers ?? [];
+        if (created.length === 0) {
+            return;
+        }
+        await enqueuePendingCustomerHistoryForCreates({
+            connectorId,
+            accountId,
+            syncMode: syncModeLabel,
+            provider: providerLabel,
+            createdCustomers: created,
+            executionId: options.executionId,
+            correlationId: options.observability?.correlationId,
+            onLog: log,
+            store: options.pendingCustomerHistoryQueueStore,
+        });
+    };
     const setTailStep = (key: TailStepKey, state: TailStepState) => {
         // A late `running` update must not resurrect a finished step.
         const current = stats.tailSteps?.[key];
@@ -693,6 +731,13 @@ async function runInProcessSyncBody(
             log(
                 `Customer scope for this Start: id=${customer.id} number=${customer.customer_number}`
             );
+            await ensureCustomerScopedHistoryProgressOwner({
+                connectorId: connector.id,
+                accountId,
+                customerId: customer.id,
+                customerNumber: customer.customer_number,
+                store: options.customerScopedHistoryProgressStore,
+            });
         }
         if (clearRequested.length > 0) {
             log(
@@ -1142,6 +1187,11 @@ async function runInProcessSyncBody(
                     !isIncremental && Boolean(connector.backfill_start_date),
                 pullFilters: connector.pull_filters,
                 runtimeCustomerNumber,
+                scopedCustomerId: clearCustomerId,
+                customerScopedHistoryProgressStore:
+                    options.customerScopedHistoryProgressStore,
+                pendingCustomerHistoryQueueStore:
+                    options.pendingCustomerHistoryQueueStore,
                 entitySets: connector.entity_sets,
                 dateFieldByType,
                 overlapMinutes: connector.sync_overlap_minutes,
@@ -1375,6 +1425,13 @@ async function runInProcessSyncBody(
                                 }
                             }
                         }
+                        await maybeEnqueuePendingHistory(
+                            entityType,
+                            importResult,
+                            mode === "incremental" ? "INCREMENTAL" : "BACKFILL",
+                            connector.provider,
+                            connector.id
+                        );
                         (stats as unknown as Record<string, number>)[importedKey] =
                             importedFromCache;
                         stats.importErrors += importResult.failed;
@@ -1397,36 +1454,60 @@ async function runInProcessSyncBody(
 
                     const maxUpdated =
                         extractMaxUpdatedAt(cachedRows) ?? new Date();
-                    await prisma.connectorSyncState.upsert({
-                        where: {
-                            connector_id_entity_type: {
+                if (
+                    clearCustomerId != null &&
+                    runtimeCustomerNumber
+                ) {
+                    await upsertCustomerScopedEntityCheckpoint(
+                        {
+                            connectorId: connector.id,
+                            accountId,
+                            customerId: clearCustomerId,
+                            customerNumber: runtimeCustomerNumber,
+                            entityType,
+                            backfillCursor: null,
+                            backfillRecordsPulled: cachedRows.length,
+                            backfillTotalRecords: cachedRows.length,
+                            pageComplete: true,
+                            lastError:
+                                failedFromCache > 0
+                                    ? "Some cache import chunks failed"
+                                    : null,
+                        },
+                        options.customerScopedHistoryProgressStore
+                    );
+                    } else {
+                        await prisma.connectorSyncState.upsert({
+                            where: {
+                                connector_id_entity_type: {
+                                    connector_id: connector.id,
+                                    entity_type: entityType,
+                                },
+                            },
+                            create: {
                                 connector_id: connector.id,
                                 entity_type: entityType,
+                                last_successful_run_at: new Date(),
+                                last_attempt_at: new Date(),
+                                last_max_updated_at: maxUpdated,
+                                backfill_records_pulled: cachedRows.length,
+                                last_error:
+                                    failedFromCache > 0
+                                        ? "Some cache import chunks failed"
+                                        : null,
                             },
-                        },
-                        create: {
-                            connector_id: connector.id,
-                            entity_type: entityType,
-                            last_successful_run_at: new Date(),
-                            last_attempt_at: new Date(),
-                            last_max_updated_at: maxUpdated,
-                            backfill_records_pulled: cachedRows.length,
-                            last_error:
-                                failedFromCache > 0
-                                    ? "Some cache import chunks failed"
-                                    : null,
-                        },
-                        update: {
-                            last_successful_run_at: new Date(),
-                            last_attempt_at: new Date(),
-                            last_max_updated_at: maxUpdated,
-                            backfill_records_pulled: cachedRows.length,
-                            last_error:
-                                failedFromCache > 0
-                                    ? "Some cache import chunks failed"
-                                    : null,
-                        },
-                    });
+                            update: {
+                                last_successful_run_at: new Date(),
+                                last_attempt_at: new Date(),
+                                last_max_updated_at: maxUpdated,
+                                backfill_records_pulled: cachedRows.length,
+                                last_error:
+                                    failedFromCache > 0
+                                        ? "Some cache import chunks failed"
+                                        : null,
+                            },
+                        });
+                    }
 
                     // Replay keeps the source backup — do not append a new
                     // Mongo import-cache doc under this execution_id (R1/R2).
@@ -1511,6 +1592,13 @@ async function runInProcessSyncBody(
                         }
                     }
                 }
+                await maybeEnqueuePendingHistory(
+                    entityType,
+                    importResult,
+                    mode === "incremental" ? "INCREMENTAL" : "BACKFILL",
+                    connector.provider,
+                    connector.id
+                );
                 emit();
 
                 if (entityType === "Invoice") {
@@ -1531,36 +1619,60 @@ async function runInProcessSyncBody(
                         pullResult.records as Record<string, unknown>[]
                     ) ?? new Date();
 
-                await prisma.connectorSyncState.upsert({
-                    where: {
-                        connector_id_entity_type: {
+                if (
+                    clearCustomerId != null &&
+                    runtimeCustomerNumber
+                ) {
+                    await upsertCustomerScopedEntityCheckpoint(
+                        {
+                            connectorId: connector.id,
+                            accountId,
+                            customerId: clearCustomerId,
+                            customerNumber: runtimeCustomerNumber,
+                            entityType,
+                            backfillCursor: null,
+                            backfillRecordsPulled: pullResult.records.length,
+                            backfillTotalRecords: pullResult.records.length,
+                            pageComplete: true,
+                            lastError:
+                                importResult.failed > 0
+                                    ? importResult.errors.slice(0, 3).join("; ")
+                                    : null,
+                        },
+                        options.customerScopedHistoryProgressStore
+                    );
+                } else {
+                    await prisma.connectorSyncState.upsert({
+                        where: {
+                            connector_id_entity_type: {
+                                connector_id: connector.id,
+                                entity_type: entityType,
+                            },
+                        },
+                        create: {
                             connector_id: connector.id,
                             entity_type: entityType,
+                            last_successful_run_at: new Date(),
+                            last_attempt_at: new Date(),
+                            last_max_updated_at: maxUpdated,
+                            backfill_records_pulled: pullResult.records.length,
+                            last_error:
+                                importResult.failed > 0
+                                    ? importResult.errors.slice(0, 3).join("; ")
+                                    : null,
                         },
-                    },
-                    create: {
-                        connector_id: connector.id,
-                        entity_type: entityType,
-                        last_successful_run_at: new Date(),
-                        last_attempt_at: new Date(),
-                        last_max_updated_at: maxUpdated,
-                        backfill_records_pulled: pullResult.records.length,
-                        last_error:
-                            importResult.failed > 0
-                                ? importResult.errors.slice(0, 3).join("; ")
-                                : null,
-                    },
-                    update: {
-                        last_successful_run_at: new Date(),
-                        last_attempt_at: new Date(),
-                        last_max_updated_at: maxUpdated,
-                        backfill_records_pulled: pullResult.records.length,
-                        last_error:
-                            importResult.failed > 0
-                                ? importResult.errors.slice(0, 3).join("; ")
-                                : null,
-                    },
-                });
+                        update: {
+                            last_successful_run_at: new Date(),
+                            last_attempt_at: new Date(),
+                            last_max_updated_at: maxUpdated,
+                            backfill_records_pulled: pullResult.records.length,
+                            last_error:
+                                importResult.failed > 0
+                                    ? importResult.errors.slice(0, 3).join("; ")
+                                    : null,
+                        },
+                    });
+                }
 
                 const rules = parseMappingRules(mapping.mapping);
                 const forCache =
@@ -1597,24 +1709,64 @@ async function runInProcessSyncBody(
                     err instanceof Error ? err.message : "Unknown error";
                 log(`${entityType} sync failed: ${message}`);
                 stats.importErrors += 1;
-                await prisma.connectorSyncState.upsert({
-                    where: {
-                        connector_id_entity_type: {
+                if (
+                    clearCustomerId != null &&
+                    runtimeCustomerNumber
+                ) {
+                    await upsertCustomerScopedEntityCheckpoint(
+                        {
+                            connectorId: connector.id,
+                            accountId,
+                            customerId: clearCustomerId,
+                            customerNumber: runtimeCustomerNumber,
+                            entityType,
+                            backfillCursor: null,
+                            backfillRecordsPulled: 0,
+                            backfillTotalRecords: null,
+                            pageComplete: false,
+                            lastError: `${entityType} sync failed: ${message}`,
+                        },
+                        options.customerScopedHistoryProgressStore
+                    );
+                } else {
+                    await prisma.connectorSyncState.upsert({
+                        where: {
+                            connector_id_entity_type: {
+                                connector_id: connector.id,
+                                entity_type: entityType,
+                            },
+                        },
+                        create: {
                             connector_id: connector.id,
                             entity_type: entityType,
+                            last_error: `${entityType} sync failed: ${message}`,
+                            last_attempt_at: new Date(),
                         },
-                    },
-                    create: {
-                        connector_id: connector.id,
-                        entity_type: entityType,
-                        last_error: `${entityType} sync failed: ${message}`,
-                        last_attempt_at: new Date(),
-                    },
-                    update: {
-                        last_error: `${entityType} sync failed: ${message}`,
-                        last_attempt_at: new Date(),
-                    },
-                });
+                        update: {
+                            last_error: `${entityType} sync failed: ${message}`,
+                            last_attempt_at: new Date(),
+                        },
+                    });
+                }
+            }
+        }
+
+        if (
+            clearCustomerId != null &&
+            runtimeCustomerNumber
+        ) {
+            const isolated = await getCustomerScopedHistoryProgress(
+                connector.id,
+                options.customerScopedHistoryProgressStore
+            );
+            if (isCustomerScopedHistoryComplete(isolated, enabled)) {
+                await clearCustomerScopedHistoryProgress(
+                    connector.id,
+                    options.customerScopedHistoryProgressStore
+                );
+                log(
+                    `Cleared isolated customer-history progress for customer_id=${clearCustomerId}`
+                );
             }
         }
 

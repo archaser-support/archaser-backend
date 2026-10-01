@@ -14,10 +14,13 @@ import {
     requestConnectorSyncCancel,
 } from "./connectorSyncCancelRegistry";
 import {
-    runInProcessSync,
     type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
 } from "./runInProcessSync";
+import {
+    runSyncWithPendingCustomerHistoryPolicy,
+    scheduleContinuePendingCustomerHistoryDrainForAccount,
+} from "./runSyncWithPendingCustomerHistoryPolicy";
 import {
     createRunningExecution,
     createSyncProgressHeartbeat,
@@ -131,7 +134,7 @@ export async function runAcceptedInProcessSync(
     } = params;
     try {
         const heartbeat = createSyncProgressHeartbeat(executionId);
-        const result = await runInProcessSync({
+        const result = await runSyncWithPendingCustomerHistoryPolicy({
             prisma,
             accountId,
             trigger,
@@ -208,6 +211,14 @@ export async function runAcceptedInProcessSync(
         }).catch(() => undefined);
     } finally {
         clearRunningSync(accountId);
+        if (mode === "incremental") {
+            void scheduleContinuePendingCustomerHistoryDrainForAccount({
+                prisma,
+                accountId,
+                onLog,
+                executionId,
+            });
+        }
     }
 }
 
