@@ -6,10 +6,13 @@ import {
     recordBillingConnectorAuthFailure,
 } from "./billingConnectorAuthCircuitBreaker";
 import {
-    runInProcessSync,
     type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
 } from "../sync/runInProcessSync";
+import {
+    runSyncWithPendingCustomerHistoryPolicy,
+    scheduleContinuePendingCustomerHistoryDrainForAccount,
+} from "../sync/runSyncWithPendingCustomerHistoryPolicy";
 import {
     createRunningExecution,
     createSyncProgressHeartbeat,
@@ -73,7 +76,8 @@ export async function syncDueBillingConnectors(
     let failed = 0;
     const skippedFrozenAccountIds = new Set<number>();
 
-    const runSync = options?.runSync ?? runInProcessSync;
+    const runSync =
+        options?.runSync ?? runSyncWithPendingCustomerHistoryPolicy;
     const createExecutionId = options?.createExecutionId ?? randomUUID;
     const now = options?.now ?? new Date();
 
@@ -202,6 +206,17 @@ export async function syncDueBillingConnectors(
                 // Portfolio Generate start runs inside the in-process sync (`_ctp` progress step).
             } catch {
                 // Circuit breaker must not fail the cron batch.
+            }
+
+            // D12: after incremental + enqueue, continue draining without
+            // holding this cron tick on multi-hour customer history.
+            if (connector.sync_mode === "INCREMENTAL") {
+                void scheduleContinuePendingCustomerHistoryDrainForAccount({
+                    prisma,
+                    accountId: connector.account_id,
+                    onLog: options?.onLog,
+                    executionId,
+                });
             }
         } catch (error) {
             failed += 1;
