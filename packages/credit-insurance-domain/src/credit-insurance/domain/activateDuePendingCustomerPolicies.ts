@@ -1,5 +1,6 @@
 import { prisma } from "../domain-db";
 import { enqueueAsOfRewrite } from "./asOfRewriteQueue";
+import { remirrorCreditPoolAfterPolicyMutation } from "./parentCustomerCreditInheritance";
 import { freezeCustomerPolicyGapOnDeactivation } from "./syncCustomerPolicyGapAmounts";
 import { syncCustomerInsuranceFields } from "./syncCustomerInsuranceFields";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
@@ -95,6 +96,15 @@ export async function activateDuePendingCustomerPolicies(): Promise<ActivateDueP
                 fromDate: pending.policy_change_start_date,
                 toDate: new Date(),
             });
+            try {
+                await remirrorCreditPoolAfterPolicyMutation(
+                    pending.customer_id,
+                    accountId,
+                    { dbClient: prisma }
+                );
+            } catch {
+                // Pool remirror can catch up on next root policy touch.
+            }
             activated += 1;
             rewriteEnqueued += 1;
         } catch {

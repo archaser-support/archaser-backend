@@ -318,7 +318,7 @@ export class AdminBackfillBlockingRewriteError extends Error {
 
     constructor(accountId: number) {
         super(
-            `Credit as-of backfill is running for account ${accountId}; try again later`
+            `Credit history refresh is running for account ${accountId}; try again later`
         );
         this.name = "AdminBackfillBlockingRewriteError";
         this.accountId = accountId;
@@ -391,12 +391,19 @@ export async function rewriteCustomerAsOfRange(
         SELECT account_id, status, units_done, units_total, updated_at
         FROM "AccountBackgroundJob"
         WHERE account_id = ${input.accountId}
-          AND job_kind = ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL}
-          AND status = 'running'
+          AND job_kind IN (
+            ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL},
+            ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_POOL_PARENT_HISTORY}
+          )
+          AND status IN ('running', 'paused')
         LIMIT 1
     `;
     const blockingJob = blockingJobs[0];
     if (blockingJob) {
+        // Intentionally paused jobs must keep blocking interactive rewrite.
+        if (blockingJob.status === "paused") {
+            throw new AdminBackfillBlockingRewriteError(input.accountId);
+        }
         const unitsDone = Number(blockingJob.units_done ?? 0);
         const unitsTotal = Number(blockingJob.units_total ?? 0);
         const updatedAt = new Date(blockingJob.updated_at);
@@ -420,7 +427,10 @@ export async function rewriteCustomerAsOfRange(
                     last_error = NULL,
                     updated_at = ${new Date()}
                 WHERE account_id = ${input.accountId}
-                  AND job_kind = ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL}
+                  AND job_kind IN (
+                    ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL},
+                    ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_POOL_PARENT_HISTORY}
+                  )
                   AND status = 'running'
             `;
         } else {
@@ -527,7 +537,10 @@ export async function drainAsOfRewriteQueue(options?: {
             SELECT account_id
             FROM "AccountBackgroundJob"
             WHERE account_id IN (${Prisma.join(accountIds)})
-              AND job_kind = ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL}
+              AND job_kind IN (
+                ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL},
+                ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_POOL_PARENT_HISTORY}
+              )
               AND status IN ('running', 'paused')
         `;
         blocking.forEach((row) => blockingAccountIds.add(row.account_id));

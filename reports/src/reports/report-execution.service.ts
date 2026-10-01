@@ -25,6 +25,7 @@ import {
     resolveReportPrimaryTable,
 } from "./report.constants";
 import {
+    attributePrismaInvoiceCustomersToCreditPoolRoots,
     bindCreditInsurancePrisma,
     enrichCreditDashboardCustomerRows,
     fetchTopUpExpiringReportAsCustomerRows,
@@ -492,6 +493,23 @@ export class ReportExecutionService {
                 ? Promise.resolve(0)
                 : delegate.count({ where }),
         ]);
+
+        // Credit invoice reports include child-pool invoices in the cohort but
+        // display them under the pool root (parity with CDP terms counts).
+        if (
+            report.context === "dashboard_credit_invoices" &&
+            primaryTable === "Invoice" &&
+            Array.isArray(rows) &&
+            rows.length > 0
+        ) {
+            rows = await attributePrismaInvoiceCustomersToCreditPoolRoots(
+                accountId,
+                rows as Array<{
+                    customer_id?: number | null;
+                    Customer?: Record<string, unknown> | null;
+                }>
+            );
+        }
 
         // Open AR / related metrics are not Prisma columns — always enrich when
         // requested, even if context is wrong/null (staging copied reports, builder).
