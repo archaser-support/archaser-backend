@@ -34,6 +34,7 @@ type PrismaClientLike = PrismaClient | DbClient;
 
 export type CreditAsOfBackfillStatus =
     | "idle"
+    | "syncing"
     | "running"
     | "paused"
     | "failed"
@@ -59,6 +60,12 @@ export type CreditAsOfBackfillJobView = {
     estimatedSecondsRemaining: number | null;
     /** Pending CreditAsOfRewriteQueue window only; null when processing/done/missing. */
     pendingRewrite: PendingRewriteWindowView | null;
+    /** Parent-change job: Save-time sync vs async history. */
+    phase?: "sync" | "history" | null;
+    /** Parent-change sync checklist step key (see PARENT_CHANGE_SYNC_STEPS). */
+    step?: string | null;
+    syncStepsTotal?: number | null;
+    syncStepsDone?: number | null;
 };
 
 type JobRow = {
