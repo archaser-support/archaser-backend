@@ -7,6 +7,7 @@
  */
 import type { DbClient } from "../domain-db";
 import type { CreditAsOfBackfillJobView } from "./creditAsOfBackfillJob";
+import { setCreditPoolParentChangeSyncStep } from "./creditPoolParentChangeProgress";
 import type { CreditPoolMembershipCache } from "./parentCustomerCreditInheritance";
 
 export async function runCreditPoolParentChangeSideEffects(args: {
@@ -27,6 +28,11 @@ export async function runCreditPoolParentChangeSideEffects(args: {
     }
 
     // 1) Live capacity gaps for every remirrored pool root
+    await setCreditPoolParentChangeSyncStep({
+        accountId: args.accountId,
+        step: "capacity_gap",
+        dbClient: args.dbClient,
+    });
     const { ensureCustomerCapacityGapStored } = await import(
         "./syncCreditInsuranceGapPipeline"
     );
@@ -36,7 +42,8 @@ export async function runCreditPoolParentChangeSideEffects(args: {
         });
     }
 
-    // 2) Today CTP/CDP + start scoped async CTP history (no CDP history)
+    // 2) Today CTP/CDP only — history starts after breach/open-AR so the modal
+    // checklist matches the real order (sync steps → history).
     const { syncCreditPoolPolicyTrendsAfterParentChange } = await import(
         "./syncCreditPoolPolicyTrendsAfterParentChange"
     );
@@ -46,9 +53,15 @@ export async function runCreditPoolParentChangeSideEffects(args: {
         dbClient: args.dbClient,
         cache: args.cache,
         requestedBy: args.requestedBy ?? null,
+        skipAsyncHistoryJob: true,
     });
 
     // 3) Breach OR onto each remirrored root
+    await setCreditPoolParentChangeSyncStep({
+        accountId: args.accountId,
+        step: "breach_and_open_ar",
+        dbClient: args.dbClient,
+    });
     const { rollupCreditPoolBreachToRoot } = await import(
         "./rollupCreditPoolBreachToRoot"
     );
@@ -83,5 +96,68 @@ export async function runCreditPoolParentChangeSideEffects(args: {
         });
     }
 
-    return { asyncHistoryJob: ctpResult.asyncHistoryJob };
+    // 5) Scoped async CTP history (after live rollups)
+    let asyncHistoryJob = ctpResult.asyncHistoryJob;
+    if (
+        ctpResult.historyMode === "today_plus_async" &&
+        ctpResult.fromDate != null &&
+        ctpResult.customerIds.length > 0
+    ) {
+        const { inclusiveUtcDaySpan } = await import(
+            "./creditPoolParentChangeTiming"
+        );
+        const daySpan = inclusiveUtcDaySpan(
+            ctpResult.fromDate,
+            ctpResult.toDate
+        );
+        // today-only sync already ran; start history when the AR window is wider
+        if (daySpan > 1) {
+            await setCreditPoolParentChangeSyncStep({
+                accountId: args.accountId,
+                step: "history",
+                dbClient: args.dbClient,
+            });
+            try {
+                const { startCreditPoolParentHistoryJob } = await import(
+                    "./creditPoolParentHistoryJob"
+                );
+                asyncHistoryJob = await startCreditPoolParentHistoryJob({
+                    accountId: args.accountId,
+                    customerIds: ctpResult.customerIds,
+                    fromDate: ctpResult.fromDate,
+                    toDate: ctpResult.toDate,
+                    requestedBy: args.requestedBy ?? null,
+                    dbClient: args.dbClient,
+                });
+            } catch (error) {
+                console.error(
+                    "[ParentCustomerCredit] scoped history job failed",
+                    {
+                        accountId: args.accountId,
+                        memberCount: ctpResult.customerIds.length,
+                        errorMessage:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                    }
+                );
+                const { completeCreditPoolParentChangeSyncProgress } =
+                    await import("./creditPoolParentChangeProgress");
+                await completeCreditPoolParentChangeSyncProgress({
+                    accountId: args.accountId,
+                    dbClient: args.dbClient,
+                });
+            }
+        } else {
+            const { completeCreditPoolParentChangeSyncProgress } = await import(
+                "./creditPoolParentChangeProgress"
+            );
+            await completeCreditPoolParentChangeSyncProgress({
+                accountId: args.accountId,
+                dbClient: args.dbClient,
+            });
+        }
+    }
+
+    return { asyncHistoryJob };
 }
