@@ -48,6 +48,18 @@ import {
     type ArPostIngestHostFn,
     type ConnectorPostIngestDeferOptions,
 } from "../credit/arPostIngestHost";
+import {
+    clearCustomerScopedHistoryProgress,
+    ensureCustomerScopedHistoryProgressOwner,
+    getCustomerScopedHistoryProgress,
+    isCustomerScopedHistoryComplete,
+    upsertCustomerScopedEntityCheckpoint,
+    type CustomerScopedHistoryProgressStore,
+} from "./customerScopedHistoryProgress";
+import {
+    enqueuePendingCustomerHistoryForCreates,
+    type PendingCustomerHistoryQueueStore,
+} from "./pendingCustomerHistoryQueue";
 import { runInlineArPostIngestTailSteps } from "./arPostIngestTailSteps";
 import {
     runProcessOverdueTailStep,
@@ -171,6 +183,16 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
      * rows for that customer after pull.
      */
     runtimeCustomerNumber?: string | null;
+    /**
+     * Start backfill only: Archaser customer_id paired with
+     * {@link runtimeCustomerNumber}. When set, page cursors land in the
+     * isolated customer-history progress store — not ConnectorSyncState.
+     */
+    scopedCustomerId?: number | null;
+    /** Override isolated progress store (tests). */
+    customerScopedHistoryProgressStore?: CustomerScopedHistoryProgressStore;
+    /** Override pending-history queue store (tests). */
+    pendingCustomerHistoryQueueStore?: PendingCustomerHistoryQueueStore;
     /** Stored BillingConnector.entity_sets — overrides TOTARPAY / etc. */
     entitySets?: unknown;
     /** Per-entity mapping pull_date_field (admin pick). */
@@ -338,6 +360,7 @@ function clipSyncStateText(value: string | null | undefined): string | null {
 async function checkpointEntityPage(params: {
     prisma: PrismaClient;
     connectorId: number;
+    accountId: number;
     entityType: ExtensionEntityType;
     pulled: number;
     nextCursor: string | null;
@@ -346,6 +369,15 @@ async function checkpointEntityPage(params: {
     pageComplete: boolean;
     pageSize: number;
     providerTotalCount?: number;
+    /**
+     * When set, persist cursors only on the isolated customer-history store.
+     * Account ConnectorSyncState (including last_max_updated_at) is untouched.
+     */
+    customerScope?: {
+        customerId: number;
+        customerNumber: string;
+        store?: CustomerScopedHistoryProgressStore;
+    } | null;
 }): Promise<void> {
     const now = new Date();
     const nextCursor = clipSyncStateText(params.nextCursor);
@@ -360,6 +392,26 @@ async function checkpointEntityPage(params: {
                     params.pulled + params.pageSize,
                     params.pulled + 1
                 ));
+
+    if (params.customerScope) {
+        await upsertCustomerScopedEntityCheckpoint(
+            {
+                connectorId: params.connectorId,
+                accountId: params.accountId,
+                customerId: params.customerScope.customerId,
+                customerNumber: params.customerScope.customerNumber,
+                entityType: params.entityType,
+                backfillCursor: nextCursor,
+                backfillRecordsPulled: params.pulled,
+                backfillTotalRecords: backfill_total_records,
+                pageComplete: params.pageComplete,
+                lastError,
+            },
+            params.customerScope.store
+        );
+        return;
+    }
+
     await params.prisma.connectorSyncState.upsert({
         where: {
             connector_id_entity_type: {
@@ -407,6 +459,33 @@ function bumpImported(
     (stats as Record<string, number>)[key] =
         ((stats as Record<string, number>)[key] ?? 0) + success;
     stats.importErrors += failed;
+}
+
+async function maybeEnqueuePendingHistoryForCustomerCreates(params: {
+    entityType: ExtensionEntityType;
+    importResult: EntityImportBatchResult;
+    options: RunStagedExtensionSyncOptions;
+    log: (message: string) => void;
+}): Promise<void> {
+    if (params.entityType !== "Customer") {
+        return;
+    }
+    const created = params.importResult.createdCustomers ?? [];
+    if (created.length === 0) {
+        return;
+    }
+    const syncMode =
+        params.options.syncMode === "INCREMENTAL" ? "INCREMENTAL" : "BACKFILL";
+    await enqueuePendingCustomerHistoryForCreates({
+        connectorId: params.options.connectorId,
+        accountId: params.options.accountId,
+        syncMode,
+        provider: params.options.providerLabel ?? "UNKNOWN",
+        createdCustomers: created,
+        executionId: params.options.executionId,
+        onLog: params.log,
+        store: params.options.pendingCustomerHistoryQueueStore,
+    });
 }
 
 async function finalizeCustomerBalances(
@@ -530,6 +609,38 @@ export async function runStagedExtensionSync(
     const cacheCustomerScope = normalizeImportCacheCustomerScope(
         options.runtimeCustomerNumber
     );
+    const scopedCustomerNumber =
+        typeof options.runtimeCustomerNumber === "string"
+            ? options.runtimeCustomerNumber.trim()
+            : "";
+    const scopedCustomerId =
+        typeof options.scopedCustomerId === "number" &&
+        Number.isFinite(options.scopedCustomerId) &&
+        options.scopedCustomerId > 0
+            ? Math.trunc(options.scopedCustomerId)
+            : null;
+    const customerScope =
+        !dryRun &&
+        scopedCustomerId != null &&
+        scopedCustomerNumber.length > 0
+            ? {
+                  customerId: scopedCustomerId,
+                  customerNumber: scopedCustomerNumber,
+                  store: options.customerScopedHistoryProgressStore,
+              }
+            : null;
+    if (customerScope) {
+        await ensureCustomerScopedHistoryProgressOwner({
+            connectorId: options.connectorId,
+            accountId: options.accountId,
+            customerId: customerScope.customerId,
+            customerNumber: customerScope.customerNumber,
+            store: customerScope.store,
+        });
+        log(
+            `Customer-scoped history progress isolated for customer_id=${customerScope.customerId} number=${customerScope.customerNumber}`
+        );
+    }
     const flushEntityImportCache = async (entityType: ExtensionEntityType) => {
         if (dryRun) {
             return;
@@ -866,6 +977,26 @@ export async function runStagedExtensionSync(
                         entityStatuses[entityType] = "done";
                     }
                 }
+                if (customerScope) {
+                    const isolated = await getCustomerScopedHistoryProgress(
+                        options.connectorId,
+                        customerScope.store
+                    );
+                    if (
+                        isCustomerScopedHistoryComplete(
+                            isolated,
+                            options.enabledEntities
+                        )
+                    ) {
+                        await clearCustomerScopedHistoryProgress(
+                            options.connectorId,
+                            customerScope.store
+                        );
+                        log(
+                            `Cleared isolated customer-history progress for customer_id=${customerScope.customerId}`
+                        );
+                    }
+                }
             }
             return {
                 ...finished,
@@ -1011,6 +1142,12 @@ export async function runStagedExtensionSync(
                                 }
                             }
                         }
+                        await maybeEnqueuePendingHistoryForCustomerCreates({
+                            entityType,
+                            importResult,
+                            options,
+                            log,
+                        });
                         bumpImported(
                             stats,
                             entityType,
@@ -1026,6 +1163,7 @@ export async function runStagedExtensionSync(
                     await checkpointEntityPage({
                         prisma: options.prisma,
                         connectorId: options.connectorId,
+                        accountId: options.accountId,
                         entityType,
                         pulled: cachedRows.length,
                         nextCursor: null,
@@ -1040,11 +1178,13 @@ export async function runStagedExtensionSync(
                         pageComplete: true,
                         pageSize: cachedRows.length || 1,
                         providerTotalCount: cachedRows.length,
+                        customerScope,
                     });
                 } else if (!dryRun) {
                     await checkpointEntityPage({
                         prisma: options.prisma,
                         connectorId: options.connectorId,
+                        accountId: options.accountId,
                         entityType,
                         pulled: 0,
                         nextCursor: null,
@@ -1053,6 +1193,7 @@ export async function runStagedExtensionSync(
                         pageComplete: true,
                         pageSize: 1,
                         providerTotalCount: 0,
+                        customerScope,
                     });
                 }
                 emitProgress();
@@ -1157,36 +1298,54 @@ export async function runStagedExtensionSync(
 
             let afterKey: string | null = null;
             if (!dryRun) {
-                const syncState =
-                    await options.prisma.connectorSyncState.findFirst({
-                        where: {
-                            connector_id: options.connectorId,
-                            entity_type: entityType,
-                        },
-                    });
-                afterKey = syncState?.backfill_cursor ?? null;
-                // Clear completion before sampling/pull so the UI stays on
-                // Running until every page for this entity is fetched. Otherwise
-                // a prior-run backfill_completed + first live page looks "Done".
-                // Also zero pulled/total so the counter does not flash the
-                // previous run's "N imported" during column sampling.
-                // Incremental must NOT clear completion — a Stop mid-run would
-                // leave entities incomplete and demote the connector to Backfill.
-                if (
-                    syncState?.backfill_completed &&
-                    cacheSyncMode !== "INCREMENTAL"
-                ) {
-                    await options.prisma.connectorSyncState.update({
-                        where: { id: syncState.id },
-                        data: {
-                            backfill_completed: false,
-                            backfill_completed_at: null,
-                            backfill_records_pulled: 0,
-                            backfill_total_records: null,
-                            backfill_cursor: null,
-                        },
-                    });
-                    afterKey = null;
+                if (customerScope) {
+                    const isolated = await getCustomerScopedHistoryProgress(
+                        options.connectorId,
+                        customerScope.store
+                    );
+                    const entityProgress =
+                        isolated?.customer_id === customerScope.customerId
+                            ? isolated.entities[entityType]
+                            : undefined;
+                    if (entityProgress?.backfill_completed) {
+                        log(
+                            `Skipping ${entityType}: already complete for customer-scoped history (customer_id=${customerScope.customerId})`
+                        );
+                        continue;
+                    }
+                    afterKey = entityProgress?.backfill_cursor ?? null;
+                } else {
+                    const syncState =
+                        await options.prisma.connectorSyncState.findFirst({
+                            where: {
+                                connector_id: options.connectorId,
+                                entity_type: entityType,
+                            },
+                        });
+                    afterKey = syncState?.backfill_cursor ?? null;
+                    // Clear completion before sampling/pull so the UI stays on
+                    // Running until every page for this entity is fetched. Otherwise
+                    // a prior-run backfill_completed + first live page looks "Done".
+                    // Also zero pulled/total so the counter does not flash the
+                    // previous run's "N imported" during column sampling.
+                    // Incremental must NOT clear completion — a Stop mid-run would
+                    // leave entities incomplete and demote the connector to Backfill.
+                    if (
+                        syncState?.backfill_completed &&
+                        cacheSyncMode !== "INCREMENTAL"
+                    ) {
+                        await options.prisma.connectorSyncState.update({
+                            where: { id: syncState.id },
+                            data: {
+                                backfill_completed: false,
+                                backfill_completed_at: null,
+                                backfill_records_pulled: 0,
+                                backfill_total_records: null,
+                                backfill_cursor: null,
+                            },
+                        });
+                        afterKey = null;
+                    }
                 }
             }
 
@@ -1202,10 +1361,6 @@ export async function runStagedExtensionSync(
                 entityType === "Invoice" || entityType === "Payment";
             const applyDateWindow =
                 Boolean(windowCutover) && usesDatePull;
-            const scopedCustomerNumber =
-                typeof options.runtimeCustomerNumber === "string"
-                    ? options.runtimeCustomerNumber.trim()
-                    : "";
             const scopeToCustomer = scopedCustomerNumber.length > 0;
             const additionalCustomerNumbers =
                 scopeToCustomer &&
@@ -1685,6 +1840,12 @@ export async function runStagedExtensionSync(
                                 }
                             }
                         }
+                        await maybeEnqueuePendingHistoryForCustomerCreates({
+                            entityType,
+                            importResult,
+                            options,
+                            log,
+                        });
                         if (importResult.failed > 0) {
                             const sampleErrors = importResult.errors
                                 .slice(0, 3)
@@ -1703,6 +1864,7 @@ export async function runStagedExtensionSync(
                             await checkpointEntityPage({
                                 prisma: options.prisma,
                                 connectorId: options.connectorId,
+                                accountId: options.accountId,
                                 entityType,
                                 pulled: (stats as Record<string, number>)[
                                     processedKey(entityType)
@@ -1716,6 +1878,7 @@ export async function runStagedExtensionSync(
                                 pageComplete: false,
                                 pageSize: entityPageSize,
                                 providerTotalCount: page.totalCount,
+                                customerScope,
                             });
                             log(
                                 `Stopped by operator during ${entityType} import`
@@ -1744,6 +1907,7 @@ export async function runStagedExtensionSync(
                     await checkpointEntityPage({
                         prisma: options.prisma,
                         connectorId: options.connectorId,
+                        accountId: options.accountId,
                         entityType,
                         pulled: (stats as Record<string, number>)[
                             processedKey(entityType)
@@ -1757,6 +1921,7 @@ export async function runStagedExtensionSync(
                         pageComplete: exhausted,
                         pageSize: entityPageSize,
                         providerTotalCount: page.totalCount,
+                        customerScope,
                     });
                 }
 

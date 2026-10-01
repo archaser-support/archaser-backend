@@ -23,6 +23,9 @@ export function formatBillingConnectorSyncLogLine(
     if (fields.entity_type != null) {
         payload.entity_type = fields.entity_type;
     }
+    if (fields.customer_id != null) {
+        payload.customer_id = fields.customer_id;
+    }
     if (fields.duration_seconds != null) {
         payload.duration_seconds = fields.duration_seconds;
     }
@@ -46,6 +49,7 @@ export function buildBaseLogFields(input: {
     executionId?: string | null;
     correlationId?: string | null;
     entityType?: string | null;
+    customerId?: number | null;
     durationSeconds?: number;
     entityStats?: unknown;
     message?: string;
@@ -72,6 +76,7 @@ export function buildBaseLogFields(input: {
         sync_execution_id: executionId,
         execution_id: executionId,
         entity_type: input.entityType,
+        customer_id: input.customerId,
         duration_seconds: input.durationSeconds,
         entity_stats: entityStats,
         message: input.message,
