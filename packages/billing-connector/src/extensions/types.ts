@@ -85,6 +85,12 @@ export type ExtensionAfterPaymentLinkedContext = {
     accountId: number;
     userId?: string;
     candidates: ExtensionPaymentLinkedCandidate[];
+    /**
+     * Settle as-of for delayed recon virtual close. Payments with
+     * `payment_date` after this instant block virtual fill / Paid.
+     * Defaults to now.
+     */
+    asOf?: Date;
     /** Live progress while applying account-specific closes after linking. */
     onProgress?: (progress: { processed: number; total: number }) => void;
 };
@@ -138,6 +144,11 @@ export interface BillingAccountExtension {
         invoiceNumbers: string[];
         /** ERP RECONDATE per invoice number for virtual-close payment dates. */
         invoiceCloseDates?: Map<string, Date>;
+        /**
+         * Settle as-of for delayed recon virtual close (future cash gate).
+         * Defaults to now.
+         */
+        asOf?: Date;
         /** Live progress for the Settle closed invoices tail step. */
         onProgress?: (progress: {
             processed: number;
