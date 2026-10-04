@@ -35,8 +35,9 @@ export async function expandCreditPoolRootsToMembers(
     const membershipCache = cache ?? createCreditPoolMembershipCache();
     const rootByMemberId = new Map<number, number>();
     const memberIdSet = new Set<number>();
+    const uniqueRoots = [...new Set(rootCustomerIds)].filter(Number.isFinite);
 
-    for (const rootId of [...new Set(rootCustomerIds)].filter(Number.isFinite)) {
+    for (const rootId of uniqueRoots) {
         rootByMemberId.set(rootId, rootId);
         memberIdSet.add(rootId);
         const descendants = await listDescendantCustomerIds(
@@ -55,6 +56,55 @@ export async function expandCreditPoolRootsToMembers(
         memberIds: [...memberIdSet],
         rootByMemberId,
     };
+}
+
+/**
+ * Attribution for a root-only customer cohort (credit dashboard reports).
+ * Use with {@link attributeAmountsToCreditPoolRoots} / {@link attributeListsToCreditPoolRoots}
+ * so shell parents pick up descendant invoice AR.
+ */
+export async function creditPoolRootAttributionForCustomers(
+    accountId: number,
+    rootCustomerIds: readonly number[],
+    dbClient: DbClient = prisma
+): Promise<CreditPoolMemberAttribution & { allowedRootIds: Set<number> }> {
+    const allowedRootIds = new Set(
+        [...new Set(rootCustomerIds)].filter(Number.isFinite)
+    );
+    const attribution = await expandCreditPoolRootsToMembers(
+        accountId,
+        [...allowedRootIds],
+        dbClient
+    );
+    return { ...attribution, allowedRootIds };
+}
+
+/**
+ * Resolve pool root for invoice-keyed customer ids (customers that actually
+ * have open AR / invoice rows). Prefer this over expanding every live root
+ * when rolling dashboard amount maps.
+ */
+export async function resolveCreditPoolRootsForMemberIds(
+    memberIds: readonly number[],
+    dbClient: DbClient = prisma,
+    cache?: CreditPoolMembershipCache
+): Promise<Map<number, number>> {
+    const membershipCache = cache ?? createCreditPoolMembershipCache();
+    const rootByMemberId = new Map<number, number>();
+    const unique = [...new Set(memberIds.filter(Number.isFinite))];
+    await Promise.all(
+        unique.map(async (memberId) => {
+            rootByMemberId.set(
+                memberId,
+                await resolveCustomerCreditPoolRoot(
+                    memberId,
+                    dbClient,
+                    membershipCache
+                )
+            );
+        })
+    );
+    return rootByMemberId;
 }
 
 /**
