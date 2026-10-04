@@ -172,24 +172,26 @@ export class AccessScopeService {
 
     async getBusinessUnitHierarchy(buId: number): Promise<number[]> {
         const descendantIds: number[] = [];
-        const visited = new Set<number>();
+        const visited = new Set<number>([buId]);
+        let frontier = [buId];
 
-        const walk = async (id: number) => {
-            if (visited.has(id)) {
-                return;
-            }
-            visited.add(id);
+        while (frontier.length > 0) {
             const children = await this.db.businessUnit.findMany({
-                where: { parent_id: id },
+                where: { parent_id: { in: frontier } },
                 select: { id: true },
             });
+            const next: number[] = [];
             for (const child of children) {
+                if (visited.has(child.id)) {
+                    continue;
+                }
+                visited.add(child.id);
                 descendantIds.push(child.id);
-                await walk(child.id);
+                next.push(child.id);
             }
-        };
+            frontier = next;
+        }
 
-        await walk(buId);
         return descendantIds;
     }
 
@@ -205,16 +207,17 @@ export class AccessScopeService {
             return { id: -1 };
         }
 
-        const descendantIds = await this.getBusinessUnitHierarchy(userBuId);
-        let includeNullBU = false;
-        if (accountId) {
-            const userBU = await this.db.businessUnit.findUnique({
-                where: { id: userBuId },
-                select: { is_primary: true, account_id: true },
-            });
-            includeNullBU =
-                userBU?.is_primary === true && userBU.account_id === accountId;
-        }
+        const [descendantIds, userBU] = await Promise.all([
+            this.getBusinessUnitHierarchy(userBuId),
+            accountId
+                ? this.db.businessUnit.findUnique({
+                      where: { id: userBuId },
+                      select: { is_primary: true, account_id: true },
+                  })
+                : Promise.resolve(null),
+        ]);
+        const includeNullBU =
+            userBU?.is_primary === true && userBU.account_id === accountId;
 
         const conditions: PrismaWhere[] = [{ business_unit_id: userBuId }];
         if (descendantIds.length > 0) {

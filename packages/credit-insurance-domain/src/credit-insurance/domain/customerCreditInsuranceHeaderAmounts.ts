@@ -16,37 +16,58 @@ export {
 };
 export type { CustomerInvoiceCurrencyBuckets } from "./shared/invoiceBucketAmounts";
 
-type FrankfurterLatestResponse = {
-    rates?: Record<string, number>;
-};
+type LatestRateRatio = number | null;
 
-/**
- * Live ECB-backed spot (same source as cron). Used when `CurrencyRate` has no row
- * for pairs like ILS→GBP (cron only stores limit→account policy pairs).
- */
-async function fetchFrankfurterCrossRate(
-    fromCurrency: string,
-    toCurrency: string
-): Promise<number | null> {
-    const from = fromCurrency.trim().toUpperCase();
-    const to = toCurrency.trim().toUpperCase();
-    if (!from || !to || from === to) {
-        return 1;
+const latestRateRatioCache = new Map<string, LatestRateRatio>();
+const latestRateRatioInflight = new Map<string, Promise<LatestRateRatio>>();
+
+function ratePairKey(from: string, to: string): string {
+    return `${from}->${to}`;
+}
+
+async function loadLatestRateRatio(
+    from: string,
+    to: string
+): Promise<LatestRateRatio> {
+    const cacheKey = ratePairKey(from, to);
+    if (latestRateRatioCache.has(cacheKey)) {
+        return latestRateRatioCache.get(cacheKey) ?? null;
     }
-    try {
-        const url = `https://api.frankfurter.app/latest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
-        const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        if (!response.ok) {
-            return null;
+    const inflight = latestRateRatioInflight.get(cacheKey);
+    if (inflight) {
+        return inflight;
+    }
+    const pending = (async (): Promise<LatestRateRatio> => {
+        const direct = await prisma.currencyRate.findFirst({
+            where: { base_currency: from, other_currency: to },
+            orderBy: { rate_date: "desc" },
+            select: { currency_ratio: true },
+        });
+        if (direct != null && typeof direct.currency_ratio === "number") {
+            return direct.currency_ratio;
         }
-        const payload = (await response.json()) as FrankfurterLatestResponse;
-        const r = payload.rates?.[to];
-        if (typeof r !== "number" || !Number.isFinite(r) || r === 0) {
-            return null;
+
+        const inverse = await prisma.currencyRate.findFirst({
+            where: { base_currency: to, other_currency: from },
+            orderBy: { rate_date: "desc" },
+            select: { currency_ratio: true },
+        });
+        if (
+            inverse != null &&
+            typeof inverse.currency_ratio === "number" &&
+            inverse.currency_ratio !== 0
+        ) {
+            return 1 / inverse.currency_ratio;
         }
-        return r;
-    } catch {
         return null;
+    })();
+    latestRateRatioInflight.set(cacheKey, pending);
+    try {
+        const ratio = await pending;
+        latestRateRatioCache.set(cacheKey, ratio);
+        return ratio;
+    } finally {
+        latestRateRatioInflight.delete(cacheKey);
     }
 }
 
@@ -64,39 +85,11 @@ export async function convertAmountToCurrencyLatestRate(
     if (!Number.isFinite(amount)) {
         return null;
     }
-
-    const direct = await prisma.currencyRate.findFirst({
-        where: { base_currency: from, other_currency: to },
-        orderBy: { rate_date: "desc" },
-        select: { currency_ratio: true },
-    });
-    if (direct != null && typeof direct.currency_ratio === "number") {
-        return amount * direct.currency_ratio;
+    const ratio = await loadLatestRateRatio(from, to);
+    if (ratio == null) {
+        return null;
     }
-
-    const inverse = await prisma.currencyRate.findFirst({
-        where: { base_currency: to, other_currency: from },
-        orderBy: { rate_date: "desc" },
-        select: { currency_ratio: true },
-    });
-    if (
-        inverse != null &&
-        typeof inverse.currency_ratio === "number" &&
-        inverse.currency_ratio !== 0
-    ) {
-        return amount / inverse.currency_ratio;
-    }
-
-    const directLive = await fetchFrankfurterCrossRate(from, to);
-    if (directLive != null) {
-        return amount * directLive;
-    }
-    const inverseLive = await fetchFrankfurterCrossRate(to, from);
-    if (inverseLive != null && inverseLive !== 0) {
-        return amount / inverseLive;
-    }
-
-    return null;
+    return amount * ratio;
 }
 
 // Re-export with Prisma Customer typing for server callers that relied on Pick<Customer, ...>
