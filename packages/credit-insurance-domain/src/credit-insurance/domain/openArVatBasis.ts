@@ -76,6 +76,30 @@ export function applyOpenArVatBasis(
  * SQL expression: VAT-scaled line outstanding for invoice alias `i` and account
  * alias `a`. Gross prefers outstanding_debt then customer_outstanding_debt.
  */
+const OPEN_AR_GROSS_OUTSTANDING_SQL = `CASE
+      WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
+      ELSE COALESCE(i.customer_outstanding_debt, 0)
+    END`;
+
+/**
+ * Invoice-only VAT line SQL when the account include/exclude VAT setting is
+ * already known (avoids joining Account).
+ */
+export function openArVatBasisLineSqlForKnownAccountSetting(
+    amountsIncludeVat: boolean
+): string {
+    if (amountsIncludeVat) {
+        return `(${OPEN_AR_GROSS_OUTSTANDING_SQL})`;
+    }
+    return `CASE
+  WHEN i.amount_without_vat IS NOT NULL
+    AND i.amount IS NOT NULL
+    AND i.amount <> 0
+  THEN (${OPEN_AR_GROSS_OUTSTANDING_SQL}) * (ABS(i.amount_without_vat) / ABS(i.amount))
+  ELSE (${OPEN_AR_GROSS_OUTSTANDING_SQL})
+END`;
+}
+
 export const OPEN_AR_VAT_BASIS_LINE_SQL = `
 CASE
   WHEN COALESCE(a.amounts_include_vat, true) = false
