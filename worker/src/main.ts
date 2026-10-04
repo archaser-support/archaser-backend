@@ -331,10 +331,11 @@ class WorkerRuntimeService implements OnModuleDestroy {
                 await requeueCreditAsOfBackfillBullJob(
                     this.backfillQueue,
                     jobId,
-                    accountId
+                    accountId,
+                    { replaceActive: true }
                 );
                 this.logger.log(
-                    `Reclaimed CreditAsOfBackfill accountId=${accountId} jobId=${jobId} queue=${BACKFILL_QUEUE_NAME}`
+                    `Reclaimed stale CreditAsOfBackfill accountId=${accountId} jobId=${jobId} queue=${BACKFILL_QUEUE_NAME}`
                 );
             }
             if (accountIds.length > 0) {

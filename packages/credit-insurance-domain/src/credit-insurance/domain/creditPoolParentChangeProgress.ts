@@ -9,6 +9,10 @@
 import { type DbClient, prisma as defaultPrisma } from "../domain-db";
 import { ACCOUNT_BACKGROUND_JOB_KIND } from "./accountBackgroundJob";
 import {
+    generateStatusBlocksParentHistory,
+    loadCreditAsOfBackfillLease,
+} from "./accountBackgroundJobLease";
+import {
     type CreditAsOfBackfillJobView,
     type CreditAsOfBackfillStatus,
 } from "./creditAsOfBackfillJob";
@@ -102,6 +106,17 @@ export async function beginCreditPoolParentChangeSyncProgress(args: {
     dbClient?: PrismaClientLike;
 }): Promise<CreditAsOfBackfillJobView> {
     const db = args.dbClient ?? defaultPrisma;
+    const generateLease = await loadCreditAsOfBackfillLease(args.accountId, db);
+    if (
+        generateStatusBlocksParentHistory(
+            generateLease?.status,
+            generateLease?.updated_at
+        )
+    ) {
+        throw new CreditPoolParentHistoryConflictError(
+            "A snapshot generate job is already running for this account"
+        );
+    }
     const existing = await db.$queryRaw<
         Array<{ status: string; run_token: string | null }>
     >`

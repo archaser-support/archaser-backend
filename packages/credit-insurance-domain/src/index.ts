@@ -253,6 +253,15 @@ export {
     takeCreditDashboardDailySnapshotsForAccount,
 } from "./credit-insurance/domain/creditDashboardSnapshotService";
 export {
+    deleteCreditDashboardDailySnapshotsForAccount,
+    deleteCreditSnapshotHistoryBeforeDate,
+    deleteCustomerPolicyTrendForScope,
+    deleteInactiveCustomerPolicyTrendRowsForScope,
+    deleteInsurancePolicyTrendForAccount,
+    prepareCreditSnapshotHistoryForRewriteWindow,
+    purgeCreditSnapshotsAfterInvoiceOrPaymentClear,
+} from "./credit-insurance/domain/creditSnapshotHistoryCleanup";
+export {
     getCapacityGapReport,
     getCreditDashboardSummary,
     getNoPolicyExposureReport,
@@ -279,6 +288,7 @@ export {
 } from "./credit-insurance/domain/customerOutdatedDcl";
 export { computeTopUpDailyCostAggregate } from "./credit-insurance/domain/customerPolicyDailyCost";
 export {
+    computeCustomerUsageBarSegments,
     getCustomerPolicyTrendForCustomer,
     getCustomerPolicyUsageTrend,
     syncCustomerPolicyTrendSnapshotForAccount,
@@ -586,7 +596,9 @@ export {
     attributeListsToCreditPoolRoots,
     attributePrismaInvoiceCustomersToCreditPoolRoots,
     applyInvoiceReportCustomerIdScope,
+    creditPoolRootAttributionForCustomers,
     expandCreditPoolRootsToMembers,
+    resolveCreditPoolRootsForMemberIds,
     expandRootIdSetToPoolMembers,
     resolveInvoiceReportCustomerIds,
     type CreditPoolMemberAttribution,

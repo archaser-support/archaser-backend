@@ -10,7 +10,7 @@ isProject: false
 
 ## Problem Statement
 
-Credit insurance users rely on the **Exposure Guard** dashboard cards — overdue block, capacity gap, entry/terms breach, action window (reporting countdown), and limit warnings — to spot uninsured exposure before it becomes a claim problem. Today those signals appear only when someone opens the credit dashboard or drills into filtered reports. There is no proactive, account-configurable way to alert the internal credit team when a customer or invoice enters one of these states or approaches a reporting deadline.
+Credit insurance users rely on the **Exposure Guard** dashboard cards — overdue block, capacity gap, entry/terms breach, action window (reporting countdown), and limit warnings — to spot at-risk exposure before it becomes a claim problem. Today those signals appear only when someone opens the credit dashboard or drills into filtered reports. There is no proactive, account-configurable way to alert the internal credit team when a customer or invoice enters one of these states or approaches a reporting deadline.
 
 The sibling **Advanced Notification Sets — Collection product** initiative defines similar rule-based internal alerts for collection workflows (overdue amount thresholds, promise-to-pay gaps, etc.). Credit needs the same class of capability, aligned to trade-credit-insurance breach semantics, without sending debtor-facing collection communications.
 
@@ -32,7 +32,7 @@ Accounts with `has_credit_insurance` already store warning thresholds on **Accou
 
 ## User Stories
 
-1. As a CFO on a credit-insurance account, I want to receive an email when a customer enters overdue block, so that I can act before shipping more uninsured exposure.
+1. As a CFO on a credit-insurance account, I want to receive an email when a customer enters overdue block, so that I can act before shipping more at-risk exposure.
 
 2. As a credit analyst, I want an in-app notification when a customer exceeds their approved limit (capacity gap), so that I see the alert without checking the dashboard daily.
 

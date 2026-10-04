@@ -67,7 +67,7 @@ export type CustomerDashboardKpiCards = {
     /** Distinct open Due/Overdue invoices with any terms-breach flag (same membership as outstanding). */
     termsBreachInvoiceCount: number;
     capacityGapAmount: number;
-    /** Uninsured exposure: full open AR when excluded from policy, else stored uninsured (0 when outdated DCL). */
+    /** Uninsured amount: full open AR when excluded from policy, else stored uninsured (0 when outdated DCL). */
     uninsuredAmount: number;
     /** True when the scoped customer policy is excluded from policy. */
     isExcludedFromPolicy: boolean;

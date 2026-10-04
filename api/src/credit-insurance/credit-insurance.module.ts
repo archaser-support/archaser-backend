@@ -67,8 +67,8 @@ export class CreditInsuranceModule implements OnModuleInit {
         registerArPostIngestOrchestrator((options) =>
             runArPostIngestForCustomers(options)
         );
-        registerCreditAsOfBackfillDispatch((accountId: number) =>
-            this.cronQueue.enqueueCreditAsOfBackfill({ accountId })
+        registerCreditAsOfBackfillDispatch((accountId, options) =>
+            this.cronQueue.enqueueCreditAsOfBackfill({ accountId }, options)
         );
         registerAccountVatBasisRefreshDispatch((accountId: number) =>
             this.cronQueue.enqueueAccountVatBasisRefresh({ accountId })

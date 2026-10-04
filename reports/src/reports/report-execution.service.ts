@@ -551,9 +551,12 @@ export class ReportExecutionService {
                     warningRows.map((r) => [r.customerId, r])
                 );
             }
+            const enrichmentLanguage =
+                body.language || user.language || undefined;
             rows = await enrichCreditDashboardCustomerRows(rows, {
                 accountId,
                 policyId: creditDashboardPolicyId,
+                accountLanguage: enrichmentLanguage,
                 requestedFields: requestedCustomerFields,
                 limitWarningByCustomerId,
                 asOfDate: creditDashboardAsOfDate,

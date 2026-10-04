@@ -2,6 +2,7 @@ import { Prisma, type cost_calculation_method } from "@prisma/client";
 
 import {
     computeCreditDashboardHealthIndex,
+    computeCustomerUsageBarSegments,
     computeTopUpDailyCostAggregate,
     creditInsurancePrisma as prisma,
     detectStaleArRuns,
@@ -288,6 +289,16 @@ export type PortfolioUtilizationTopCustomer = {
      * limit; null when no such day exists.
      */
     utilizationPct: number | null;
+    /** Mean daily approved limit in the range. */
+    approvedLimit?: number | null;
+    /** Mean daily top-up cover in the range; null when none. */
+    topUpTotal?: number | null;
+    policyUsagePct?: number | null;
+    topUpUsagePct?: number | null;
+    effectiveUsagePct?: number | null;
+    barPolicyPct?: number;
+    barTopUpPct?: number;
+    barOverPct?: number;
 };
 
 /** Per-customer utilization overshoot ranking (Bucket 1 KPI #2). */
@@ -2195,6 +2206,8 @@ type CptTopCustomerRow = {
     customer_id: number;
     usage_amount: number | string;
     open_ar: number | string;
+    approved_limit: number | string | null;
+    top_up_total: number | string | null;
     /** Mean daily effective utilization % (null when no positive-limit day). */
     average_utilization_pct: number | string | null;
     person_name: string | null;
@@ -2849,6 +2862,8 @@ async function fetchCptTopUtilizationCustomers(
             t.customer_id,
             AVG(COALESCE(t.usage_amount, 0))::float8 AS usage_amount,
             AVG(COALESCE(t.total_receivables, 0))::float8 AS open_ar,
+            AVG(COALESCE(t.approved_limit, 0))::float8 AS approved_limit,
+            AVG(COALESCE(t.top_up_total, 0))::float8 AS top_up_total,
             AVG(
                 CASE
                     WHEN COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
@@ -2906,6 +2921,10 @@ async function fetchCptTopUtilizationCustomers(
     return rows.map((row) => {
         const usageAmount = toNumber(row.usage_amount);
         const openAr = toNumber(row.open_ar);
+        const approvedLimitRaw = toNumber(row.approved_limit);
+        const topUpTotalRaw = toNumber(row.top_up_total);
+        const approvedLimit = approvedLimitRaw > 0 ? approvedLimitRaw : null;
+        const topUpTotal = topUpTotalRaw > 0 ? topUpTotalRaw : null;
         const utilizationPct =
             row.average_utilization_pct == null
                 ? null
@@ -2914,12 +2933,26 @@ async function fetchCptTopUtilizationCustomers(
             row.company_name?.trim() ||
             row.person_name?.trim() ||
             `Customer ${row.customer_id}`;
+        const segments = computeCustomerUsageBarSegments({
+            ar: usageAmount,
+            approvedLimit,
+            topUpTotal,
+            hasTopUpPolicies: topUpTotal != null && approvedLimit != null,
+        });
         return {
             customerId: row.customer_id,
             customerName,
             usageAmount,
             openAr,
             utilizationPct,
+            approvedLimit,
+            topUpTotal,
+            policyUsagePct: segments.policyUsagePct,
+            topUpUsagePct: segments.topUpUsagePct,
+            effectiveUsagePct: segments.effectiveUsagePct,
+            barPolicyPct: segments.barPolicyPct,
+            barTopUpPct: segments.barTopUpPct,
+            barOverPct: segments.barOverPct,
         };
     });
 }

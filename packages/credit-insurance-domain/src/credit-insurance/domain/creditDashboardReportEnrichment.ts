@@ -9,7 +9,10 @@ import type { invoice_status } from "@prisma/client";
 import { prisma } from "../domain-db";
 import { resolveAccountDisplayLanguage } from "./reportExecutionVirtualFields-stub";
 import { getCustomerPolicyRow } from "./reportCustomerPolicyFields-stub";
-import { computeCustomerRiskExposure } from "./invoiceInsuranceFields";
+import {
+    computeCustomerRiskExposure,
+    type CustomerAtRiskInvoiceInput,
+} from "./invoiceInsuranceFields";
 import {
     isFullOpenArAtRiskCustomer,
     uncoveredExposureFieldsFromPolicyLink,
@@ -34,6 +37,11 @@ import {
 } from "./breachDilutionStreakPeriod";
 import type { CustomerBreachDilutionStreakRow } from "./shared/ctpBreachDilutionStreakMetrics";
 import { OPEN_AR_VAT_BASIS_LINE_SQL } from "./openArVatBasis";
+import {
+    attributeAmountsToCreditPoolRoots,
+    attributeListsToCreditPoolRoots,
+    creditPoolRootAttributionForCustomers,
+} from "./creditPoolInvoiceAttribution";
 
 const CLOSED_INVOICE_STATUS: invoice_status[] = [
     InvoiceStatus.Paid,
@@ -345,8 +353,7 @@ export function formatLimitWarningSummary(
     >,
     accountLanguage?: string | null
 ): string {
-    const language = resolveAccountDisplayLanguage(accountLanguage) as
-        keyof typeof LIMIT_WARNING_LABELS;
+    const language = resolveAccountDisplayLanguage(accountLanguage);
     const labels =
         LIMIT_WARNING_LABELS[language] ?? LIMIT_WARNING_LABELS.en;
     const parts: string[] = [];
@@ -388,6 +395,13 @@ export async function enrichCreditDashboardCustomerRows(
     const customerIds = rows
         .map((r) => r.id as number)
         .filter((id) => Number.isFinite(id));
+    const { memberIds, rootByMemberId, allowedRootIds } =
+        await creditPoolRootAttributionForCustomers(
+            options.accountId,
+            customerIds
+        );
+    const invoiceScopeCustomerIds =
+        memberIds.length > 0 ? memberIds : customerIds;
 
     const needsOpenAr =
         fields.has("open_receivable_amount") ||
@@ -428,10 +442,10 @@ export async function enrichCreditDashboardCustomerRows(
         needsPeriodBreachDilution || needsPeriodBreachEpisodes;
 
     const [
-        openArByCustomer,
-        openInvoiceByCustomer,
-        termsOutstandingByCustomer,
-        atRiskInvoicesByCustomer,
+        openArRaw,
+        openInvoiceRaw,
+        termsRaw,
+        atRiskRaw,
         asOfByCustomer,
         periodSlopeVolByCustomer,
         periodOvershootByCustomer,
@@ -450,7 +464,7 @@ export async function enrichCreditDashboardCustomerRows(
         needsOpenInvoices
             ? fetchOpenInvoiceCountByCustomer(
                   options.accountId,
-                  customerIds,
+                  invoiceScopeCustomerIds,
                   options.policyId
               )
             : Promise.resolve(new Map<number, number>()),
@@ -464,9 +478,11 @@ export async function enrichCreditDashboardCustomerRows(
         needsPolicyRisk
             ? fetchAtRiskInvoiceInputsByCustomerMap(options.accountId, {
                   policyId: options.policyId,
-                  customerIds,
+                  customerIds: invoiceScopeCustomerIds,
               })
-            : Promise.resolve(new Map()),
+            : Promise.resolve(
+                  new Map<number, CustomerAtRiskInvoiceInput[]>()
+              ),
         needsAsOfUtilization && (options.fromDate || options.asOfDate)
             ? fetchAsOfUtilizationByCustomerIds({
                   accountId: options.accountId,
@@ -673,6 +689,27 @@ export async function enrichCreditDashboardCustomerRows(
                   .catch(() => new Map<number, CustomerBreachDilutionStreakRow>())
             : Promise.resolve(new Map<number, CustomerBreachDilutionStreakRow>()),
     ]);
+
+    const openArByCustomer = attributeAmountsToCreditPoolRoots(
+        openArRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+    const openInvoiceByCustomer = attributeAmountsToCreditPoolRoots(
+        openInvoiceRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+    const termsOutstandingByCustomer = attributeAmountsToCreditPoolRoots(
+        termsRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+    const atRiskInvoicesByCustomer = attributeListsToCreditPoolRoots(
+        atRiskRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
 
     return rows.map((row) => {
         const customerId = row.id as number;

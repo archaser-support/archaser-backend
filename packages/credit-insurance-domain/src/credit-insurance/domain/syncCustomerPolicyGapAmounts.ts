@@ -91,7 +91,7 @@ type UninsuredWriteFields = Pick<
 >;
 
 /**
- * Uninsured exposure (open AR beyond the approved limit) plus the FX date it was
+ * Uninsured amount (open AR beyond the approved limit) plus the FX date it was
  * resolved on, for the account total and the top-2 invoice-currency buckets.
  */
 async function resolveUninsuredFields(params: {
@@ -409,7 +409,7 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
                 ? capacityGapKpi
                 : Math.max(0, gapLimit);
 
-        // Uninsured exposure is AR-bucket based, so it comes from the bucket
+        // Uninsured amount is AR-bucket based, so it comes from the bucket
         // computation. Capacity gap card is AR − effective limit.
         const uninsuredFields = await resolveUninsuredFields({
             accountId: customer.account_id,
