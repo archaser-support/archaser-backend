@@ -47,7 +47,8 @@ import {
     pullFiltersToPrismaJson,
     registerRunningSync,
     requestConnectorSyncCancel,
-    runInProcessSync,
+    runSyncWithPendingCustomerHistoryPolicy,
+    scheduleContinuePendingCustomerHistoryDrainForAccount,
     runPreviewSync,
     clearRunningSync,
     completePreviewJob,
@@ -86,6 +87,8 @@ import {
     persistReconciledConnectorSyncMode,
     reconcileConnectorSyncMode,
     recordBillingConnectorAuthFailure,
+    getIncompleteCustomerScopedHistoryProgress,
+    getPendingCustomerHistoryStatusSummary,
     type ClearBeforeImportEntity,
     type ImportCacheEntityType,
     type ConnectorSyncRunSummary,
@@ -494,6 +497,27 @@ export class BillingConnectorApiService {
             );
         }
 
+        let pendingCustomerHistoryCount = 0;
+        let pendingCustomerHistoryIds: number[] = [];
+        let needsAttentionCustomerHistoryCount = 0;
+        let needsAttentionCustomerHistoryIds: number[] = [];
+        try {
+            const pendingHistory =
+                await getPendingCustomerHistoryStatusSummary(connector.id);
+            pendingCustomerHistoryCount = pendingHistory.pending_count;
+            pendingCustomerHistoryIds = pendingHistory.pending_customer_ids;
+            needsAttentionCustomerHistoryCount =
+                pendingHistory.needs_attention_count;
+            needsAttentionCustomerHistoryIds =
+                pendingHistory.needs_attention_customer_ids;
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `[account ${connector.account_id}] Pending customer history status skipped: ${message}`
+            );
+        }
+
         // Prefer Mongo last SUCCESS; fall back to Prisma watermarks when Mongo
         // is down / over quota (same pattern as listMergedInProcessSyncRuns).
         let lastSyncAt: string | null = null;
@@ -582,6 +606,12 @@ export class BillingConnectorApiService {
             weekly_day: preset.weekly_day,
             schedule_warning: null,
             pending_ar_post_ingest_customers: pendingArPostIngestCustomers,
+            pending_customer_history_count: pendingCustomerHistoryCount,
+            pending_customer_history_customer_ids: pendingCustomerHistoryIds,
+            needs_attention_customer_history_count:
+                needsAttentionCustomerHistoryCount,
+            needs_attention_customer_history_customer_ids:
+                needsAttentionCustomerHistoryIds,
             sync_states: (connector.ConnectorSyncState ?? []).map((state) => ({
                 entity_type: state.entity_type,
                 backfill_completed: state.backfill_completed,
@@ -1287,20 +1317,45 @@ export class BillingConnectorApiService {
         }
 
         // Start backfill only — Resume / incremental ignore clear options.
-        const isResumeBackfill =
+        // Account-wide Resume (partial ConnectorSyncState) drops body customer_id.
+        // Incomplete isolated customer-history progress restores the same
+        // customer_id so Resume/Start never widens to the whole account.
+        const isResumeAccountBackfill =
             mode === "backfill" &&
             this.connectorHasPartialBackfillProgress(
                 connector.ConnectorSyncState,
                 parseEnabledEntities(connector.enabled_entities)
             );
+        const incompleteCustomerHistory =
+            mode === "backfill" && !isResumeAccountBackfill
+                ? await getIncompleteCustomerScopedHistoryProgress(connector.id)
+                : null;
         const clearBeforeImport =
-            mode === "backfill" && !isResumeBackfill
+            mode === "backfill" && !isResumeAccountBackfill
                 ? parseClearBeforeImport(body?.clear_before_import)
                 : [];
-        const customerId =
-            mode === "backfill" && !isResumeBackfill
+        let customerId =
+            mode === "backfill" && !isResumeAccountBackfill
                 ? parseCustomerIdForClearBeforeImport(body?.customer_id)
                 : null;
+        if (
+            mode === "backfill" &&
+            !isResumeAccountBackfill &&
+            customerId == null &&
+            incompleteCustomerHistory != null
+        ) {
+            customerId = incompleteCustomerHistory.customer_id;
+        }
+        if (
+            customerId != null &&
+            incompleteCustomerHistory != null &&
+            customerId !== incompleteCustomerHistory.customer_id
+        ) {
+            this.logger.log(
+                `[account ${accountId}] Replacing incomplete customer-history progress ` +
+                    `customer_id=${incompleteCustomerHistory.customer_id} with customer_id=${customerId}`
+            );
+        }
         let customerScopeForCache = "all";
         if (customerId != null) {
             const customer = await resolveAccountCustomerById({
@@ -1617,7 +1672,7 @@ export class BillingConnectorApiService {
         } = params;
         try {
             const heartbeat = createSyncProgressHeartbeat(executionId);
-            const result = await runInProcessSync({
+            const result = await runSyncWithPendingCustomerHistoryPolicy({
                 prisma: this.db,
                 accountId,
                 trigger,
@@ -1861,6 +1916,14 @@ export class BillingConnectorApiService {
             }
         } finally {
             clearRunningSync(accountId);
+            if (mode === "incremental") {
+                void scheduleContinuePendingCustomerHistoryDrainForAccount({
+                    prisma: this.db,
+                    accountId,
+                    onLog,
+                    executionId,
+                });
+            }
         }
     }
 

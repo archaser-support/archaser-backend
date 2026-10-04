@@ -370,6 +370,7 @@ export async function getTopUpExpiringSoonAlerts(
                                   collection_status: {
                                       in: [...COLLECTION_LIVE],
                                   },
+                                  parent_customer_id: null,
                               },
                               businessUnitFilter,
                           ],
@@ -377,6 +378,7 @@ export async function getTopUpExpiringSoonAlerts(
                     : {
                           account_id: accountId,
                           collection_status: { in: [...COLLECTION_LIVE] },
+                          parent_customer_id: null,
                       },
             InsurancePolicy: {
                 policy_kind: "TopUp",
@@ -607,8 +609,15 @@ export async function getTopUpCoverReport(
     const accountCurrency = await getAccountDisplayCurrency(accountId);
     const today = startOfTodayUtc();
 
+    const { withExcludeLinkedChildCustomers } = await import(
+        "./customerPolicyQueryHelpers"
+    );
+    const {
+        attributeAmountsToCreditPoolRoots,
+        resolveCreditPoolRootsForMemberIds,
+    } = await import("./creditPoolInvoiceAttribution");
     const allRaw = await prisma.customer.findMany({
-        where: {
+        where: withExcludeLinkedChildCustomers({
             account_id: accountId,
             collection_status: { in: [...COLLECTION_LIVE] },
             ...(options.customerId != null ? { id: options.customerId } : {}),
@@ -616,7 +625,7 @@ export async function getTopUpCoverReport(
             Object.keys(options.businessUnitFilter).length > 0
                 ? options.businessUnitFilter
                 : {}),
-        },
+        }),
         select: {
             id: true,
             customer_number: true,
@@ -625,10 +634,19 @@ export async function getTopUpCoverReport(
         },
     });
 
-    const [all, openArByCustomer] = await Promise.all([
+    const [all, openArRaw] = await Promise.all([
         enrichCustomersWithPolicyScope(allRaw, options.policyId),
         fetchOpenReceivableByCustomerMap(accountId, options.policyId),
     ]);
+    const allowedRootIds = new Set(all.map((c) => c.id));
+    const rootByMemberId = await resolveCreditPoolRootsForMemberIds([
+        ...openArRaw.keys(),
+    ]);
+    const openArByCustomer = attributeAmountsToCreditPoolRoots(
+        openArRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
 
     const built: TopUpCoverReportRow[] = [];
     for (const c of all) {
@@ -741,6 +759,7 @@ export async function getTopUpExpiringReport(
             Customer: {
                 account_id: accountId,
                 collection_status: { in: [...COLLECTION_LIVE] },
+                parent_customer_id: null,
                 ...(options.businessUnitFilter &&
                 Object.keys(options.businessUnitFilter).length > 0
                     ? options.businessUnitFilter

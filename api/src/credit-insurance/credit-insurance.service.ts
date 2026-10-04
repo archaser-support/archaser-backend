@@ -14,6 +14,8 @@ import {
     bindCreditInsurancePrisma,
     getCreditDashboardSummary,
     getCustomerDashboardKpis,
+    listDescendantCustomerIds,
+    resolveCreditPoolMemberIds,
 } from "@archaser/credit-insurance-domain";
 
 /**
@@ -70,6 +72,8 @@ export class CreditInsuranceService implements OnModuleInit {
                 return this.markReportedBulk(user, body);
             case "asof-backfill-status":
                 return this.leaves.asOfBackfillStatus(user, query);
+            case "parent-pool-history-status":
+                return this.leaves.parentPoolHistoryStatus(user, query);
             case "asof-backfill-start":
                 return this.leaves.asOfBackfillStart(user, query, body);
             case "asof-backfill-pause":
@@ -144,7 +148,8 @@ export class CreditInsuranceService implements OnModuleInit {
         user: JwtPayload,
         query: Record<string, unknown>
     ) {
-        const accountId = await this.accountId(user);
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
         const customerId = this.parseCustomerId(query);
         if (!customerId) {
             throw new BadRequestException({ error: "customerId is required" });
@@ -161,9 +166,50 @@ export class CreditInsuranceService implements OnModuleInit {
             });
         }
 
+        // PRD D11: shell Dashboard KPIs = local subtree ∩ viewer BU permissions.
+        // Linked children: expand to full credit pool ∩ BU so terms-breach
+        // (and other invoice KPIs) match the shared pool posture.
+        let poolCustomerIds: number[] | undefined;
+        const localDescendants = await listDescendantCustomerIds(
+            customerId,
+            accountId,
+            this.db
+        );
+        let candidateIds: number[] | undefined;
+        if (localDescendants.length > 0) {
+            candidateIds = [customerId, ...localDescendants];
+        } else {
+            const pool = await resolveCreditPoolMemberIds(
+                customerId,
+                accountId,
+                this.db
+            );
+            if (pool.memberIds.length > 1) {
+                candidateIds = [...pool.memberIds];
+            }
+        }
+        if (candidateIds != null && candidateIds.length > 1) {
+            const accessParts =
+                await this.accessScope.buildCustomerAccessWhere(userInfo);
+            const allowed = await this.db.customer.findMany({
+                where: {
+                    AND: [{ id: { in: candidateIds } }, ...accessParts],
+                },
+                select: { id: true },
+            });
+            const ids = allowed.map((row) => row.id);
+            if (!ids.includes(customerId)) {
+                ids.push(customerId);
+            }
+            poolCustomerIds = ids;
+        }
+
         const kpis = await getCustomerDashboardKpis(accountId, customerId, {
             policyId: this.parsePolicyId(query),
             days: this.parseDays(query),
+            ...(poolCustomerIds != null
+                ? { customerIds: poolCustomerIds }
+                : {}),
         });
 
         return serializeBigInt(kpis);

@@ -14,8 +14,11 @@ import {
 } from "./credit-dashboard-access.service";
 import {
     bindCreditInsurancePrisma,
+    CreditAsOfBackfillConflictError,
     getCapacityGapReport,
+    getCreditAsOfBackfillJobStatus,
     getCreditDashboardSummaryHistory,
+    getCreditPoolParentHistoryJobStatus,
     getCustomerPolicyTrendForCustomer,
     getCustomerPolicyUsageTrend,
     getInsurancePolicyConfigChanges,
@@ -35,16 +38,12 @@ import {
     getZeroLimitWarningReport,
     hasTopUpPolicies,
     isTermsBreachReasonFilter,
-    type CreditReportListOptions,
-} from "@archaser/credit-insurance-domain";
-import { getCreditPortfolioHealth } from "./domain/creditPortfolioHealthService";
-import {
-    CreditAsOfBackfillConflictError,
-    getCreditAsOfBackfillJobStatus,
     pauseCreditAsOfBackfillJob,
     retryCreditAsOfBackfillJob,
     startCreditAsOfBackfillJob,
-} from "./domain/creditAsOfBackfillJob";
+    type CreditReportListOptions,
+} from "@archaser/credit-insurance-domain";
+import { getCreditPortfolioHealth } from "./domain/creditPortfolioHealthService";
 
 const REPORT_TYPES = [
     "overdue",
@@ -484,6 +483,15 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
     async asOfBackfillStatus(user: JwtPayload, query: Record<string, unknown>) {
         const ctx = await this.access.authorize(user, query);
         const status = await getCreditAsOfBackfillJobStatus(ctx.accountId);
+        return serializeBigInt(status);
+    }
+
+    async parentPoolHistoryStatus(
+        user: JwtPayload,
+        query: Record<string, unknown>
+    ) {
+        const ctx = await this.access.authorize(user, query);
+        const status = await getCreditPoolParentHistoryJobStatus(ctx.accountId);
         return serializeBigInt(status);
     }
 

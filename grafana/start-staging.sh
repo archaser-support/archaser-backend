@@ -28,10 +28,35 @@ if [[ -f "../.env.staging" ]]; then
   ENV_FILE="../.env.staging"
 fi
 
-echo "==> Rendering MongoDB Grafana datasource from MONGODB_URI in $ENV_FILE..."
-python3 "$SCRIPT_DIR/scripts/render-mongodb-datasource.py" --env-file "$ENV_FILE"
-if [[ ! -f "$SCRIPT_DIR/provisioning/datasources/mongodb.generated.yaml" ]]; then
+MONGO_DS="$SCRIPT_DIR/provisioning/datasources/mongodb.generated.yaml"
+# Docker creates a directory here if the file was missing at first `compose up`
+# (bind-mount of a non-existent path). Grafana then crash-loops → nginx 502.
+if [[ -d "$MONGO_DS" ]]; then
+  echo "==> Removing bind-mount leftover directory at $MONGO_DS"
+  rm -rf "$MONGO_DS"
+fi
+
+# Nest staging compose overrides MONGODB_URI to docker DNS mongo:27017/archaser_staging.
+# Prefer that for Grafana (same archaser-mongo-shared network). Override with
+# GRAFANA_MONGODB_URI only for Atlas / non-docker Mongo.
+GRAFANA_MONGO_URI="${GRAFANA_MONGODB_URI:-mongodb://mongo:27017/archaser_staging}"
+echo "==> Rendering MongoDB Grafana datasource → $GRAFANA_MONGO_URI"
+MONGODB_URI="$GRAFANA_MONGO_URI" \
+  python3 "$SCRIPT_DIR/scripts/render-mongodb-datasource.py"
+if [[ ! -f "$MONGO_DS" ]]; then
   echo "ERROR: mongodb.generated.yaml missing after render."
+  exit 1
+fi
+
+PROMTAIL_CFG="$SCRIPT_DIR/promtail-config.generated.yaml"
+if [[ -d "$PROMTAIL_CFG" ]]; then
+  echo "==> Removing bind-mount leftover directory at $PROMTAIL_CFG"
+  rm -rf "$PROMTAIL_CFG"
+fi
+echo "==> Rendering Promtail config for MONITORING_ENV=staging..."
+python3 "$SCRIPT_DIR/scripts/render-promtail-config.py" --monitoring-env staging
+if [[ ! -f "$PROMTAIL_CFG" ]]; then
+  echo "ERROR: promtail-config.generated.yaml missing after render."
   exit 1
 fi
 
@@ -46,7 +71,7 @@ BACKEND_DOCKER_NETWORK="$NETWORK_NAME" \
 MONGO_DOCKER_NETWORK="$MONGO_NETWORK_NAME" \
 docker compose --project-name archaser-monitoring-staging \
   --env-file "$ENV_FILE" \
-  -f docker-compose.logging.yml up -d
+  -f docker-compose.logging.yml up -d --force-recreate prometheus promtail grafana
 
 echo "==> Checking status of archaser-grafana-staging..."
 sleep 3

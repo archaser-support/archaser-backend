@@ -9,6 +9,8 @@ import {
     computeInvoiceLineOpenArInAccountCurrency,
     fetchOpenReceivableByCustomerMapInAccountCurrency,
     fetchOpenReceivableForCustomerByCurrency,
+    fetchOpenReceivableForCustomers,
+    fetchOpenReceivableForCustomersByCurrency,
     resolveInvoiceLineOutstandingInAccountCurrency,
 } from "./openReceivableByCustomerCurrency";
 import {
@@ -26,15 +28,38 @@ import {
     invoiceLinkedPolicyTextSearchOr,
     policyDisplayFromCustomerRow,
     policyDisplayFromInvoiceRow,
+    withExcludeLinkedChildCustomers,
     withInvoiceCustomerPolicyFilter,
 } from "./customerPolicyQueryHelpers";
+import {
+    applyInvoiceReportCustomerIdScope,
+    attributeAmountsToCreditPoolRoots,
+    attributeInvoiceCustomerIdsToCreditPoolRoots,
+    attributeListsToCreditPoolRoots,
+    attributePrismaInvoiceCustomersToCreditPoolRoots,
+    creditPoolRootAttributionForCustomers,
+    expandCreditPoolRootsToMembers,
+    expandRootIdSetToPoolMembers,
+    resolveCreditPoolRootsForMemberIds,
+} from "./creditPoolInvoiceAttribution";
+import {
+    TERMS_BREACH_OR,
+    TERMS_BREACH_REASON_FIELDS,
+    isTermsBreachReasonFilter,
+    reportedInvoicesMembershipWhere,
+    reportingCountdownMembershipWhere,
+    termsBreachMembershipWhere,
+    type TermsBreachReasonFilter,
+} from "./creditDashboardInvoiceMembership";
+
+export type { TermsBreachReasonFilter };
+export { isTermsBreachReasonFilter };
 import {
     computeCustomerRiskExposure,
     computeCustomerTotalAr,
     computeInvoiceCapacityGapContribution,
     isNearLimitUtilizationWarning,
     invoiceOutstandingLeft,
-    invoiceOutstandingInAccountCurrency,
     sumInvoiceCapacityGapContributions,
     type CustomerAtRiskInvoiceInput,
     type InvoiceForCapacityGapSum,
@@ -77,14 +102,6 @@ const CLOSED_INVOICE_STATUS: invoice_status[] = [
     invoice_status.Paid,
     invoice_status.Void,
     invoice_status.Cancelled,
-];
-
-const TERMS_BREACH_OR: Prisma.InvoiceWhereInput[] = [
-    { reporting_breach: true },
-    { ctv_payment_term: true },
-    { ctv_customer_overdue_mep: true },
-    { ctv_outdated_dcl: true },
-    { ctv_invoice_after_policy_end: true },
 ];
 
 function customerNameFromRow(
@@ -171,30 +188,16 @@ function scopedInvoiceWhere(
     return base;
 }
 
-const TERMS_BREACH_REASON_FILTERS = [
-    "reporting_breach",
-    "ctv_payment_term",
-    "ctv_customer_overdue_mep",
-    "ctv_outdated_dcl",
-    "ctv_invoice_after_policy_end",
-] as const;
-
-export type TermsBreachReasonFilter =
-    (typeof TERMS_BREACH_REASON_FILTERS)[number];
-
-export function isTermsBreachReasonFilter(
-    value: string
-): value is TermsBreachReasonFilter {
-    return (TERMS_BREACH_REASON_FILTERS as readonly string[]).includes(value);
-}
-
 export type CreditReportListOptions = {
     query?: string;
     sortField?: string;
     sortDirection?: "asc" | "desc";
     /** When set, restrict rows to customers linked to this policy (must belong to the account). */
     policyId?: number;
-    /** When set, restrict invoice reports to this customer (must belong to the account). */
+    /**
+     * When set, restrict invoice reports to this customer (must belong to the
+     * account). Shell roots expand to pool members for invoice-grain reports.
+     */
     customerId?: number;
     /** Terms report only: single breach flag (matches `termsBreachReasonCodes` on rows). */
     termsBreachReason?: TermsBreachReasonFilter;
@@ -469,18 +472,30 @@ export async function getCustomerTermsBreachOutstandingSum(
         excludeCapacityGapInvoices?: boolean;
         /** When set, only Due/Overdue invoices tagged with this insurance policy. */
         policyId?: number;
+        /**
+         * When set (shell parent KPIs), sum terms-breach outstanding across these
+         * customer ids instead of only `customerId`.
+         */
+        customerIds?: readonly number[];
     }
 ): Promise<number> {
     const line = termsBreachOutstandingLineSql(
         options?.excludeCapacityGapInvoices === true
     );
     const policyId = options?.policyId;
+    const scopeIds =
+        options?.customerIds != null && options.customerIds.length > 0
+            ? [...new Set(options.customerIds.filter(Number.isFinite))]
+            : [customerId];
+    if (scopeIds.length === 0) {
+        return 0;
+    }
     const rows = await prisma.$queryRaw<{ t: number | null }[]>`
         SELECT COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
         INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
-          AND i.customer_id = ${customerId}
+          AND i.customer_id IN (${Prisma.join(scopeIds)})
           AND i.status IN ('Due', 'Overdue')
           AND i.amount >= 0
           AND (
@@ -556,7 +571,11 @@ export async function getCustomerTermsBreachOutstandingSumByCurrency(
     accountId: number,
     customerId: number,
     currency: string,
-    options?: { excludeCapacityGapInvoices?: boolean; policyId?: number }
+    options?: {
+        excludeCapacityGapInvoices?: boolean;
+        policyId?: number;
+        customerIds?: readonly number[];
+    }
 ): Promise<number> {
     const code = currency.trim().toUpperCase();
     if (!code) {
@@ -566,12 +585,19 @@ export async function getCustomerTermsBreachOutstandingSumByCurrency(
         options?.excludeCapacityGapInvoices === true
     );
     const policyId = options?.policyId;
+    const scopeIds =
+        options?.customerIds != null && options.customerIds.length > 0
+            ? [...new Set(options.customerIds.filter(Number.isFinite))]
+            : [customerId];
+    if (scopeIds.length === 0) {
+        return 0;
+    }
     const rows = await prisma.$queryRaw<{ t: number | null }[]>`
         SELECT COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
         INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
-          AND i.customer_id = ${customerId}
+          AND i.customer_id IN (${Prisma.join(scopeIds)})
           AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
           AND i.status IN ('Due', 'Overdue')
           AND i.amount >= 0
@@ -615,9 +641,16 @@ type AtRiskInvoiceSqlRow = {
 export async function fetchCustomerAtRiskInvoiceInputs(
     accountId: number,
     customerId: number,
-    options?: { policyId?: number }
+    options?: { policyId?: number; customerIds?: readonly number[] }
 ): Promise<CustomerAtRiskInvoiceInput[]> {
     const policyId = options?.policyId;
+    const scopeIds =
+        options?.customerIds != null && options.customerIds.length > 0
+            ? [...new Set(options.customerIds.filter(Number.isFinite))]
+            : [customerId];
+    if (scopeIds.length === 0) {
+        return [];
+    }
     const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const rows = await prisma.$queryRaw<AtRiskInvoiceSqlRow[]>`
         SELECT
@@ -633,7 +666,7 @@ export async function fetchCustomerAtRiskInvoiceInputs(
         FROM "Invoice" i
         INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
-          AND i.customer_id = ${customerId}
+          AND i.customer_id IN (${Prisma.join(scopeIds)})
           AND i.status IN ('Due', 'Overdue')
           AND i.amount >= 0
           ${policyId != null ? Prisma.sql`AND i.policy_id = ${policyId}` : Prisma.empty}
@@ -653,13 +686,20 @@ export async function fetchCustomerAtRiskInvoiceInputsByCurrency(
     accountId: number,
     customerId: number,
     currency: string,
-    options?: { policyId?: number }
+    options?: { policyId?: number; customerIds?: readonly number[] }
 ): Promise<CustomerAtRiskInvoiceInput[]> {
     const code = currency.trim().toUpperCase();
     if (!code) {
         return [];
     }
     const policyId = options?.policyId;
+    const scopeIds =
+        options?.customerIds != null && options.customerIds.length > 0
+            ? [...new Set(options.customerIds.filter(Number.isFinite))]
+            : [customerId];
+    if (scopeIds.length === 0) {
+        return [];
+    }
     const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL);
     const rows = await prisma.$queryRaw<AtRiskInvoiceSqlRow[]>`
         SELECT
@@ -675,7 +715,7 @@ export async function fetchCustomerAtRiskInvoiceInputsByCurrency(
         FROM "Invoice" i
         INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.account_id = ${accountId}
-          AND i.customer_id = ${customerId}
+          AND i.customer_id IN (${Prisma.join(scopeIds)})
           AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
           AND i.status IN ('Due', 'Overdue')
           AND i.amount >= 0
@@ -823,16 +863,43 @@ export async function resolveOpenArOnPolicyInLimitCurrency(
     customerId: number,
     policyId: number,
     limitCurrency: string,
-    accountCurrency: string | null
+    accountCurrency: string | null,
+    options?: { customerIds?: readonly number[] }
 ): Promise<number> {
     const limitCcy = limitCurrency.trim().toUpperCase();
     const acct = accountCurrency?.trim().toUpperCase() ?? "";
-    if (limitCcy && acct && limitCcy === acct) {
-        return fetchOpenReceivableForCustomer(accountId, customerId, policyId);
+    const scopeIds =
+        options?.customerIds != null && options.customerIds.length > 0
+            ? [...new Set(options.customerIds.filter(Number.isFinite))]
+            : [customerId];
+    if (scopeIds.length === 0) {
+        return 0;
     }
-    return fetchOpenReceivableForCustomerByCurrency(
+    if (limitCcy && acct && limitCcy === acct) {
+        if (scopeIds.length === 1) {
+            return fetchOpenReceivableForCustomer(
+                accountId,
+                scopeIds[0],
+                policyId
+            );
+        }
+        return fetchOpenReceivableForCustomers(
+            accountId,
+            scopeIds,
+            policyId
+        );
+    }
+    if (scopeIds.length === 1) {
+        return fetchOpenReceivableForCustomerByCurrency(
+            accountId,
+            scopeIds[0],
+            limitCcy,
+            policyId
+        );
+    }
+    return fetchOpenReceivableForCustomersByCurrency(
         accountId,
-        customerId,
+        scopeIds,
         limitCcy,
         policyId
     );
@@ -1168,16 +1235,7 @@ function reportingCountdownOpenWhere(
     accountId: number,
     windowDays: number
 ): Prisma.InvoiceWhereInput {
-    const today = startOfDay(new Date());
-    const lastInclusive = addDays(today, Math.max(0, windowDays));
-    return {
-        account_id: accountId,
-        status: { in: [invoice_status.Due, invoice_status.Overdue] },
-        target_reporting_date: { gte: today, lte: lastInclusive },
-        actual_reporting_date: null,
-        reporting_breach: false,
-        amount: { gte: 0 },
-    };
+    return reportingCountdownMembershipWhere(accountId, windowDays);
 }
 
 type TermsBreachSummaryAggRow = {
@@ -1281,13 +1339,15 @@ export async function getCreditDashboardSummary(
         asOfTermsFlagsApplied?: boolean;
     }
 ): Promise<CreditDashboardSummary> {
-    const whereCust = customersScoped(accountId, policyId, businessUnitFilter);
+    // KPI totals count each shared parent/child pool once at the root.
+    const whereCust = withExcludeLinkedChildCustomers(
+        customersScoped(accountId, policyId, businessUnitFilter)
+    );
     const useScopedTermsBreachAgg = hasDashboardBusinessUnitScope(
         businessUnitFilter
     );
     const asOfDate = options?.asOfDate;
     const asOfLines = options?.asOfLines;
-
     let accountCurrency: string;
     let windowDays: number;
     let limitWarnThresholdPct: number;
@@ -1305,22 +1365,22 @@ export async function getCreditDashboardSummary(
         limitExpirationWarnDays =
             options.accountSettings.customerLimitExpirationWarningDays;
         const vatRow = await prisma.account.findUnique({
-            where: { id: accountId },
-            select: { amounts_include_vat: true },
-        });
+                where: { id: accountId },
+                select: { amounts_include_vat: true },
+            });
         amountsIncludeVat = vatRow?.amounts_include_vat !== false;
     } else {
         const accountRow = await (prisma.account.findUnique as any)({
-            where: { id: accountId },
-            select: {
-                currency: true,
-                customer_limit_expiration_warning_days: true,
-                reporting_date_warning_days: true,
-                credit_limit_warning_threshold_pct: true,
-                credit_score_validity_warning_days: true,
-                amounts_include_vat: true,
-            },
-        }) as {
+                where: { id: accountId },
+                select: {
+                    currency: true,
+                    customer_limit_expiration_warning_days: true,
+                    reporting_date_warning_days: true,
+                    credit_limit_warning_threshold_pct: true,
+                    credit_score_validity_warning_days: true,
+                    amounts_include_vat: true,
+                },
+            }) as {
             currency: string | null;
             customer_limit_expiration_warning_days: number | null;
             reporting_date_warning_days: number | null;
@@ -1379,13 +1439,7 @@ export async function getCreditDashboardSummary(
           });
 
     const termsBreachVatLine = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
-    const [
-        customersRaw,
-        scopedPolicies,
-        _overdueCount,
-        invAgg,
-        rcInvoices,
-    ] = await Promise.all([
+    const [customersRaw, scopedPolicies, _overdueCount] = await Promise.all([
         (prisma.customer.findMany as any)({
             where: whereCust,
             select: {
@@ -1408,24 +1462,43 @@ export async function getCreditDashboardSummary(
         prisma.customer.count({
             where: { ...whereCust, overdue_block: true },
         }),
-        useScopedTermsBreachAgg
-            ? aggregateTermsBreachForSummary(
-                  accountId,
-                  policyId,
-                  whereCust
-              )
-            : policyId != null
-              ? prisma.$queryRaw<
-                    {
-                        c: number;
-                        t: number | null;
-                        cnt_reporting: number;
-                        cnt_payment_term: number;
-                        cnt_overdue_mep: number;
-                        cnt_outdated_dcl: number;
-                        cnt_after_policy_end: number;
-                    }[]
-                >`SELECT COUNT(*)::int AS c,
+            ]);
+
+    const { enrichCustomersWithPolicyScope } = await import(
+        "./enrichCustomersWithActivePolicy"
+    );
+    const customers = await enrichCustomersWithPolicyScope(customersRaw, policyId);
+
+    const customerIds = customers.map((c) => c.id);
+    const allowedRootIds = new Set(customerIds);
+    const { memberIds: poolMemberIds, rootByMemberId } = await expandCreditPoolRootsToMembers(accountId, customerIds);
+    const poolCustomerScope: Prisma.CustomerWhereInput = {
+        id: { in: poolMemberIds.length > 0 ? poolMemberIds : [-1] },
+    };
+
+    const emptyTermsAgg: TermsBreachSummaryAggRow[] = [
+        {
+            c: 0,
+            t: 0,
+            cnt_reporting: 0,
+            cnt_payment_term: 0,
+            cnt_overdue_mep: 0,
+            cnt_outdated_dcl: 0,
+            cnt_after_policy_end: 0,
+        },
+    ];
+
+    const [invAgg, rcInvoices] = await Promise.all([
+        poolMemberIds.length === 0
+            ? Promise.resolve(emptyTermsAgg)
+            : useScopedTermsBreachAgg
+              ? aggregateTermsBreachForSummary(
+                    accountId,
+                    policyId,
+                    poolCustomerScope
+                )
+              : policyId != null
+                ? prisma.$queryRaw<TermsBreachSummaryAggRow[]>`SELECT COUNT(*)::int AS c,
           COALESCE(SUM(${termsBreachVatLine}), 0)::float AS t,
           COUNT(*) FILTER (WHERE i.reporting_breach = true)::int AS cnt_reporting,
           COUNT(*) FILTER (WHERE i.ctv_payment_term = true)::int AS cnt_payment_term,
@@ -1438,6 +1511,7 @@ export async function getCreditDashboardSummary(
     WHERE i.account_id = ${accountId}
       AND c.account_id = ${accountId}
       AND c.collection_status IN ('Active', 'Inactive')
+      AND i.customer_id IN (${Prisma.join(poolMemberIds)})
       AND i.policy_id = ${policyId}
       AND i.status IN ('Due', 'Overdue')
       AND i.amount >= 0
@@ -1448,17 +1522,7 @@ export async function getCreditDashboardSummary(
         OR i.ctv_outdated_dcl = true
         OR i.ctv_invoice_after_policy_end = true
       )`
-              : prisma.$queryRaw<
-                    {
-                        c: number;
-                        t: number | null;
-                        cnt_reporting: number;
-                        cnt_payment_term: number;
-                        cnt_overdue_mep: number;
-                        cnt_outdated_dcl: number;
-                        cnt_after_policy_end: number;
-                    }[]
-                >`SELECT COUNT(*)::int AS c,
+                : prisma.$queryRaw<TermsBreachSummaryAggRow[]>`SELECT COUNT(*)::int AS c,
           COALESCE(SUM(${termsBreachVatLine}), 0)::float AS t,
           COUNT(*) FILTER (WHERE i.reporting_breach = true)::int AS cnt_reporting,
           COUNT(*) FILTER (WHERE i.ctv_payment_term = true)::int AS cnt_payment_term,
@@ -1466,8 +1530,12 @@ export async function getCreditDashboardSummary(
           COUNT(*) FILTER (WHERE i.ctv_outdated_dcl = true)::int AS cnt_outdated_dcl,
           COUNT(*) FILTER (WHERE i.ctv_invoice_after_policy_end = true)::int AS cnt_after_policy_end
      FROM "Invoice" i
+    INNER JOIN "Customer" c ON c.id = i.customer_id
     INNER JOIN "Account" a ON a.id = i.account_id
     WHERE i.account_id = ${accountId}
+      AND c.account_id = ${accountId}
+      AND c.collection_status IN ('Active', 'Inactive')
+      AND i.customer_id IN (${Prisma.join(poolMemberIds)})
       AND i.status IN ('Due', 'Overdue')
       AND i.amount >= 0
       AND (
@@ -1477,33 +1545,25 @@ export async function getCreditDashboardSummary(
         OR i.ctv_outdated_dcl = true
         OR i.ctv_invoice_after_policy_end = true
       )`,
-        prisma.invoice.findMany({
-            where: applyBusinessUnitFilterToInvoiceWhere(
-                withInvoiceCustomerPolicyFilter(
-                    reportingCountdownOpenWhere(accountId, windowDays),
-                    policyId
-                ),
-                businessUnitFilter
-            ),
-            select: {
-                customer_id: true,
-                outstanding_debt: true,
-                customer_outstanding_debt: true,
-                amount: true,
-                amount_without_vat: true,
-            },
-        }),
-    ]);
-
-    const { enrichCustomersWithPolicyScope } = await import(
-        "./enrichCustomersWithActivePolicy"
-    );
-    const customers = await enrichCustomersWithPolicyScope(
-        customersRaw,
-        policyId
-    );
-
-    const customerIds = customers.map((c) => c.id);
+        poolMemberIds.length === 0
+            ? Promise.resolve([])
+            : prisma.invoice.findMany({
+                  where: withInvoiceCustomerPolicyFilter(
+                      {
+                          ...reportingCountdownOpenWhere(accountId, windowDays),
+                          customer_id: { in: poolMemberIds },
+                      },
+                      policyId
+                  ),
+                  select: {
+                      customer_id: true,
+                      outstanding_debt: true,
+                      customer_outstanding_debt: true,
+                      amount: true,
+                      amount_without_vat: true,
+                  },
+              }),
+            ]);
 
     let preparedAsOfLines:
         | import("./asOfOpenAr").AsOfOpenInvoiceLine[]
@@ -1515,7 +1575,7 @@ export async function getCreditDashboardSummary(
         let lines =
             asOfLines ??
             (await asOf.loadAsOfOpenInvoiceCandidates(accountId, asOfDate, {
-                customerIds,
+                customerIds: poolMemberIds,
                 policyId,
             }));
         const ignoreReportingBreach =
@@ -1543,12 +1603,12 @@ export async function getCreditDashboardSummary(
             });
         }
         preparedAsOfLines = lines;
-        [openArByCustomer, termsOutstandingByCustomer] = await Promise.all([
+        const [openArRaw, termsRaw] = await Promise.all([
             asOf.buildAsOfOpenReceivableByCustomerMapInAccountCurrencyFromLines(
                 lines,
                 accountCurrency,
                 asOfDate,
-                { customerIds, policyId }
+                { customerIds: poolMemberIds, policyId }
             ),
             asOf.buildAsOfTermsBreachOutstandingByCustomerInAccountCurrencyFromLines(
                 lines,
@@ -1557,25 +1617,46 @@ export async function getCreditDashboardSummary(
                 {
                     policyId,
                     excludeCapacityGapInvoices: false,
-                    customerIds,
+                    customerIds: poolMemberIds,
                 }
             ),
         ]);
+        openArByCustomer = attributeAmountsToCreditPoolRoots(
+            openArRaw,
+            rootByMemberId,
+            { allowedRootIds }
+        );
+        termsOutstandingByCustomer = attributeAmountsToCreditPoolRoots(
+            termsRaw,
+            rootByMemberId,
+            { allowedRootIds }
+        );
     } else {
-        [openArByCustomer, termsOutstandingByCustomer] = await Promise.all([
+        const [openArRaw, termsRaw] = await Promise.all([
             fetchOpenReceivableByCustomerMapInAccountCurrency(
                 accountId,
                 accountCurrency,
-                { customerIds, policyId }
+                { customerIds: poolMemberIds, policyId }
             ),
             fetchTermsBreachOutstandingByCustomerInAccountCurrency(
                 accountId,
                 accountCurrency,
                 policyId,
                 false,
-                businessUnitFilter
+                // Pool members already scoped to included roots (BU applied on roots).
+                undefined
             ),
-        ]);
+                ]);
+        openArByCustomer = attributeAmountsToCreditPoolRoots(
+            openArRaw,
+            rootByMemberId,
+            { allowedRootIds }
+        );
+        termsOutstandingByCustomer = attributeAmountsToCreditPoolRoots(
+            termsRaw,
+            rootByMemberId,
+            { allowedRootIds }
+        );
     }
 
     const openArForCustomer = (c: (typeof customers)[number]): number => {
@@ -1613,10 +1694,10 @@ export async function getCreditDashboardSummary(
             )
             .map((c) => c.id);
         await refreshCapacityGapsForAtRiskDrift({
-            accountId,
-            customerIds: insuredIdsForGapRefresh,
-            policyId,
-        });
+                    accountId,
+                    customerIds: insuredIdsForGapRefresh,
+                    policyId,
+                });
     }
 
     let totalReceivables = 0;
@@ -1684,7 +1765,7 @@ export async function getCreditDashboardSummary(
                 );
                 return [pid, maxInAccount] as const;
             })
-        )
+                )
     );
 
     const policyMaxCoverAlerts = Array.from(policyArUsage.entries())
@@ -1722,7 +1803,8 @@ export async function getCreditDashboardSummary(
         .sort((a, b) => a.endDate.localeCompare(b.endDate));
 
     const accountHasTopUp =
-        options?.hasTopUpPolicies ?? (await hasTopUpPolicies(accountId));
+        options?.hasTopUpPolicies ??
+        (await hasTopUpPolicies(accountId));
 
     let topUpBlock: TopUpDashboardBlock | null = null;
     let topUpExpirationAlerts: TopUpExpiringSoonAlert[] = [];
@@ -1733,30 +1815,30 @@ export async function getCreditDashboardSummary(
 
     if (accountHasTopUp) {
         const topUpMetrics = await computeTopUpDashboardMetrics({
-            accountId,
-            accountCurrency,
-            expiringWindowDays: Math.max(30, limitExpirationWarnDays),
-            primaryPolicyId: policyId,
-            customers: dashboardCustomers.map((c) => ({
-                id: c.id,
-                policy_id: c.policy_id,
-                approved_limit: c.approved_limit,
-                approved_limit_currency: c.approved_limit_currency,
-                outdated_dcl: c.outdated_dcl,
-                excluded_from_policy: c.excluded_from_policy,
-            })),
-            openArByCustomerId: openArByCustomer,
-        });
+                    accountId,
+                    accountCurrency,
+                    expiringWindowDays: Math.max(30, limitExpirationWarnDays),
+                    primaryPolicyId: policyId,
+                    customers: dashboardCustomers.map((c) => ({
+                        id: c.id,
+                        policy_id: c.policy_id,
+                        approved_limit: c.approved_limit,
+                        approved_limit_currency: c.approved_limit_currency,
+                        outdated_dcl: c.outdated_dcl,
+                        excluded_from_policy: c.excluded_from_policy,
+                    })),
+                    openArByCustomerId: openArByCustomer,
+                });
         topUpBlock = topUpMetrics.topUp;
         const { getTopUpExpiringSoonAlerts } = await import(
             "./creditInsuranceTopUpDashboardService"
         );
         topUpExpirationAlerts = await getTopUpExpiringSoonAlerts(
-            accountId,
-            7,
-            policyId,
-            businessUnitFilter
-        );
+                    accountId,
+                    7,
+                    policyId,
+                    businessUnitFilter
+                );
         topUpCoverTotal = topUpMetrics.policyUsageTopUp.topUpCoverTotal;
         topUpCoverUsed = topUpMetrics.policyUsageTopUp.topUpCoverUsed;
         topUpCoverRemaining = topUpMetrics.policyUsageTopUp.topUpCoverRemaining;
@@ -1831,10 +1913,10 @@ export async function getCreditDashboardSummary(
         today
     );
 
-    const policyGapRollup = await sumCustomerPolicyCapacityGapForAccount(
-        accountId,
-        { policyId, businessUnitFilter }
-    );
+    const policyGapRollup = await sumCustomerPolicyCapacityGapForAccount(accountId, {
+                policyId,
+                businessUnitFilter,
+            });
     const capacityTotal = policyGapRollup.gapBaseTotal;
     const customerOverLimit = policyGapRollup.customerOverLimitCount;
     const capacityGapByCustomerId = new Map<number, number>();
@@ -1868,6 +1950,12 @@ export async function getCreditDashboardSummary(
     const insuredCustomerIdsForTermsBreach = dashboardCustomers
         .filter((c) => !isFullArAtRiskCohortCustomer(c))
         .map((c) => c.id);
+    const insuredPoolMemberIdsForTermsBreach = [
+        ...expandRootIdSetToPoolMembers(
+            insuredCustomerIdsForTermsBreach,
+            rootByMemberId
+        ),
+    ];
 
     if (insuredCustomerIdsForTermsBreach.length === 0) {
         termsCount = 0;
@@ -1882,7 +1970,7 @@ export async function getCreditDashboardSummary(
     } else if (preparedAsOfLines && asOfDate) {
         const asOf = await import("./asOfOpenAr");
         const snapshotDay = asOfDate;
-        const insuredSet = new Set(insuredCustomerIdsForTermsBreach);
+        const insuredSet = new Set(insuredPoolMemberIdsForTermsBreach);
         const asOfTermRows: Array<{
             outstanding_debt: number | null;
             customer_outstanding_debt: number | null;
@@ -1936,17 +2024,14 @@ export async function getCreditDashboardSummary(
         !includeNoPolicyExposure
     ) {
         const filteredTermInvoices = await prisma.invoice.findMany({
-            where: applyBusinessUnitFilterToInvoiceWhere(
-                {
-                    account_id: accountId,
-                    customer_id: { in: insuredCustomerIdsForTermsBreach },
-                    status: { in: [invoice_status.Due, invoice_status.Overdue] },
-                    OR: TERMS_BREACH_OR,
-                    amount: { gte: 0 },
-                    ...(policyId != null ? { policy_id: policyId } : {}),
-                },
-                businessUnitFilter
-            ),
+            where: {
+                account_id: accountId,
+                customer_id: { in: insuredPoolMemberIdsForTermsBreach },
+                status: { in: [invoice_status.Due, invoice_status.Overdue] },
+                OR: TERMS_BREACH_OR,
+                amount: { gte: 0 },
+                ...(policyId != null ? { policy_id: policyId } : {}),
+            },
             select: {
                 outstanding_debt: true,
                 customer_outstanding_debt: true,
@@ -1993,10 +2078,10 @@ export async function getCreditDashboardSummary(
 
     const effectiveLimitByCustomerId = accountHasTopUp
         ? await buildEffectiveLimitByCustomerIdInAccountCurrency(
-              accountCurrency,
-              dashboardCustomers,
-              openArByCustomer
-          )
+                      accountCurrency,
+                      dashboardCustomers,
+                      openArByCustomer
+                  )
         : new Map<number, number>();
 
     /**
@@ -2017,6 +2102,13 @@ export async function getCreditDashboardSummary(
             return openArForCustomer(c) > 0;
         })
         .map((c) => c.id);
+    const insuredAtRiskRootIds = new Set(insuredCustomerIdsForAtRisk);
+    const insuredPoolMemberIdsForAtRisk = [
+        ...expandRootIdSetToPoolMembers(
+            insuredCustomerIdsForAtRisk,
+            rootByMemberId
+        ),
+    ];
 
     const atRiskInvoicesByCustomer =
         asOfDate != null
@@ -2028,7 +2120,10 @@ export async function getCreditDashboardSummary(
                       (await asOf.loadAsOfOpenInvoiceCandidates(
                           accountId,
                           asOfDate,
-                          { customerIds: insuredCustomerIdsForAtRisk, policyId }
+                          {
+                              customerIds: insuredPoolMemberIdsForAtRisk,
+                              policyId,
+                          }
                       ));
                   if (preparedAsOfLines == null) {
                       const ignoreReportingBreach =
@@ -2048,6 +2143,13 @@ export async function getCreditDashboardSummary(
                           lines = asOf.withReportingBreachIgnored(lines, true);
                       }
                   }
+                  // Remap descendant invoices onto roots so the shared-limit
+                  // waterfall (and at-risk map) includes shell-root pools.
+                  lines = attributeInvoiceCustomerIdsToCreditPoolRoots(
+                      lines,
+                      rootByMemberId,
+                      { allowedRootIds: insuredAtRiskRootIds }
+                  );
                   const scopeByCustomerPolicy = new Map<
                       string,
                       import("./asOfOpenAr").AsOfCapacityGapWaterfallScope
@@ -2136,10 +2238,14 @@ export async function getCreditDashboardSummary(
                       }
                   );
               })()
-            : await fetchAtRiskInvoiceInputsByCustomerMap(accountId, {
-                  policyId: policyId ?? undefined,
-                  customerIds: insuredCustomerIdsForAtRisk,
-              });
+            : attributeListsToCreditPoolRoots(
+                  await fetchAtRiskInvoiceInputsByCustomerMap(accountId, {
+                              policyId: policyId ?? undefined,
+                              customerIds: insuredPoolMemberIdsForAtRisk,
+                          }),
+                  rootByMemberId,
+                  { allowedRootIds: insuredAtRiskRootIds }
+              );
 
     for (const c of dashboardCustomers) {
         const ar = openArForCustomer(c);
@@ -2215,11 +2321,14 @@ export async function getCreditDashboardSummary(
 
     let reportingCount = 0;
     let reportingTotal = 0;
-    const dashboardCustomerIds = new Set(dashboardCustomers.map((c) => c.id));
+    const reportingPoolMemberIds = expandRootIdSetToPoolMembers(
+        dashboardCustomers.map((c) => c.id),
+        rootByMemberId
+    );
     for (const inv of rcInvoices) {
         if (
             inv.customer_id != null &&
-            !dashboardCustomerIds.has(inv.customer_id)
+            !reportingPoolMemberIds.has(inv.customer_id)
         ) {
             continue;
         }
@@ -2227,18 +2336,29 @@ export async function getCreditDashboardSummary(
         reportingTotal += lineOutstanding(inv, amountsIncludeVat);
     }
 
-    const zeroLimitWarningsCount = await prisma.customerPolicy.count({
+    const zeroLimitWarningsCount = await prisma.customer.count({
         where: {
-            is_active: true,
-            approved_limit: 0,
-            insurance_policy_id: policyId != null ? policyId : { not: null },
-            Customer: mergeDashboardBusinessUnitIntoCustomerScope(
+            AND: [
+                withExcludeLinkedChildCustomers(
+                    mergeDashboardBusinessUnitIntoCustomerScope(
+                        {
+                            account_id: accountId,
+                            collection_status: { in: COLLECTION_LIVE },
+                        },
+                        businessUnitFilter
+                    )
+                ),
                 {
-                    account_id: accountId,
-                    collection_status: { in: COLLECTION_LIVE },
+                    CustomerPolicy: {
+                        some: {
+                            is_active: true,
+                            approved_limit: 0,
+                            insurance_policy_id:
+                                policyId != null ? policyId : { not: null },
+                        },
+                    },
                 },
-                businessUnitFilter
-            ),
+            ],
         },
     });
 
@@ -2316,9 +2436,16 @@ export async function getOverdueBlockReport(
 ): Promise<{ total: number; rows: OverdueBlockRow[] }> {
     const accountCur = await getAccountDisplayCurrency(accountId);
     const searchWhere = buildCustomerTextSearchWhere(options.query);
+    // Match CDP overdue-block cohort: pool once at the root (linked children out).
     const whereCust: Prisma.CustomerWhereInput = {
         AND: [
-            customersScoped(accountId, options.policyId, options.businessUnitFilter),
+            withExcludeLinkedChildCustomers(
+                customersScoped(
+                    accountId,
+                    options.policyId,
+                    options.businessUnitFilter
+                )
+            ),
             { overdue_block: true },
             ...(options.customerId != null ? [{ id: options.customerId }] : []),
             ...(searchWhere ? [searchWhere] : []),
@@ -2332,7 +2459,7 @@ export async function getOverdueBlockReport(
     const orderByClause: Prisma.CustomerOrderByWithRelationInput[] =
         Array.isArray(ob) ? [...ob, { id: "asc" }] : [ob, { id: "asc" }];
 
-    const [total, pageRaw, openArByCustomer] = await Promise.all([
+    const [total, pageRaw, openArRaw] = await Promise.all([
         prisma.customer.count({ where: whereCust }),
         prisma.customer.findMany({
             where: whereCust,
@@ -2365,16 +2492,28 @@ export async function getOverdueBlockReport(
         return { total, rows: [] };
     }
 
-    const ids = page.map((c) => c.id);
+    const rootIds = page.map((c) => c.id);
+    const allowedRootIds = new Set(rootIds);
+    const { memberIds, rootByMemberId } = await expandCreditPoolRootsToMembers(
+        accountId,
+        rootIds
+    );
+    const openArByCustomer = attributeAmountsToCreditPoolRoots(
+        openArRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
     const today = startOfDay(new Date());
 
     const invoiceScope = scopedInvoiceWhere(accountId, options.policyId);
+    const poolCustomerIds =
+        memberIds.length > 0 ? memberIds : rootIds;
     const [openCounts, overdueInv] = await Promise.all([
         prisma.invoice.groupBy({
             by: ["customer_id"],
             where: {
                 ...invoiceScope,
-                customer_id: { in: ids },
+                customer_id: { in: poolCustomerIds },
                 status: { notIn: CLOSED_INVOICE_STATUS },
             },
             _count: { _all: true },
@@ -2382,7 +2521,7 @@ export async function getOverdueBlockReport(
         prisma.invoice.findMany({
             where: {
                 ...invoiceScope,
-                customer_id: { in: ids },
+                customer_id: { in: poolCustomerIds },
                 status: "Overdue",
                 due_date: { not: null },
             },
@@ -2390,21 +2529,39 @@ export async function getOverdueBlockReport(
         }),
     ]);
 
-    const openMap = new Map<number, number>();
+    const openMapRaw = new Map<number, number>();
     for (const g of openCounts) {
         if (g.customer_id != null) {
-            openMap.set(g.customer_id, g._count._all);
+            openMapRaw.set(g.customer_id, g._count._all);
         }
     }
-    const maxDays = new Map<number, number>();
+    const openMap = attributeAmountsToCreditPoolRoots(
+        openMapRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+    const maxDaysRaw = new Map<number, number>();
     for (const inv of overdueInv) {
         if (!inv.due_date) {
             continue;
         }
         const days = Math.max(0, differenceInCalendarDays(today, new Date(inv.due_date)));
-        const prev = maxDays.get(inv.customer_id as number) ?? 0;
+        const memberId = inv.customer_id as number;
+        const prev = maxDaysRaw.get(memberId) ?? 0;
         if (days > prev) {
-            maxDays.set(inv.customer_id as number, days);
+            maxDaysRaw.set(memberId, days);
+        }
+    }
+    // Pool max days overdue = max across members (not a sum).
+    const maxDays = new Map<number, number>();
+    for (const [memberId, days] of maxDaysRaw) {
+        const rootId = rootByMemberId.get(memberId) ?? memberId;
+        if (!allowedRootIds.has(rootId)) {
+            continue;
+        }
+        const prev = maxDays.get(rootId) ?? 0;
+        if (days > prev) {
+            maxDays.set(rootId, days);
         }
     }
 
@@ -2464,7 +2621,7 @@ async function buildCapacityGapCandidates(
         ...(options.customerId != null ? { id: options.customerId } : {}),
     };
 
-    const [allRaw, openArByCustomer] = await Promise.all([
+    const [allRaw, openArRaw] = await Promise.all([
         prisma.customer.findMany({
             where: whereAll,
             select: {
@@ -2486,6 +2643,15 @@ async function buildCapacityGapCandidates(
         "./enrichCustomersWithActivePolicy"
     );
     const all = await enrichCustomersWithPolicyScope(allRaw, options.policyId);
+    const allowedRootIds = new Set(all.map((c) => c.id));
+    const rootByMemberId = await resolveCreditPoolRootsForMemberIds([
+        ...openArRaw.keys(),
+    ]);
+    const openArByCustomer = attributeAmountsToCreditPoolRoots(
+        openArRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
 
     const withGap: CapacityGapCandidate[] = [];
     for (const c of all) {
@@ -2590,11 +2756,17 @@ async function buildCapacityGapCandidates(
             );
         }
 
+        const gapByRoot = attributeAmountsToCreditPoolRoots(
+            gapByCustomer,
+            rootByMemberId,
+            { allowedRootIds }
+        );
+
         for (const c of all) {
             if (!c.is_active) {
                 continue;
             }
-            const gapAmount = gapByCustomer.get(c.id) ?? 0;
+            const gapAmount = gapByRoot.get(c.id) ?? 0;
             if (gapAmount <= 0) {
                 continue;
             }
@@ -2735,21 +2907,26 @@ export async function getCapacityGapReport(
 
     const ids = page.map((c) => c.id);
     const invoiceScope = scopedInvoiceWhere(accountId, options.policyId);
+    const { memberIds, rootByMemberId, allowedRootIds } =
+        await creditPoolRootAttributionForCustomers(accountId, ids);
     const openCounts = await prisma.invoice.groupBy({
         by: ["customer_id"],
         where: {
             ...invoiceScope,
-            customer_id: { in: ids },
+            customer_id: { in: memberIds.length > 0 ? memberIds : ids },
             status: { notIn: CLOSED_INVOICE_STATUS },
         },
         _count: { _all: true },
     });
-    const openMap = new Map<number, number>();
+    const openMapRaw = new Map<number, number>();
     for (const g of openCounts) {
         if (g.customer_id != null) {
-            openMap.set(g.customer_id, g._count._all);
+            openMapRaw.set(g.customer_id, g._count._all);
         }
     }
+    const openMap = attributeAmountsToCreditPoolRoots(openMapRaw, rootByMemberId, {
+        allowedRootIds,
+    });
 
     const rows: CapacityGapRow[] = page.map((c) => ({
         customerId: c.id,
@@ -2843,7 +3020,7 @@ export async function getPolicyRiskExposureReport(
         options.businessUnitFilter
     );
 
-    const [allRaw, openArByCustomer, termsOutstandingByCustomer, atRiskInvoicesByCustomer] =
+    const [allRaw, openArRaw, termsRaw, atRiskRaw] =
         await Promise.all([
             prisma.customer.findMany({
                 where: whereAll,
@@ -2875,6 +3052,27 @@ export async function getPolicyRiskExposureReport(
         "./enrichCustomersWithActivePolicy"
     );
     const all = await enrichCustomersWithPolicyScope(allRaw, options.policyId);
+    const allowedRootIds = new Set(all.map((c) => c.id));
+    const rootByMemberId = await resolveCreditPoolRootsForMemberIds([
+        ...openArRaw.keys(),
+        ...termsRaw.keys(),
+        ...atRiskRaw.keys(),
+    ]);
+    const openArByCustomer = attributeAmountsToCreditPoolRoots(
+        openArRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+    const termsOutstandingByCustomer = attributeAmountsToCreditPoolRoots(
+        termsRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+    const atRiskInvoicesByCustomer = attributeListsToCreditPoolRoots(
+        atRiskRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
 
     const openArFor = (c: (typeof all)[number]): number => {
         return openArByCustomer.get(c.id) ?? 0;
@@ -2956,7 +3154,7 @@ export async function getNoPolicyExposureReport(
         options.businessUnitFilter
     );
 
-    const [allRaw, openArByCustomer] = await Promise.all([
+    const [allRaw, openArRaw] = await Promise.all([
         prisma.customer.findMany({
             where: whereAll,
             select: {
@@ -2979,6 +3177,15 @@ export async function getNoPolicyExposureReport(
         "./enrichCustomersWithActivePolicy"
     );
     const all = await enrichCustomersWithPolicyScope(allRaw, options.policyId);
+    const allowedRootIds = new Set(all.map((c) => c.id));
+    const rootByMemberId = await resolveCreditPoolRootsForMemberIds([
+        ...openArRaw.keys(),
+    ]);
+    const openArByCustomer = attributeAmountsToCreditPoolRoots(
+        openArRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
 
     let list = all.filter((c) => {
         const ar = openArByCustomer.get(c.id) ?? 0;
@@ -3080,55 +3287,24 @@ function termsBreachReasonCodesForInvoice(inv: {
     ctv_outdated_dcl: boolean;
     ctv_invoice_after_policy_end: boolean;
 }): string[] {
-    const codes: string[] = [];
-    if (inv.reporting_breach) {
-        codes.push("reporting_breach");
-    }
-    if (inv.ctv_payment_term) {
-        codes.push("ctv_payment_term");
-    }
-    if (inv.ctv_customer_overdue_mep) {
-        codes.push("ctv_customer_overdue_mep");
-    }
-    if (inv.ctv_outdated_dcl) {
-        codes.push("ctv_outdated_dcl");
-    }
-    if (inv.ctv_invoice_after_policy_end) {
-        codes.push("ctv_invoice_after_policy_end");
-    }
-    return codes;
+    return TERMS_BREACH_REASON_FIELDS.filter((field) => inv[field]);
 }
 
-function termsBreachReportWhere(
-    accountId: number,
-    q: string | undefined,
-    scope?: Pick<
-        CreditReportListOptions,
-        "termsBreachReason" | "termsOverdueOnly"
-    >
+/** Overlay list-search text onto a membership invoice where (leaves reports). */
+function withInvoiceReportTextSearch(
+    base: Prisma.InvoiceWhereInput,
+    q: string | undefined
 ): Prisma.InvoiceWhereInput {
-    const statusFilter = scope?.termsOverdueOnly
-        ? { status: invoice_status.Overdue }
-        : { status: { in: [invoice_status.Due, invoice_status.Overdue] } };
-    const breachFilter = scope?.termsBreachReason
-        ? { [scope.termsBreachReason]: true }
-        : { OR: TERMS_BREACH_OR };
-    const base: Prisma.InvoiceWhereInput = {
-        account_id: accountId,
-        ...statusFilter,
-        ...breachFilter,
-        amount: { gte: 0 },
+    const withCustomer: Prisma.InvoiceWhereInput = {
+        ...base,
+        Customer: { isNot: null },
     };
     if (!q?.trim()) {
-        return {
-            ...base,
-            Customer: { isNot: null },
-        };
+        return withCustomer;
     }
     const t = q.trim();
     return {
-        ...base,
-        Customer: { isNot: null },
+        ...withCustomer,
         AND: [
             {
                 OR: [
@@ -3193,6 +3369,23 @@ function termsBreachReportWhere(
     };
 }
 
+function termsBreachReportWhere(
+    accountId: number,
+    q: string | undefined,
+    scope?: Pick<
+        CreditReportListOptions,
+        "termsBreachReason" | "termsOverdueOnly"
+    >
+): Prisma.InvoiceWhereInput {
+    return withInvoiceReportTextSearch(
+        termsBreachMembershipWhere(accountId, {
+            termsBreachReason: scope?.termsBreachReason,
+            termsOverdueOnly: scope?.termsOverdueOnly,
+        }),
+        q
+    );
+}
+
 function termsOrderBy(
     sortField: string | undefined,
     sortDirection: "asc" | "desc" | undefined
@@ -3246,26 +3439,27 @@ export async function getTermsBreachReport(
         select: { amounts_include_vat: true },
     });
     const amountsIncludeVat = accountVat?.amounts_include_vat !== false;
-    let where: Prisma.InvoiceWhereInput = applyBusinessUnitFilterToInvoiceWhere(
-        withInvoiceCustomerPolicyFilter(
-            termsBreachReportWhere(accountId, options.query, {
-                termsBreachReason: options.termsBreachReason,
-                termsOverdueOnly: options.termsOverdueOnly,
-            }),
-            options.policyId
+    const where = await applyInvoiceReportCustomerIdScope(
+        accountId,
+        applyBusinessUnitFilterToInvoiceWhere(
+            withInvoiceCustomerPolicyFilter(
+                termsBreachReportWhere(accountId, options.query, {
+                    termsBreachReason: options.termsBreachReason,
+                    termsOverdueOnly: options.termsOverdueOnly,
+                }),
+                options.policyId
+            ),
+            options.businessUnitFilter
         ),
-        options.businessUnitFilter
+        options.customerId
     );
-    if (options.customerId != null) {
-        where = { ...where, customer_id: options.customerId };
-    }
     const obT = termsOrderBy(
         options.sortField,
         options.sortDirection
     );
     const orderByClauseTerms: Prisma.InvoiceOrderByWithRelationInput[] =
         Array.isArray(obT) ? [...obT, { id: "asc" }] : [obT, { id: "asc" }];
-    const [total, list] = await Promise.all([
+    const [total, listRaw] = await Promise.all([
         prisma.invoice.count({ where }),
         prisma.invoice.findMany({
             where,
@@ -3280,6 +3474,7 @@ export async function getTermsBreachReport(
                 amount: true,
                 amount_without_vat: true,
                 customer_currency: true,
+                customer_id: true,
                 reporting_breach: true,
                 ctv_payment_term: true,
                 ctv_customer_overdue_mep: true,
@@ -3303,6 +3498,10 @@ export async function getTermsBreachReport(
             },
         }),
     ]);
+    const list = await attributePrismaInvoiceCustomersToCreditPoolRoots(
+        accountId,
+        listRaw
+    );
 
     const rows: TermsBreachRow[] = (
         await Promise.all(
@@ -3388,79 +3587,10 @@ function reportingCountdownOpenSearchWhere(
     windowDays: number,
     q: string | undefined
 ): Prisma.InvoiceWhereInput {
-    const base = reportingCountdownOpenWhere(accountId, windowDays);
-    if (!q?.trim()) {
-        return {
-            ...base,
-            Customer: { isNot: null },
-        };
-    }
-    const t = q.trim();
-    return {
-        ...base,
-        Customer: { isNot: null },
-        AND: [
-            {
-                OR: [
-                    { invoice_number: { contains: t, mode: "insensitive" } },
-                    invoiceLinkedPolicyTextSearchOr(t),
-                    {
-                        Customer: {
-                            is: {
-                                OR: [
-                                    {
-                                        customer_number: {
-                                            contains: t,
-                                            mode: "insensitive",
-                                        },
-                                    },
-                                    {
-                                        Person: {
-                                            full_name: {
-                                                contains: t,
-                                                mode: "insensitive",
-                                            },
-                                        },
-                                    },
-                                    {
-                                        Company: {
-                                            name: {
-                                                contains: t,
-                                                mode: "insensitive",
-                                            },
-                                        },
-                                    },
-                                    {
-                                        CustomerPolicy: {
-                                            some: {
-                                                is_active: true,
-                                                OR: [
-                                                    {
-                                                        customer_number_policy: {
-                                                            contains: t,
-                                                            mode: "insensitive",
-                                                        },
-                                                    },
-                                                    {
-                                                        InsurancePolicy: {
-                                                            policy_number: {
-                                                                contains: t,
-                                                                mode: "insensitive",
-                                                            },
-                                                        },
-                                                    },
-                                                ],
-                                            },
-                                        },
-                                    },
-                                ],
-                            },
-                        },
-                    },
-                ],
-            },
-        ],
-    };
+    return withInvoiceReportTextSearch(
+        reportingCountdownOpenWhere(accountId, windowDays),
+        q
+    );
 }
 
 function reportingOrderBy(
@@ -3501,20 +3631,21 @@ export async function getReportingCountdownOpenReport(
     });
     const amountsIncludeVat = accountVat?.amounts_include_vat !== false;
     const w = Math.max(0, windowDays);
-    let where: Prisma.InvoiceWhereInput = applyBusinessUnitFilterToInvoiceWhere(
-        withInvoiceCustomerPolicyFilter(
-            reportingCountdownOpenSearchWhere(accountId, w, options.query),
-            options.policyId
+    const where = await applyInvoiceReportCustomerIdScope(
+        accountId,
+        applyBusinessUnitFilterToInvoiceWhere(
+            withInvoiceCustomerPolicyFilter(
+                reportingCountdownOpenSearchWhere(accountId, w, options.query),
+                options.policyId
+            ),
+            options.businessUnitFilter
         ),
-        options.businessUnitFilter
+        options.customerId
     );
-    if (options.customerId != null) {
-        where = { ...where, customer_id: options.customerId };
-    }
     const ob = reportingOrderBy(options.sortField, options.sortDirection);
     const orderByClause: Prisma.InvoiceOrderByWithRelationInput[] =
         Array.isArray(ob) ? [...ob, { id: "asc" }] : [ob, { id: "asc" }];
-    const [total, list] = await Promise.all([
+    const [total, listRaw] = await Promise.all([
         prisma.invoice.count({ where }),
         prisma.invoice.findMany({
             where,
@@ -3532,6 +3663,7 @@ export async function getReportingCountdownOpenReport(
                 amount: true,
                 amount_without_vat: true,
                 customer_currency: true,
+                customer_id: true,
                 InsurancePolicy: {
                     select: {
                         policy_number: true,
@@ -3553,6 +3685,10 @@ export async function getReportingCountdownOpenReport(
             },
         }),
     ]);
+    const list = await attributePrismaInvoiceCustomersToCreditPoolRoots(
+        accountId,
+        listRaw
+    );
 
     const rows: ReportingCountdownRow[] = list
         .map((inv) => {
@@ -3603,79 +3739,10 @@ function reportedInvoicesSearchWhere(
     accountId: number,
     q: string | undefined
 ): Prisma.InvoiceWhereInput {
-    const base: Prisma.InvoiceWhereInput = {
-        account_id: accountId,
-        actual_reporting_date: { not: null },
-    };
-    if (!q?.trim()) {
-        return { ...base, Customer: { isNot: null } };
-    }
-    const t = q.trim();
-    return {
-        ...base,
-        Customer: { isNot: null },
-        AND: [
-            {
-                OR: [
-                    { invoice_number: { contains: t, mode: "insensitive" } },
-                    invoiceLinkedPolicyTextSearchOr(t),
-                    {
-                        Customer: {
-                            is: {
-                                OR: [
-                                    {
-                                        customer_number: {
-                                            contains: t,
-                                            mode: "insensitive",
-                                        },
-                                    },
-                                    {
-                                        Person: {
-                                            full_name: {
-                                                contains: t,
-                                                mode: "insensitive",
-                                            },
-                                        },
-                                    },
-                                    {
-                                        Company: {
-                                            name: {
-                                                contains: t,
-                                                mode: "insensitive",
-                                            },
-                                        },
-                                    },
-                                    {
-                                        CustomerPolicy: {
-                                            some: {
-                                                is_active: true,
-                                                OR: [
-                                                    {
-                                                        customer_number_policy: {
-                                                            contains: t,
-                                                            mode: "insensitive",
-                                                        },
-                                                    },
-                                                    {
-                                                        InsurancePolicy: {
-                                                            policy_number: {
-                                                                contains: t,
-                                                                mode: "insensitive",
-                                                            },
-                                                        },
-                                                    },
-                                                ],
-                                            },
-                                        },
-                                    },
-                                ],
-                            },
-                        },
-                    },
-                ],
-            },
-        ],
-    };
+    return withInvoiceReportTextSearch(
+        reportedInvoicesMembershipWhere(accountId),
+        q
+    );
 }
 
 function reportedListOrderBy(
@@ -3723,18 +3790,22 @@ export async function getReportedInvoicesReport(
         select: { amounts_include_vat: true },
     });
     const amountsIncludeVat = accountVat?.amounts_include_vat !== false;
-    const where = applyBusinessUnitFilterToInvoiceWhere(
-        withInvoiceCustomerPolicyFilter(
-            reportedInvoicesSearchWhere(accountId, options.query),
-            options.policyId
+    const where = await applyInvoiceReportCustomerIdScope(
+        accountId,
+        applyBusinessUnitFilterToInvoiceWhere(
+            withInvoiceCustomerPolicyFilter(
+                reportedInvoicesSearchWhere(accountId, options.query),
+                options.policyId
+            ),
+            options.businessUnitFilter
         ),
-        options.businessUnitFilter
+        options.customerId
     );
     const orderBy = reportedListOrderBy(
         options.sortField,
         options.sortDirection
     );
-    const [total, list] = await Promise.all([
+    const [total, listRaw] = await Promise.all([
         prisma.invoice.count({ where }),
         prisma.invoice.findMany({
             where,
@@ -3749,6 +3820,7 @@ export async function getReportedInvoicesReport(
                 amount: true,
                 amount_without_vat: true,
                 customer_currency: true,
+                customer_id: true,
                 actual_reporting_date: true,
                 reporting_captured_at: true,
                 reporting_comment: true,
@@ -3770,6 +3842,10 @@ export async function getReportedInvoicesReport(
             },
         }),
     ]);
+    const list = await attributePrismaInvoiceCustomersToCreditPoolRoots(
+        accountId,
+        listRaw
+    );
 
     const rows: ReportedInvoicesRow[] = list
         .map((inv) => {
@@ -4022,7 +4098,7 @@ export async function getLimitWarningReport(
         accountSettings?.customer_limit_expiration_warning_days ?? 0
     );
 
-    const [allRaw, openArByCustomer] = await Promise.all([
+    const [allRaw, openArRaw] = await Promise.all([
         prisma.customer.findMany({
             where: customersScoped(accountId, options.policyId, options.businessUnitFilter),
             select: {
@@ -4047,6 +4123,15 @@ export async function getLimitWarningReport(
         allRaw,
         options.policyId
     )) as CustomerForLimitWarning[];
+    const allowedRootIds = new Set(all.map((c) => c.id));
+    const rootByMemberId = await resolveCreditPoolRootsForMemberIds([
+        ...openArRaw.keys(),
+    ]);
+    const openArByCustomer = attributeAmountsToCreditPoolRoots(
+        openArRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
 
     const accountHasTopUp = await hasTopUpPolicies(accountId);
     const effectiveLimitByCustomerId = accountHasTopUp
@@ -4132,7 +4217,7 @@ export async function getZeroLimitWarningReport(
         ],
     };
 
-    const [allRaw, openArByCustomer] = await Promise.all([
+    const [allRaw, openArRaw] = await Promise.all([
         prisma.customer.findMany({
             where: whereCust,
             select: {
@@ -4165,24 +4250,34 @@ export async function getZeroLimitWarningReport(
 
     const ids = enriched.map((c) => c.id);
     const invoiceScope = scopedInvoiceWhere(accountId, options.policyId);
+    const { memberIds, rootByMemberId, allowedRootIds } =
+        await creditPoolRootAttributionForCustomers(accountId, ids);
+    const openArByCustomer = attributeAmountsToCreditPoolRoots(
+        openArRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
 
     // Group invoices by customer to get open invoices count
     const openCounts = await prisma.invoice.groupBy({
         by: ["customer_id"],
         where: {
             ...invoiceScope,
-            customer_id: { in: ids },
+            customer_id: { in: memberIds.length > 0 ? memberIds : ids },
             status: { notIn: CLOSED_INVOICE_STATUS },
         },
         _count: { _all: true },
     });
 
-    const openMap = new Map<number, number>();
+    const openMapRaw = new Map<number, number>();
     for (const g of openCounts) {
         if (g.customer_id != null) {
-            openMap.set(g.customer_id, g._count._all);
+            openMapRaw.set(g.customer_id, g._count._all);
         }
     }
+    const openMap = attributeAmountsToCreditPoolRoots(openMapRaw, rootByMemberId, {
+        allowedRootIds,
+    });
 
     const built: ZeroLimitWarningRow[] = enriched.map((c) => {
         return {

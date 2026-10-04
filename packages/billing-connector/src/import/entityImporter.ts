@@ -1,20 +1,22 @@
 import type { PrismaClient } from "@prisma/client";
 import {
+    assertParentIsShell,
+    CreditPoolShellError,
+    customerIdsWithChildren,
+    onParentCustomerIdChanged,
+} from "@archaser/credit-insurance-domain";
+import {
     mapErpRecord,
     parseErpDateOnly,
     parseMappingRules,
     type MappingRule,
 } from "../utils/connectorFieldUtils";
-import { appendBatchImportIssue } from "./aggregateEntityImportStats";
 import { applyMaturedDeferredPayments } from "./applyMaturedDeferredPayments";
 import { commitOps, lastWinsByKey } from "./bulkWrite";
 import { importPayments } from "./importPaymentService";
 import { normalizeInvoiceImportInput } from "./normalizeInvoiceImportInput";
 import { toPaymentInput } from "./normalizePaymentInput";
-import {
-    formatImportIssueMessage,
-    validateConnectorLiveImportRow,
-} from "./validateConnectorLiveImportRow";
+import { validateConnectorLiveImportRow } from "./validateConnectorLiveImportRow";
 import { sortInvoicesForImport } from "./sortInvoicesForImport";
 import { linkOrphanedCreditNotes } from "../invoice/linkOrphanedCreditNotes";
 import { resolveInvoicePaymentCloseDates } from "../invoice/invoicePaymentCloseDates";
@@ -42,6 +44,11 @@ export interface EntityImportBatchResult {
     errors: string[];
     cancelled?: boolean;
     rowResults?: EntityImportRowResult[];
+    /**
+     * Customer import only: Archaser rows inserted in this batch (not updates).
+     * Used to enqueue pending-history on INCREMENTAL sync.
+     */
+    createdCustomers?: Array<{ id: number; customer_number: string }>;
 }
 
 export interface EntityImportBatchOptions {
@@ -470,6 +477,17 @@ async function importCustomerBatch(
             createdByNumber.set(customer.customer_number, customer.id);
         }
     }
+    result.createdCustomers = createdCustomers
+        .filter(
+            (
+                customer
+            ): customer is { id: number; customer_number: string } =>
+                Boolean(customer.customer_number)
+        )
+        .map((customer) => ({
+            id: customer.id,
+            customer_number: customer.customer_number,
+        }));
     if (updates.length > 0) {
         await commitOps(
             prisma,
@@ -559,16 +577,96 @@ async function importCustomerBatch(
         }
 
         if (parentUpdates.length > 0) {
-            await commitOps(
-                prisma,
-                parentUpdates.map((update) =>
-                    prisma.customer.update({
+            const previousParents = await prisma.customer.findMany({
+                where: {
+                    id: { in: parentUpdates.map((update) => update.id) },
+                },
+                select: { id: true, parent_customer_id: true },
+            });
+            const previousParentById = new Map(
+                previousParents.map((row) => [
+                    row.id,
+                    row.parent_customer_id ?? null,
+                ])
+            );
+
+            const allowedParentUpdates: typeof parentUpdates = [];
+            for (const update of parentUpdates) {
+                try {
+                    await assertParentIsShell(update.parentId, prisma);
+                    allowedParentUpdates.push(update);
+                } catch (error) {
+                    const message =
+                        error instanceof CreditPoolShellError
+                            ? error.message
+                            : "Parent customer must be a shell (no invoices/payments)";
+                    warn(
+                        `parent:shell:${update.parentId}`,
+                        `Customer ${update.id}: ${message}; parent left unchanged`
+                    );
+                }
+            }
+
+            if (allowedParentUpdates.length > 0) {
+                // Per-customer FK write + sync (fail-closed like API): on effect
+                // failure restore previous parent and remirror; do not leave a
+                // linked FK with stale mirrors / CTP.
+                for (const update of allowedParentUpdates) {
+                    const previousParentId =
+                        previousParentById.get(update.id) ?? null;
+                    if (previousParentId === update.parentId) {
+                        continue;
+                    }
+                    await prisma.customer.update({
                         where: { id: update.id },
                         data: { parent_customer_id: update.parentId },
                         select: { id: true },
-                    })
-                )
-            );
+                    });
+                    try {
+                        await onParentCustomerIdChanged({
+                            accountId,
+                            customerId: update.id,
+                            previousParentId,
+                            nextParentId: update.parentId,
+                            dbClient: prisma,
+                            skipInsuranceSync: true,
+                        });
+                    } catch (error) {
+                        await prisma.customer.update({
+                            where: { id: update.id },
+                            data: { parent_customer_id: previousParentId },
+                            select: { id: true },
+                        });
+                        try {
+                            await onParentCustomerIdChanged({
+                                accountId,
+                                customerId: update.id,
+                                previousParentId: update.parentId,
+                                nextParentId: previousParentId,
+                                dbClient: prisma,
+                                skipInsuranceSync: true,
+                            });
+                        } catch (rollbackError) {
+                            warn(
+                                `parent:rollback:${update.id}`,
+                                `Customer ${update.id}: parent sync failed and rollback remirror also failed (${
+                                    rollbackError instanceof Error
+                                        ? rollbackError.message
+                                        : String(rollbackError)
+                                })`
+                            );
+                        }
+                        warn(
+                            `parent:sync:${update.id}`,
+                            `Customer ${update.id}: parent sync failed (${
+                                error instanceof Error
+                                    ? error.message
+                                    : String(error)
+                            }); parent left unchanged`
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -966,6 +1064,10 @@ async function importInvoiceBatch(
             customerByNumber.set(customer.customer_number, customer.id);
         }
     }
+    const parentsWithChildren = await customerIdsWithChildren(
+        [...customerByNumber.values()],
+        prisma
+    );
     const existingByNumber = new Map<string, number>();
     const existingStatusByNumber = new Map<string, string>();
     for (const invoice of existingInvoices) {
@@ -993,6 +1095,24 @@ async function importInvoiceBatch(
         const customerId = customerByNumber.get(customerNumber);
         if (customerId == null) {
             const message = `Customer not found for invoice: ${customerNumber}`;
+            result.failed += 1;
+            result.errors.push(message);
+            options?.onLog?.(`Invoice ${invoiceNumber} failed: ${message}`);
+            for (const row of valid) {
+                if (str(row.invoice_number) === invoiceNumber) {
+                    rowResults[row.index] = {
+                        index: row.index,
+                        success: false,
+                        error: message,
+                    };
+                }
+            }
+            continue;
+        }
+
+        if (parentsWithChildren.has(customerId)) {
+            const message =
+                "Customers with children cannot have invoices or payments";
             result.failed += 1;
             result.errors.push(message);
             options?.onLog?.(`Invoice ${invoiceNumber} failed: ${message}`);

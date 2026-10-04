@@ -53,7 +53,8 @@ services:
       # Leave headroom for metrics updater + backfill + UI (RDS budget: sum of all Nest pools).
       CONNECTION_LIMIT_API: "25"
       ENABLE_LOKI_LOGGING: "true"
-      LOKI_HOST: http://host.docker.internal:3100
+      # Production Loki host port from grafana/start-production.sh (LOKI_HOST_PORT=3101)
+      LOKI_HOST: http://host.docker.internal:3101
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
     ports:
@@ -92,7 +93,8 @@ services:
       REPORTS_SERVICE_URL: http://reports:3006
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
       ENABLE_LOKI_LOGGING: "true"
-      LOKI_HOST: http://host.docker.internal:3100
+      # Production Loki host port from grafana/start-production.sh (LOKI_HOST_PORT=3101)
+      LOKI_HOST: http://host.docker.internal:3101
     volumes:
       - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
     ports:

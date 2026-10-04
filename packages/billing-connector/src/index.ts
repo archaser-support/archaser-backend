@@ -154,6 +154,21 @@ export {
 } from "./sync/runInProcessSync";
 
 export {
+    buildPendingCustomerHistoryDrainOptions,
+    runSyncWithPendingCustomerHistoryPolicy,
+    scheduleContinuePendingCustomerHistoryDrainForAccount,
+    type RunSyncWithPendingCustomerHistoryPolicyOptions,
+    type ScheduleContinuePendingCustomerHistoryDrainForAccountParams,
+} from "./sync/runSyncWithPendingCustomerHistoryPolicy";
+
+export {
+    drainBlockingPendingCustomerHistory,
+    scheduleContinuePendingCustomerHistoryDrain,
+    type DrainPendingCustomerHistoryOptions,
+    type DrainPendingCustomerHistoryResult,
+} from "./sync/pendingCustomerHistoryDrain";
+
+export {
     assertCustomerRollupHostLoadable,
     isCustomerBalancesFinalRegistered,
     loadRecalculateCustomerAmountsModule,
@@ -326,6 +341,48 @@ export {
 } from "./sync/customerScopedTailProgress";
 
 export {
+    clearCustomerScopedHistoryProgress,
+    createMemoryCustomerScopedHistoryProgressStore,
+    ensureCustomerScopedHistoryProgressOwner,
+    getCustomerScopedHistoryProgress,
+    getIncompleteCustomerScopedHistoryProgress,
+    isCustomerScopedHistoryComplete,
+    resetCustomerScopedHistoryProgressStoreForTests,
+    upsertCustomerScopedEntityCheckpoint,
+    useMemoryCustomerScopedHistoryProgressStoreForTests,
+    type CustomerScopedEntityCheckpoint,
+    type CustomerScopedHistoryProgress,
+    type CustomerScopedHistoryProgressStore,
+    type UpsertCustomerScopedEntityCheckpointInput,
+} from "./sync/customerScopedHistoryProgress";
+
+export {
+    clearPendingCustomerHistoryOnSuccess,
+    createMemoryPendingCustomerHistoryQueueStore,
+    enqueuePendingCustomerHistory,
+    enqueuePendingCustomerHistoryForCreates,
+    getPendingCustomerHistoryStatusSummary,
+    listBlockingPendingCustomerHistory,
+    listPendingCustomerHistoryRows,
+    markPendingCustomerHistoryInProgress,
+    PENDING_CUSTOMER_HISTORY_MAX_ATTEMPTS,
+    recordPendingCustomerHistoryFailure,
+    resetPendingCustomerHistoryQueueStoreForTests,
+    revertPendingCustomerHistoryToPending,
+    upsertPendingCustomerHistoryEntityCheckpoint,
+    useMemoryPendingCustomerHistoryQueueStoreForTests,
+    type EnqueuePendingCustomerHistoryForCreatesInput,
+    type EnqueuePendingCustomerHistoryForCreatesResult,
+    type EnqueuePendingCustomerHistoryInput,
+    type EnqueuePendingCustomerHistoryResult,
+    type PendingCustomerHistoryQueueStore,
+    type PendingCustomerHistoryRow,
+    type PendingCustomerHistoryStatus,
+    type PendingCustomerHistoryStatusSummary,
+    type RecordPendingCustomerHistoryFailureResult,
+} from "./sync/pendingCustomerHistoryQueue";
+
+export {
     runArPostIngestViaHost,
     DEFERRED_CI_POST_INGEST_STEPS,
     invokeConnectorArPostIngest,
@@ -474,6 +531,7 @@ export {
     bulkLinkDeferredPayments,
     linkDeferredPaymentAndRecalc,
     linkDeferredPaymentsAndRecalcBatch,
+    paymentsEffectiveAsOf,
     recalculateInvoicesFromLinkedPayments,
     resolveInvoicePaidRecalcOptions,
     type BulkDeferredPaymentLink,
@@ -500,6 +558,12 @@ export {
     normalizeInvoicePaidTolerance,
     resolveInvoicePaidTolerance,
 } from "./invoice/invoicePaidTolerance";
+
+export {
+    isInvoiceFullyCoveredByFuturePayments,
+    type FutureCoverInvoice,
+    type FutureCoverPayment,
+} from "./invoice/invoiceFuturePaymentCover";
 
 export {
     calendarDateFromTimestamp,

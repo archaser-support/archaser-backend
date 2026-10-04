@@ -270,6 +270,42 @@ export async function fetchOpenReceivableForCustomerByCurrency(
     return Number(rows[0]?.ar ?? 0);
 }
 
+/** Open Due/Overdue AR in a customer currency summed across several customers. */
+export async function fetchOpenReceivableForCustomersByCurrency(
+    accountId: number,
+    customerIds: readonly number[],
+    currency: string,
+    policyId?: number | null,
+    dbClient: DbClient = defaultPrisma
+): Promise<number> {
+    const code = currency.trim().toUpperCase();
+    if (!code || customerIds.length === 0) {
+        return 0;
+    }
+    if (customerIds.length === 1) {
+        return fetchOpenReceivableForCustomerByCurrency(
+            accountId,
+            customerIds[0],
+            code,
+            policyId,
+            dbClient
+        );
+    }
+    const line = Prisma.raw(OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL);
+    const ids = [...customerIds];
+    const rows = await dbClient.$queryRaw<{ ar: number | null }[]>`
+        SELECT COALESCE(SUM(${line}), 0)::float AS ar
+        FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
+        WHERE i.account_id = ${accountId}
+          AND i.customer_id IN (${Prisma.join(ids)})
+          AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
+          AND i.status IN ('Due', 'Overdue')
+          ${policyId != null ? Prisma.sql`AND i.policy_id = ${policyId}` : Prisma.empty}
+    `;
+    return Number(rows[0]?.ar ?? 0);
+}
+
 export type CustomerHeaderCurrencyBuckets = {
     customer_due_amount1: number;
     customer_due_currency1: string | null;
@@ -654,6 +690,38 @@ export async function fetchOpenReceivableForCustomer(
     return Number(rows[0]?.ar ?? 0);
 }
 
+/** Open Due/Overdue AR summed across a credit pool (root + descendants). */
+export async function fetchOpenReceivableForCustomers(
+    accountId: number,
+    customerIds: readonly number[],
+    policyId?: number | null,
+    dbClient: DbClient = defaultPrisma
+): Promise<number> {
+    if (customerIds.length === 0) {
+        return 0;
+    }
+    if (customerIds.length === 1) {
+        return fetchOpenReceivableForCustomer(
+            accountId,
+            customerIds[0],
+            policyId,
+            dbClient
+        );
+    }
+    const line = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
+    const ids = [...customerIds];
+    const rows = await dbClient.$queryRaw<{ ar: number | null }[]>`
+        SELECT COALESCE(SUM(${line}), 0)::float AS ar
+        FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
+        WHERE i.account_id = ${accountId}
+          AND i.customer_id IN (${Prisma.join(ids)})
+          AND i.status IN ('Due', 'Overdue')
+          ${policyId != null ? Prisma.sql`AND i.policy_id = ${policyId}` : Prisma.empty}
+    `;
+    return Number(rows[0]?.ar ?? 0);
+}
+
 export async function fetchOpenReceivableCurrencyRowsForCustomer(
     customerId: number,
     accountId: number,
@@ -669,6 +737,39 @@ export async function fetchOpenReceivableCurrencyRowsForCustomer(
         FROM "Invoice" i
         INNER JOIN "Account" a ON a.id = i.account_id
         WHERE i.customer_id = ${customerId}
+          AND i.account_id = ${accountId}
+          AND i.status IN ('Due', 'Overdue')
+        GROUP BY i.customer_currency
+    `;
+}
+
+/** Currency-bucket open AR across a credit pool (root + descendants). */
+export async function fetchOpenReceivableCurrencyRowsForCustomers(
+    customerIds: readonly number[],
+    accountId: number,
+    dbClient: DbClient = defaultPrisma
+): Promise<CurrencyGroupedRow[]> {
+    if (customerIds.length === 0) {
+        return [];
+    }
+    if (customerIds.length === 1) {
+        return fetchOpenReceivableCurrencyRowsForCustomer(
+            customerIds[0],
+            accountId,
+            dbClient
+        );
+    }
+    const accountLine = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
+    const customerLine = Prisma.raw(OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL);
+    const ids = [...customerIds];
+    return dbClient.$queryRaw<CurrencyGroupedRow[]>`
+        SELECT
+          i.customer_currency,
+          COALESCE(SUM(${accountLine}), 0)::float AS outstanding_debt,
+          COALESCE(SUM(${customerLine}), 0)::float AS customer_outstanding_debt
+        FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
+        WHERE i.customer_id IN (${Prisma.join(ids)})
           AND i.account_id = ${accountId}
           AND i.status IN ('Due', 'Overdue')
         GROUP BY i.customer_currency
