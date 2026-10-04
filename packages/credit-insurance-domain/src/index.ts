@@ -279,6 +279,7 @@ export {
 } from "./credit-insurance/domain/customerOutdatedDcl";
 export { computeTopUpDailyCostAggregate } from "./credit-insurance/domain/customerPolicyDailyCost";
 export {
+    computeCustomerUsageBarSegments,
     getCustomerPolicyTrendForCustomer,
     getCustomerPolicyUsageTrend,
     syncCustomerPolicyTrendSnapshotForAccount,
