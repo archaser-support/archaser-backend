@@ -1,10 +1,11 @@
 /**
- * Staging datafix: create shell parents for remaining customer-group rows,
- * copy active policy from the main customer (force Named), then link all row
- * IDs as children via onParentCustomerIdChanged.
+ * Staging datafix: create shell parents for the full customer-group list,
+ * copy active policy from the main customer (or another ID on the row), force
+ * Named, link children via onParentCustomerIdChanged, then drain CTP history
+ * for each shell pool.
  *
- * Account: 10149. Shell customer_number starts at 1002 (bumps if taken).
- * Skips the first 3 screenshot rows (already created by hand).
+ * Account: 10149. Shell customer_number starts at 1000 (bumps if taken).
+ * Existing shells are reused: children are (re)linked and CTP history still runs.
  *
  * Usage:
  *   npx tsx scripts/datafixes/create-shell-customers-from-group-list.ts
@@ -17,14 +18,19 @@ import { PrismaClient, type CustomerPolicy } from "@prisma/client";
 import {
     assertParentIsShell,
     bindCreditInsurancePrisma,
+    getCreditPoolParentHistoryJobStatus,
     onParentCustomerIdChanged,
     remirrorDescendantsFromRoot,
+    resolveCreditPoolMemberIds,
     resolveCustomerCreditPoolRoot,
+    runCreditPoolParentHistoryJob,
+    startCreditPoolParentHistoryJob,
+    startOfTodayUtc,
 } from "@archaser/credit-insurance-domain";
 
 const LOG = "[create-shell-from-group-list]";
 const ACCOUNT_ID = 10149;
-const START_SHELL_NUMBER = 1002;
+const START_SHELL_NUMBER = 1000;
 const PARENT_HISTORY_JOB_KIND = "credit_pool_parent_history";
 
 type GroupRow = {
@@ -33,8 +39,23 @@ type GroupRow = {
     otherCustomerNumbers: string[];
 };
 
-/** Remaining screenshot rows after the first 3 (already done). */
+/** Full screenshot list (all customer groups). */
 const ROWS: GroupRow[] = [
+    {
+        name: 'א.ל.מ סחר 0 2 בע"מ ח.פ. 511021495',
+        mainCustomerNumber: "107821693",
+        otherCustomerNumbers: ["107821686"],
+    },
+    {
+        name: 'אספירקום מערכות בע"מ',
+        mainCustomerNumber: "10783466",
+        otherCustomerNumbers: ["107926914"],
+    },
+    {
+        name: 'היי ביז בע"מ',
+        mainCustomerNumber: "10726123",
+        otherCustomerNumbers: ["107936626", "107911232"],
+    },
     {
         name: 'פטקום אלקטריק בע"מ',
         mainCustomerNumber: "107134486",
@@ -176,28 +197,13 @@ async function allocateShellNumber(
     }
 }
 
-async function getParentHistoryJobStatus(
+async function releaseBlockingParentHistoryJob(
     prisma: PrismaClient
-): Promise<{ status: string; units_done: number; units_total: number | null } | null> {
-    const rows = await prisma.$queryRaw<
-        Array<{ status: string; units_done: number; units_total: number | null }>
-    >`
-        SELECT status, units_done, units_total
-        FROM "AccountBackgroundJob"
-        WHERE account_id = ${ACCOUNT_ID}
-          AND job_kind = ${PARENT_HISTORY_JOB_KIND}
-        LIMIT 1
-    `;
-    return rows[0] ?? null;
-}
-
-/** Mark parent-history job complete so the next row is not blocked. */
-async function releaseParentHistoryJob(prisma: PrismaClient): Promise<void> {
+): Promise<void> {
     await prisma.$executeRaw`
         UPDATE "AccountBackgroundJob"
         SET status = 'complete',
-            units_done = GREATEST(units_done, COALESCE(units_total, units_done)),
-            last_error = ${"Skipped full CTP history drain for bulk shell create script"},
+            last_error = ${"Cleared before shell create / CTP history"},
             updated_at = ${new Date()}
         WHERE account_id = ${ACCOUNT_ID}
           AND job_kind = ${PARENT_HISTORY_JOB_KIND}
@@ -205,37 +211,24 @@ async function releaseParentHistoryJob(prisma: PrismaClient): Promise<void> {
     `;
 }
 
-/** Block until parent-history job is not syncing/running/paused. Clears orphaned jobs. */
 async function waitForParentHistoryIdle(prisma: PrismaClient): Promise<void> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-        const job = await getParentHistoryJobStatus(prisma);
+        const status = await getCreditPoolParentHistoryJobStatus(ACCOUNT_ID, {
+            dbClient: prisma,
+        });
         if (
-            job == null ||
-            (job.status !== "running" &&
-                job.status !== "paused" &&
-                job.status !== "syncing")
+            status.status !== "running" &&
+            status.status !== "paused" &&
+            status.status !== "syncing"
         ) {
             return;
         }
-
-        console.log(LOG, "releasing blocking parent-history job", {
-            status: job.status,
-            unitsDone: job.units_done,
-            unitsTotal: job.units_total,
+        console.log(LOG, "clearing blocking parent-history job", {
+            status: status.status,
+            daysDone: status.daysDone,
+            daysTotal: status.daysTotal,
         });
-        await releaseParentHistoryJob(prisma);
-    }
-
-    const still = await getParentHistoryJobStatus(prisma);
-    if (
-        still &&
-        (still.status === "running" ||
-            still.status === "paused" ||
-            still.status === "syncing")
-    ) {
-        throw new Error(
-            `parent-history job still ${still.status} after release attempts`
-        );
+        await releaseBlockingParentHistoryJob(prisma);
     }
 }
 
@@ -261,6 +254,187 @@ async function findExistingShellByCompanyName(
     });
 }
 
+async function earliestArDate(
+    prisma: PrismaClient,
+    customerIds: number[]
+): Promise<Date | null> {
+    if (customerIds.length === 0) {
+        return null;
+    }
+    const invoices = await prisma.invoice.findFirst({
+        where: { customer_id: { in: customerIds } },
+        orderBy: { invoice_date: "asc" },
+        select: { invoice_date: true },
+    });
+    const payments = await prisma.invoicePayment.findFirst({
+        where: { customer_id: { in: customerIds } },
+        orderBy: { payment_date: "asc" },
+        select: { payment_date: true },
+    });
+    const dates = [invoices?.invoice_date, payments?.payment_date].filter(
+        (d): d is Date => d != null
+    );
+    if (dates.length === 0) {
+        return null;
+    }
+    dates.sort((a, b) => a.getTime() - b.getTime());
+    return dates[0]!;
+}
+
+/** Drain scoped CTP history for one shell pool (awaits completion). */
+async function drainShellCtpHistory(
+    prisma: PrismaClient,
+    shellId: number,
+    shellCustomerNumber: string | null
+): Promise<void> {
+    await waitForParentHistoryIdle(prisma);
+
+    const { memberIds } = await resolveCreditPoolMemberIds(
+        shellId,
+        ACCOUNT_ID,
+        prisma
+    );
+    const fromDate =
+        (await earliestArDate(prisma, memberIds)) ?? startOfTodayUtc();
+    const toDate = startOfTodayUtc();
+    const beforeCount = await prisma.customerPolicyTrend.count({
+        where: { customer_id: shellId },
+    });
+
+    console.log(LOG, "starting CTP history", {
+        shellCustomerNumber,
+        shellCustomerId: shellId,
+        memberCount: memberIds.length,
+        fromDate: fromDate.toISOString().slice(0, 10),
+        toDate: toDate.toISOString().slice(0, 10),
+        trendRowsBefore: beforeCount,
+    });
+
+    await startCreditPoolParentHistoryJob({
+        accountId: ACCOUNT_ID,
+        customerIds: memberIds,
+        fromDate,
+        toDate,
+        dbClient: prisma,
+    });
+
+    // Keep the process alive and drive the runner if the fire-and-forget exits.
+    for (;;) {
+        const status = await getCreditPoolParentHistoryJobStatus(ACCOUNT_ID, {
+            dbClient: prisma,
+        });
+        console.log(LOG, "CTP history progress", {
+            shellCustomerNumber,
+            status: status.status,
+            daysDone: status.daysDone,
+            daysTotal: status.daysTotal,
+            lastError: status.lastError,
+        });
+        if (
+            status.status === "complete" ||
+            status.status === "failed" ||
+            status.status === "paused"
+        ) {
+            const afterCount = await prisma.customerPolicyTrend.count({
+                where: { customer_id: shellId },
+            });
+            console.log(LOG, "CTP history finished", {
+                shellCustomerNumber,
+                shellCustomerId: shellId,
+                status: status.status,
+                trendRowsAfter: afterCount,
+                lastError: status.lastError,
+            });
+            if (status.status === "failed") {
+                throw new Error(
+                    `CTP history failed for shell ${shellCustomerNumber}: ${status.lastError}`
+                );
+            }
+            return;
+        }
+        // Nudge runner if still marked running with no progress (payload in-process).
+        if (status.status === "running" && status.daysDone === 0) {
+            await runCreditPoolParentHistoryJob(ACCOUNT_ID, {
+                dbClient: prisma,
+            });
+            continue;
+        }
+        await new Promise((r) => setTimeout(r, 10_000));
+    }
+}
+
+async function linkChildrenToShell(args: {
+    prisma: PrismaClient;
+    shellId: number;
+    children: Array<{
+        id: number;
+        customer_number: string | null;
+        parent_customer_id: number | null;
+    }>;
+}): Promise<number> {
+    const { prisma, shellId, children } = args;
+    await assertParentIsShell(shellId, prisma);
+
+    const previousParents = new Map<number, number | null>();
+    let syncChildId: number | null = null;
+    let syncPreviousParentId: number | null = null;
+    let linked = 0;
+
+    for (const child of children) {
+        const previousParentId = child.parent_customer_id ?? null;
+        previousParents.set(child.id, previousParentId);
+        if (previousParentId === shellId) {
+            continue;
+        }
+        await prisma.customer.update({
+            where: { id: child.id },
+            data: { parent_customer_id: shellId },
+        });
+        if (syncChildId == null) {
+            syncChildId = child.id;
+            syncPreviousParentId = previousParentId;
+        }
+        linked += 1;
+    }
+
+    if (syncChildId != null) {
+        await waitForParentHistoryIdle(prisma);
+        const parentChange = await onParentCustomerIdChanged({
+            accountId: ACCOUNT_ID,
+            customerId: syncChildId,
+            previousParentId: syncPreviousParentId,
+            nextParentId: shellId,
+            dbClient: prisma,
+        });
+
+        const remirrored = new Set(parentChange.remirroredRoots);
+        for (const previousParentId of previousParents.values()) {
+            if (previousParentId == null || previousParentId === shellId) {
+                continue;
+            }
+            const oldRootId = await resolveCustomerCreditPoolRoot(
+                previousParentId,
+                prisma
+            );
+            if (remirrored.has(oldRootId)) {
+                continue;
+            }
+            await remirrorDescendantsFromRoot(oldRootId, ACCOUNT_ID, {
+                dbClient: prisma,
+            });
+            remirrored.add(oldRootId);
+        }
+
+        // Do not cancel async history here — drainShellCtpHistory runs next and
+        // owns the parent-history job for the full AR window.
+        if (parentChange.asyncHistoryJob != null) {
+            await releaseBlockingParentHistoryJob(prisma);
+        }
+    }
+
+    return linked;
+}
+
 async function main(): Promise<void> {
     const apply = process.argv.includes("--apply");
     const dryRun = !apply;
@@ -270,14 +444,17 @@ async function main(): Promise<void> {
 
     let nextShellNumber = START_SHELL_NUMBER;
     let created = 0;
+    let reused = 0;
     let skipped = 0;
     let linked = 0;
+    let ctpDrained = 0;
 
     console.log(LOG, {
         accountId: ACCOUNT_ID,
         mode: dryRun ? "dry-run" : "apply",
         rows: ROWS.length,
         startShellNumber: START_SHELL_NUMBER,
+        runCtpHistory: true,
     });
 
     try {
@@ -317,55 +494,85 @@ async function main(): Promise<void> {
 
             const main = byNumber.get(row.mainCustomerNumber)!;
             const companyName = shellCompanyName(row.name);
-            const existingShell = await findExistingShellByCompanyName(
+            const children = numbers.map((n) => byNumber.get(n)!);
+            let existingShell = await findExistingShellByCompanyName(
                 prisma,
                 companyName
             );
-            if (existingShell) {
+
+            let activePolicy: CustomerPolicy | null = null;
+            let policySourceCustomerNumber: string | null = null;
+            for (const customerNumber of numbers) {
+                const candidate = byNumber.get(customerNumber)!;
+                const policy = await prisma.customerPolicy.findFirst({
+                    where: {
+                        customer_id: candidate.id,
+                        is_active: true,
+                    },
+                });
+                if (policy) {
+                    activePolicy = policy;
+                    policySourceCustomerNumber = customerNumber;
+                    break;
+                }
+            }
+
+            if (!existingShell && (!activePolicy || policySourceCustomerNumber == null)) {
                 skipped += 1;
-                console.log(LOG, "skip row — shell already exists", {
+                console.log(LOG, "skip row — no active policy on any row customer", {
                     name: row.name,
-                    companyName,
-                    shellCustomerId: existingShell.id,
-                    shellCustomerNumber: existingShell.customer_number,
+                    customerNumbers: numbers,
                 });
                 continue;
             }
 
-            const activePolicy = await prisma.customerPolicy.findFirst({
-                where: {
-                    customer_id: main.id,
-                    is_active: true,
-                },
-            });
-            if (!activePolicy) {
-                skipped += 1;
-                console.log(LOG, "skip row — main has no active policy", {
-                    name: row.name,
-                    mainCustomerNumber: row.mainCustomerNumber,
-                    mainCustomerId: main.id,
+            if (existingShell) {
+                console.log(LOG, dryRun ? "would reuse shell" : "reusing shell", {
+                    companyName,
+                    shellCustomerId: existingShell.id,
+                    shellCustomerNumber: existingShell.customer_number,
+                    linkCustomerNumbers: numbers,
                 });
+                if (dryRun) {
+                    reused += 1;
+                    linked += children.length;
+                    ctpDrained += 1;
+                    continue;
+                }
+
+                linked += await linkChildrenToShell({
+                    prisma,
+                    shellId: existingShell.id,
+                    children,
+                });
+                await drainShellCtpHistory(
+                    prisma,
+                    existingShell.id,
+                    existingShell.customer_number
+                );
+                reused += 1;
+                ctpDrained += 1;
                 continue;
             }
 
             const allocated = await allocateShellNumber(prisma, nextShellNumber);
             nextShellNumber = allocated.nextPreferred;
-            const children = numbers.map((n) => byNumber.get(n)!);
 
             console.log(LOG, dryRun ? "would process row" : "processing row", {
                 shellCustomerNumber: allocated.number,
                 companyName,
                 mainCustomerNumber: row.mainCustomerNumber,
                 mainCustomerId: main.id,
+                policySourceCustomerNumber,
                 linkCustomerIds: children.map((c) => c.id),
                 linkCustomerNumbers: numbers,
                 currentParents: children.map((c) => ({
                     customerNumber: c.customer_number,
                     parentCustomerId: c.parent_customer_id,
                 })),
-                insurancePolicyId: activePolicy.insurance_policy_id,
-                customerNumberPolicy: activePolicy.customer_number_policy,
-                sourceLimitType: activePolicy.limit_type,
+                insurancePolicyId: activePolicy!.insurance_policy_id,
+                customerNumberPolicy: activePolicy!.customer_number_policy,
+                sourceLimitType: activePolicy!.limit_type,
                 forcedLimitType: "Named",
                 countryId: main.country_id,
                 businessUnitId: main.business_unit_id,
@@ -376,6 +583,7 @@ async function main(): Promise<void> {
             if (dryRun) {
                 created += 1;
                 linked += children.length;
+                ctpDrained += 1;
                 continue;
             }
 
@@ -404,73 +612,21 @@ async function main(): Promise<void> {
 
             await prisma.customerPolicy.create({
                 data: {
-                    ...buildShellPolicyCreateData(activePolicy),
+                    ...buildShellPolicyCreateData(activePolicy!),
                     customer_id: shell.id,
                 } as never,
             });
 
-            await assertParentIsShell(shell.id, prisma);
+            linked += await linkChildrenToShell({
+                prisma,
+                shellId: shell.id,
+                children,
+            });
 
-            // Set all parent FKs first, then one product sync so history runs once.
-            const previousParents = new Map<number, number | null>();
-            let syncChildId: number | null = null;
-            let syncPreviousParentId: number | null = null;
-            for (const child of children) {
-                const previousParentId = child.parent_customer_id ?? null;
-                previousParents.set(child.id, previousParentId);
-                if (previousParentId === shell.id) {
-                    continue;
-                }
-                await prisma.customer.update({
-                    where: { id: child.id },
-                    data: { parent_customer_id: shell.id },
-                });
-                if (syncChildId == null) {
-                    syncChildId = child.id;
-                    syncPreviousParentId = previousParentId;
-                }
-                linked += 1;
-            }
-
-            if (syncChildId != null) {
-                await waitForParentHistoryIdle(prisma);
-                const parentChange = await onParentCustomerIdChanged({
-                    accountId: ACCOUNT_ID,
-                    customerId: syncChildId,
-                    previousParentId: syncPreviousParentId,
-                    nextParentId: shell.id,
-                    dbClient: prisma,
-                });
-
-                // Remirror any other former parents that lost a child.
-                const remirrored = new Set(parentChange.remirroredRoots);
-                for (const previousParentId of previousParents.values()) {
-                    if (previousParentId == null || previousParentId === shell.id) {
-                        continue;
-                    }
-                    const oldRootId = await resolveCustomerCreditPoolRoot(
-                        previousParentId,
-                        prisma
-                    );
-                    if (remirrored.has(oldRootId)) {
-                        continue;
-                    }
-                    await remirrorDescendantsFromRoot(oldRootId, ACCOUNT_ID, {
-                        dbClient: prisma,
-                    });
-                    remirrored.add(oldRootId);
-                }
-
-                if (parentChange.asyncHistoryJob != null) {
-                    console.log(
-                        LOG,
-                        "releasing parent-history job (skip full CTP history drain)"
-                    );
-                    await releaseParentHistoryJob(prisma);
-                }
-            }
+            await drainShellCtpHistory(prisma, shell.id, allocated.number);
 
             created += 1;
+            ctpDrained += 1;
             console.log(LOG, "created shell", {
                 shellCustomerId: shell.id,
                 shellCustomerNumber: allocated.number,
@@ -482,8 +638,10 @@ async function main(): Promise<void> {
         console.log(LOG, "done", {
             mode: dryRun ? "dry-run" : "apply",
             createdOrWouldCreate: created,
+            reusedOrWouldReuse: reused,
             skipped,
             linkedOrWouldLink: linked,
+            ctpDrainedOrWouldDrain: ctpDrained,
             nextFreeShellNumber: nextShellNumber,
         });
     } finally {
