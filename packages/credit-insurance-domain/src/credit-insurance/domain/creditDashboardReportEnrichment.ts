@@ -353,8 +353,7 @@ export function formatLimitWarningSummary(
     >,
     accountLanguage?: string | null
 ): string {
-    const language = resolveAccountDisplayLanguage(accountLanguage) as
-        keyof typeof LIMIT_WARNING_LABELS;
+    const language = resolveAccountDisplayLanguage(accountLanguage);
     const labels =
         LIMIT_WARNING_LABELS[language] ?? LIMIT_WARNING_LABELS.en;
     const parts: string[] = [];
