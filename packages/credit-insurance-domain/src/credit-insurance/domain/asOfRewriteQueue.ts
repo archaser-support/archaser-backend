@@ -458,6 +458,16 @@ export async function rewriteCustomerAsOfRange(
         dbClient: db,
     });
 
+    const { prepareCreditSnapshotHistoryForRewriteWindow } = await import(
+        "./creditSnapshotHistoryCleanup"
+    );
+    await prepareCreditSnapshotHistoryForRewriteWindow({
+        accountId: input.accountId,
+        fromDate,
+        customerIds,
+        dbClient: db,
+    });
+
     const {
         loadAsOfOpenInvoiceLedgerRange,
         deriveAsOfOpenInvoiceCandidatesFromLedger,
@@ -591,6 +601,18 @@ export async function drainAsOfRewriteQueue(options?: {
             runContext = await ensureCapacityGapsForBackfillRun(runContext, {
                 dbClient: db,
             });
+            // Fresh window only: drop inactive-CP CPT + days before from_date.
+            if (item.checkpoint_date == null) {
+                const { prepareCreditSnapshotHistoryForRewriteWindow } =
+                    await import("./creditSnapshotHistoryCleanup");
+                await prepareCreditSnapshotHistoryForRewriteWindow({
+                    accountId: item.account_id,
+                    fromDate: item.from_date,
+                    customerIds:
+                        customerIds.length > 0 ? customerIds : undefined,
+                    dbClient: db,
+                });
+            }
             const {
                 loadAsOfOpenInvoiceLedgerRange,
                 deriveAsOfOpenInvoiceCandidatesFromLedger,

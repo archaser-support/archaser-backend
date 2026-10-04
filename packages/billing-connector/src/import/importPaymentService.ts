@@ -905,6 +905,16 @@ export async function importPayments(
         }
     }
 
+    const recalcInvoiceIds = [...invoiceIdsToRecalc.keys()];
+    console.error(
+        "[DEBUG-pay-recalc-42846] payment import calling invoice paid recalc",
+        {
+            invoiceCount: recalcInvoiceIds.length,
+            sampleInvoiceId0: recalcInvoiceIds[0] ?? null,
+            sampleInvoiceId1: recalcInvoiceIds[1] ?? null,
+            sampleInvoiceId2: recalcInvoiceIds[2] ?? null,
+        }
+    );
     await recalculateInvoicesFromLinkedPayments(prisma, invoiceIdsToRecalc);
 
     for (const row of prepared) {

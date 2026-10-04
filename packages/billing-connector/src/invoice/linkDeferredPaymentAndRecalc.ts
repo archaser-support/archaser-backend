@@ -12,6 +12,7 @@ import { resolveInvoicePaymentCloseDates } from "./invoicePaymentCloseDates";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
 import { shrinkOrDeleteVirtualPaymentsForInvoiceIds } from "../payment/virtualPaymentTrim";
+import { paymentsEffectiveAsOf } from "./paymentsEffectiveAsOf";
 
 export type LinkDeferredPaymentAndRecalcResult = {
     invoicePayment: InvoicePayment;
@@ -26,10 +27,17 @@ export {
     resolveInvoicePaidTolerance,
 } from "./invoicePaidTolerance";
 
+export { paymentsEffectiveAsOf } from "./paymentsEffectiveAsOf";
+
 export type InvoicePaidRecalcOptions = {
     isForcePaidClose?: (payment: ExtensionLinkedPayment) => boolean;
     /** When set, skips a BillingConnector lookup inside the transaction. */
     paidTolerance?: number;
+    /**
+     * Payments with `payment_date` after this instant are ignored for
+     * outstanding / total_paid / Paid. Defaults to now.
+     */
+    asOf?: Date;
 };
 
 /** Default Prisma interactive tx timeout is 5s; replay recalc can exceed that under load. */
@@ -51,6 +59,64 @@ type InvoiceForPaidRecalc = Pick<
 >;
 
 const RECALC_PROGRESS_CHUNK = 200;
+const DEBUG_PAY_RECALC_42846 = "[DEBUG-pay-recalc-42846]";
+
+function dateKind(value: unknown): string {
+    if (value == null) {
+        return "null";
+    }
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? "InvalidDate" : "Date";
+    }
+    return typeof value;
+}
+
+function describeDateUnnest(
+    prefix: string,
+    values: unknown[]
+): Record<string, unknown> {
+    const typeCounts: Record<string, number> = {};
+    for (const value of values) {
+        const kind = dateKind(value);
+        typeCounts[kind] = (typeCounts[kind] ?? 0) + 1;
+    }
+    const out: Record<string, unknown> = {
+        [`${prefix}_length`]: values.length,
+        [`${prefix}_null`]: typeCounts.null ?? 0,
+        [`${prefix}_Date`]: typeCounts.Date ?? 0,
+        [`${prefix}_InvalidDate`]: typeCounts.InvalidDate ?? 0,
+        [`${prefix}_number`]: typeCounts.number ?? 0,
+        [`${prefix}_string`]: typeCounts.string ?? 0,
+        [`${prefix}_other`]:
+            values.length -
+            (typeCounts.null ?? 0) -
+            (typeCounts.Date ?? 0) -
+            (typeCounts.InvalidDate ?? 0) -
+            (typeCounts.number ?? 0) -
+            (typeCounts.string ?? 0),
+    };
+    for (let i = 0; i < Math.min(3, values.length); i++) {
+        const value = values[i];
+        out[`${prefix}${i}_typeof`] = value == null ? "null" : typeof value;
+        out[`${prefix}${i}_ctor`] =
+            value == null ? "null" : (value as object).constructor?.name;
+        out[`${prefix}${i}_isDate`] = value instanceof Date;
+        out[`${prefix}${i}_value`] =
+            value instanceof Date
+                ? value.toISOString()
+                : value == null
+                  ? null
+                  : String(value);
+    }
+    return out;
+}
+
+function dateToSqlText(value: Date | null): string | null {
+    if (value == null || Number.isNaN(value.getTime())) {
+        return null;
+    }
+    return value.toISOString();
+}
 const BULK_PAYMENT_LINK_CHUNK = 500;
 
 export type BulkDeferredPaymentLink = {
@@ -133,9 +199,15 @@ function buildInvoicePaidUpdate(
     modifiedAt: Date,
     paidTolerance: number
 ): Prisma.InvoiceUpdateInput {
-    const paymentDates = linkedPayments.map((payment) => payment.payment_date);
+    const effectivePayments = paymentsEffectiveAsOf(
+        linkedPayments,
+        options?.asOf ?? modifiedAt
+    );
+    const paymentDates = effectivePayments.map(
+        (payment) => payment.payment_date
+    );
 
-    if (hasForcePaidClose(linkedPayments, options?.isForcePaidClose)) {
+    if (hasForcePaidClose(effectivePayments, options?.isForcePaidClose)) {
         const totalPaid = invoice.net_amount ?? 0;
         const totalCustomerPaid = invoice.customer_net_amount ?? 0;
         const dates = resolveInvoicePaymentCloseDates({
@@ -160,7 +232,7 @@ function buildInvoicePaidUpdate(
     let totalPaid = 0;
     let totalCustomerPaid = 0;
 
-    for (const payment of linkedPayments) {
+    for (const payment of effectivePayments) {
         totalPaid += payment.amount ?? 0;
         totalCustomerPaid += payment.customer_amount ?? 0;
     }
@@ -250,39 +322,72 @@ async function bulkWriteInvoicePaidRecalcRows(
         const lastPaymentDates = chunk.map((row) => row.last_payment_date);
         const closeDates = chunk.map((row) => row.close_date);
         const clearAlerts = chunk.map((row) => row.clearAlerts);
-        await prisma.$executeRaw`
-            UPDATE "Invoice" AS inv
-            SET
-                total_paid = data.total_paid,
-                customer_total_paid = data.customer_total_paid,
-                outstanding_debt = data.outstanding_debt,
-                customer_outstanding_debt = data.customer_outstanding_debt,
-                status = data.status::"invoice_status",
-                last_payment_date = data.last_payment_date,
-                close_date = data.close_date,
-                modified_at = ${modifiedAt},
-                zero_limit_alert = CASE
-                    WHEN data.clear_alerts THEN false
-                    ELSE inv.zero_limit_alert
-                END,
-                reporting_breach = CASE
-                    WHEN data.clear_alerts THEN false
-                    ELSE inv.reporting_breach
-                END
-            FROM (
-                SELECT
-                    UNNEST(${ids}::int[]) AS id,
-                    UNNEST(${totalPaid}::float8[]) AS total_paid,
-                    UNNEST(${customerTotalPaid}::float8[]) AS customer_total_paid,
-                    UNNEST(${outstandingDebt}::float8[]) AS outstanding_debt,
-                    UNNEST(${customerOutstandingDebt}::float8[]) AS customer_outstanding_debt,
-                    UNNEST(${statuses}::text[]) AS status,
-                    UNNEST(${lastPaymentDates}::date[]) AS last_payment_date,
-                    UNNEST(${closeDates}::date[]) AS close_date,
-                    UNNEST(${clearAlerts}::boolean[]) AS clear_alerts
-            ) AS data
-            WHERE inv.id = data.id
-        `;
+        // Prisma binds JS Date[] as integer[] (unix), so `::date[]` throws 42846.
+        const lastPaymentDateTexts = lastPaymentDates.map(dateToSqlText);
+        const closeDateTexts = closeDates.map(dateToSqlText);
+        if (i === 0) {
+            console.error(DEBUG_PAY_RECALC_42846, "invoice paid recalc UNNEST dates", {
+                offset: i,
+                chunkSize: chunk.length,
+                sampleInvoiceId0: ids[0] ?? null,
+                sampleInvoiceId1: ids[1] ?? null,
+                sampleInvoiceId2: ids[2] ?? null,
+                ...describeDateUnnest("last", lastPaymentDates),
+                ...describeDateUnnest("close", closeDates),
+                lastText0: lastPaymentDateTexts[0] ?? null,
+                closeText0: closeDateTexts[0] ?? null,
+            });
+        }
+        try {
+            await prisma.$executeRaw`
+                UPDATE "Invoice" AS inv
+                SET
+                    total_paid = data.total_paid,
+                    customer_total_paid = data.customer_total_paid,
+                    outstanding_debt = data.outstanding_debt,
+                    customer_outstanding_debt = data.customer_outstanding_debt,
+                    status = data.status::"invoice_status",
+                    last_payment_date = data.last_payment_date::timestamptz::date,
+                    close_date = data.close_date::timestamptz::date,
+                    modified_at = ${modifiedAt},
+                    zero_limit_alert = CASE
+                        WHEN data.clear_alerts THEN false
+                        ELSE inv.zero_limit_alert
+                    END,
+                    reporting_breach = CASE
+                        WHEN data.clear_alerts THEN false
+                        ELSE inv.reporting_breach
+                    END
+                FROM (
+                    SELECT
+                        UNNEST(${ids}::int[]) AS id,
+                        UNNEST(${totalPaid}::float8[]) AS total_paid,
+                        UNNEST(${customerTotalPaid}::float8[]) AS customer_total_paid,
+                        UNNEST(${outstandingDebt}::float8[]) AS outstanding_debt,
+                        UNNEST(${customerOutstandingDebt}::float8[]) AS customer_outstanding_debt,
+                        UNNEST(${statuses}::text[]) AS status,
+                        UNNEST(${lastPaymentDateTexts}::text[]) AS last_payment_date,
+                        UNNEST(${closeDateTexts}::text[]) AS close_date,
+                        UNNEST(${clearAlerts}::boolean[]) AS clear_alerts
+                ) AS data
+                WHERE inv.id = data.id
+            `;
+        } catch (error) {
+            console.error(DEBUG_PAY_RECALC_42846, "executeRaw failed", {
+                offset: i,
+                chunkSize: chunk.length,
+                sampleInvoiceId0: ids[0] ?? null,
+                sampleInvoiceId1: ids[1] ?? null,
+                sampleInvoiceId2: ids[2] ?? null,
+                ...describeDateUnnest("last", lastPaymentDates),
+                ...describeDateUnnest("close", closeDates),
+                lastText0: lastPaymentDateTexts[0] ?? null,
+                closeText0: closeDateTexts[0] ?? null,
+                errorMessage:
+                    error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+        }
     }
 }
 

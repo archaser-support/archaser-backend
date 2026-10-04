@@ -949,6 +949,7 @@ export async function afterAccount10149PaymentLinked(
     if (closeCandidates.length === 0) {
         return { invoiceIdsToRecalc: [] };
     }
+    const asOf = ctx.asOf ?? new Date();
     const touched = await applyReconciledVirtualCloses(
         ctx.prisma,
         ctx.accountId,
@@ -966,6 +967,7 @@ export async function afterAccount10149PaymentLinked(
         }),
         ctx.userId,
         {
+            asOf,
             onProgress: ctx.onProgress,
         }
     );
@@ -1099,6 +1101,7 @@ export const account10149Extension: BillingAccountExtension = {
                 ctx.invoiceCloseDates,
                 new Date(),
                 {
+                    asOf: ctx.asOf,
                     onProgress: ({ processed, total: closeTotal }) => {
                         // Prefer the flush total so the UI stays consistent.
                         report(

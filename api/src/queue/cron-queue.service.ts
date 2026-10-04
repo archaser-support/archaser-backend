@@ -265,7 +265,8 @@ export class CronQueueService implements OnModuleDestroy {
     }
 
     async enqueueCreditAsOfBackfill(
-        data: CreditAsOfBackfillJobData
+        data: CreditAsOfBackfillJobData,
+        options?: { replaceActive?: boolean }
     ): Promise<{ queued: boolean; jobId?: string; reason?: string }> {
         const queue = this.ensureBackfillQueue();
         if (!queue) {
@@ -289,7 +290,8 @@ export class CronQueueService implements OnModuleDestroy {
             const job = await requeueCreditAsOfBackfillBullJob(
                 queue,
                 jobId,
-                data.accountId
+                data.accountId,
+                { replaceActive: options?.replaceActive === true }
             );
             this.logger.log(
                 `enqueueCreditAsOfBackfill ok accountId=${data.accountId} jobId=${job.id} queue=${CREDIT_ASOF_BACKFILL_QUEUE_NAME}`

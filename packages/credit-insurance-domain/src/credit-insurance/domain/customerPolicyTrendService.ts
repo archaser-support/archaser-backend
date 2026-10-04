@@ -2046,11 +2046,11 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
         SELECT
             t.snapshot_date,
             t.insurance_policy_id,
-            t.at_risk_exposure,
-            t.usage_amount,
-            t.capacity_gap_amount,
-            t.terms_breach_amount,
-            ip.policy_number
+            MAX(t.at_risk_exposure) AS at_risk_exposure,
+            MAX(t.usage_amount) AS usage_amount,
+            MAX(t.capacity_gap_amount) AS capacity_gap_amount,
+            MAX(t.terms_breach_amount) AS terms_breach_amount,
+            MAX(ip.policy_number) AS policy_number
         FROM "CustomerPolicyTrend" t
         LEFT JOIN "InsurancePolicy" ip ON ip.id = t.insurance_policy_id
         WHERE t.account_id = ${accountId}
@@ -2062,6 +2062,7 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
             ${options?.policyId ?? null}::int IS NULL
             OR t.insurance_policy_id = ${options?.policyId ?? null}
           )
+        GROUP BY t.snapshot_date, t.insurance_policy_id
         ORDER BY t.snapshot_date ASC, t.insurance_policy_id ASC
     `;
 

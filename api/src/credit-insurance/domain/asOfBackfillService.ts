@@ -1,8 +1,13 @@
 import {
     ACCOUNT_BACKGROUND_JOB_KIND,
+    CreditAsOfBackfillConflictError,
     creditInsurancePrisma as prisma,
-    resolveMepBreachStartDate,
+    getCreditAsOfBackfillJobStatus,
+    pauseCreditAsOfBackfillJob,
+    retryCreditAsOfBackfillJob,
+    startCreditAsOfBackfillJob,
     startOfTodayUtc,
+    type CreditAsOfBackfillJobView,
 } from "@archaser/credit-insurance-domain";
 
 const CREDIT_ASOF_JOB_KIND =
@@ -41,8 +46,6 @@ type BackfillRow = {
     updated_at: Date | null;
 };
 
-const runningAccounts = new Set<number>();
-
 function toDayStartUtc(date: Date): Date {
     return new Date(
         Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
@@ -51,11 +54,6 @@ function toDayStartUtc(date: Date): Date {
 
 function dateOnly(date: Date | null): string | null {
     return date ? date.toISOString().slice(0, 10) : null;
-}
-
-function daysInclusive(from: Date, to: Date): number {
-    const ms = toDayStartUtc(to).getTime() - toDayStartUtc(from).getTime();
-    return ms < 0 ? 0 : Math.floor(ms / 86_400_000) + 1;
 }
 
 function idleStatus(accountId: number): AsOfBackfillStatus {
@@ -113,15 +111,33 @@ export async function getAsOfBackfillStatus(
     return row ? rowToStatus(row) : idleStatus(accountId);
 }
 
+function viewToStatus(
+    accountId: number,
+    view: CreditAsOfBackfillJobView
+): AsOfBackfillStatus {
+    const status = (
+        ["idle", "running", "paused", "failed", "complete"].includes(view.status)
+            ? view.status
+            : "idle"
+    ) as AsOfBackfillStatusValue;
+    return {
+        accountId,
+        status,
+        fromDate: view.fromDate,
+        toDate: view.toDate,
+        lastCheckpoint: view.checkpointDate,
+        daysDone: view.daysDone,
+        daysTotal: view.daysTotal,
+        lastError: view.lastError,
+        startedAt: view.startedAt,
+        updatedAt: view.updatedAt,
+    };
+}
+
 export async function startAsOfBackfill(
     accountId: number,
     requestedBy: string | null
 ): Promise<AsOfBackfillStatus> {
-    const existing = await readRow(accountId);
-    if (existing?.status === "running") {
-        return rowToStatus(existing);
-    }
-
     const toDate = startOfTodayUtc();
     const agg = await prisma.invoice.aggregate({
         where: { customer_id: { not: null }, Customer: { account_id: accountId } },
@@ -147,135 +163,39 @@ export async function startAsOfBackfill(
         return getAsOfBackfillStatus(accountId);
     }
 
-    const fromDate = toDayStartUtc(earliest);
-    const daysTotal = daysInclusive(fromDate, toDate);
-    await prisma.$executeRaw`
-        INSERT INTO "AccountBackgroundJob" (
-            account_id, job_kind, status, from_date, to_date, checkpoint_date,
-            units_total, units_done, last_error, requested_by, started_at, updated_at
-        ) VALUES (
-            ${accountId}, ${CREDIT_ASOF_JOB_KIND}, 'running', ${fromDate}, ${toDate}, ${fromDate},
-            ${daysTotal}, 0, NULL, ${requestedBy}, NOW(), NOW()
-        )
-        ON CONFLICT (account_id, job_kind) DO UPDATE SET
-            status = 'running', from_date = ${fromDate}, to_date = ${toDate},
-            checkpoint_date = ${fromDate}, units_total = ${daysTotal},
-            units_done = 0, last_error = NULL, requested_by = ${requestedBy},
-            started_at = NOW(), updated_at = NOW()
-    `;
-
-    void launchRunner(accountId);
-    return getAsOfBackfillStatus(accountId);
+    try {
+        const view = await startCreditAsOfBackfillJob(
+            accountId,
+            toDayStartUtc(earliest),
+            toDate,
+            { requestedBy }
+        );
+        return viewToStatus(accountId, view);
+    } catch (error) {
+        if (error instanceof CreditAsOfBackfillConflictError) {
+            return viewToStatus(
+                accountId,
+                await getCreditAsOfBackfillJobStatus(accountId)
+            );
+        }
+        throw error;
+    }
 }
 
 export async function pauseAsOfBackfill(
     accountId: number
 ): Promise<AsOfBackfillStatus> {
-    await prisma.$executeRaw`
-        UPDATE "AccountBackgroundJob"
-        SET status = 'paused', updated_at = NOW()
-        WHERE account_id = ${accountId}
-          AND job_kind = ${CREDIT_ASOF_JOB_KIND}
-          AND status = 'running'
-    `;
-    return getAsOfBackfillStatus(accountId);
+    const view = await pauseCreditAsOfBackfillJob(accountId);
+    return viewToStatus(accountId, view);
 }
 
 export async function resumeAsOfBackfill(
     accountId: number
 ): Promise<AsOfBackfillStatus> {
-    const updated = await prisma.$executeRaw`
-        UPDATE "AccountBackgroundJob"
-        SET status = 'running', last_error = NULL, updated_at = NOW()
-        WHERE account_id = ${accountId}
-          AND job_kind = ${CREDIT_ASOF_JOB_KIND}
-          AND status = 'paused'
-    `;
-    if (updated > 0) {
-        void launchRunner(accountId);
-    }
-    return getAsOfBackfillStatus(accountId);
-}
-
-async function launchRunner(accountId: number): Promise<void> {
-    if (runningAccounts.has(accountId)) return;
-
-    runningAccounts.add(accountId);
     try {
-        await runBackfillLoop(accountId);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await prisma.$executeRaw`
-            UPDATE "AccountBackgroundJob"
-            SET status = 'failed', last_error = ${message.slice(0, 1000)},
-                updated_at = NOW()
-            WHERE account_id = ${accountId}
-              AND job_kind = ${CREDIT_ASOF_JOB_KIND}
-        `.catch(() => {});
-    } finally {
-        runningAccounts.delete(accountId);
-    }
-}
-
-async function runBackfillLoop(accountId: number): Promise<void> {
-    const {
-        syncCustomerPolicyTrendSnapshotForAccount,
-        takeCreditDashboardDailySnapshotsForAccount,
-    } = await import("@archaser/credit-insurance-domain");
-
-    // Resolved once for the whole replay, not per replayed day.
-    const mepBreachStartDate = await resolveMepBreachStartDate(accountId);
-
-    for (let guard = 0; guard < 4200; guard += 1) {
-        const row = await readRow(accountId);
-        if (
-            !row ||
-            row.status !== "running" ||
-            !row.checkpoint_date ||
-            !row.to_date
-        ) {
-            return;
-        }
-
-        const day = toDayStartUtc(row.checkpoint_date);
-        if (day.getTime() > toDayStartUtc(row.to_date).getTime()) {
-            await prisma.$executeRaw`
-                UPDATE "AccountBackgroundJob"
-                SET status = 'complete', units_done = units_total, updated_at = NOW()
-                WHERE account_id = ${accountId}
-                  AND job_kind = ${CREDIT_ASOF_JOB_KIND}
-            `;
-            return;
-        }
-
-        try {
-            await syncCustomerPolicyTrendSnapshotForAccount(accountId, {
-                snapshotDate: day,
-                mepBreachStartDate,
-            });
-            await takeCreditDashboardDailySnapshotsForAccount(accountId, {
-                snapshotDate: day,
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            await prisma.$executeRaw`
-                UPDATE "AccountBackgroundJob"
-                SET status = 'failed', last_error = ${message.slice(0, 1000)},
-                    updated_at = NOW()
-                WHERE account_id = ${accountId}
-                  AND job_kind = ${CREDIT_ASOF_JOB_KIND}
-            `;
-            return;
-        }
-
-        const nextDay = new Date(day);
-        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-        await prisma.$executeRaw`
-            UPDATE "AccountBackgroundJob"
-            SET checkpoint_date = ${nextDay}, units_done = units_done + 1,
-                updated_at = NOW()
-            WHERE account_id = ${accountId}
-              AND job_kind = ${CREDIT_ASOF_JOB_KIND}
-        `;
+        const view = await retryCreditAsOfBackfillJob(accountId);
+        return viewToStatus(accountId, view);
+    } catch {
+        return getAsOfBackfillStatus(accountId);
     }
 }
