@@ -41,11 +41,11 @@ Deliver a consistent **credit-insurance gap and usage model** aligned with the p
 
 3. As a **credit analyst**, I want effective usage to show total AR as a percentage of combined policy + active top-up cover, so that I have a single “overall cover utilization” metric.
 
-4. As a **credit analyst**, I want policy usage to exceed 100% when no top-up is active, so that uninsured exposure above the policy limit is visible before top-up is added.
+4. As a **credit analyst**, I want policy usage to exceed 100% when no top-up is active, so that uninsured amount above the policy limit is visible before top-up is added.
 
 5. As a **credit analyst**, I want policy usage to stay above 100% and top-up usage at 0% when a top-up is recorded but **not yet active** (start date in the future), so that scheduled cover does not distort current metrics.
 
-6. As a **credit analyst**, I want existing invoice capacity gaps to remain unchanged when I add or extend a top-up, so that historical uninsured exposure is not silently absorbed by new cover.
+6. As a **credit analyst**, I want existing invoice capacity gaps to remain unchanged when I add or extend a top-up, so that historical uninsured amount is not silently absorbed by new cover.
 
 7. As a **collections user**, I want paying an invoice to reduce capacity gap only on that invoice, so that I can trust per-invoice gap columns in the invoice list.
 

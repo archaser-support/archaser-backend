@@ -1101,7 +1101,7 @@ export type CreditDashboardSummary = {
         /** Invoices per breach flag (counts may overlap across categories). */
         countByReason: TermsBreachCountByReason;
     };
-    /** Customers with no linked policy: count and total open AR (treated as uninsured in at-risk logic). */
+    /** Customers with no linked policy: count and total open AR (full open AR contributes to at-risk). */
     withoutPolicy: {
         customerCount: number;
         totalAmount: number;

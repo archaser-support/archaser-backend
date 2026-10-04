@@ -14,7 +14,7 @@ Credit analysts need a consistent way to handle **new customers** who are not ye
 
 Separately, customers **excluded from policy** and customers **without a linked policy** should not go through normal **capacity gap** or **terms breach** calculations. Exclusion is an intentional exception—not a payment-term violation—and uninsured customers should not show policy-style gap math. Today capacity gap writers still compute and persist values for excluded customers (unlike outdated DCL, which short-circuits writers), portfolio and customer KPIs disagree on terms breach for these cohorts, and the invoice `ctv_customer_excluded_from_policy` flag is used inconsistently across golden harness vs portfolio SQL.
 
-Analysts want excluded customers (especially **Pending review**) grouped with **uninsured exposure** on the **No Policy Exposure** card, with a drill-down **report**, and a dashboard filter to show or hide that card cohort across portfolio KPIs. Other exclusion reasons remain on the **policy-risk** path but share the same simplified gap/breach rules.
+Analysts want excluded customers (especially **Pending review**) grouped with **at-risk exposure** on the **No Policy Exposure** card, with a drill-down **report**, and a dashboard filter to show or hide that card cohort across portfolio KPIs. Other exclusion reasons remain on the **policy-risk** path but share the same simplified gap/breach rules.
 
 Today exclusion is controlled by a separate **Excluded from policy** toggle plus a free-text **Policy exclusion reason** field. That two-control model is redundant and allows inconsistent rows. Analysts should set exclusion **only** via a standardized reason dropdown; clearing the reason means the customer is **not excluded**.
 
@@ -58,7 +58,7 @@ Today exclusion is controlled by a separate **Excluded from policy** toggle plus
 
 7. As a credit analyst, I want customers excluded for other reasons (**Credit hold**, **Insurer declined**, **Other**) to **not** appear on the No Policy Exposure card, so that the card stays focused on uninsured and pending-review cohorts.
 
-8. As a credit analyst, I want pending-review and true no-policy customers to contribute **full open AR** to at-risk exposure, so that dashboard risk totals reflect uninsured exposure correctly.
+8. As a credit analyst, I want pending-review and true no-policy customers to contribute **full open AR** to at-risk exposure, so that dashboard risk totals reflect at-risk exposure correctly.
 
 9. As a credit analyst, I want uncovered-exposure customers removed from the **portfolio Terms Breach** chart and totals, so that intentional exclusions and no-policy customers are not misread as payment-term violations.
 
@@ -104,9 +104,9 @@ Today exclusion is controlled by a separate **Excluded from policy** toggle plus
 
 30. As an ops engineer, I want a deploy-time datafix reconciling legacy toggle/reason mismatches, so that production data matches reason-only semantics before go-live.
 
-31. As a credit analyst, I want customers **without a linked policy** to follow the same capacity gap and terms breach rules as excluded customers, so that uninsured exposure is treated consistently.
+31. As a credit analyst, I want customers **without a linked policy** to follow the same capacity gap and terms breach rules as excluded customers, so that at-risk exposure is treated consistently.
 
-32. As a credit analyst viewing a **no-policy** customer, I want the customer detail **Terms Breach** KPI to show **full open AR**, so that I see total uninsured exposure even though portfolio Terms Breach omits them.
+32. As a credit analyst viewing a **no-policy** customer, I want the customer detail **Terms Breach** KPI to show **full open AR**, so that I see total at-risk exposure even though portfolio Terms Breach omits them.
 
 33. As a credit analyst, I want **capacity gap = 0** for all uncovered-exposure customers (no-policy and excluded), so that gap cards and policy-style limit math do not misrepresent uninsured debtors.
 
