@@ -178,7 +178,7 @@ effective_usage =
 | 10k | 5k | 11k | **100%** | **20%** (1k/5k) | **73.3%** |
 | 10k | 5k | 5k | 50% | **0%** | 33.3% |
 
-**Usage vs gap:** Usage measures consumption of policy / top-up / combined cover. **Gap** is uninsured exposure that top-up does not retroactively absorb.
+**Usage vs gap:** Usage measures consumption of policy / top-up / combined cover. **Gap** is uninsured amount that top-up does not retroactively absorb.
 
 ---
 
