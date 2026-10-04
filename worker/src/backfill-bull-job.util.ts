@@ -66,8 +66,16 @@ export async function forceRemoveCreditAsOfBackfillBullJob(
 export async function requeueCreditAsOfBackfillBullJob(
     queue: Queue,
     jobId: string,
-    accountId: number
+    accountId: number,
+    options?: { replaceActive?: boolean }
 ): Promise<Job> {
+    const existing = await queue.getJob(jobId);
+    if (existing && options?.replaceActive !== true) {
+        const priorState = await existing.getState();
+        if (priorState === "active") {
+            return existing;
+        }
+    }
     const removal = await forceRemoveCreditAsOfBackfillBullJob(queue, jobId);
     if (!removal.removed) {
         throw new Error(

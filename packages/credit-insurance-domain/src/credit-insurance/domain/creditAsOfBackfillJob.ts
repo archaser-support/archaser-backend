@@ -3,6 +3,14 @@ import { PrismaClient } from "@prisma/client";
 import { type DbClient, prisma as defaultPrisma } from "../domain-db";
 import { ACCOUNT_BACKGROUND_JOB_KIND } from "./accountBackgroundJob";
 import {
+    CREDIT_ASOF_HEARTBEAT_INTERVAL_MS,
+    creditAsOfHeartbeatStaleCutoff,
+    isAccountBackgroundJobHeartbeatStale,
+    loadParentHistoryLease,
+    newAccountBackgroundJobRunToken,
+    parentHistoryStatusBlocksGenerate,
+} from "./accountBackgroundJobLease";
+import {
     deriveAsOfOpenInvoiceCandidatesFromLedger,
     loadAsOfOpenInvoiceLedgerRange,
 } from "./asOfOpenArLedgerPreload";
@@ -80,6 +88,7 @@ type JobRow = {
     requested_by: string | null;
     started_at: Date | null;
     updated_at: Date;
+    run_token: string | null;
 };
 
 function toUtcDayStart(date: Date): Date {
@@ -243,7 +252,8 @@ async function loadJob(
             last_error,
             requested_by,
             started_at,
-            updated_at
+            updated_at,
+            run_token
         FROM "AccountBackgroundJob"
         WHERE account_id = ${accountId}
           AND job_kind = ${CREDIT_ASOF_JOB_KIND}
@@ -252,15 +262,21 @@ async function loadJob(
     return rows[0] ?? null;
 }
 
+/**
+ * Generate jobs that are `running` with a stale heartbeat — worker reclaim
+ * candidates only. Healthy in-flight runs are omitted.
+ */
 export async function listRunningCreditAsOfBackfillAccountIds(
-    options?: { dbClient?: PrismaClientLike }
+    options?: { dbClient?: PrismaClientLike; now?: Date }
 ): Promise<number[]> {
     const db = options?.dbClient ?? defaultPrisma;
+    const staleCutoff = creditAsOfHeartbeatStaleCutoff(options?.now ?? new Date());
     const rows = await db.$queryRaw<{ account_id: number }[]>`
         SELECT account_id
         FROM "AccountBackgroundJob"
         WHERE job_kind = ${CREDIT_ASOF_JOB_KIND}
           AND status = 'running'
+          AND updated_at < ${staleCutoff}
     `;
     return rows.map((row) => Number(row.account_id));
 }
@@ -333,8 +349,14 @@ type LoadAsOfLines = (
     asOfDate: Date
 ) => Promise<AsOfLines>;
 
+export type CreditAsOfBackfillDispatchOptions = {
+    /** Replace an active BullMQ job (new lease / stale reclaim). Default false. */
+    replaceActive?: boolean;
+};
+
 type CreditAsOfBackfillDispatch = (
-    accountId: number
+    accountId: number,
+    options?: CreditAsOfBackfillDispatchOptions
 ) => Promise<{ queued: boolean; reason?: string }>;
 
 let creditAsOfBackfillDispatch: CreditAsOfBackfillDispatch | null = null;
@@ -351,9 +373,12 @@ export function creditAsOfBackfillBullJobId(accountId: number): string {
     return `credit-asof-backfill-${accountId}`;
 }
 
-async function dispatchRunner(accountId: number): Promise<void> {
+async function dispatchRunner(
+    accountId: number,
+    options?: CreditAsOfBackfillDispatchOptions
+): Promise<void> {
     if (creditAsOfBackfillDispatch) {
-        const result = await creditAsOfBackfillDispatch(accountId);
+        const result = await creditAsOfBackfillDispatch(accountId, options);
         if (result.queued) {
             return;
         }
@@ -410,16 +435,67 @@ export async function runCreditAsOfBackfillJob(
             return jobView(job);
         }
 
-        await db.$executeRaw`
-            UPDATE "AccountBackgroundJob"
-            SET updated_at = ${now}
-            WHERE account_id = ${accountId}
-              AND job_kind = ${CREDIT_ASOF_JOB_KIND}
-              AND status = 'running'
-        `;
+        let runToken = job.run_token;
+        if (runToken == null || runToken === "") {
+            const claimed = newAccountBackgroundJobRunToken();
+            const claimedRows = await db.$executeRaw`
+                UPDATE "AccountBackgroundJob"
+                SET run_token = ${claimed},
+                    updated_at = ${now}
+                WHERE account_id = ${accountId}
+                  AND job_kind = ${CREDIT_ASOF_JOB_KIND}
+                  AND status = 'running'
+                  AND run_token IS NULL
+            `;
+            if (Number(claimedRows) < 1) {
+                return getCreditAsOfBackfillJobStatus(accountId, {
+                    dbClient: db,
+                });
+            }
+            runToken = claimed;
+        } else {
+            await db.$executeRaw`
+                UPDATE "AccountBackgroundJob"
+                SET updated_at = ${now}
+                WHERE account_id = ${accountId}
+                  AND job_kind = ${CREDIT_ASOF_JOB_KIND}
+                  AND status = 'running'
+                  AND run_token = ${runToken}
+            `;
+        }
 
+        const stillMine = await loadJob(accountId, db);
+        if (
+            !stillMine ||
+            stillMine.status !== "running" ||
+            (stillMine.run_token != null && stillMine.run_token !== runToken)
+        ) {
+            return jobView(stillMine);
+        }
+        job = stillMine;
+        if (job.from_date == null || job.to_date == null) {
+            return jobView(job);
+        }
+        const jobFromDate = job.from_date;
+        const jobToDate = job.to_date;
+
+        const heartbeatTimer = setInterval(() => {
+            void db.$executeRaw`
+                UPDATE "AccountBackgroundJob"
+                SET updated_at = ${new Date()}
+                WHERE account_id = ${accountId}
+                  AND job_kind = ${CREDIT_ASOF_JOB_KIND}
+                  AND status = 'running'
+                  AND run_token = ${runToken}
+            `;
+        }, CREDIT_ASOF_HEARTBEAT_INTERVAL_MS);
+        if (typeof heartbeatTimer.unref === "function") {
+            heartbeatTimer.unref();
+        }
+
+        try {
         const resumeFrom = resolveRewriteDrainStart(
-            job.from_date,
+            jobFromDate,
             job.checkpoint_date
         );
 
@@ -449,8 +525,8 @@ export async function runCreditAsOfBackfillJob(
         } else {
             runContext = await buildCreditAsOfBackfillRunContext(accountId, {
                 dbClient: db,
-                replayFromDate: job.from_date,
-                replayToDate: job.to_date,
+                replayFromDate: jobFromDate,
+                replayToDate: jobToDate,
             });
             if (runContext.reportingBreachStartDate == null) {
                 throw new Error(
@@ -460,7 +536,7 @@ export async function runCreditAsOfBackfillJob(
             runContext = await ensureCapacityGapsForBackfillRun(runContext, {
                 dbClient: db,
             });
-            if (resumeFrom.getTime() > job.from_date.getTime()) {
+            if (resumeFrom.getTime() > jobFromDate.getTime()) {
                 runContext.priorDayTrendCostByKey =
                     await seedPriorDayTrendCostCacheForReplay(
                         accountId,
@@ -469,10 +545,10 @@ export async function runCreditAsOfBackfillJob(
             }
         }
 
-        const days = enumerateUtcDaysInclusive(resumeFrom, job.to_date);
+        const days = enumerateUtcDaysInclusive(resumeFrom, jobToDate);
         const baseDone = Math.max(
             0,
-            countInclusiveUtcDays(job.from_date, job.to_date) - days.length
+            countInclusiveUtcDays(jobFromDate, jobToDate) - days.length
         );
 
         let loadAsOfLines: LoadAsOfLines;
@@ -481,7 +557,7 @@ export async function runCreditAsOfBackfillJob(
         } else {
             const ledger = await loadAsOfOpenInvoiceLedgerRange(
                 accountId,
-                job.to_date,
+                jobToDate,
                 { dbClient: db }
             );
             loadAsOfLines = async (_id, asOfDate) =>
@@ -517,7 +593,7 @@ export async function runCreditAsOfBackfillJob(
             if (!shouldFlush) {
                 return;
             }
-            await db.$executeRaw`
+            const flushed = await db.$executeRaw`
                 UPDATE "AccountBackgroundJob"
                 SET checkpoint_date = ${pendingCheckpoint.checkpointDate},
                     units_done = ${pendingCheckpoint.daysDone},
@@ -526,7 +602,11 @@ export async function runCreditAsOfBackfillJob(
                 WHERE account_id = ${accountId}
                   AND job_kind = ${CREDIT_ASOF_JOB_KIND}
                   AND status = 'running'
+                  AND run_token = ${runToken}
             `;
+            if (Number(flushed) < 1) {
+                return;
+            }
             lastCheckpointFlushAt = Date.now();
             daysSinceLastCheckpointFlush = 0;
         }
@@ -534,8 +614,11 @@ export async function runCreditAsOfBackfillJob(
         for (let i = 0; i < days.length; i++) {
             const day = days[i]!;
             const latest = await loadJob(accountId, db);
-            if (!latest || latest.status !== "running") {
-                await flushCheckpoint(true);
+            if (
+                !latest ||
+                latest.status !== "running" ||
+                (latest.run_token != null && latest.run_token !== runToken)
+            ) {
                 return jobView(latest);
             }
 
@@ -597,6 +680,8 @@ export async function runCreditAsOfBackfillJob(
                         updated_at = ${now}
                     WHERE account_id = ${accountId}
                       AND job_kind = ${CREDIT_ASOF_JOB_KIND}
+                      AND status = 'running'
+                      AND run_token = ${runToken}
                 `;
                 return getCreditAsOfBackfillJobStatus(accountId, {
                     dbClient: db,
@@ -621,14 +706,21 @@ export async function runCreditAsOfBackfillJob(
                 },
                 select: { id: true },
             });
-            if (shellRows.length > 0 && job.from_date && job.to_date) {
+            if (shellRows.length > 0) {
+                const lease = await loadJob(accountId, db);
+                if (
+                    lease?.run_token != null &&
+                    lease.run_token !== runToken
+                ) {
+                    return jobView(lease);
+                }
                 const { overlayPoolCapacityGapAndAtRiskOnTrends } =
                     await import("./syncCreditPoolPolicyTrendsAfterParentChange");
                 await overlayPoolCapacityGapAndAtRiskOnTrends({
                     accountId,
                     rootCustomerIds: shellRows.map((row) => row.id),
-                    fromDate: toUtcDayStart(job.from_date),
-                    toDate: toUtcDayStart(job.to_date),
+                    fromDate: toUtcDayStart(jobFromDate),
+                    toDate: toUtcDayStart(jobToDate),
                     dbClient: db,
                 });
             }
@@ -655,8 +747,12 @@ export async function runCreditAsOfBackfillJob(
             WHERE account_id = ${accountId}
               AND job_kind = ${CREDIT_ASOF_JOB_KIND}
               AND status = 'running'
+              AND run_token = ${runToken}
         `;
         return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
+        } finally {
+            clearInterval(heartbeatTimer);
+        }
     } finally {
         runnersInFlight.delete(accountId);
     }
@@ -691,16 +787,27 @@ export async function startCreditAsOfBackfillJob(
     }
     const now = new Date();
     const daysTotal = countInclusiveUtcDays(from, to);
+    const parentLease = await loadParentHistoryLease(accountId, db);
+    if (parentHistoryStatusBlocksGenerate(parentLease?.status)) {
+        throw new CreditAsOfBackfillConflictError(
+            "A parent-link credit history refresh is already running for this account"
+        );
+    }
     const existing = await loadJob(accountId, db);
-    // Only an in-flight run blocks Generate. Stop leaves status `paused` —
-    // Generate must be allowed to start a fresh range (Retry resumes checkpoint).
-    if (existing?.status === "running") {
+    // Healthy in-flight run blocks Generate. Stale `running` may be taken over
+    // with this new range. Stop (`paused`) can start a fresh range.
+    if (
+        existing?.status === "running" &&
+        !isAccountBackgroundJobHeartbeatStale(existing.updated_at, now)
+    ) {
         throw new CreditAsOfBackfillConflictError(
             "A snapshot generate job is already running for this account"
         );
     }
 
-    await db.$executeRaw`
+    const runToken = newAccountBackgroundJobRunToken();
+    const staleCutoff = creditAsOfHeartbeatStaleCutoff(now);
+    const claimed = await db.$executeRaw`
         INSERT INTO "AccountBackgroundJob" (
             account_id,
             job_kind,
@@ -710,6 +817,7 @@ export async function startCreditAsOfBackfillJob(
             checkpoint_date,
             units_total,
             units_done,
+            run_token,
             last_error,
             requested_by,
             started_at,
@@ -724,6 +832,7 @@ export async function startCreditAsOfBackfillJob(
             NULL,
             ${daysTotal},
             0,
+            ${runToken},
             NULL,
             ${options?.requestedBy ?? null},
             ${now},
@@ -737,11 +846,19 @@ export async function startCreditAsOfBackfillJob(
             checkpoint_date = NULL,
             units_total = EXCLUDED.units_total,
             units_done = 0,
+            run_token = EXCLUDED.run_token,
             last_error = NULL,
             requested_by = EXCLUDED.requested_by,
             started_at = EXCLUDED.started_at,
             updated_at = EXCLUDED.updated_at
+        WHERE "AccountBackgroundJob".status IS DISTINCT FROM 'running'
+           OR "AccountBackgroundJob".updated_at < ${staleCutoff}
     `;
+    if (Number(claimed) < 1) {
+        throw new CreditAsOfBackfillConflictError(
+            "A snapshot generate job is already running for this account"
+        );
+    }
 
     if (options?.runInline) {
         return runCreditAsOfBackfillJob(accountId, {
@@ -751,7 +868,7 @@ export async function startCreditAsOfBackfillJob(
             now,
         });
     }
-    await dispatchRunner(accountId);
+    await dispatchRunner(accountId, { replaceActive: true });
     return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
 }
 
@@ -791,14 +908,6 @@ export async function retryCreditAsOfBackfillJob(
         throw new Error("No backfill job to retry");
     }
     if (existing.status === "running") {
-        await db.$executeRaw`
-            UPDATE "AccountBackgroundJob"
-            SET updated_at = ${now}
-            WHERE account_id = ${accountId}
-              AND job_kind = ${CREDIT_ASOF_JOB_KIND}
-              AND status = 'running'
-        `;
-        await dispatchRunner(accountId);
         return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
     }
     if (existing.status !== "paused" && existing.status !== "failed") {
@@ -807,10 +916,12 @@ export async function retryCreditAsOfBackfillJob(
         );
     }
 
+    const runToken = newAccountBackgroundJobRunToken();
     await db.$executeRaw`
         UPDATE "AccountBackgroundJob"
         SET status = 'running',
             last_error = NULL,
+            run_token = ${runToken},
             updated_at = ${now}
         WHERE account_id = ${accountId}
           AND job_kind = ${CREDIT_ASOF_JOB_KIND}
@@ -824,7 +935,7 @@ export async function retryCreditAsOfBackfillJob(
             now,
         });
     }
-    await dispatchRunner(accountId);
+    await dispatchRunner(accountId, { replaceActive: true });
     return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
 }
 

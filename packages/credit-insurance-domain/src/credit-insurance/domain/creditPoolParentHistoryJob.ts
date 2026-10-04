@@ -18,6 +18,10 @@ import {
     type CreditAsOfBackfillStatus,
 } from "./creditAsOfBackfillJob";
 import {
+    generateStatusBlocksParentHistory,
+    loadCreditAsOfBackfillLease,
+} from "./accountBackgroundJobLease";
+import {
     CreditPoolParentHistoryConflictError,
     enrichParentHistoryJobView,
 } from "./creditPoolParentChangeProgress";
@@ -217,6 +221,17 @@ export async function startCreditPoolParentHistoryJob(args: {
     }
 
     const existing = await loadJob(args.accountId, db);
+    const generateLease = await loadCreditAsOfBackfillLease(args.accountId, db);
+    if (
+        generateStatusBlocksParentHistory(
+            generateLease?.status,
+            generateLease?.updated_at
+        )
+    ) {
+        throw new CreditPoolParentHistoryConflictError(
+            "A snapshot generate job is already running for this account"
+        );
+    }
     // `syncing` is the same Save request handing off to history — allow.
     if (
         existing?.status === "running" ||
