@@ -253,6 +253,15 @@ export {
     takeCreditDashboardDailySnapshotsForAccount,
 } from "./credit-insurance/domain/creditDashboardSnapshotService";
 export {
+    deleteCreditDashboardDailySnapshotsForAccount,
+    deleteCreditSnapshotHistoryBeforeDate,
+    deleteCustomerPolicyTrendForScope,
+    deleteInactiveCustomerPolicyTrendRowsForScope,
+    deleteInsurancePolicyTrendForAccount,
+    prepareCreditSnapshotHistoryForRewriteWindow,
+    purgeCreditSnapshotsAfterInvoiceOrPaymentClear,
+} from "./credit-insurance/domain/creditSnapshotHistoryCleanup";
+export {
     getCapacityGapReport,
     getCreditDashboardSummary,
     getNoPolicyExposureReport,

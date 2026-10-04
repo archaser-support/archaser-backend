@@ -499,6 +499,17 @@ export async function runCreditAsOfBackfillJob(
             job.checkpoint_date
         );
 
+        // Fresh Generate window only: inactive-CP CPT purge + pre-from_date orphans.
+        if (job.checkpoint_date == null) {
+            const { prepareCreditSnapshotHistoryForRewriteWindow } =
+                await import("./creditSnapshotHistoryCleanup");
+            await prepareCreditSnapshotHistoryForRewriteWindow({
+                accountId,
+                fromDate: jobFromDate,
+                dbClient: db,
+            });
+        }
+
         let runContext: BackfillRunContext;
         /**
          * Production Generate (start + Retry/resume) always uses the optimized
