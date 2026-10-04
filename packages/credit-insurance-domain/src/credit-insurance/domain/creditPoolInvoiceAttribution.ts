@@ -10,6 +10,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma, type DbClient } from "../domain-db";
 import {
     createCreditPoolMembershipCache,
+    hydrateCreditPoolMembershipCacheForAccount,
     listDescendantCustomerIds,
     resolveCustomerCreditPoolRoot,
     type CreditPoolMembershipCache,
@@ -36,6 +37,19 @@ export async function expandCreditPoolRootsToMembers(
     const rootByMemberId = new Map<number, number>();
     const memberIdSet = new Set<number>();
     const uniqueRoots = [...new Set(rootCustomerIds)].filter(Number.isFinite);
+
+    if (
+        uniqueRoots.length > 0 &&
+        uniqueRoots.some(
+            (rootId) => !membershipCache.descendantsByCustomerId.has(rootId)
+        )
+    ) {
+        await hydrateCreditPoolMembershipCacheForAccount(
+            accountId,
+            dbClient,
+            membershipCache
+        );
+    }
 
     for (const rootId of uniqueRoots) {
         rootByMemberId.set(rootId, rootId);
