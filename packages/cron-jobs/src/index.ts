@@ -89,6 +89,7 @@ export {
     isAccountFrozen,
     type FrozenAccountResolverDeps,
 } from "./accountFreeze/frozenAccountResolver";
+export { FrozenAccountMongoUnavailableError } from "./accountFreeze/frozenAccountMongoUnavailableError";
 export {
     STALE_IMPORT_JOB_ERROR_MESSAGE,
     STALE_IMPORT_JOB_IDLE_HOURS,
