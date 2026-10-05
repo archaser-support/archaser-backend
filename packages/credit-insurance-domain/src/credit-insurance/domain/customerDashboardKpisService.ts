@@ -851,8 +851,12 @@ export async function getCustomerDashboardKpis(
         },
         invoiceCount: 0,
     };
-    const trailingDays = options?.days ?? 90;
-    // Trailing period cards + risk chart read this customer's CTP. For shells,
+    const trailingDays = 90;
+    const riskTrendDays = Math.max(
+        7,
+        Math.min(options?.days ?? 365, 365)
+    );
+    // Trailing period cards (90d) + risk chart (12 months) read this customer's CTP. For shells,
     // connect/daily overlay writes **local-subtree** pool AR / gap / at-risk /
     // terms-breach onto the shell row (PRD D11; nested shells kept).
     const [
@@ -867,7 +871,7 @@ export async function getCustomerDashboardKpis(
     ] = await Promise.all([
             getCustomerRiskExposureAmountTrendByPolicy(accountId, customerId, {
                 policyId,
-                days: trailingDays,
+                days: riskTrendDays,
             }),
             fullArAtRisk
                 ? Promise.resolve(emptyTermsBreachCounts)
