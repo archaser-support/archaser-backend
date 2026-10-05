@@ -22,6 +22,7 @@ import {
 import {
     computeCustomerOverdueBlock,
     isEligibleForCustomerMepOverdue,
+    isIgnoredForMepOverdueBlock,
 } from "./invoiceInsuranceFields";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import { getActiveCustomerPolicyRow } from "./resolveActiveCustomerPolicy";
@@ -69,7 +70,12 @@ async function syncCustomerInsuranceFieldsCore(
                 status: "Overdue",
                 OR: [{ amount: null }, { amount: { gte: 0 } }],
             },
-            select: { due_date: true, amount: true, invoice_date: true },
+            select: {
+                due_date: true,
+                amount: true,
+                invoice_date: true,
+                mep_ignored: true,
+            },
         }),
         dbClient.customer.findUnique({
             where: { id: customerId },
@@ -111,6 +117,9 @@ async function syncCustomerInsuranceFieldsCore(
         }
         if (!oldestDue || dueDate < oldestDue) {
             oldestDue = dueDate;
+        }
+        if (isIgnoredForMepOverdueBlock(invoice.mep_ignored)) {
+            continue;
         }
         const issueDate = invoice.invoice_date
             ? new Date(invoice.invoice_date)

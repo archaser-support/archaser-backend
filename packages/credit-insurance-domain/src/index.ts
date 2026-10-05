@@ -101,6 +101,7 @@ export {
     invoiceOutstandingInLimitCurrency,
     parseImportDateToLocalCalendarDate,
     shouldSetReportingBreach,
+    isNegativeInvoiceAmount,
     computeCustomerRiskExposure,
 } from "./credit-insurance/domain/invoiceInsuranceFields";
 export {
@@ -331,6 +332,7 @@ export {
 } from "./credit-insurance/domain/accountVatBasisRefreshJob";
 export {
     isActiveTopUp,
+    loadActiveTopUpsByCustomerIdForAccount,
     resolveEffectiveApprovedLimit,
     resolveEffectiveApprovedLimitFromTopUpRows,
     resolveTopUpTotalsForAsOfDates,
@@ -579,6 +581,7 @@ export { syncInvoiceCapacityGapAmountsForCustomer } from "./credit-insurance/dom
 export {
     accountHasCreditInsurance,
     createCreditPoolMembershipCache,
+    hydrateCreditPoolMembershipCacheForAccount,
     isLinkedCreditChild,
     listDescendantCustomerIds,
     onParentCustomerIdChanged,

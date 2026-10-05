@@ -127,7 +127,7 @@ A list of implementation decisions that were made. This can include:
 - The interfaces of those modules that will be modified
 - Technical clarifications from the developer
 - Architectural decisions
-- Schema changes
+- Schema changes — if the PRD needs a DB change, require a SQL file under `prisma/migrations/` on the feature branch so CI can run it. Do **not** wrap that SQL in top-level `BEGIN;` / `COMMIT;` (runner already transactional). Local `db push` / ad-hoc `ALTER` is not a substitute. Details: `.cursor/rules/database.mdc`
 - API contracts
 - Specific interactions
 - **i18n:** new or changed user-facing strings ship with **both English and Hebrew** locale keys in the same feature (no English-only `defaultValue` gaps)

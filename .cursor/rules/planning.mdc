@@ -66,7 +66,7 @@ Before finalizing any implementation plan (initial draft or after user feedback)
 - Call out easy-to-miss touchpoints (e.g. manual export mappers, row/API types, sort allowlists, validation parity client/server, conditional required fields).
 - Note incorrect assumptions (e.g. “export auto-picks grid columns” when a handler maps fields manually).
 - Propose optional follow-ups (unit tests, report builder fields, edge cases) clearly labeled **out of scope unless requested**.
-- Flag cross-cutting rules that affect the plan (translations, styling approval, migration safety).
+- Flag cross-cutting rules that affect the plan (translations, styling approval, migration safety). A schema change must ship a `prisma/migrations/` SQL file for CI, with **no** top-level `BEGIN;` / `COMMIT;` (`.cursor/rules/database.mdc`).
 - If the scan reveals gaps or better approaches, update the plan before asking the user to approve execution.
 
 ## Plan persistence (repo copy)

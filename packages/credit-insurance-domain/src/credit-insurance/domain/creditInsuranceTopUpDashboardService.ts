@@ -6,7 +6,9 @@ import { convertAmountToCurrencyLatestRate } from "./customerCreditInsuranceHead
 import {
     isActiveTopUp,
     resolveEffectiveApprovedLimit,
+    type TopUpRowForResolution,
 } from "./resolveEffectiveApprovedLimit";
+import type { CreditPoolMembershipCache } from "./parentCustomerCreditInheritance";
 import {
     startOfTodayUtc,
     toUtcDateOnly,
@@ -118,6 +120,8 @@ export async function computeTopUpDashboardMetrics(args: {
     primaryPolicyId?: number;
     customers: CustomerRow[];
     openArByCustomerId: Map<number, number>;
+    membershipCache?: CreditPoolMembershipCache;
+    preloadedTopUpsByOwnerId?: Map<number, TopUpRowForResolution[]>;
 }): Promise<{
     topUp: TopUpDashboardBlock;
     policyUsageTopUp: TopUpPolicyUsageMetrics;
@@ -155,6 +159,8 @@ export async function computeTopUpDashboardMetrics(args: {
             outdatedDcl: c.outdated_dcl ?? false,
             excludedFromPolicy: c.excluded_from_policy ?? false,
             asOfDate: today,
+            membershipCache: args.membershipCache,
+            preloadedTopUpsByOwnerId: args.preloadedTopUpsByOwnerId,
         });
 
         const limitCurrency =
