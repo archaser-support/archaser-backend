@@ -397,7 +397,7 @@ export type PortfolioUtilizationSection = {
     averageTopUpUtilizationPct: number | null;
     /** Unique top-ups active on at least one day in the range. */
     periodActiveTopUpCount: number;
-    /** Unique customers with an active top-up on at least one day in the range. */
+    /** Unique roots with top-up cover on at least one day (shells include child cover). */
     periodCustomersWithTopUp: number;
     /**
      * Customers with active top-up cover. Bars use peak-day capacity;
@@ -2818,7 +2818,6 @@ async function fetchPeriodTopUpUniques(
     }
 ): Promise<{
     periodActiveTopUpCount: number;
-    periodCustomersWithTopUp: number;
 }> {
     const topUpWhere: Prisma.CustomerTopUpWhereInput = {
         cancelled_at: null,
@@ -2842,14 +2841,11 @@ async function fetchPeriodTopUpUniques(
         where: topUpWhere,
         select: {
             id: true,
-            customer_id: true,
         },
     });
 
-    const customerIds = new Set(rows.map((row) => row.customer_id));
     return {
         periodActiveTopUpCount: rows.length,
-        periodCustomersWithTopUp: customerIds.size,
     };
 }
 
@@ -3429,7 +3425,7 @@ export async function getCreditPortfolioHealth(
             topCustomers,
             distributionCustomers,
             periodActiveTopUpCount: periodTopUps.periodActiveTopUpCount,
-            periodCustomersWithTopUp: periodTopUps.periodCustomersWithTopUp,
+            periodCustomersWithTopUp: topUpDraw.customerCount,
             topUpDraw,
             asOfDate,
             accountCurrency,
