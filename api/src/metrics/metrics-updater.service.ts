@@ -10,6 +10,7 @@ import type { ArchaserBusinessMetrics } from "./archaser-business-metrics";
 const UPDATE_INTERVAL_MS = 60_000;
 /** Cap parallel Prisma queries so metrics refresh cannot exhaust the API pool. */
 const METRICS_DB_CONCURRENCY = 4;
+const MONGO_METRICS_ERROR_LOG_INTERVAL_MS = 5 * 60_000;
 
 @Injectable()
 export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
@@ -18,8 +19,18 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
     private m!: ArchaserBusinessMetrics;
     private timer: ReturnType<typeof setInterval> | null = null;
     private updateInFlight: Promise<void> | null = null;
+    private lastMongoMetricsErrorLogAt = 0;
 
     constructor(private readonly db: DatabaseService) {}
+
+    private logMongoMetricsFailure(context: string, error: unknown): void {
+        const now = Date.now();
+        if (now - this.lastMongoMetricsErrorLogAt < MONGO_METRICS_ERROR_LOG_INTERVAL_MS) {
+            return;
+        }
+        this.lastMongoMetricsErrorLogAt = now;
+        this.logger.error(`${context}:`, error);
+    }
 
     bindMetrics(metrics: ArchaserBusinessMetrics): void {
         this.m = metrics;
@@ -99,7 +110,7 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                         this.m.dbMongodbConnections.set(mongoCount);
                     }
                 } catch (error) {
-                    this.logger.error("MongoDB health check failed:", error);
+                    this.logMongoMetricsFailure("MongoDB health check failed", error);
                     this.m.dbMongodbConnected.set(0);
                     this.m.dbMongodbConnections.set(0);
                 }
@@ -759,8 +770,10 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                         this.m.applicationErrors24h.set(errors24h);
                         this.m.applicationWarnings24h.set(warnings24h);
                     } catch (mongoError) {
-                        // Continue without MongoDB metrics if there's an error
-                        this.logger.error("Failed to fetch error logs from MongoDB:", mongoError);
+                        this.logMongoMetricsFailure(
+                            "Failed to fetch error logs from MongoDB",
+                            mongoError
+                        );
                     }
                 }
 
@@ -878,16 +891,28 @@ export class MetricsUpdaterService implements OnModuleInit, OnModuleDestroy {
                     );
 
                     if (process.env.NODE_ENV !== "development") {
-                        await ensureMongoConnection();
-                        const staleCutoff = new Date(Date.now() - 15 * 60 * 1000);
-                        const staleRunning =
-                            (await mongoose.connection.db
-                                ?.collection("connector_sync_executions")
-                                .countDocuments({
-                                    status: "RUNNING",
-                                    started_at: { $lt: staleCutoff },
-                                })) ?? 0;
-                        this.m.billingConnectorStaleRunningCount.set(staleRunning);
+                        try {
+                            await ensureMongoConnection();
+                            const staleCutoff = new Date(
+                                Date.now() - 15 * 60 * 1000
+                            );
+                            const staleRunning =
+                                (await mongoose.connection.db
+                                    ?.collection("connector_sync_executions")
+                                    .countDocuments({
+                                        status: "RUNNING",
+                                        started_at: { $lt: staleCutoff },
+                                    })) ?? 0;
+                            this.m.billingConnectorStaleRunningCount.set(
+                                staleRunning
+                            );
+                        } catch (mongoStaleRunningError) {
+                            this.logMongoMetricsFailure(
+                                "Failed to fetch billing connector stale RUNNING count from MongoDB",
+                                mongoStaleRunningError
+                            );
+                            this.m.billingConnectorStaleRunningCount.set(0);
+                        }
                     }
                 } catch (billingMetricsError) {
                     this.logger.error(

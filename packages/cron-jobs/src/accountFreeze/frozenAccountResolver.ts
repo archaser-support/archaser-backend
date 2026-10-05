@@ -2,6 +2,7 @@ import { listRunningSyncAccountIds } from "@archaser/billing-connector";
 import type { PrismaClient } from "@prisma/client";
 
 import { jobLog } from "../logging/jobLog";
+import { FrozenAccountMongoUnavailableError } from "./frozenAccountMongoUnavailableError";
 import { sweepStaleProcessingImportJobs } from "./sweepStaleProcessingImportJobs";
 
 /** Keep in sync with ACCOUNT_BACKGROUND_JOB_KIND in credit-insurance-domain. */
@@ -58,14 +59,14 @@ async function queryRunningSyncAccountIds(
     } catch (error) {
         jobLog(
             "frozen-account",
-            "warn",
-            "Mongo RUNNING account lookup failed; Postgres-only freeze",
+            "error",
+            "Mongo RUNNING account lookup failed; refusing Postgres-only freeze",
             {
                 error:
                     error instanceof Error ? error.message : String(error),
             }
         );
-        return [];
+        throw new FrozenAccountMongoUnavailableError(error);
     }
 }
 

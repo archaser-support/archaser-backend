@@ -18,6 +18,13 @@ export async function ensureMongoConnection(): Promise<typeof mongoose> {
     if (mongoose.connection.readyState === 1) {
         return mongoose;
     }
+    if (mongoose.connection.readyState !== 0) {
+        try {
+            await mongoose.disconnect();
+        } catch {
+            // ignore
+        }
+    }
     await mongoose.connect(getMongoDBUri(), mongooseOptions);
     return mongoose;
 }

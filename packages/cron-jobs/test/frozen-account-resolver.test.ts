@@ -8,6 +8,7 @@ import {
     getFrozenAccountIds,
     isAccountFrozen,
 } from "../src/accountFreeze/frozenAccountResolver";
+import { FrozenAccountMongoUnavailableError } from "../src/accountFreeze/frozenAccountMongoUnavailableError";
 import {
     logFrozenAccountSkips,
     reportFrozenAccountSkips,
@@ -117,15 +118,16 @@ describe("getFrozenAccountIds", () => {
         expect([...frozen].sort((a, b) => a - b)).toEqual([505, 506]);
     });
 
-    it("returns Postgres-only frozen accounts when Mongo lookup fails", async () => {
+    it("fails when Mongo lookup fails and MONGODB_URI is set", async () => {
         process.env.MONGODB_URI = "mongodb://test";
-        const frozen = await getFrozenAccountIds({
-            prisma: mockPrisma({ import: [606] }),
-            listRunningSyncAccountIds: async () => {
-                throw new Error("Mongo unavailable");
-            },
-        });
-        expect([...frozen]).toEqual([606]);
+        await expect(
+            getFrozenAccountIds({
+                prisma: mockPrisma({ import: [606] }),
+                listRunningSyncAccountIds: async () => {
+                    throw new Error("Mongo unavailable");
+                },
+            })
+        ).rejects.toBeInstanceOf(FrozenAccountMongoUnavailableError);
     });
 });
 
