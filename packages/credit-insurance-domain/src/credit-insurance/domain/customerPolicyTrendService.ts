@@ -2028,7 +2028,7 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
         days?: number;
     }
 ): Promise<RiskExposurePolicySeries[]> {
-    const safeDays = Math.max(7, Math.min(options?.days ?? 90, 365));
+    const safeDays = Math.max(7, Math.min(options?.days ?? 365, 365));
     const toDateUtc = startOfTodayUtc();
     const fromDateUtc = addUtcCalendarDays(toDateUtc, -(safeDays - 1));
 
