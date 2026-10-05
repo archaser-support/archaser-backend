@@ -416,7 +416,7 @@ export class OperationsService {
     ) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
         const accountId = this.accessScope.getEffectiveAccountId(userInfo);
-        const userId = userInfo.userId;
+        const userId = this.accessScope.getEffectiveUserId(userInfo);
         const effectiveRole = userInfo.viewAsUserRole || userInfo.role;
         const includeFollowUpReminders = await this.accessScope.hasPermission(
             accountId,
@@ -545,10 +545,11 @@ export class OperationsService {
     async deleteNotification(user: JwtPayload, notificationId: string) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
         const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const userId = this.accessScope.getEffectiveUserId(userInfo);
         const result = await this.db.notification.deleteMany({
             where: {
                 id: notificationId,
-                user_id: userInfo.userId,
+                user_id: userId,
                 account_id: accountId,
             },
         });
@@ -556,7 +557,7 @@ export class OperationsService {
             throw new NotFoundException({ error: "Notification not found" });
         }
         await this.realtime.notifyNotificationChange(
-            userInfo.userId,
+            userId,
             "notification-deleted"
         );
         return { success: true };
@@ -569,6 +570,7 @@ export class OperationsService {
     ) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
         const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const userId = this.accessScope.getEffectiveUserId(userInfo);
         const read =
             typeof body.read === "boolean"
                 ? body.read
@@ -581,7 +583,7 @@ export class OperationsService {
         const result = await this.db.notification.updateMany({
             where: {
                 id: notificationId,
-                user_id: userInfo.userId,
+                user_id: userId,
                 account_id: accountId,
             },
             data: { read, modified_at: new Date() },
@@ -590,7 +592,7 @@ export class OperationsService {
             throw new NotFoundException({ error: "Notification not found" });
         }
         await this.realtime.notifyNotificationChange(
-            userInfo.userId,
+            userId,
             "notification-updated"
         );
         return { success: true, read };
@@ -602,8 +604,9 @@ export class OperationsService {
     ) {
         const userInfo = await this.accessScope.resolveUserInfo(user);
         const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const userId = this.accessScope.getEffectiveUserId(userInfo);
         const baseWhere = {
-            user_id: userInfo.userId,
+            user_id: userId,
             account_id: accountId,
         };
         const action = typeof body.action === "string" ? body.action : "";
@@ -611,7 +614,7 @@ export class OperationsService {
         if (action === "deleteAll") {
             await this.db.notification.deleteMany({ where: baseWhere });
             await this.realtime.notifyNotificationChange(
-                userInfo.userId,
+                userId,
                 "notifications-cleared"
             );
             return { success: true };
@@ -622,7 +625,7 @@ export class OperationsService {
                 where: { ...baseWhere, type: body.type as never },
             });
             await this.realtime.notifyNotificationChange(
-                userInfo.userId,
+                userId,
                 "notifications-cleared-by-type"
             );
             return { success: true };
@@ -643,7 +646,7 @@ export class OperationsService {
                 },
             });
             await this.realtime.notifyNotificationChange(
-                userInfo.userId,
+                userId,
                 "notifications-cleared-read"
             );
             return { success: true };

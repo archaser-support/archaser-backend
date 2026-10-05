@@ -89,9 +89,27 @@ export class UsersExtrasController {
         if (!target) {
             throw new NotFoundException({ error: "User not found" });
         }
+        const viewAsUserAccountId = target.account_id ?? null;
+        let permissions: string[] = [];
+        if (viewAsUserAccountId != null && target.role) {
+            if (target.role === "System_Administrator") {
+                permissions = ["*"];
+            } else {
+                const rows = await this.db.rolePermission.findMany({
+                    where: {
+                        account_id: viewAsUserAccountId,
+                        role: target.role as never,
+                    },
+                    select: { permission_key: true },
+                });
+                permissions = rows.map((r) => r.permission_key);
+            }
+        }
         return serializeBigInt({
             success: true,
             viewAsUser: target,
+            viewAsUserAccountId,
+            permissions,
         });
     }
 
