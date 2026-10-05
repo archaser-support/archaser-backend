@@ -110,8 +110,11 @@ export {
     type InvoiceInsuranceAsOfStamp,
 } from "./credit-insurance/domain/stampInvoiceInsuranceFieldsAsOf";
 export {
+    loadInvoiceNumbersById,
     resolveCreatedOverdueMepByInvoiceId,
+    resolveCreatedOverdueMepDetailsByInvoiceId,
     resolveCreatedOverdueMepForInvoice,
+    type CreatedOverdueMepResolution,
 } from "./credit-insurance/domain/createdOverdueMepAtInvoiceDate";
 
 // --- Calendar-day compare (shared by MEP/reporting gates and claims anniversary) ---

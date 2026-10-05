@@ -618,6 +618,7 @@ const MS_PER_UTC_DAY = 86_400_000;
  * rescans (CPT Generate bottleneck when one customer has hundreds of invoices).
  */
 export type OldestOverdueAtIssue = {
+    invoiceId: number;
     dueDate: Date;
     invoiceDate: Date;
 };
@@ -703,16 +704,26 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
     let cachedMin: OldestOverdueAtIssue | null = null;
     let cachedMinDueMs: number | null = null;
 
-    function pickMinInvoiceDate(
+    function pickOldestIssue(
         byInvoiceId: Map<number, Date>
-    ): Date | null {
-        let best: Date | null = null;
-        for (const invoiceDate of byInvoiceId.values()) {
-            if (!best || invoiceDate.getTime() < best.getTime()) {
-                best = invoiceDate;
+    ): { invoiceId: number; invoiceDate: Date } | null {
+        let bestId: number | null = null;
+        let bestDate: Date | null = null;
+        for (const [invoiceId, invoiceDate] of byInvoiceId) {
+            if (
+                !bestDate ||
+                invoiceDate.getTime() < bestDate.getTime() ||
+                (invoiceDate.getTime() === bestDate.getTime() &&
+                    invoiceId < (bestId ?? Number.POSITIVE_INFINITY))
+            ) {
+                bestId = invoiceId;
+                bestDate = invoiceDate;
             }
         }
-        return best;
+        if (bestId == null || !bestDate) {
+            return null;
+        }
+        return { invoiceId: bestId, invoiceDate: bestDate };
     }
 
     function recomputeMin(): void {
@@ -723,12 +734,16 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
                 continue;
             }
             if (cachedMinDueMs == null || ms < cachedMinDueMs) {
-                const invoiceDate = pickMinInvoiceDate(meta.byInvoiceId);
-                if (!invoiceDate) {
+                const oldest = pickOldestIssue(meta.byInvoiceId);
+                if (!oldest) {
                     continue;
                 }
                 cachedMinDueMs = ms;
-                cachedMin = { dueDate: meta.dueDate, invoiceDate };
+                cachedMin = {
+                    invoiceId: oldest.invoiceId,
+                    dueDate: meta.dueDate,
+                    invoiceDate: oldest.invoiceDate,
+                };
             }
         }
     }
@@ -748,15 +763,19 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
         if (cachedMinDueMs == null || cand.dueDateMs < cachedMinDueMs) {
             cachedMinDueMs = cand.dueDateMs;
             cachedMin = {
+                invoiceId: cand.invoiceId,
                 dueDate: cand.dueDate,
                 invoiceDate: cand.invoiceDate,
             };
         } else if (cachedMinDueMs === cand.dueDateMs) {
             if (
                 !cachedMin ||
-                cand.invoiceDateMs < cachedMin.invoiceDate.getTime()
+                cand.invoiceDateMs < cachedMin.invoiceDate.getTime() ||
+                (cand.invoiceDateMs === cachedMin.invoiceDate.getTime() &&
+                    cand.invoiceId < cachedMin.invoiceId)
             ) {
                 cachedMin = {
+                    invoiceId: cand.invoiceId,
                     dueDate: cand.dueDate,
                     invoiceDate: cand.invoiceDate,
                 };
@@ -777,9 +796,13 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
                 recomputeMin();
             }
         } else if (cachedMinDueMs === cand.dueDateMs) {
-            const invoiceDate = pickMinInvoiceDate(prev.byInvoiceId);
-            cachedMin = invoiceDate
-                ? { dueDate: prev.dueDate, invoiceDate }
+            const oldest = pickOldestIssue(prev.byInvoiceId);
+            cachedMin = oldest
+                ? {
+                      invoiceId: oldest.invoiceId,
+                      dueDate: prev.dueDate,
+                      invoiceDate: oldest.invoiceDate,
+                  }
                 : null;
             if (!cachedMin) {
                 recomputeMin();
@@ -837,6 +860,16 @@ export function overlayAsOfTermsFlagsOnLine(
         oldestOverdueAtIssue?: OldestOverdueAtIssue | null;
     }
 ): AsOfOpenInvoiceLine {
+    if (isNegativeInvoiceAmount(line.amount)) {
+        return {
+            ...line,
+            reportingBreach: false,
+            ctvPaymentTerm: false,
+            ctvCustomerOverdueMep: false,
+            ctvOutdatedDcl: false,
+            ctvInvoiceAfterPolicyEnd: false,
+        };
+    }
     const asOfStatus = classifyAsOfOpenStatus(line.dueDate, asOfDate);
     const row = computeInvoiceInsuranceRowData({
         status: asOfStatus as invoice_status,
@@ -954,6 +987,16 @@ export function overlayAsOfTermsFlagsOnLines(
         );
         const terms = exact ?? fallback;
         if (!terms) {
+            if (isNegativeInvoiceAmount(line.amount)) {
+                return {
+                    ...line,
+                    reportingBreach: false,
+                    ctvPaymentTerm: false,
+                    ctvCustomerOverdueMep: false,
+                    ctvOutdatedDcl: false,
+                    ctvInvoiceAfterPolicyEnd: false,
+                };
+            }
             if (options?.ignoreReportingBreach) {
                 return { ...line, reportingBreach: false };
             }

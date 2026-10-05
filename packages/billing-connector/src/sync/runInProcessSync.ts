@@ -18,6 +18,7 @@ import {
     type EntityImportBatchResult,
     type ImportEntityType,
 } from "../import/entityImporter";
+import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
 import {
     loadImportCachesForReplay,
     normalizeImportCacheCustomerScope,
@@ -608,11 +609,14 @@ async function runInProcessSyncBody(
         invoiceEntityIds: number[];
         paymentEntityIds: number[];
         runMaturity: boolean;
+        runReplay?: boolean;
+        runProcessOverdue?: boolean;
         mepBreachStartDate?: Date | null;
     }): Promise<void> => {
         // Nest wires onProcessOverdueCustomers as its own step; skip overdue inside
         // runInlineArPostIngestTailSteps (separateOverdueStep) and run it here first.
         if (
+            args.runProcessOverdue !== false &&
             options.onProcessOverdueCustomers &&
             args.customerIds.length > 0
         ) {
@@ -638,6 +642,8 @@ async function runInProcessSyncBody(
             separateOverdueStep: Boolean(options.onProcessOverdueCustomers),
             onProcessOverdueCustomers: options.onProcessOverdueCustomers,
             runMaturity: args.runMaturity,
+            runReplay: args.runReplay,
+            runProcessOverdue: args.runProcessOverdue,
             importType:
                 args.invoiceEntityIds.length > 0 ? "Invoice" : "Payment",
         });
@@ -1770,19 +1776,62 @@ async function runInProcessSyncBody(
             }
         }
 
-        if (
-            !invoicePostIngestRan &&
-            paymentAffectedCustomerIds.size > 0
-        ) {
-            await runArTailWithProgress({
-                customerIds: Array.from(paymentAffectedCustomerIds),
-                invoiceEntityIds: [],
-                paymentEntityIds: Array.from(arAffectedPaymentIds),
-                runMaturity: true,
-                mepBreachStartDate:
-                    options.mepBreachStartDate ??
-                    connector.mep_breach_start_date,
-            });
+        if (!options.dryRun) {
+            try {
+                const maturityStarted = Date.now();
+                const maturityResult = await applyMaturedDeferredPayments(
+                    prisma,
+                    accountId,
+                    new Date(),
+                    undefined,
+                    { userId: options.userId }
+                );
+                for (const id of maturityResult.affectedCustomerIds) {
+                    arAffectedCustomerIds.add(id);
+                }
+                for (const id of maturityResult.affectedInvoiceIds) {
+                    arAffectedInvoiceIds.add(id);
+                }
+                log(
+                    `Sync finalize maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
+                );
+            } catch (error) {
+                const message =
+                    error instanceof Error
+                        ? error.message
+                        : "Deferred payment maturity failed";
+                log(`Sync finalize maturity failed: ${message}`);
+            }
+        }
+
+        if (!invoicePostIngestRan) {
+            if (paymentAffectedCustomerIds.size > 0) {
+                await runArTailWithProgress({
+                    customerIds: Array.from(paymentAffectedCustomerIds),
+                    invoiceEntityIds: [],
+                    paymentEntityIds: Array.from(arAffectedPaymentIds),
+                    runMaturity: false,
+                    mepBreachStartDate:
+                        options.mepBreachStartDate ??
+                        connector.mep_breach_start_date,
+                });
+            }
+            const liveOnlyCustomerIds = Array.from(
+                arAffectedCustomerIds
+            ).filter((id) => !paymentAffectedCustomerIds.has(id));
+            if (liveOnlyCustomerIds.length > 0) {
+                await runArTailWithProgress({
+                    customerIds: liveOnlyCustomerIds,
+                    invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                    paymentEntityIds: [],
+                    runMaturity: false,
+                    runReplay: false,
+                    runProcessOverdue: false,
+                    mepBreachStartDate:
+                        options.mepBreachStartDate ??
+                        connector.mep_breach_start_date,
+                });
+            }
         }
 
         const balances = await finalizeLegacyCustomerBalances(

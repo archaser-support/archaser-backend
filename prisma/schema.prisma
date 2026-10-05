@@ -1744,6 +1744,8 @@ model Invoice {
   ctv_payment_term                  Boolean                   @default(false)
   /// Snapshot at create/import: Customer was in overdue (MEP) breach.
   ctv_customer_overdue_mep          Boolean                   @default(false)
+  /// Invoice number of the oldest overdue that set customer MEP on this invoice's issue date.
+  ctv_customer_overdue_mep_cause_invoice_number String?       @db.VarChar(100)
   /// Snapshot at create/import: Customer.excluded_from_policy.
   ctv_customer_excluded_from_policy Boolean                   @default(false)
   /// Snapshot at create/import: credit score / DCL info expired vs invoice issue date (policy validity months).
