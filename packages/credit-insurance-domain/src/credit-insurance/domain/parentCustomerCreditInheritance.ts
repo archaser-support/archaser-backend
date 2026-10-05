@@ -30,6 +30,91 @@ export function createCreditPoolMembershipCache(): CreditPoolMembershipCache {
     };
 }
 
+/**
+ * One account query of parent links, then fill root/descendant maps in memory.
+ * Dashboard KPI expansion used to run one descendant query per root (~N round-trips).
+ */
+export async function hydrateCreditPoolMembershipCacheForAccount(
+    accountId: number,
+    dbClient: DbClient = prisma,
+    cache: CreditPoolMembershipCache = createCreditPoolMembershipCache()
+): Promise<CreditPoolMembershipCache> {
+    const rows = await dbClient.customer.findMany({
+        where: { account_id: accountId },
+        select: { id: true, parent_customer_id: true },
+    });
+    const parentById = new Map<number, number | null>();
+    const childrenByParent = new Map<number, number[]>();
+    for (const row of rows) {
+        parentById.set(row.id, row.parent_customer_id ?? null);
+        if (row.parent_customer_id != null) {
+            const list = childrenByParent.get(row.parent_customer_id) ?? [];
+            list.push(row.id);
+            childrenByParent.set(row.parent_customer_id, list);
+        }
+    }
+
+    const rootMemo = new Map<number, number>();
+    const resolveRoot = (startId: number): number => {
+        const already = rootMemo.get(startId);
+        if (already != null) {
+            return already;
+        }
+        const path: number[] = [];
+        let currentId = startId;
+        const seen = new Set<number>();
+        while (parentById.has(currentId)) {
+            if (seen.has(currentId)) {
+                break;
+            }
+            const memo = rootMemo.get(currentId);
+            if (memo != null) {
+                currentId = memo;
+                break;
+            }
+            seen.add(currentId);
+            path.push(currentId);
+            const parentId = parentById.get(currentId);
+            if (parentId == null || !parentById.has(parentId)) {
+                break;
+            }
+            currentId = parentId;
+        }
+        for (const id of path) {
+            rootMemo.set(id, currentId);
+            cache.rootByCustomerId.set(id, currentId);
+        }
+        rootMemo.set(currentId, currentId);
+        cache.rootByCustomerId.set(currentId, currentId);
+        return currentId;
+    };
+
+    const descendantsOf = (rootId: number): number[] => {
+        const result: number[] = [];
+        const stack = [...(childrenByParent.get(rootId) ?? [])];
+        const seen = new Set<number>([rootId]);
+        while (stack.length > 0) {
+            const id = stack.pop()!;
+            if (seen.has(id)) {
+                continue;
+            }
+            seen.add(id);
+            result.push(id);
+            const children = childrenByParent.get(id);
+            if (children) {
+                stack.push(...children);
+            }
+        }
+        return result;
+    };
+
+    for (const id of parentById.keys()) {
+        resolveRoot(id);
+        cache.descendantsByCustomerId.set(id, descendantsOf(id));
+    }
+    return cache;
+}
+
 /** Settings copied from root → descendant mirrors. */
 const MIRROR_POLICY_FIELD_KEYS = [
     "insurance_policy_id",

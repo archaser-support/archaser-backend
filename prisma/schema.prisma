@@ -1752,6 +1752,8 @@ model Invoice {
   ctv_invoice_after_policy_end      Boolean                   @default(false)
   /// Open Due/Overdue balance allocated above approved limit (FIFO by invoice_date); excluded from terms-breach sum when computing at-risk exposure.
   in_capacity_gap                   Boolean                   @default(false)
+  /// User flag: skip this invoice for MEP overdue_block only (live and as-of). Aging, AR, and capacity gap still include it. Survives ERP upsert.
+  mep_ignored                       Boolean                   @default(false)
   /// Invoice-level limit basis snapshot captured when invoice first becomes open.
   limit_assessed_amount             Decimal?                  @db.Decimal(20, 4)
   /// Timestamp when invoice-level limit basis was captured.

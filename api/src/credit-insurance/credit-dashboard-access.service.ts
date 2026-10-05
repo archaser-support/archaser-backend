@@ -51,54 +51,52 @@ export class CreditDashboardAccessService {
         const role = userInfo.viewAsUserRole || userInfo.role;
         const isAdmin = this.accessScope.isAdminAccount(userInfo.accountId);
 
-        const account = await this.db.account.findUnique({
-            where: { id: accountId },
-            select: { has_credit_insurance: true },
-        });
-
-        if (!account?.has_credit_insurance) {
-            throw new ForbiddenException(
-                "Credit insurance is not enabled for this account"
-            );
-        }
-
-        const allowed =
-            mode === "insurance-policy-trend"
-                ? await this.hasInsurancePolicyTrendAccess(accountId, role)
-                : await this.accessScope.hasPermission(
-                      accountId,
-                      role,
-                      "view_credit_dashboard"
-                  );
-
-        if (!allowed) {
-            throw new ForbiddenException("Forbidden");
-        }
-
         try {
-            const { filter, selectedBusinessUnitId } =
-                await this.resolveDashboardBusinessUnitFilter({
-                    userBusinessUnitId: userInfo.businessUnitId,
-                    isAdmin,
-                    accountId,
-                    selectedBusinessUnitId: this.parseBusinessUnitIdParam(
-                        query.businessUnitId
+            const selectedBusinessUnitId = this.parseBusinessUnitIdParam(
+                query.businessUnitId
+            );
+            const [account, allowed, filterResult, accessibleBusinessUnitIds] =
+                await Promise.all([
+                    this.db.account.findUnique({
+                        where: { id: accountId },
+                        select: { has_credit_insurance: true },
+                    }),
+                    mode === "insurance-policy-trend"
+                        ? this.hasInsurancePolicyTrendAccess(accountId, role)
+                        : this.accessScope.hasPermission(
+                              accountId,
+                              role,
+                              "view_credit_dashboard"
+                          ),
+                    this.resolveDashboardBusinessUnitFilter({
+                        userBusinessUnitId: userInfo.businessUnitId,
+                        isAdmin,
+                        accountId,
+                        selectedBusinessUnitId,
+                    }),
+                    this.getAccessibleBusinessUnitIds(
+                        userInfo.businessUnitId ?? null,
+                        isAdmin
                     ),
-                });
+                ]);
 
-            const accessibleBusinessUnitIds =
-                await this.getAccessibleBusinessUnitIds(
-                    userInfo.businessUnitId ?? null,
-                    isAdmin
+            if (!account?.has_credit_insurance) {
+                throw new ForbiddenException(
+                    "Credit insurance is not enabled for this account"
                 );
+            }
+
+            if (!allowed) {
+                throw new ForbiddenException("Forbidden");
+            }
 
             return {
                 userInfo,
                 accountId,
                 role,
                 isAdmin,
-                businessUnitFilter: filter,
-                selectedBusinessUnitId,
+                businessUnitFilter: filterResult.filter,
+                selectedBusinessUnitId: filterResult.selectedBusinessUnitId,
                 accessibleBusinessUnitIds,
             };
         } catch (error) {

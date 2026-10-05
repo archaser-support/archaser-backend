@@ -129,37 +129,23 @@ export async function enrichCustomersWithPolicyScope<
     const customerIds = rows.map((r) => r.id);
 
     if (policyId == null) {
+        // Active row first, else latest row (same as previous two-query fallback).
         const scopedRows = await prisma.customerPolicy.findMany({
-            where: { customer_id: { in: customerIds }, is_active: true },
+            where: { customer_id: { in: customerIds } },
             include: { InsurancePolicy: { select: INSURANCE_POLICY_SELECT } },
+            orderBy: [
+                { is_active: "desc" },
+                { modified_at: "desc" },
+                { id: "desc" },
+            ],
         });
-        const scopedByCustomerId = new Map(
-            scopedRows.map((row) => [row.customer_id, row])
-        );
-
-        // Fallback for "All Policies": if a customer is included via invoice policy scope
-        // but has no active CustomerPolicy row, use the latest policy row so gap/limit
-        // cards align with policy-scoped card totals.
-        const missingCustomerIds = customerIds.filter(
-            (id) => !scopedByCustomerId.has(id)
-        );
-        if (missingCustomerIds.length > 0) {
-            const latestRows = await prisma.customerPolicy.findMany({
-                where: {
-                    customer_id: { in: missingCustomerIds },
-                    insurance_policy_id: { not: null },
-                },
-                include: { InsurancePolicy: { select: INSURANCE_POLICY_SELECT } },
-                orderBy: [
-                    { is_active: "desc" },
-                    { modified_at: "desc" },
-                    { id: "desc" },
-                ],
-            });
-            for (const row of latestRows) {
-                if (!scopedByCustomerId.has(row.customer_id)) {
-                    scopedByCustomerId.set(row.customer_id, row);
-                }
+        const scopedByCustomerId = new Map<
+            number,
+            (typeof scopedRows)[number]
+        >();
+        for (const row of scopedRows) {
+            if (!scopedByCustomerId.has(row.customer_id)) {
+                scopedByCustomerId.set(row.customer_id, row);
             }
         }
 
