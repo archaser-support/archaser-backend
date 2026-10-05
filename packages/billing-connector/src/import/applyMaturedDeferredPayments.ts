@@ -20,6 +20,8 @@ export interface MaturityResult {
     totalCandidates: number;
     /** Customers whose invoices were linked/recalculated in this pass. */
     affectedCustomerIds: number[];
+    /** Invoices recalculated in this pass (as-of rewrite / live gap scope). */
+    affectedInvoiceIds: number[];
 }
 
 export interface MaturityProgress {
@@ -234,6 +236,7 @@ export async function applyMaturedDeferredPayments(
             deferredRemaining: 0,
             totalCandidates: 0,
             affectedCustomerIds: [],
+            affectedInvoiceIds: [],
         };
     }
 
@@ -585,5 +588,6 @@ export async function applyMaturedDeferredPayments(
         deferredRemaining: stillDeferred,
         totalCandidates,
         affectedCustomerIds,
+        affectedInvoiceIds: Array.from(invoiceIdsToRecalc.keys()),
     };
 }

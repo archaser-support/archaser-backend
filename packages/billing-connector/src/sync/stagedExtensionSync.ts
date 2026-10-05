@@ -775,6 +775,77 @@ export async function runStagedExtensionSync(
     /** ERP RECONDATE per queued IVNUM — payment date for its virtual close. */
     const pendingInvoiceCloseDates = new Map<string, Date>();
     let invoicePostIngestRan = false;
+    let accountMaturityRan = false;
+
+    const runAccountMaturityPass = async (reason: string): Promise<void> => {
+        if (dryRun || accountMaturityRan) {
+            return;
+        }
+        setActiveStep(MATURITY_ENTITY_STATS_KEY, "linking");
+        paymentLink.paymentLinkStatus = "running";
+        paymentLink.paymentLinkError = undefined;
+        paymentLink.paymentsLinked = 0;
+        paymentLink.paymentsStillDeferred = 0;
+        paymentLink.paymentsLinkTotal = 0;
+        emitProgress();
+        try {
+            const maturityStarted = Date.now();
+            const maturityResult = await applyMaturedDeferredPayments(
+                options.prisma,
+                options.accountId,
+                new Date(),
+                undefined,
+                {
+                    userId: options.userId,
+                    onProgress: ({ linked, totalCandidates, detail }) => {
+                        paymentLink.paymentLinkStatus = "running";
+                        paymentLink.paymentsLinked = linked;
+                        paymentLink.paymentsLinkTotal = totalCandidates;
+                        paymentLink.paymentsStillDeferred = Math.max(
+                            0,
+                            totalCandidates - linked
+                        );
+                        paymentLink.paymentLinkDetail = detail;
+                        emitProgress();
+                    },
+                }
+            );
+            accountMaturityRan = true;
+            for (const id of maturityResult.affectedCustomerIds) {
+                arAffectedCustomerIds.add(id);
+            }
+            for (const id of maturityResult.affectedInvoiceIds) {
+                arAffectedInvoiceIds.add(id);
+            }
+            paymentLink.paymentLinkStatus = "done";
+            paymentLink.paymentLinkDetail = undefined;
+            paymentLink.paymentsLinked = maturityResult.matured;
+            paymentLink.paymentsStillDeferred =
+                maturityResult.deferredRemaining;
+            paymentLink.paymentsLinkTotal = maturityResult.totalCandidates;
+            if (activeStep === MATURITY_ENTITY_STATS_KEY) {
+                activeStep = null;
+                activeStepDetail = null;
+            }
+            emitProgress();
+            log(
+                `${reason} maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
+            );
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Deferred payment maturity failed";
+            paymentLink.paymentLinkStatus = "failed";
+            paymentLink.paymentLinkError = message;
+            if (activeStep === MATURITY_ENTITY_STATS_KEY) {
+                activeStep = null;
+                activeStepDetail = null;
+            }
+            emitProgress();
+            log(`${reason} maturity failed: ${message}`);
+        }
+    };
 
     const flushExtensionPendingCloses = async (label: string) => {
         if (
@@ -877,10 +948,13 @@ export async function runStagedExtensionSync(
         invoiceEntityIds: number[];
         paymentEntityIds: number[];
         runMaturity: boolean;
+        runReplay?: boolean;
+        runProcessOverdue?: boolean;
     }): Promise<void> => {
         // Nest wires onProcessOverdueCustomers as its own step; skip overdue inside
         // runInlineArPostIngestTailSteps (separateOverdueStep) and run it here first.
         if (
+            args.runProcessOverdue !== false &&
             options.onProcessOverdueCustomers &&
             args.customerIds.length > 0
         ) {
@@ -906,6 +980,8 @@ export async function runStagedExtensionSync(
             separateOverdueStep: Boolean(options.onProcessOverdueCustomers),
             onProcessOverdueCustomers: options.onProcessOverdueCustomers,
             runMaturity: args.runMaturity,
+            runReplay: args.runReplay,
+            runProcessOverdue: args.runProcessOverdue,
             importType:
                 args.invoiceEntityIds.length > 0 ? "Invoice" : "Payment",
         });
@@ -923,19 +999,38 @@ export async function runStagedExtensionSync(
                         `Extension pending invoice closes still missing after finalize: ${pendingInvoiceCloses.size} (${Array.from(pendingInvoiceCloses).slice(0, 20).join(", ")}${pendingInvoiceCloses.size > 20 ? ", …" : ""})`
                     );
                 }
+                // Already-linked future cash matures on payment_date even when
+                // this run imported 0 Invoice/Payment rows. Skip a second pass
+                // when Invoice already ran maturity; skip account-wide work on
+                // isolated customer-history drains.
+                if (!customerScope) {
+                    await runAccountMaturityPass("sync finalize");
+                }
                 // Payment-only (or Invoice-not-orchestrated) fallback: same
-                // orchestrator as post-Invoice, including deferred maturity.
-                // Skip when Invoice already ran post-ingest in this sync.
-                if (
-                    !invoicePostIngestRan &&
-                    paymentAffectedCustomerIds.size > 0
-                ) {
-                    await runArTailWithProgress({
-                        customerIds: Array.from(paymentAffectedCustomerIds),
-                        invoiceEntityIds: [],
-                        paymentEntityIds: Array.from(arAffectedPaymentIds),
-                        runMaturity: true,
-                    });
+                // orchestrator as post-Invoice. Skip when Invoice already ran
+                // post-ingest in this sync. Maturity already ran above / on Invoice.
+                if (!invoicePostIngestRan) {
+                    if (paymentAffectedCustomerIds.size > 0) {
+                        await runArTailWithProgress({
+                            customerIds: Array.from(paymentAffectedCustomerIds),
+                            invoiceEntityIds: [],
+                            paymentEntityIds: Array.from(arAffectedPaymentIds),
+                            runMaturity: false,
+                        });
+                    }
+                    const liveOnlyCustomerIds = Array.from(
+                        arAffectedCustomerIds
+                    ).filter((id) => !paymentAffectedCustomerIds.has(id));
+                    if (liveOnlyCustomerIds.length > 0) {
+                        await runArTailWithProgress({
+                            customerIds: liveOnlyCustomerIds,
+                            invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                            paymentEntityIds: [],
+                            runMaturity: false,
+                            runReplay: false,
+                            runProcessOverdue: false,
+                        });
+                    }
                 }
                 const balances = await finalizeCustomerBalances(
                     arAffectedCustomerIds,
@@ -1199,75 +1294,7 @@ export async function runStagedExtensionSync(
                 emitProgress();
 
                 if (!dryRun && entityType === "Invoice") {
-                    setActiveStep(MATURITY_ENTITY_STATS_KEY, "linking");
-                    paymentLink.paymentLinkStatus = "running";
-                    paymentLink.paymentLinkError = undefined;
-                    paymentLink.paymentsLinked = 0;
-                    paymentLink.paymentsStillDeferred = 0;
-                    paymentLink.paymentsLinkTotal = 0;
-                    emitProgress();
-                    try {
-                        const maturityStarted = Date.now();
-                        const maturityResult =
-                            await applyMaturedDeferredPayments(
-                                options.prisma,
-                                options.accountId,
-                                new Date(),
-                                undefined,
-                                {
-                                    userId: options.userId,
-                                    onProgress: ({
-                                        linked,
-                                        totalCandidates,
-                                        detail,
-                                    }) => {
-                                        paymentLink.paymentLinkStatus =
-                                            "running";
-                                        paymentLink.paymentsLinked = linked;
-                                        paymentLink.paymentsLinkTotal =
-                                            totalCandidates;
-                                        paymentLink.paymentsStillDeferred =
-                                            Math.max(
-                                                0,
-                                                totalCandidates - linked
-                                            );
-                                        paymentLink.paymentLinkDetail = detail;
-                                        emitProgress();
-                                    },
-                                }
-                            );
-                        for (const id of maturityResult.affectedCustomerIds) {
-                            arAffectedCustomerIds.add(id);
-                        }
-                        paymentLink.paymentLinkStatus = "done";
-                        paymentLink.paymentLinkDetail = undefined;
-                        paymentLink.paymentsLinked = maturityResult.matured;
-                        paymentLink.paymentsStillDeferred =
-                            maturityResult.deferredRemaining;
-                        paymentLink.paymentsLinkTotal =
-                            maturityResult.totalCandidates;
-                        if (activeStep === MATURITY_ENTITY_STATS_KEY) {
-                            activeStep = null;
-                            activeStepDetail = null;
-                        }
-                        emitProgress();
-                        log(
-                            `Invoice entity maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
-                        );
-                    } catch (error) {
-                        const message =
-                            error instanceof Error
-                                ? error.message
-                                : "Deferred payment maturity failed";
-                        paymentLink.paymentLinkStatus = "failed";
-                        paymentLink.paymentLinkError = message;
-                        if (activeStep === MATURITY_ENTITY_STATS_KEY) {
-                            activeStep = null;
-                            activeStepDetail = null;
-                        }
-                        emitProgress();
-                        log(`Invoice entity maturity failed: ${message}`);
-                    }
+                    await runAccountMaturityPass("Invoice entity");
 
                     if (pendingInvoiceCloses.size > 0) {
                         await flushExtensionPendingCloses("after Invoice");
@@ -1953,71 +1980,7 @@ export async function runStagedExtensionSync(
             // Maturity once after all Invoice pages (not per page) so paging
             // stays fast; deferred payments from Payment-first ingest link here.
             if (!dryRun && entityType === "Invoice") {
-                setActiveStep(MATURITY_ENTITY_STATS_KEY, "linking");
-                paymentLink.paymentLinkStatus = "running";
-                paymentLink.paymentLinkError = undefined;
-                paymentLink.paymentsLinked = 0;
-                paymentLink.paymentsStillDeferred = 0;
-                paymentLink.paymentsLinkTotal = 0;
-                emitProgress();
-                try {
-                    const maturityStarted = Date.now();
-                    const maturityResult = await applyMaturedDeferredPayments(
-                        options.prisma,
-                        options.accountId,
-                        new Date(),
-                        undefined,
-                        {
-                            userId: options.userId,
-                            onProgress: ({
-                                linked,
-                                totalCandidates,
-                                detail,
-                            }) => {
-                                paymentLink.paymentLinkStatus = "running";
-                                paymentLink.paymentsLinked = linked;
-                                paymentLink.paymentsLinkTotal = totalCandidates;
-                                paymentLink.paymentsStillDeferred = Math.max(
-                                    0,
-                                    totalCandidates - linked
-                                );
-                                paymentLink.paymentLinkDetail = detail;
-                                emitProgress();
-                            },
-                        }
-                    );
-                    for (const id of maturityResult.affectedCustomerIds) {
-                        arAffectedCustomerIds.add(id);
-                    }
-                    paymentLink.paymentLinkStatus = "done";
-                    paymentLink.paymentLinkDetail = undefined;
-                    paymentLink.paymentsLinked = maturityResult.matured;
-                    paymentLink.paymentsStillDeferred =
-                        maturityResult.deferredRemaining;
-                    paymentLink.paymentsLinkTotal =
-                        maturityResult.totalCandidates;
-                    if (activeStep === MATURITY_ENTITY_STATS_KEY) {
-                        activeStep = null;
-                        activeStepDetail = null;
-                    }
-                    emitProgress();
-                    log(
-                        `Invoice entity maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
-                    );
-                } catch (error) {
-                    const message =
-                        error instanceof Error
-                            ? error.message
-                            : "Deferred payment maturity failed";
-                    paymentLink.paymentLinkStatus = "failed";
-                    paymentLink.paymentLinkError = message;
-                    if (activeStep === MATURITY_ENTITY_STATS_KEY) {
-                        activeStep = null;
-                        activeStepDetail = null;
-                    }
-                    emitProgress();
-                    log(`Invoice entity maturity failed: ${message}`);
-                }
+                await runAccountMaturityPass("Invoice entity");
 
                 if (pendingInvoiceCloses.size > 0) {
                     await flushExtensionPendingCloses("after Invoice");
