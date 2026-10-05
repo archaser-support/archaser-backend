@@ -32,6 +32,7 @@ SELECT
     '{
         "joins": [],
         "fields": [
+            {"field": "id", "table": "Invoice"},
             {"field": "invoice_number", "table": "Invoice"},
             {"field": "invoice_date", "table": "Invoice"},
             {"field": "due_date", "table": "Invoice"},
