@@ -10,6 +10,7 @@ import {
     computeInvoiceInsuranceRowData,
     computeLimitExcessOverEffective,
     isEligibleForCustomerMepOverdue,
+    isIgnoredForMepOverdueBlock,
     isNegativeInvoiceAmount,
     type CustomerAtRiskInvoiceInput,
 } from "./invoiceInsuranceFields";
@@ -210,6 +211,8 @@ export type AsOfOpenInvoiceLine = {
     inCapacityGap: boolean;
     capacityGapAmount?: number;
     actualReportingDate?: Date | null;
+    /** Skip for overdue_block only; AR / gap / aging still include the line. */
+    mepIgnored?: boolean;
 };
 
 /** Policy terms used to recompute invoice breach flags as of a snapshot day. */
@@ -492,6 +495,9 @@ export function asOfCustomerOverdueBlockAt(
     let oldestOverdueDue: Date | null = null;
     let oldestOverdueIssueDate: Date | null = null;
     for (const line of customerLines) {
+        if (isIgnoredForMepOverdueBlock(line.mepIgnored)) {
+            continue;
+        }
         if (!isInvoiceInMepBreachScope(line.invoiceDate, mepBreachStartDate)) {
             continue;
         }
@@ -632,6 +638,9 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
     const cands: Cand[] = [];
     for (const line of customerLines) {
         if (!isEligibleForCustomerMepOverdue(line.amount)) {
+            continue;
+        }
+        if (isIgnoredForMepOverdueBlock(line.mepIgnored)) {
             continue;
         }
         if (
@@ -1161,6 +1170,7 @@ type AsOfInvoiceSqlRow = {
     actual_reporting_date: Date | null;
     last_payment_date: Date | null;
     status: string;
+    mep_ignored: boolean;
 };
 
 function mapSqlRow(
@@ -1199,6 +1209,7 @@ function mapSqlRow(
         lastPaymentDate: row.last_payment_date,
         liveClosed: row.status === "Paid",
         openAmountTolerance,
+        mepIgnored: Boolean(row.mep_ignored),
     };
 }
 
@@ -1252,7 +1263,8 @@ export async function loadAsOfOpenInvoiceCandidates(
             COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
             i.actual_reporting_date,
             p.last_payment_date,
-            i.status::text AS status
+            i.status::text AS status,
+            COALESCE(i.mep_ignored, false) AS mep_ignored
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
         INNER JOIN "Account" a ON a.id = i.account_id

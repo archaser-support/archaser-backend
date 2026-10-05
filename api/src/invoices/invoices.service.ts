@@ -157,6 +157,7 @@ export class InvoicesService {
         delete data.DisputeInvoice;
         delete data.created_at;
         delete data.created_by;
+        delete data.mep_ignored;
         data.modified_at = new Date();
 
         if ("account_id" in body || "customer_id" in body) {

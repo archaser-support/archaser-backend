@@ -36,6 +36,13 @@ await prisma.model.update({ data: { date: dateString } });
 
 ## 🔧 Migration SQL Scripts for DBeaver
 
+### Feature PRs (CI)
+
+When a feature or PRD requires a database change, **commit a SQL script on the feature branch** under `prisma/migrations/` so CI/deploy can run it. Prisma schema edits and local `npx prisma db push` (or an ad-hoc `ALTER`) do **not** replace that file.
+
+- ❌ **Never** wrap the script in top-level `BEGIN;` / `COMMIT;` — the CI/deploy runner already opens a transaction
+- Mechanics, `IF NOT EXISTS`, and the rest of this file remain the source of truth for how to write the SQL
+
 ### Transaction Handling
 
 - ❌ **Do NOT wrap scripts in top-level `BEGIN;` / `COMMIT;`**

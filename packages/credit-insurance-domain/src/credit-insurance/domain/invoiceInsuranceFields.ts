@@ -280,6 +280,13 @@ export function isEligibleForCustomerMepOverdue(
     return !isNegativeInvoiceAmount(amount);
 }
 
+/** Skip only overdue_block candidates — not aging, AR, or capacity-gap allocation. */
+export function isIgnoredForMepOverdueBlock(
+    mepIgnored: boolean | null | undefined
+): boolean {
+    return mepIgnored === true;
+}
+
 /**
  * Whether reporting_breach should be true for an open Due/Overdue invoice
  * (evaluation only; persistence in sync helper).
