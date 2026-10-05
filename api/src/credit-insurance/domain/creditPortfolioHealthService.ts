@@ -7,7 +7,10 @@ import {
     creditInsurancePrisma as prisma,
     detectStaleArRuns,
     deriveCapacityAndOvershootFromLinkedCptDaySeries,
+    emptyTopUpDrawSection,
     fetchLinkedCptCustomerDaySeries,
+    mapLinkedCptDaySeriesToTopUpDrawSection,
+    type PortfolioTopUpDrawSection,
     summarizePortfolioStaleSlopeVolatility,
     isActiveTopUp,
     isPendingReviewExclusion,
@@ -396,6 +399,11 @@ export type PortfolioUtilizationSection = {
     periodActiveTopUpCount: number;
     /** Unique customers with an active top-up on at least one day in the range. */
     periodCustomersWithTopUp: number;
+    /**
+     * Customers with active top-up cover. Bars use peak-day capacity;
+     * the marker is peak usage (may stay inside the policy limit).
+     */
+    topUpDraw: PortfolioTopUpDrawSection;
     topCustomers: PortfolioUtilizationTopCustomer[];
     efficiencyA: number | null;
     /** @deprecated Health B removed from UI; kept null for API compatibility. */
@@ -1469,6 +1477,7 @@ export function emptyUtilizationSection(
         averageTopUpUtilizationPct: null,
         periodActiveTopUpCount: 0,
         periodCustomersWithTopUp: 0,
+        topUpDraw: emptyTopUpDrawSection(),
         topCustomers: [],
         efficiencyA: null,
         efficiencyB: null,
@@ -1504,6 +1513,7 @@ export function buildUtilizationSection(input: {
     }>;
     periodActiveTopUpCount: number;
     periodCustomersWithTopUp: number;
+    topUpDraw?: PortfolioTopUpDrawSection;
     asOfDate?: string | null;
     accountCurrency?: string;
     overshoot?: PortfolioUtilizationOvershootSection | null;
@@ -1542,6 +1552,7 @@ export function buildUtilizationSection(input: {
         averageTopUpUtilizationPct: period.averageTopUpUtilizationPct,
         periodActiveTopUpCount: input.periodActiveTopUpCount,
         periodCustomersWithTopUp: input.periodCustomersWithTopUp,
+        topUpDraw: input.topUpDraw ?? emptyTopUpDrawSection(),
         topCustomers: input.topCustomers,
         efficiencyA: computePolicyEfficiency(
             input.healthAverageA,
@@ -3313,6 +3324,8 @@ export async function getCreditPortfolioHealth(
     const asOfDate = latestSnapshotYmdOnOrBefore(snapshotYmds, parsed.to);
     const { capacity: overLimitGapPeriod, overshoot: overshootPeriod } =
         deriveCapacityAndOvershootFromLinkedCptDaySeries(linkedCptDaySeries);
+    const topUpDraw =
+        mapLinkedCptDaySeriesToTopUpDrawSection(linkedCptDaySeries);
 
     const withoutPolicyAmountByDate = new Map<string, number>();
     withoutPolicyByDate.forEach((value, date) => {
@@ -3417,6 +3430,7 @@ export async function getCreditPortfolioHealth(
             distributionCustomers,
             periodActiveTopUpCount: periodTopUps.periodActiveTopUpCount,
             periodCustomersWithTopUp: periodTopUps.periodCustomersWithTopUp,
+            topUpDraw,
             asOfDate,
             accountCurrency,
             overshoot: {
