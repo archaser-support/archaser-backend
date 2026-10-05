@@ -89,7 +89,6 @@ describe("negative invoice amount — insurance targets and reporting breach", (
         expect(row.target_mep_date).toBeNull();
         expect(row.target_reporting_date).toBeNull();
         expect(row.reporting_breach).toBe(false);
-        // Payment term / CTV payment-term stay amount-agnostic
         expect(row.payment_term).toBe(9);
         expect(row.ctv_payment_term).toBe(false);
     });
