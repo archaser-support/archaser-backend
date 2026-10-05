@@ -127,7 +127,7 @@ Same name will be used in every repo **when** that repo is later touched. **Do n
 
 **Completion:** `.cursor/plans/<feature-slug>.prd.md` exists with `clickup_task_url` set; slices published under `.cursor/plans/<feature-slug>/issues/` (and `OVERVIEW.md` when 2+ slices).
 
-1. Follow `/to-prd` with the session’s ClickUp task so durable light sync can run (summary + How to test + branch link when known). Status ladder for `selected for development` stays with this orchestrator after push — `/to-prd` must not invent statuses unless the user asks.
+1. Follow `/to-prd` with the session’s ClickUp task so durable light sync can run (summary + How to test + branch link when known). Status ladder for `selected for development` stays with this orchestrator after push — `/to-prd` must not invent statuses unless the user asks. If the PRD needs a DB change, `/to-prd` must require a `prisma/migrations/` SQL file on the branch (no top-level `BEGIN;` / `COMMIT;`; `.cursor/rules/database.mdc`).
 2. Follow `/to-issues` to publish commit-able slices (no ClickUp MCP from that skill).
 3. Keep planning files only under `.cursor/plans/` — never treat `.scratch/` as the shippable home.
 
