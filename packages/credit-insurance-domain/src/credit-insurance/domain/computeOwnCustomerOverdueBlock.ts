@@ -6,6 +6,7 @@ import { type DbClient, prisma } from "../domain-db";
 import {
     computeCustomerOverdueBlock,
     isEligibleForCustomerMepOverdue,
+    isIgnoredForMepOverdueBlock,
 } from "./invoiceInsuranceFields";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import { getActiveCustomerPolicyRow } from "./resolveActiveCustomerPolicy";
@@ -31,7 +32,12 @@ export async function computeOwnCustomerOverdueBlock(
                 status: "Overdue",
                 OR: [{ amount: null }, { amount: { gte: 0 } }],
             },
-            select: { due_date: true, amount: true, invoice_date: true },
+            select: {
+                due_date: true,
+                amount: true,
+                invoice_date: true,
+                mep_ignored: true,
+            },
         }),
         dbClient.customer.findUnique({
             where: { id: customerId },
@@ -49,6 +55,9 @@ export async function computeOwnCustomerOverdueBlock(
     let oldestIssueInMepScope: Date | null = null;
     for (const invoice of overdueInvoices) {
         if (!isEligibleForCustomerMepOverdue(invoice.amount)) {
+            continue;
+        }
+        if (isIgnoredForMepOverdueBlock(invoice.mep_ignored)) {
             continue;
         }
         if (!invoice.due_date) {
