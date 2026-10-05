@@ -62,23 +62,18 @@ export class AccessScopeService {
         let businessUnitId: number | null =
             dbUser?.business_unit_id ?? null;
 
-        // Optional view-as claim if present on extended payloads
-        const extended = user as JwtPayload & {
-            view_as_user_id?: string;
-            view_as_user_role?: string;
-            view_as_user_account_id?: number;
-        };
-        if (extended.view_as_user_id) {
-            viewAsUserId = extended.view_as_user_id;
+        // Optional view-as claim if present on DualAuth / NextAuth payload
+        if (user.view_as_user_id) {
+            viewAsUserId = user.view_as_user_id;
             if (
-                extended.view_as_user_role &&
-                extended.view_as_user_account_id != null
+                user.view_as_user_role &&
+                user.view_as_user_account_id != null
             ) {
-                viewAsUserRole = extended.view_as_user_role;
-                viewAsUserAccountId = extended.view_as_user_account_id;
+                viewAsUserRole = user.view_as_user_role;
+                viewAsUserAccountId = user.view_as_user_account_id;
             } else {
                 const viewAs = await this.db.user.findUnique({
-                    where: { id: extended.view_as_user_id },
+                    where: { id: user.view_as_user_id },
                     select: {
                         role: true,
                         account_id: true,

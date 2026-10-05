@@ -12,6 +12,7 @@ import {
     ApiTags,
 } from "@nestjs/swagger";
 import type { Response } from "express";
+import { AccessScopeService } from "../auth/access-scope.service";
 import {
     DualAuthGuard,
     DualAuthRequest,
@@ -38,28 +39,35 @@ function writeSseHeaders(res: Response, origin: string | undefined): void {
 @UseGuards(DualAuthGuard)
 @Controller("api/ws")
 export class RealtimeWsController {
-    constructor(private readonly hub: RealtimeHubService) {}
+    constructor(
+        private readonly hub: RealtimeHubService,
+        private readonly accessScope: AccessScopeService
+    ) {}
 
     @Get("notifications")
     @ApiOperation({
         summary:
             "SSE notification stream (Nest-owned). EventSource may pass ?access_token= for Amplify cross-origin.",
     })
-    notifications(
+    async notifications(
         @Req() req: DualAuthRequest,
         @Res() res: Response,
         @Query("access_token") _accessToken?: string
-    ): void {
+    ): Promise<void> {
         const user = req.user!;
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const effectiveUserId = this.accessScope.getEffectiveUserId(userInfo);
+        const effectiveAccountId =
+            this.accessScope.getEffectiveAccountId(userInfo);
         const origin = req.headers.origin;
         writeSseHeaders(res, typeof origin === "string" ? origin : undefined);
 
-        const clientId = `${user.sub}-notif-${Date.now()}`;
+        const clientId = `${effectiveUserId}-notif-${Date.now()}`;
         this.hub.addNotificationClient({
             id: clientId,
-            userId: user.sub,
-            accountId: user.account_id ?? null,
-            hasViewAsPermission: false,
+            userId: effectiveUserId,
+            accountId: effectiveAccountId,
+            hasViewAsPermission: Boolean(userInfo.viewAsUserId),
             res,
         });
 
@@ -67,7 +75,7 @@ export class RealtimeWsController {
             `data: ${JSON.stringify({
                 type: "connected",
                 message: "Notification SSE connected",
-                userId: user.sub,
+                userId: effectiveUserId,
                 timestamp: new Date().toISOString(),
             })}\n\n`
         );
@@ -97,21 +105,25 @@ export class RealtimeWsController {
         summary:
             "SSE control-center stream (Nest-owned). EventSource may pass ?access_token=.",
     })
-    controlCenter(
+    async controlCenter(
         @Req() req: DualAuthRequest,
         @Res() res: Response,
         @Query("access_token") _accessToken?: string
-    ): void {
+    ): Promise<void> {
         const user = req.user!;
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const effectiveUserId = this.accessScope.getEffectiveUserId(userInfo);
+        const effectiveAccountId =
+            this.accessScope.getEffectiveAccountId(userInfo);
         const origin = req.headers.origin;
         writeSseHeaders(res, typeof origin === "string" ? origin : undefined);
 
-        const clientId = `${user.sub}-cc-${Date.now()}`;
+        const clientId = `${effectiveUserId}-cc-${Date.now()}`;
         this.hub.addControlCenterClient({
             id: clientId,
-            userId: user.sub,
-            accountId: user.account_id ?? null,
-            hasViewAsPermission: false,
+            userId: effectiveUserId,
+            accountId: effectiveAccountId,
+            hasViewAsPermission: Boolean(userInfo.viewAsUserId),
             res,
         });
 
@@ -119,7 +131,7 @@ export class RealtimeWsController {
             `data: ${JSON.stringify({
                 type: "connected",
                 message: "Control Center SSE connected",
-                userId: user.sub,
+                userId: effectiveUserId,
             })}\n\n`
         );
 

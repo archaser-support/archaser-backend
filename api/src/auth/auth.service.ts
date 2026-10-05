@@ -8,6 +8,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
+import { AccessScopeService } from "./access-scope.service";
 import { DatabaseService } from "../database/database.service";
 import { SystemEmailService } from "../email/system-email.service";
 import { LoginDto } from "./dto/login.dto";
@@ -17,6 +18,14 @@ import {
     MeResponseDto,
     ScopeProbeResponseDto,
 } from "./dto/auth-response.dto";
+import {
+    parseEnabledEntitiesForSyncDate,
+    pickAccountLastSyncDate,
+} from "../billing-connector/account-last-sync-date";
+import {
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
+} from "@archaser/billing-connector";
 
 export interface JwtPayload {
     sub: string;
@@ -34,6 +43,11 @@ export interface JwtPayload {
     chart_palette_color?: string | null;
     currency?: string | null;
     sidebar_collapsed?: boolean | null;
+    view_as_user_id?: string | null;
+    view_as_user_role?: string | null;
+    view_as_user_account_id?: number | null;
+    view_as_user_name?: string | null;
+    view_as_user_account_name?: string | null;
 }
 
 export type SsoProviderId = "google" | "microsoft";
@@ -44,7 +58,8 @@ export class AuthService {
         private readonly database: DatabaseService,
         private readonly jwtService: JwtService,
         private readonly configService: ConfigService,
-        private readonly systemEmail: SystemEmailService
+        private readonly systemEmail: SystemEmailService,
+        private readonly accessScope: AccessScopeService
     ) {}
 
     async login(credentials: LoginDto): Promise<LoginResponseDto> {
@@ -168,7 +183,15 @@ export class AuthService {
             throw new UnauthorizedException("User not found");
         }
 
-        const account = dbUser.account_id
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const effectiveUserId = this.accessScope.getEffectiveUserId(userInfo);
+        const effectiveAccountId =
+            this.accessScope.getEffectiveAccountId(userInfo);
+        const isViewAs =
+            Boolean(userInfo.viewAsUserId) &&
+            userInfo.viewAsUserId !== userInfo.userId;
+
+        const loginAccount = dbUser.account_id
             ? await this.database.account.findUnique({
                   where: { id: dbUser.account_id },
                   select: {
@@ -181,6 +204,23 @@ export class AuthService {
               })
             : null;
 
+        const effectiveAccount = await this.database.account.findUnique({
+            where: { id: effectiveAccountId },
+            select: {
+                name: true,
+                primary_color: true,
+                secondary_color: true,
+                chart_palette_color: true,
+                currency: true,
+                has_collection: true,
+                has_credit_insurance: true,
+                is_demo: true,
+            },
+        });
+
+        const lastSyncDate =
+            await this.resolveAccountLastSyncDate(effectiveAccountId);
+
         return {
             sub: dbUser.id,
             username: dbUser.username,
@@ -191,13 +231,71 @@ export class AuthService {
             language: dbUser.language ?? "English",
             timezone: dbUser.time_zone ?? null,
             locale: dbUser.locale ?? null,
-            account_name: account?.name ?? null,
-            primary_color: account?.primary_color ?? null,
-            secondary_color: account?.secondary_color ?? null,
-            chart_palette_color: account?.chart_palette_color ?? null,
-            currency: account?.currency ?? null,
+            account_name:
+                (isViewAs ? effectiveAccount?.name : null) ??
+                loginAccount?.name ??
+                null,
+            primary_color:
+                effectiveAccount?.primary_color ??
+                loginAccount?.primary_color ??
+                null,
+            secondary_color:
+                effectiveAccount?.secondary_color ??
+                loginAccount?.secondary_color ??
+                null,
+            chart_palette_color:
+                effectiveAccount?.chart_palette_color ??
+                loginAccount?.chart_palette_color ??
+                null,
+            currency:
+                effectiveAccount?.currency ?? loginAccount?.currency ?? null,
             sidebar_collapsed: dbUser.sidebar_collapsed ?? null,
+            has_collection: effectiveAccount?.has_collection !== false,
+            has_credit_insurance:
+                effectiveAccount?.has_credit_insurance === true,
+            is_demo: effectiveAccount?.is_demo === true,
+            last_sync_date: lastSyncDate
+                ? lastSyncDate.toISOString()
+                : null,
+            effective_user_id: isViewAs ? effectiveUserId : null,
+            effective_account_id: isViewAs ? effectiveAccountId : null,
+            effective_role: isViewAs
+                ? userInfo.viewAsUserRole ?? null
+                : null,
         };
+    }
+
+    private async resolveAccountLastSyncDate(
+        accountId: number
+    ): Promise<Date | null> {
+        const connector = await this.database.billingConnector.findUnique({
+            where: { account_id: accountId },
+            select: {
+                id: true,
+                enabled_entities: true,
+                ConnectorSyncState: {
+                    select: {
+                        entity_type: true,
+                        last_successful_run_at: true,
+                    },
+                },
+            },
+        });
+        if (!connector) {
+            return null;
+        }
+        const fromPrisma = pickAccountLastSyncDate(
+            parseEnabledEntitiesForSyncDate(connector.enabled_entities),
+            connector.ConnectorSyncState
+        );
+        try {
+            const fromMongo = watermarkFromSuccessfulExecution(
+                await findLastSuccessfulExecutionForConnector(connector.id)
+            );
+            return fromMongo ?? fromPrisma;
+        } catch {
+            return fromPrisma;
+        }
     }
 
     async requestPasswordReset(
