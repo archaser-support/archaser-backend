@@ -218,13 +218,18 @@ export function computeTargetMepDate(
  * `ctv_payment_term` is true when `credit_days > max_payment_term` (i.e. max_payment_term − credit_days < 0).
  * When payment-term month-end cutoff applies (on/after cutoff), compares against
  * `max_payment_term + diff` instead. If `max_payment_term` or credit days cannot be derived, returns false.
+ * Negative-amount invoices (credit notes) never breach payment terms.
  */
 export function computePaymentTermBreach(
     invoiceDate: Date | null | undefined,
     dueDate: Date | null | undefined,
     maxPaymentTerm: number | null | undefined,
-    monthEnd?: MonthEndCutoffOptions
+    monthEnd?: MonthEndCutoffOptions,
+    amount?: number | null
 ): boolean {
+    if (isNegativeInvoiceAmount(amount)) {
+        return false;
+    }
     const creditDays = computePaymentTermDays(invoiceDate, dueDate);
     if (
         creditDays === null ||
@@ -265,7 +270,8 @@ export function isTargetReportingDateBeforeToday(
 
 /**
  * Credit notes are stored as invoices with amount &lt; 0.
- * Used to skip MEP / reporting target dates and reporting-breach promotion.
+ * Used to skip MEP / reporting target dates, reporting-breach promotion,
+ * and terms-breach (payment-term CTV and created-in-violation snapshots).
  */
 export function isNegativeInvoiceAmount(
     amount: number | null | undefined
@@ -488,6 +494,14 @@ export function computeCreatedTermsViolationSnapshot(args: {
         dcl_customer_since_months?: number | null;
     } | null;
 }): CreatedTermsViolationSnapshot {
+    if (isNegativeInvoiceAmount(args.invoice_amount)) {
+        return {
+            ctv_customer_overdue_mep: false,
+            ctv_customer_excluded_from_policy: false,
+            ctv_outdated_dcl: false,
+            ctv_invoice_after_policy_end: false,
+        };
+    }
     const ctv_customer_overdue_mep = isEligibleForCustomerMepOverdue(
         args.invoice_amount
     ) &&
@@ -587,7 +601,8 @@ export function computeInsuranceTargetDates(args: {
  *   or due_date + max_allowed_mep + substitute_extra_days when invoice month-end cutoff applies
  * - When `amount` &lt; 0, both target dates are null and reporting_breach is false
  * - `ctv_payment_term` = credit days (due − issue) > `customer.max_payment_term`
- *   (or > max_payment_term + diff when payment-term month-end cutoff applies)
+ *   (or > max_payment_term + diff when payment-term month-end cutoff applies);
+ *   always false when `amount` &lt; 0
  */
 export function computeInvoiceInsuranceRowData(args: {
     status: invoice_status;
@@ -647,7 +662,8 @@ export function computeInvoiceInsuranceRowData(args: {
             cutoffDayOfMonth: args.customer.payment_term_cutoff_day,
             substituteDayOfMonth:
                 args.customer.payment_term_substitute_day,
-        }
+        },
+        args.amount
     );
 
     return {
