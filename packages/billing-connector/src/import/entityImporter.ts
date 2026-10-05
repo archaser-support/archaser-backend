@@ -1154,6 +1154,7 @@ async function importInvoiceBatch(
                 : (!existingStatus || existingStatus === "Open") &&
                   importStatus === "Paid";
 
+        // Explicit ERP fields only — never copy user-owned mep_ignored.
         const data: Record<string, unknown> = {
             invoice_number: invoiceNumber,
             account_id: accountId,

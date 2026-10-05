@@ -101,6 +101,7 @@ export {
     invoiceOutstandingInLimitCurrency,
     parseImportDateToLocalCalendarDate,
     shouldSetReportingBreach,
+    isNegativeInvoiceAmount,
     computeCustomerRiskExposure,
 } from "./credit-insurance/domain/invoiceInsuranceFields";
 export {
