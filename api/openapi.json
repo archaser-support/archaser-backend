@@ -2246,6 +2246,44 @@
         ]
       }
     },
+    "/api/invoices/mep-ignored": {
+      "get": {
+        "operationId": "InvoiceMepIgnoredController_listMepIgnored",
+        "parameters": [],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List invoice ids ignored for MEP on a customer",
+        "tags": [
+          "invoices"
+        ]
+      },
+      "post": {
+        "operationId": "InvoiceMepIgnoredController_updateMepIgnored",
+        "parameters": [],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Toggle invoice ignored for MEP overdue_block",
+        "tags": [
+          "invoices"
+        ]
+      }
+    },
     "/api/entities/contacts": {
       "get": {
         "tags": [
