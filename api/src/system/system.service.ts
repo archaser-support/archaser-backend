@@ -1437,12 +1437,25 @@ export class SystemService {
         });
     }
 
+    private async assertCollectionProduct(accountId: number): Promise<void> {
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { has_collection: true },
+        });
+        if (account?.has_collection === false) {
+            throw new ForbiddenException({
+                error: "Control center requires the collection product",
+            });
+        }
+    }
+
     async getControlCenter(
         user: JwtPayload,
         operation?: string | null,
         query: SystemListQuery = {}
     ) {
         const { accountId } = await this.scope(user);
+        await this.assertCollectionProduct(accountId);
         const op = operation || "stats";
 
         if (op === "stats" || op === "agents") {
@@ -1789,6 +1802,8 @@ export class SystemService {
         operation: string | null | undefined,
         body: Record<string, unknown>
     ) {
+        const { accountId } = await this.scope(user);
+        await this.assertCollectionProduct(accountId);
         const op = operation || (body.operation as string | undefined);
         if (op === "assign-credit") {
             return this.invoices.assignCredit(user, {
