@@ -389,6 +389,14 @@ export {
 } from "./credit-insurance/domain/linkedCptCustomerDaySeries";
 export { deriveCapacityAndOvershootFromLinkedCptDaySeries } from "./credit-insurance/domain/deriveCapacityAndOvershootFromLinkedCptDaySeries";
 export {
+    emptyTopUpDrawSection,
+    isTopUpCoverDay,
+    isTopUpDrawDay,
+    mapLinkedCptDaySeriesToTopUpDrawSection,
+    type PortfolioTopUpDrawCustomer,
+    type PortfolioTopUpDrawSection,
+} from "./credit-insurance/domain/topUpDrawFromLinkedCpt";
+export {
     fetchCapacityGapDaysPeriodCustomers,
     fetchCapacityGapDaysPeriodSummary,
     fetchCustomerTrailingOverLimitGapMetrics,
