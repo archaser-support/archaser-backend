@@ -29,6 +29,7 @@ export type AsOfLedgerInvoiceRow = {
     capacityGapAmount: number;
     actualReportingDate: Date | null;
     status: string;
+    mepIgnored: boolean;
 };
 
 export type AsOfLedgerPaymentRow = {
@@ -69,6 +70,7 @@ type AsOfLedgerInvoiceSqlRow = {
     capacity_gap_amount: number | null;
     actual_reporting_date: Date | null;
     status: string;
+    mep_ignored: boolean;
 };
 
 type AsOfLedgerPaymentSqlRow = {
@@ -106,6 +108,7 @@ function mapLedgerInvoiceRow(row: AsOfLedgerInvoiceSqlRow): AsOfLedgerInvoiceRow
         capacityGapAmount: Number(row.capacity_gap_amount ?? 0),
         actualReportingDate: row.actual_reporting_date,
         status: row.status,
+        mepIgnored: Boolean(row.mep_ignored),
     };
 }
 
@@ -175,7 +178,8 @@ export async function loadAsOfOpenInvoiceLedgerRange(
             COALESCE(i.in_capacity_gap, false) AS in_capacity_gap,
             COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
             i.actual_reporting_date,
-            i.status::text AS status
+            i.status::text AS status,
+            COALESCE(i.mep_ignored, false) AS mep_ignored
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
         WHERE ${where}
@@ -297,6 +301,7 @@ function buildAsOfLineFromLedgerInvoice(
         lastPaymentDate: aggregate.lastPaymentDate,
         liveClosed: invoice.status === "Paid",
         openAmountTolerance,
+        mepIgnored: invoice.mepIgnored,
     };
 }
 
