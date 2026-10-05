@@ -14,6 +14,7 @@ export type InvoiceCtvSnapshotWrite = {
     /** When non-null, set `policy_id`; otherwise leave existing policy. */
     policyIdToSet: number | null;
     ctv_customer_overdue_mep: boolean;
+    ctv_customer_overdue_mep_cause_invoice_number: string | null;
     ctv_customer_excluded_from_policy: boolean;
     ctv_outdated_dcl: boolean;
     ctv_invoice_after_policy_end: boolean;
@@ -73,6 +74,9 @@ export async function bulkUpdateInvoiceCtvSnapshots(
         const ids = chunk.map((row) => row.id);
         const policyIds = chunk.map((row) => row.policyIdToSet);
         const overdueMeps = chunk.map((row) => row.ctv_customer_overdue_mep);
+        const overdueMepCauses = chunk.map(
+            (row) => row.ctv_customer_overdue_mep_cause_invoice_number
+        );
         const excluded = chunk.map(
             (row) => row.ctv_customer_excluded_from_policy
         );
@@ -85,6 +89,8 @@ export async function bulkUpdateInvoiceCtvSnapshots(
             SET
                 policy_id = COALESCE(data.policy_id, inv.policy_id),
                 ctv_customer_overdue_mep = data.ctv_customer_overdue_mep,
+                ctv_customer_overdue_mep_cause_invoice_number =
+                    data.ctv_customer_overdue_mep_cause_invoice_number,
                 ctv_customer_excluded_from_policy =
                     data.ctv_customer_excluded_from_policy,
                 ctv_outdated_dcl = data.ctv_outdated_dcl,
@@ -96,6 +102,8 @@ export async function bulkUpdateInvoiceCtvSnapshots(
                     UNNEST(${policyIds}::int[]) AS policy_id,
                     UNNEST(${overdueMeps}::boolean[])
                         AS ctv_customer_overdue_mep,
+                    UNNEST(${overdueMepCauses}::text[])
+                        AS ctv_customer_overdue_mep_cause_invoice_number,
                     UNNEST(${excluded}::boolean[])
                         AS ctv_customer_excluded_from_policy,
                     UNNEST(${outdatedDcls}::boolean[]) AS ctv_outdated_dcl,

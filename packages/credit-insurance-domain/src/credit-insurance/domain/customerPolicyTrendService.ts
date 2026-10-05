@@ -1203,14 +1203,16 @@ export function computeCustomerUsageBarSegments(args: {
 
     if (!hasTopUp) {
         const policyUsagePct = computeUsagePct(ar, limit > 0 ? limit : null);
-        const barPolicyPct = Math.max(0, policyUsagePct ?? 0);
+        const usage = Math.max(0, policyUsagePct ?? 0);
+        const barPolicyPct = Math.min(100, usage);
+        const barOverPct = Math.max(0, usage - 100);
         return {
             policyUsagePct,
             topUpUsagePct: null,
             effectiveUsagePct: policyUsagePct,
             barPolicyPct,
             barTopUpPct: 0,
-            barOverPct: 0,
+            barOverPct,
             usagePct: policyUsagePct,
         };
     }

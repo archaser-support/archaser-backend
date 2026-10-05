@@ -167,7 +167,9 @@ export class InvoiceMepIgnoredController {
         });
 
         const customerId = updated.customer_id!;
-        await syncCustomerInsuranceFields(customerId);
+        await syncCustomerInsuranceFields(customerId, {
+            refreshTermsBreachFlags: true,
+        });
 
         const { memberIds } = await resolveCreditPoolMemberIds(
             customerId,

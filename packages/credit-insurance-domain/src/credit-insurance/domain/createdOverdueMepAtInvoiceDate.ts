@@ -22,6 +22,11 @@ export type InvoiceForCreatedOverdueMep = {
     amount: number | null;
 };
 
+export type CreatedOverdueMepResolution = {
+    flagged: boolean;
+    causeInvoiceId: number | null;
+};
+
 /**
  * Resolves `ctv_customer_overdue_mep` (created while customer past MEP) for each
  * invoice using the payment ledger, so the answer is the block state on the
@@ -33,7 +38,7 @@ export type InvoiceForCreatedOverdueMep = {
  * when nothing eligible remains; out-of-scope lines are dropped from siblings
  * so a legacy invoice cannot block a newer one.
  */
-export async function resolveCreatedOverdueMepByInvoiceId(args: {
+export async function resolveCreatedOverdueMepDetailsByInvoiceId(args: {
     accountId: number;
     customerId: number;
     invoices: InvoiceForCreatedOverdueMep[];
@@ -42,14 +47,13 @@ export async function resolveCreatedOverdueMepByInvoiceId(args: {
     mepBreachStartDate?: Date | null;
     monthEnd?: CustomerOverdueMepMonthEnd;
     db?: DbClient;
-}): Promise<Map<number, boolean>> {
-    const result = new Map<number, boolean>();
+}): Promise<Map<number, CreatedOverdueMepResolution>> {
+    const result = new Map<number, CreatedOverdueMepResolution>();
     if (args.invoices.length === 0) {
         return result;
     }
-
     for (const invoice of args.invoices) {
-        result.set(invoice.id, false);
+        result.set(invoice.id, { flagged: false, causeInvoiceId: null });
     }
     if (args.maxAllowedMep == null) {
         return result;
@@ -102,17 +106,35 @@ export async function resolveCreatedOverdueMepByInvoiceId(args: {
             continue;
         }
         const oldest = oldestByInvoiceId.get(invoice.id) ?? null;
-        result.set(
-            invoice.id,
-            computeCustomerOverdueBlock({
-                oldestInvoiceOverdueDate: oldest?.dueDate ?? null,
-                maxAllowedMepDays: args.maxAllowedMep,
-                today: invoice.invoice_date,
-                oldestInvoiceIssueDate: oldest?.invoiceDate ?? null,
-                mepCutoffDay: args.monthEnd?.mepCutoffDay,
-                mepSubstituteExtraDays: args.monthEnd?.mepSubstituteExtraDays,
-            })
-        );
+        const flagged = computeCustomerOverdueBlock({
+            oldestInvoiceOverdueDate: oldest?.dueDate ?? null,
+            maxAllowedMepDays: args.maxAllowedMep,
+            today: invoice.invoice_date,
+            oldestInvoiceIssueDate: oldest?.invoiceDate ?? null,
+            mepCutoffDay: args.monthEnd?.mepCutoffDay,
+            mepSubstituteExtraDays: args.monthEnd?.mepSubstituteExtraDays,
+        });
+        result.set(invoice.id, {
+            flagged,
+            causeInvoiceId: flagged ? oldest?.invoiceId ?? null : null,
+        });
+    }
+    return result;
+}
+
+export async function resolveCreatedOverdueMepByInvoiceId(args: {
+    accountId: number;
+    customerId: number;
+    invoices: InvoiceForCreatedOverdueMep[];
+    maxAllowedMep: number | null | undefined;
+    mepBreachStartDate?: Date | null;
+    monthEnd?: CustomerOverdueMepMonthEnd;
+    db?: DbClient;
+}): Promise<Map<number, boolean>> {
+    const details = await resolveCreatedOverdueMepDetailsByInvoiceId(args);
+    const result = new Map<number, boolean>();
+    for (const [invoiceId, row] of details) {
+        result.set(invoiceId, row.flagged);
     }
     return result;
 }
@@ -137,4 +159,28 @@ export async function resolveCreatedOverdueMepForInvoice(args: {
         db: args.db,
     });
     return byId.get(args.invoice.id) ?? false;
+}
+
+export async function loadInvoiceNumbersById(
+    invoiceIds: number[],
+    db: DbClient = prisma
+): Promise<Map<number, string>> {
+    const uniqueIds = Array.from(
+        new Set(invoiceIds.filter((id) => Number.isFinite(id) && id > 0))
+    );
+    const result = new Map<number, string>();
+    if (uniqueIds.length === 0) {
+        return result;
+    }
+    const rows = await db.invoice.findMany({
+        where: { id: { in: uniqueIds } },
+        select: { id: true, invoice_number: true },
+    });
+    for (const row of rows) {
+        const number = row.invoice_number?.trim();
+        if (number) {
+            result.set(row.id, number);
+        }
+    }
+    return result;
 }
