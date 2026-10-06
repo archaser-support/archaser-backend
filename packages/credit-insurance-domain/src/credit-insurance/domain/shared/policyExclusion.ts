@@ -52,23 +52,23 @@ export function hasActiveLinkedPolicy(
     return insurancePolicyId != null;
 }
 
-export type UncoveredExposureFields = {
+export type AtRiskExposureFields = {
     hasLinkedPolicy: boolean;
     exclusionReason: unknown;
 };
 
-export type NoPolicyExposureCardFields = UncoveredExposureFields & {
+export type NoPolicyExposureCardFields = AtRiskExposureFields & {
     openAr: number;
 };
 
 /**
- * Uncovered inputs from a scoped CustomerPolicy link (dashboard enrich / KPI row).
+ * At-risk inputs from a scoped CustomerPolicy link (dashboard enrich / KPI row).
  * Prefer this over “any active linked policy” so portfolio and customer cards match.
  */
-export function uncoveredExposureFieldsFromPolicyLink(args: {
+export function atRiskExposureFieldsFromPolicyLink(args: {
     insurancePolicyId: number | null | undefined;
     exclusionReason: unknown;
-}): UncoveredExposureFields {
+}): AtRiskExposureFields {
     return {
         hasLinkedPolicy: hasActiveLinkedPolicy(args.insurancePolicyId),
         exclusionReason: args.exclusionReason,
@@ -76,8 +76,8 @@ export function uncoveredExposureFieldsFromPolicyLink(args: {
 }
 
 /** No linked policy or any non-empty exclusion reason. */
-export function isUncoveredExposureCustomer(
-    fields: UncoveredExposureFields
+export function isAtRiskExposureCustomer(
+    fields: AtRiskExposureFields
 ): boolean {
     return (
         !fields.hasLinkedPolicy ||
@@ -92,7 +92,7 @@ export function isUncoveredExposureCustomer(
  * per-invoice max path so At Risk can reconcile with Cap Gap + Terms Breach.
  */
 export function isFullOpenArAtRiskCustomer(
-    fields: UncoveredExposureFields
+    fields: AtRiskExposureFields
 ): boolean {
     return (
         !fields.hasLinkedPolicy ||

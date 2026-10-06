@@ -20,6 +20,7 @@ import {
 } from "./asOfRewriteQueue";
 import type { AsOfOpenInvoiceLine } from "./asOfOpenAr";
 import {
+    filterAsOfOpenLines,
     overlayAsOfTermsFlagsOnLines,
     isUtcCalendarToday,
 } from "./asOfOpenAr";
@@ -330,6 +331,8 @@ type BackfillWriters = {
             mepBreachStartDate?: Date | null;
             runContext?: BackfillRunContext;
             asOfTermsFlagsApplied?: boolean;
+            skipCreditPoolShellOverlay?: boolean;
+            skipInactivePrune?: boolean;
         }
     ) => Promise<unknown>;
     takeCreditDashboardDailySnapshotsForAccount: (
@@ -622,6 +625,83 @@ export async function runCreditAsOfBackfillJob(
             daysSinceLastCheckpointFlush = 0;
         }
 
+        /**
+         * Per-day shell overlay is skipped before yesterday (the live top-up
+         * cover-declined metric reads today's and yesterday's shell CTP rows),
+         * so completed days must get one range overlay before the run exits.
+         */
+        const perDayShellOverlayFrom = toUtcDayStart(new Date());
+        perDayShellOverlayFrom.setUTCDate(
+            perDayShellOverlayFrom.getUTCDate() - 1
+        );
+        let lastCompletedDay: Date | null = null;
+
+        async function overlayCreditPoolShellsForRange(
+            fromDate: Date,
+            toDate: Date
+        ): Promise<void> {
+            try {
+                const shellRows = await db.customer.findMany({
+                    where: {
+                        account_id: accountId,
+                        ChildCustomers: { some: {} },
+                    },
+                    select: { id: true },
+                });
+                if (shellRows.length === 0) {
+                    return;
+                }
+                const { overlayPoolCapacityGapAndAtRiskOnTrends } =
+                    await import("./syncCreditPoolPolicyTrendsAfterParentChange");
+                await overlayPoolCapacityGapAndAtRiskOnTrends({
+                    accountId,
+                    rootCustomerIds: shellRows.map((row) => row.id),
+                    fromDate: toUtcDayStart(fromDate),
+                    toDate: toUtcDayStart(toDate),
+                    dbClient: db,
+                });
+            } catch (overlayError) {
+                // Do not fail the Generate job; live today overlay already ran on parent save.
+                console.error(
+                    "[ParentCustomerCredit] post-backfill pool overlay failed",
+                    {
+                        accountId,
+                        errorMessage:
+                            overlayError instanceof Error
+                                ? overlayError.message
+                                : String(overlayError),
+                    }
+                );
+            }
+        }
+
+        /** Per-day writers skip the inactive-CP prune and shell overlay; apply both once here. */
+        async function finalizeReplayedRange(
+            fromDate: Date,
+            toDate: Date
+        ): Promise<void> {
+            try {
+                const { deleteInactiveCustomerPolicyTrendRowsForScope } =
+                    await import("./creditSnapshotHistoryCleanup");
+                await deleteInactiveCustomerPolicyTrendRowsForScope({
+                    accountId,
+                    dbClient: db,
+                });
+            } catch (pruneError) {
+                console.error(
+                    "[CreditAsOfBackfill] inactive customer policy trend prune failed",
+                    {
+                        accountId,
+                        errorMessage:
+                            pruneError instanceof Error
+                                ? pruneError.message
+                                : String(pruneError),
+                    }
+                );
+            }
+            await overlayCreditPoolShellsForRange(fromDate, toDate);
+        }
+
         for (let i = 0; i < days.length; i++) {
             const day = days[i]!;
             const latest = await loadJob(accountId, db);
@@ -630,6 +710,15 @@ export async function runCreditAsOfBackfillJob(
                 latest.status !== "running" ||
                 (latest.run_token != null && latest.run_token !== runToken)
             ) {
+                const tokenStillMine =
+                    latest != null &&
+                    (latest.run_token == null || latest.run_token === runToken);
+                if (tokenStillMine && lastCompletedDay) {
+                    await finalizeReplayedRange(
+                        resumeFrom,
+                        lastCompletedDay
+                    );
+                }
                 return jobView(latest);
             }
 
@@ -657,33 +746,57 @@ export async function runCreditAsOfBackfillJob(
                     );
                     asOfTermsFlagsApplied = true;
                 }
+                if (asOfTermsFlagsApplied) {
+                    asOfLines = filterAsOfOpenLines(asOfLines, day);
+                }
 
-                await writers.syncCustomerPolicyTrendSnapshotForAccount(
-                    accountId,
-                    {
-                        snapshotDate: day,
-                        asOfLines,
-                        ignoreReportingBreach: false,
-                        mepBreachStartDate: runContext.mepBreachStartDate,
-                        runContext,
-                        asOfTermsFlagsApplied,
+                /**
+                 * Dashboard snapshots do not read CPT rows (snapshot-only summary),
+                 * so both writers can run concurrently. allSettled keeps a failure
+                 * from reaching the catch while the other writer is still writing.
+                 */
+                const writerResults = await Promise.allSettled([
+                    writers.syncCustomerPolicyTrendSnapshotForAccount(
+                        accountId,
+                        {
+                            snapshotDate: day,
+                            asOfLines,
+                            ignoreReportingBreach: false,
+                            mepBreachStartDate: runContext.mepBreachStartDate,
+                            runContext,
+                            asOfTermsFlagsApplied,
+                            skipCreditPoolShellOverlay:
+                                day.getTime() <
+                                perDayShellOverlayFrom.getTime(),
+                            skipInactivePrune: true,
+                        }
+                    ),
+                    writers.takeCreditDashboardDailySnapshotsForAccount(
+                        accountId,
+                        {
+                            snapshotDate: day,
+                            asOfLines,
+                            ignoreReportingBreach: false,
+                            runContext,
+                            asOfTermsFlagsApplied,
+                        }
+                    ),
+                ]);
+                for (const result of writerResults) {
+                    if (result.status === "rejected") {
+                        throw result.reason;
                     }
-                );
-
-                await writers.takeCreditDashboardDailySnapshotsForAccount(
-                    accountId,
-                    {
-                        snapshotDate: day,
-                        asOfLines,
-                        ignoreReportingBreach: false,
-                        runContext,
-                        asOfTermsFlagsApplied,
-                    }
-                );
+                }
             } catch (error) {
                 const message =
                     error instanceof Error ? error.message : String(error);
                 await flushCheckpoint(true);
+                if (lastCompletedDay) {
+                    await finalizeReplayedRange(
+                        resumeFrom,
+                        lastCompletedDay
+                    );
+                }
                 await db.$executeRaw`
                     UPDATE "AccountBackgroundJob"
                     SET status = 'failed',
@@ -699,6 +812,7 @@ export async function runCreditAsOfBackfillJob(
                 });
             }
 
+            lastCompletedDay = day;
             const daysDone = baseDone + i + 1;
             pendingCheckpoint = { checkpointDate: day, daysDone };
             daysSinceLastCheckpointFlush += 1;
@@ -709,45 +823,11 @@ export async function runCreditAsOfBackfillJob(
 
         // After full history rewrite, re-apply credit-pool shell overlays so
         // parent Dashboard / Portfolio charts keep leaf AR under each shell.
-        try {
-            const shellRows = await db.customer.findMany({
-                where: {
-                    account_id: accountId,
-                    ChildCustomers: { some: {} },
-                },
-                select: { id: true },
-            });
-            if (shellRows.length > 0) {
-                const lease = await loadJob(accountId, db);
-                if (
-                    lease?.run_token != null &&
-                    lease.run_token !== runToken
-                ) {
-                    return jobView(lease);
-                }
-                const { overlayPoolCapacityGapAndAtRiskOnTrends } =
-                    await import("./syncCreditPoolPolicyTrendsAfterParentChange");
-                await overlayPoolCapacityGapAndAtRiskOnTrends({
-                    accountId,
-                    rootCustomerIds: shellRows.map((row) => row.id),
-                    fromDate: toUtcDayStart(jobFromDate),
-                    toDate: toUtcDayStart(jobToDate),
-                    dbClient: db,
-                });
-            }
-        } catch (overlayError) {
-            // Do not fail the Generate job; live today overlay already ran on parent save.
-            console.error(
-                "[ParentCustomerCredit] post-backfill pool overlay failed",
-                {
-                    accountId,
-                    errorMessage:
-                        overlayError instanceof Error
-                            ? overlayError.message
-                            : String(overlayError),
-                }
-            );
+        const lease = await loadJob(accountId, db);
+        if (lease?.run_token != null && lease.run_token !== runToken) {
+            return jobView(lease);
         }
+        await finalizeReplayedRange(jobFromDate, jobToDate);
 
         await db.$executeRaw`
             UPDATE "AccountBackgroundJob"
