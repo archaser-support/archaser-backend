@@ -27,8 +27,8 @@ export type CustomerKpiSnapshotInput = {
     approvedLimit: number;
     asOf: Date;
     retainedCapacityGap?: number;
-    /** When true, terms breach and at-risk use full open AR (uncovered exposure). */
-    uncoveredExposure?: boolean;
+    /** When true, terms breach and at-risk use full open AR (at-risk cohort). */
+    atRiskCohort?: boolean;
 };
 
 export type CustomerKpiSnapshotResult = {
@@ -125,16 +125,16 @@ export function computeCustomerKpiSnapshotFromInvoices(
     });
     const capacity = capacityResolution.capacity;
 
-    const uncovered = input.uncoveredExposure === true;
+    const atRiskCohort = input.atRiskCohort === true;
     const termBreach = resolveCustomerTermsBreachOutstanding({
-        uncovered,
+        atRiskCohort,
         totalOpenAr: totalAr,
         invoices: openInvoices,
         asOf: input.asOf,
     });
 
     const notInsured = computeCustomerRiskExposure({
-        uncovered,
+        atRiskCohort,
         totalAr,
         invoices: openInvoices.map((invoice) => ({
             outstanding: Math.max(0, invoice.outstanding),

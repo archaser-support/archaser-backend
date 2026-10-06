@@ -15,8 +15,8 @@ export type CustomerPolicyTrendSnapshotPayloadInput = {
     capacityGapAmount: number;
     /** Full terms-breach outstanding (dashboard terms breach card). */
     termsBreachOutstanding: number;
-    /** Uncovered / excluded → at-risk = full open AR. */
-    uncovered?: boolean;
+    /** At-risk / excluded → at-risk = full open AR. */
+    atRiskCohort?: boolean;
     /** As-of (or live-equivalent) open invoices for per-invoice at-risk. */
     atRiskInvoices: CustomerAtRiskInvoiceInput[];
     /** Open AR in policy limit currency (usage % formulas). */
@@ -63,12 +63,12 @@ export function buildCustomerPolicyTrendSnapshotPayload(
     const totalReceivables = Math.max(0, input.totalReceivables);
     const capacityGapAmount = Math.max(0, input.capacityGapAmount);
     const termsBreachAmount = Math.max(0, input.termsBreachOutstanding);
-    const uncovered = input.uncovered === true;
+    const atRiskCohort = input.atRiskCohort === true;
 
     const atRiskExposure = computeCustomerRiskExposure({
-        uncovered,
+        atRiskCohort,
         totalAr: totalReceivables,
-        invoices: uncovered ? [] : input.atRiskInvoices,
+        invoices: atRiskCohort ? [] : input.atRiskInvoices,
     });
     const healthIndex = computeCustomerHealthIndex(
         totalReceivables,

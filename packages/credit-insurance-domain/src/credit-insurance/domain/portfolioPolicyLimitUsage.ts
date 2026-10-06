@@ -39,9 +39,9 @@ export type PolicyLimitUsageCategoryTotals = {
      * Sum of per-customer AR above base covered by that customer's top-up
      * (not min(portfolio excess, Σ top-up)).
      */
-    topUpCoveredExcess: number;
+    topUpCompliantExcess: number;
     /** Sum of per-customer AR beyond base approved limit plus that customer's top-up. */
-    uncoveredExposure: number;
+    atRiskExposure: number;
     /**
      * Portfolio usage percentage: usedWithinLimit / approved capacity × 100.
      * Combined uses base + top-up; Named and DCL use base approved only.
@@ -61,8 +61,8 @@ export type CustomerPolicyLimitUsageSegments = {
     topUpTotal: number;
     usedWithinLimit: number;
     remaining: number;
-    topUpCoveredExcess: number;
-    uncoveredExposure: number;
+    topUpCompliantExcess: number;
+    atRiskExposure: number;
 };
 
 type CategoryAccumulators = {
@@ -71,8 +71,8 @@ type CategoryAccumulators = {
     topUpTotal: number;
     usedWithinLimit: number;
     remaining: number;
-    topUpCoveredExcess: number;
-    uncoveredExposure: number;
+    topUpCompliantExcess: number;
+    atRiskExposure: number;
 };
 
 function emptyAccumulators(): CategoryAccumulators {
@@ -82,8 +82,8 @@ function emptyAccumulators(): CategoryAccumulators {
         topUpTotal: 0,
         usedWithinLimit: 0,
         remaining: 0,
-        topUpCoveredExcess: 0,
-        uncoveredExposure: 0,
+        topUpCompliantExcess: 0,
+        atRiskExposure: 0,
     };
 }
 
@@ -102,8 +102,8 @@ export function computeCustomerPolicyLimitUsageSegments(args: {
     const usedWithinLimit = Math.min(openAr, approvedLimit);
     const remaining = Math.max(0, approvedLimit - openAr);
     const aboveBase = Math.max(0, openAr - approvedLimit);
-    const topUpCoveredExcess = Math.min(aboveBase, topUpTotal);
-    const uncoveredExposure = Math.max(0, aboveBase - topUpTotal);
+    const topUpCompliantExcess = Math.min(aboveBase, topUpTotal);
+    const atRiskExposure = Math.max(0, aboveBase - topUpTotal);
 
     return {
         openAr,
@@ -111,8 +111,8 @@ export function computeCustomerPolicyLimitUsageSegments(args: {
         topUpTotal,
         usedWithinLimit,
         remaining,
-        topUpCoveredExcess,
-        uncoveredExposure,
+        topUpCompliantExcess,
+        atRiskExposure,
     };
 }
 
@@ -141,8 +141,8 @@ function finalizeCategoryTotals(
         topUpTotal: acc.topUpTotal,
         usedWithinLimit: acc.usedWithinLimit,
         remaining: acc.remaining,
-        topUpCoveredExcess: acc.topUpCoveredExcess,
-        uncoveredExposure: acc.uncoveredExposure,
+        topUpCompliantExcess: acc.topUpCompliantExcess,
+        atRiskExposure: acc.atRiskExposure,
         usagePct,
     };
 }
@@ -200,8 +200,8 @@ function addCustomerSegmentsToCategory(
     category.topUpTotal += segments.topUpTotal;
     category.usedWithinLimit += segments.usedWithinLimit;
     category.remaining += segments.remaining;
-    category.topUpCoveredExcess += segments.topUpCoveredExcess;
-    category.uncoveredExposure += segments.uncoveredExposure;
+    category.topUpCompliantExcess += segments.topUpCompliantExcess;
+    category.atRiskExposure += segments.atRiskExposure;
 }
 
 /**

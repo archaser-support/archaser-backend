@@ -12,7 +12,7 @@ import {
 } from "./NotificationRuleEvaluator";
 import {
     bindCreditInsurancePrisma,
-    fetchUncoveredCustomerIdsForAccount,
+    fetchAtRiskCustomerIdsForAccount,
 } from "@archaser/credit-insurance-domain";
 
 function parseEntityFromDedupKey(
@@ -66,7 +66,7 @@ export class NotificationRuleDeliveryService {
         private readonly ledger: NotificationDeliveryLogService,
         private readonly notifications: NotificationService,
         private readonly creditEmail: CreditNotificationEmailService,
-        private readonly fetchUncoveredCustomerIds: (
+        private readonly fetchAtRiskCustomerIds: (
             accountId: number
         ) => Promise<Set<number>>
     ) {}
@@ -83,7 +83,7 @@ export class NotificationRuleDeliveryService {
         const now = input.now ?? new Date();
         const provider = new PrismaNotificationRuleEvaluatorProvider(
             this.prisma,
-            this.fetchUncoveredCustomerIds,
+            this.fetchAtRiskCustomerIds,
             {
                 isDedupActive: (dedupKey) => this.ledger.isActive(dedupKey),
             }
@@ -255,7 +255,7 @@ export class NotificationRuleDeliveryService {
             new NotificationDeliveryLogService(prisma),
             new NotificationService(prisma),
             new CreditNotificationEmailService(prisma),
-            fetchUncoveredCustomerIdsForAccount
+            fetchAtRiskCustomerIdsForAccount
         );
     }
 }

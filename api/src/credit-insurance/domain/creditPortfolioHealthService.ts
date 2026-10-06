@@ -1,6 +1,7 @@
 import { Prisma, type cost_calculation_method } from "@prisma/client";
 
 import {
+    applyOpenArVatBasis,
     computeCreditDashboardHealthIndex,
     computeCustomerUsageBarSegments,
     computeTopUpDailyCostAggregate,
@@ -8,6 +9,7 @@ import {
     detectStaleArRuns,
     deriveCapacityAndOvershootFromLinkedCptDaySeries,
     emptyTopUpDrawSection,
+    expandCreditPoolRootsToMembers,
     fetchLinkedCptCustomerDaySeries,
     mapLinkedCptDaySeriesToTopUpDrawSection,
     type PortfolioTopUpDrawSection,
@@ -221,8 +223,8 @@ export type PortfolioBreachDilutionStreakSection = {
 export type PortfolioNoCoverageDailyPoint = {
     snapshotDate: string;
     totalCustomerCount: number;
-    uncoveredCustomerCount: number;
-    uncoveredAmount: number;
+    atRiskCustomerCount: number;
+    atRiskAmount: number;
     approvedTotalReceivables: number;
     approvedTermsBreachAmount: number;
     amountByReason: Partial<Record<string, number>>;
@@ -239,9 +241,9 @@ export type PortfolioNoCoverageReasonItem = {
 };
 
 export type PortfolioNoCoverageSection = {
-    averageUncoveredCustomerPct: number;
-    averageUncoveredAmount: number;
-    averageUncoveredCustomerCount: number;
+    averageAtRiskCustomerPct: number;
+    averageAtRiskAmount: number;
+    averageAtRiskCustomerCount: number;
     reasons: PortfolioNoCoverageReasonItem[];
     averageViolationPct: number;
     mainViolationReason: string | null;
@@ -382,14 +384,14 @@ export type PortfolioUtilizationSection = {
     peakUtilizationStreakStart: string | null;
     peakUtilizationStreakEnd: string | null;
     /**
-     * DCL (self-underwriting) share of covered customers (DCL + Named).
-     * Uncovered customers are excluded from the denominator.
+     * DCL (self-underwriting) share of compliant customers (DCL + Named).
+     * At-risk customers are excluded from the denominator.
      */
     selfUnderwrittenCustomerPct: number;
     selfUnderwrittenArSharePct: number;
     selfUnderwrittenAverageAr: number;
     selfUnderwrittenAverageUtilizationPct: number | null;
-    /** Named (insurer-approved) share of covered customers (DCL + Named). */
+    /** Named (insurer-approved) share of compliant customers (DCL + Named). */
     approvedCustomerPct: number;
     approvedArSharePct: number;
     approvedAverageAr: number;
@@ -562,8 +564,8 @@ type WithoutPolicyDayRow = {
 type CptNoCoverageDayRow = {
     snapshot_date: Date;
     total_customers: number | string;
-    uncovered_customers: number | string;
-    uncovered_amount: number | string;
+    at_risk_customers: number | string;
+    at_risk_amount: number | string;
     approved_ar: number | string;
     approved_breach: number | string;
 };
@@ -1035,8 +1037,8 @@ export function applyWithoutPolicyToNoCoverageDay(
     return {
         ...day,
         totalCustomerCount: day.totalCustomerCount + customerCount,
-        uncoveredCustomerCount: day.uncoveredCustomerCount + customerCount,
-        uncoveredAmount: day.uncoveredAmount + amount,
+        atRiskCustomerCount: day.atRiskCustomerCount + customerCount,
+        atRiskAmount: day.atRiskAmount + amount,
         amountByReason: {
             ...day.amountByReason,
             no_linked_policy:
@@ -1059,9 +1061,9 @@ export function buildNoCoverageSection(
     const reasonKeys = collectNoCoverageReasonKeys(daily);
     if (daily.length === 0) {
         return {
-            averageUncoveredCustomerPct: 0,
-            averageUncoveredAmount: 0,
-            averageUncoveredCustomerCount: 0,
+            averageAtRiskCustomerPct: 0,
+            averageAtRiskAmount: 0,
+            averageAtRiskCustomerCount: 0,
             reasons: reasonKeys.map((reason) => ({
                 reason,
                 averageAmount: 0,
@@ -1077,8 +1079,8 @@ export function buildNoCoverageSection(
 
     const dayCount = daily.length;
     let sumCustomerPct = 0;
-    let sumUncoveredAmount = 0;
-    let sumUncoveredCustomers = 0;
+    let sumAtRiskAmount = 0;
+    let sumAtRiskCustomers = 0;
     let sumViolationPct = 0;
     const sumAmountByReason = Object.fromEntries(
         reasonKeys.map((key) => [key, 0])
@@ -1091,10 +1093,10 @@ export function buildNoCoverageSection(
     for (const day of daily) {
         sumCustomerPct +=
             day.totalCustomerCount > 0
-                ? (100 * day.uncoveredCustomerCount) / day.totalCustomerCount
+                ? (100 * day.atRiskCustomerCount) / day.totalCustomerCount
                 : 0;
-        sumUncoveredAmount += day.uncoveredAmount;
-        sumUncoveredCustomers += day.uncoveredCustomerCount;
+        sumAtRiskAmount += day.atRiskAmount;
+        sumAtRiskCustomers += day.atRiskCustomerCount;
         sumViolationPct +=
             day.approvedTotalReceivables > 0
                 ? (100 * day.approvedTermsBreachAmount) /
@@ -1119,10 +1121,10 @@ export function buildNoCoverageSection(
     const main = pickMainViolationReason(breachTotals);
 
     return {
-        averageUncoveredCustomerPct: sumCustomerPct / dayCount,
-        averageUncoveredAmount: sumUncoveredAmount / dayCount,
-        averageUncoveredCustomerCount: roundToOneDecimal(
-            sumUncoveredCustomers / dayCount
+        averageAtRiskCustomerPct: sumCustomerPct / dayCount,
+        averageAtRiskAmount: sumAtRiskAmount / dayCount,
+        averageAtRiskCustomerCount: roundToOneDecimal(
+            sumAtRiskCustomers / dayCount
         ),
         reasons: reasonKeys.map((reason) => ({
             reason,
@@ -1220,9 +1222,9 @@ export function computePolicyEfficiency(
 }
 
 /**
- * Footprint shares among covered customers only (DCL + Named).
+ * Footprint shares among compliant customers only (DCL + Named).
+ * At-risk customers are excluded from the denominator.
  * selfUnderwritten* = DCL; approved* = Named.
- * Uncovered customers are excluded from the denominator.
  */
 export function computeDclVsNamedFootprints(
     daily: Array<{
@@ -1270,19 +1272,19 @@ export function computeDclVsNamedFootprints(
     let namedUtilDays = 0;
 
     for (const day of daily) {
-        const coveredCustomers = day.dclCustomerCount + day.namedCustomerCount;
-        if (coveredCustomers > 0) {
+        const compliantCustomers = day.dclCustomerCount + day.namedCustomerCount;
+        if (compliantCustomers > 0) {
             customerShareDays += 1;
-            sumDclCustomerPct += (100 * day.dclCustomerCount) / coveredCustomers;
+            sumDclCustomerPct += (100 * day.dclCustomerCount) / compliantCustomers;
             sumNamedCustomerPct +=
-                (100 * day.namedCustomerCount) / coveredCustomers;
+                (100 * day.namedCustomerCount) / compliantCustomers;
         }
 
-        const coveredAr = day.dclAr + day.namedAr;
-        if (coveredAr > 0) {
+        const compliantAr = day.dclAr + day.namedAr;
+        if (compliantAr > 0) {
             arShareDays += 1;
-            sumDclArShare += (100 * day.dclAr) / coveredAr;
-            sumNamedArShare += (100 * day.namedAr) / coveredAr;
+            sumDclArShare += (100 * day.dclAr) / compliantAr;
+            sumNamedArShare += (100 * day.namedAr) / compliantAr;
         }
 
         sumDclAr += day.dclAr;
@@ -1349,22 +1351,22 @@ export function computeSelfVsApprovedShares(
     for (const day of daily) {
         sumSelfCustomerPct +=
             day.totalCustomerCount > 0
-                ? (100 * day.uncoveredCustomerCount) / day.totalCustomerCount
+                ? (100 * day.atRiskCustomerCount) / day.totalCustomerCount
                 : 0;
         sumApprovedCustomerPct +=
             day.totalCustomerCount > 0
                 ? (100 *
-                      (day.totalCustomerCount - day.uncoveredCustomerCount)) /
+                      (day.totalCustomerCount - day.atRiskCustomerCount)) /
                   day.totalCustomerCount
                 : 0;
-        const totalAr = day.uncoveredAmount + day.approvedTotalReceivables;
+        const totalAr = day.atRiskAmount + day.approvedTotalReceivables;
         sumSelfArShare +=
-            totalAr > 0 ? (100 * day.uncoveredAmount) / totalAr : 0;
+            totalAr > 0 ? (100 * day.atRiskAmount) / totalAr : 0;
         sumApprovedArShare +=
             totalAr > 0
                 ? (100 * day.approvedTotalReceivables) / totalAr
                 : 0;
-        sumSelfAr += day.uncoveredAmount;
+        sumSelfAr += day.atRiskAmount;
         sumApprovedAr += day.approvedTotalReceivables;
     }
 
@@ -1990,14 +1992,14 @@ async function fetchCptNoCoverageDayAggregates(
             COUNT(DISTINCT t.customer_id) FILTER (
                 WHERE t.insurance_policy_id IS NULL
                    OR NULLIF(TRIM(t.policy_exclusion_reason), '') IS NOT NULL
-            )::float8 AS uncovered_customers,
+            )::float8 AS at_risk_customers,
             COALESCE(
                 SUM(t.total_receivables) FILTER (
                     WHERE t.insurance_policy_id IS NULL
                        OR NULLIF(TRIM(t.policy_exclusion_reason), '') IS NOT NULL
                 ),
                 0
-            )::float8 AS uncovered_amount,
+            )::float8 AS at_risk_amount,
             COALESCE(
                 SUM(t.total_receivables) FILTER (
                     WHERE t.insurance_policy_id IS NOT NULL
@@ -2179,8 +2181,8 @@ function buildNoCoverageDailyPoints(input: {
         const base: PortfolioNoCoverageDailyPoint = {
             snapshotDate,
             totalCustomerCount: toNumber(row.total_customers),
-            uncoveredCustomerCount: toNumber(row.uncovered_customers),
-            uncoveredAmount: toNumber(row.uncovered_amount),
+            atRiskCustomerCount: toNumber(row.at_risk_customers),
+            atRiskAmount: toNumber(row.at_risk_amount),
             approvedTotalReceivables: toNumber(row.approved_ar),
             approvedTermsBreachAmount: toNumber(row.approved_breach),
             amountByReason: { ...reasonBucket.amountByReason },
@@ -2343,8 +2345,22 @@ async function fetchPortfolioRangeCostInputs(
         },
     };
 
-    const [limitMonthRows, topUpRows, invoiceRows, approvedTopUpDays] =
-        await Promise.all([
+    const poolAttribution =
+        options.scopedCustomerIds == null
+            ? null
+            : await expandCreditPoolRootsToMembers(
+                  accountId,
+                  options.scopedCustomerIds
+              );
+    const invoiceCustomerIds = poolAttribution?.memberIds ?? null;
+
+    const [
+        limitMonthRows,
+        topUpRows,
+        invoiceRows,
+        approvedTopUpDays,
+        accountVatRow,
+    ] = await Promise.all([
             prisma.$queryRaw<LimitMonthAggRow[]>`
                 SELECT
                     to_char(t.snapshot_date::timestamp, 'YYYY-MM') AS month,
@@ -2431,14 +2447,15 @@ async function fetchPortfolioRangeCostInputs(
                     ...(options.policyId != null
                         ? { policy_id: options.policyId }
                         : {}),
-                    ...(options.scopedCustomerIds != null
-                        ? { customer_id: { in: options.scopedCustomerIds } }
+                    ...(invoiceCustomerIds != null
+                        ? { customer_id: { in: invoiceCustomerIds } }
                         : {}),
                 },
                 select: {
                     invoice_date: true,
                     customer_id: true,
                     amount: true,
+                    amount_without_vat: true,
                     policy_id: true,
                     status: true,
                 },
@@ -2483,17 +2500,44 @@ async function fetchPortfolioRangeCostInputs(
                       AND tip.parent_insurance_policy_id = t.insurance_policy_id
                   )
             `,
+            prisma.account.findUnique({
+                where: { id: accountId },
+                select: { amounts_include_vat: true },
+            }),
         ]);
 
-    const invoices: PortfolioRangeCostInvoice[] = invoiceRows
-        .filter((inv) => inv.customer_id != null)
-        .map((inv) => ({
+    const amountsIncludeVat = accountVatRow?.amounts_include_vat !== false;
+
+    const invoices: PortfolioRangeCostInvoice[] = [];
+    for (const inv of invoiceRows) {
+        if (inv.customer_id == null) {
+            continue;
+        }
+        const costCustomerId =
+            poolAttribution == null
+                ? inv.customer_id
+                : poolAttribution.rootByMemberId.get(inv.customer_id);
+        if (costCustomerId == null) {
+            continue;
+        }
+        invoices.push({
             invoiceDate: normalizeDateString(inv.invoice_date),
-            customerId: inv.customer_id!,
-            amount: toNumber(inv.amount),
+            // Linked-child sales are booked on the shell; orphans stay on self.
+            customerId: costCustomerId,
+            amount: applyOpenArVatBasis(
+                amountsIncludeVat,
+                toNumber(inv.amount),
+                {
+                    amount: toNumber(inv.amount),
+                    amount_without_vat: optionalFiniteNumber(
+                        inv.amount_without_vat
+                    ),
+                }
+            ),
             policyId: inv.policy_id,
             status: inv.status,
-        }));
+        });
+    }
 
     // Slim CPT rows only for Actual Sales invoice dates (last row wins per
     // customer×day — same as the previous Map overwrite behavior).
@@ -2529,10 +2573,6 @@ async function fetchPortfolioRangeCostInputs(
               AND (
                 ${options.policyId ?? null}::int IS NULL
                 OR t.insurance_policy_id = ${options.policyId ?? null}
-              )
-              AND (
-                ${options.scopedCustomerIds == null}::boolean
-                OR t.customer_id = ANY(${options.scopedCustomerIds ?? []}::int[])
               )
             ORDER BY t.snapshot_date ASC, t.customer_id ASC
         `;

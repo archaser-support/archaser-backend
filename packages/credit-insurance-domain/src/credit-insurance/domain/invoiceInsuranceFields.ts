@@ -743,14 +743,14 @@ export function computeInvoiceAtRiskAmount(
 
 /**
  * Customer at-risk from open invoices:
- * - uncovered / full-AR cohort → full open AR
+ * - at-risk / full-AR cohort → full open AR
  * - when {@link capacityGapAmount} is set (Cap Gap card):  
  *   `capacityGapAmount + Σ terms_breach_i − Σ min(gap_i, terms_breach_i)`  
  *   so At Risk cannot exceed Cap Gap + Terms (same cards).
  * - else Σ max(capacity_gap_i, terms_breach_i) (invoice-only path)
  */
 export function computeCustomerRiskExposure(args: {
-    uncovered?: boolean;
+    atRiskCohort?: boolean;
     totalAr: number;
     invoices: CustomerAtRiskInvoiceInput[];
     /**
@@ -760,7 +760,7 @@ export function computeCustomerRiskExposure(args: {
     capacityGapAmount?: number;
 }): number {
     const ar = Math.max(0, args.totalAr);
-    if (args.uncovered === true) {
+    if (args.atRiskCohort === true) {
         return ar;
     }
     if (ar <= 0) {

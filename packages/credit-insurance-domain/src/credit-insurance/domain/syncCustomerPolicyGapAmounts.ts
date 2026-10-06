@@ -24,7 +24,7 @@ import {
 import { resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
 import {
     hasActiveLinkedPolicy,
-    isUncoveredExposureCustomer,
+    isAtRiskExposureCustomer,
 } from "./policyExclusion";
 import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
@@ -241,7 +241,7 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
 
     const activePolicyRow =
         policyRows.find((row) => row.is_active) ?? policyRows[0];
-    const uncovered = isUncoveredExposureCustomer({
+    const atRiskCohort = isAtRiskExposureCustomer({
         hasLinkedPolicy: hasActiveLinkedPolicy(
             activePolicyRow.insurance_policy_id
         ),
@@ -250,7 +250,7 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
 
     const membersToWrite = freezeSingleRow ? [customerId] : memberIds;
 
-    if (uncovered) {
+    if (atRiskCohort) {
         for (const memberId of membersToWrite) {
             const memberPolicies = freezeSingleRow
                 ? policyRows
