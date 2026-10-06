@@ -397,7 +397,7 @@ export type PortfolioUtilizationSection = {
     averageTopUpUtilizationPct: number | null;
     /** Unique top-ups active on at least one day in the range. */
     periodActiveTopUpCount: number;
-    /** Unique roots with top-up cover on at least one day (shells include child cover). */
+    /** Unique roots with top-up cover on at least one day (credit-pool shells included). */
     periodCustomersWithTopUp: number;
     /**
      * Customers with active top-up cover. Bars use peak-day capacity;

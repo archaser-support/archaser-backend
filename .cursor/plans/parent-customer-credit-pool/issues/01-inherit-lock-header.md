@@ -3,7 +3,7 @@
 **Status:** in-progress
 **Priority:** high
 **Blocked by:** —
-**User stories:** 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 19, 22, 23, 25, 26, 27, 28
+**User stories:** 1, 2, 3, 4, 5, 5b, 6, 6b, 7, 8, 9, 10, 11, 19, 22, 23, 25, 26, 27, 28
 **PRD:** `.cursor/plans/parent-customer-credit-pool.prd.md`
 
 ## Implementation note (2026-09-30)
@@ -16,7 +16,7 @@ Backend inheritance + remirror is on `feat/parent-customer-credit-pool-CU-869f9d
 
 ## What to build
 
-When credit insurance is on, any change to `parent_customer_id` (UI, API, import/ERP) runs the same connect/disconnect side effects: resolve the **top root**, overwrite/mirror active + pending customer policy (including `customer_number_policy`) from root onto all descendants, remirror when the root’s policy changes, and on disconnect unlock while leaving last mirrored data (subtree under a disconnected mid-level node becomes a new pool). Nested parents are allowed; every node with children must be a **shell**. Linked children hide Edit policy and Top-up; only the top root may edit pool policy/top-ups.
+When credit insurance is on, any change to `parent_customer_id` (UI, API, import/ERP) runs the same connect/disconnect side effects: resolve the **top root**, overwrite/mirror active + pending customer policy (including `customer_number_policy`) from root onto all descendants, **and remirror uncancelled top-ups** (cancel child live rows, copy every uncancelled root `CustomerTopUp`; empty root clears live child top-ups). Remirror policy and top-ups when the root’s policy or top-ups change. On disconnect unlock, leave last mirrored **policy**, **cancel all live top-ups** on the unbound node (subtree under a disconnected mid-level node becomes a new pool and remirrors from that node — live top-ups empty). Nested parents are allowed; every node with children must be a **shell**. Linked children hide Edit policy and Top-up; only the top root may edit pool policy/top-ups. Shared extra cover uses **root top-up rows only**.
 
 **Shell guards (always, greenfield):** Block setting a parent that already has invoices or payments. Block creating new invoices or payments on any customer that has children. Collection UI/migration cleanup stays on the same ClickUp task (CU-869f9dx8q); domain/API guards still apply now.
 
@@ -29,8 +29,11 @@ Ship EN + HE for new copy.
 ## Acceptance criteria
 
 - [x] Connect overwrites child policy from root and keeps mirrors in sync while linked (including empty root → empty mirrors) *(backend)*
+- [ ] Connect cancels the child’s live top-ups and copies every uncancelled root top-up (past/current/future); empty root → child live top-ups cancelled *(not built)*
 - [x] Root policy updates (active + pending) remirror to all descendants *(backend)*
-- [x] Disconnect unlocks and leaves last mirrored settings; mid-level disconnect forms a new root pool for remaining descendants *(backend)*
+- [ ] Root top-up create/edit/cancel remirrors to all descendants *(not built)*
+- [x] Disconnect unlocks and leaves last mirrored **policy**; mid-level disconnect forms a new root pool for remaining descendants *(backend)*
+- [ ] Disconnect cancels all live top-ups on the unbound customer; remaining descendants remirror from that root with no live top-ups *(not built)*
 - [x] Import/ERP parent set/clear uses the same side-effect path as UI/API *(backend)*
 - [ ] Linked children hide Edit policy and Top-up; root top-ups only apply to shared effective-limit rules *(FE present — smoke pending)*
 - [ ] Child header shows parent link whenever parent is set *(FE present — smoke pending)*
@@ -48,5 +51,6 @@ Ship EN + HE for new copy.
 3. With Group linked to children, try to create an invoice on Group → blocked.
 4. Put reporting breach / MEP overdue-block on Store-A → Group shows rolled-up breach; clear Store-A (with no other breached siblings) → Group clears.
 5. Change Group’s limit and add a pending change; refresh Store-A — mirrored active + pending match.
-6. Nest Counter-1 under Store-A (Store-A must be shell / no AR); Counter-1 mirrors Group (top root). Disconnect Store-A from Group; Store-A unlocks with last values; Counter-1 now follows Store-A as root.
-7. Spot-check Hebrew labels for parent/children indications and shell errors.
+6. Add or change a Group top-up; refresh Store-A — child’s uncancelled top-ups match Group (old child live rows cancelled). Unlink Store-A — live top-ups on Store-A are cancelled (policy still the last mirror).
+7. Nest Counter-1 under Store-A (Store-A must be shell / no AR); Counter-1 mirrors Group (top root). Disconnect Store-A from Group; Store-A unlocks with last **policy** and no live top-ups; Counter-1 now follows Store-A as root (no live top-ups).
+8. Spot-check Hebrew labels for parent/children indications and shell errors.

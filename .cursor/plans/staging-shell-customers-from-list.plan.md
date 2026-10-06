@@ -77,6 +77,10 @@ Lookup key: `Customer.customer_number` (not `Customer.id`) + `account_id = 10149
 - Frontend customer form
 - Tests (not requested)
 
+## Follow-up (top-ups)
+
+Shells did not receive `CustomerTopUp` rows. Grill + plan: `.cursor/plans/lift-child-topups-to-shell-10149.plan.md`.
+
 ## Out of scope unless requested
 
 - ClickUp ticket / product UI

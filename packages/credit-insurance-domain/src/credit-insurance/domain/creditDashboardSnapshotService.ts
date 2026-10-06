@@ -15,6 +15,7 @@ import {
     type CreditAsOfBackfillRunContext,
     type CreditDashboardAccountSettings,
 } from "./creditAsOfBackfillRunContext";
+import { excludeLinkedChildCustomersFilter } from "./customerPolicyQueryHelpers";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
 import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron";
 import {
@@ -329,6 +330,7 @@ async function fetchTopUpSnapshotAgg(
             end_date: { gte: snapshotDate },
             Customer: {
                 account_id: accountId,
+                ...excludeLinkedChildCustomersFilter(),
                 ...(businessUnitId != null
                     ? { business_unit_id: businessUnitId }
                     : {}),

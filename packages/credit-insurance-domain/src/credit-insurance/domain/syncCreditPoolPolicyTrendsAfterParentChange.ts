@@ -22,12 +22,18 @@ import {
     inclusiveUtcDaySpan,
 } from "./creditPoolParentChangeTiming";
 import { customerIdsWithChildren } from "./creditPoolShellGuards";
+import { computeTopUpUsageMetrics } from "./invoiceCapacityGapAmounts";
 import {
     createCreditPoolMembershipCache,
     listDescendantCustomerIds,
     resolveCreditPoolMemberIds,
     type CreditPoolMembershipCache,
 } from "./parentCustomerCreditInheritance";
+import {
+    isActiveTopUp,
+    resolveEffectiveApprovedLimitFromTopUpRows,
+    type TopUpRowForResolution,
+} from "./resolveEffectiveApprovedLimit";
 import {
     startOfTodayUtc,
     toUtcDateOnly,
@@ -75,8 +81,10 @@ async function earliestCustomerArActivityDate(
 /**
  * Sum **leaf** member open AR vs shell effective limit for pool capacity gap;
  * approximate pool at-risk as min(pool AR, gap + Σ terms breach). Persist pool
- * AR / terms-breach onto the shell CTP. Zero gap/at-risk only on **leaf**
- * children (nested shells keep their own local overlay).
+ * AR / terms-breach onto the shell CTP. Stamp extra cover, effective limit, and
+ * usage percents from **this shell’s** CustomerTopUp rows (not descendants).
+ * Zero gap/at-risk only on **leaf** children (nested shells keep their own
+ * local overlay).
  *
  * Scope = local subtree of each `rootCustomerIds` entry (self + descendants).
  * Nested shells are excluded from the AR/terms sum so mid-level rolled CTP is
@@ -134,15 +142,20 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
             continue;
         }
 
-        const dayRows = await dbClient.$queryRaw<
-            Array<{
-                snapshot_date: Date;
-                pool_receivables: number | null;
-                pool_terms_breach: number | null;
-                pool_terms_breach_count: number | null;
-                root_effective_limit: number | null;
-            }>
-        >`
+        const [dayRows, shellTopUps] = await Promise.all([
+            dbClient.$queryRaw<
+                Array<{
+                    snapshot_date: Date;
+                    pool_receivables: number | null;
+                    pool_terms_breach: number | null;
+                    pool_terms_breach_count: number | null;
+                    root_approved_limit: number | null;
+                    root_approved_limit_currency: string | null;
+                    root_insurance_policy_id: number | null;
+                    root_outdated_dcl: boolean | null;
+                    root_excluded_from_policy: boolean | null;
+                }>
+            >`
             SELECT
                 t.snapshot_date,
                 COALESCE(SUM(
@@ -169,29 +182,103 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
                 MAX(
                     CASE
                         WHEN t.customer_id = ${shellId}
-                        THEN COALESCE(
-                            t.effective_approved_limit,
-                            t.approved_limit,
-                            0
-                        )
+                        THEN t.approved_limit
                         ELSE NULL
                     END
-                )::float8 AS root_effective_limit
+                )::float8 AS root_approved_limit,
+                MAX(
+                    CASE
+                        WHEN t.customer_id = ${shellId}
+                        THEN t.approved_limit_currency
+                        ELSE NULL
+                    END
+                ) AS root_approved_limit_currency,
+                MAX(
+                    CASE
+                        WHEN t.customer_id = ${shellId}
+                        THEN t.insurance_policy_id
+                        ELSE NULL
+                    END
+                )::int AS root_insurance_policy_id,
+                BOOL_OR(
+                    t.customer_id = ${shellId} AND COALESCE(t.outdated_dcl, false)
+                ) AS root_outdated_dcl,
+                BOOL_OR(
+                    t.customer_id = ${shellId}
+                    AND COALESCE(t.excluded_from_policy, false)
+                ) AS root_excluded_from_policy
             FROM "CustomerPolicyTrend" t
             WHERE t.account_id = ${accountId}
               AND t.customer_id IN (${Prisma.join(memberIds)})
               AND t.snapshot_date >= ${fromDate}::date
               AND t.snapshot_date <= ${toDate}::date
             GROUP BY t.snapshot_date
-        `;
+        `,
+            dbClient.customerTopUp.findMany({
+                where: {
+                    customer_id: shellId,
+                    cancelled_at: null,
+                    start_date: { lte: toDate },
+                    end_date: { gte: fromDate },
+                    InsurancePolicy: { policy_kind: "TopUp" },
+                },
+                select: {
+                    id: true,
+                    top_up_type: true,
+                    top_up_value: true,
+                    currency: true,
+                    start_date: true,
+                    end_date: true,
+                    cancelled_at: true,
+                    InsurancePolicy: {
+                        select: {
+                            id: true,
+                            allow_concurrent_top_ups: true,
+                            parent_insurance_policy_id: true,
+                        },
+                    },
+                },
+            }) as Promise<TopUpRowForResolution[]>,
+        ]);
 
         const valueRows: Prisma.Sql[] = [];
         for (const day of dayRows) {
             const dayStart = toUtcDateOnly(day.snapshot_date);
             const poolAr = Math.max(0, Number(day.pool_receivables ?? 0));
+            const approvedLimitRaw = day.root_approved_limit;
+            const approvedLimit =
+                approvedLimitRaw != null && Number.isFinite(Number(approvedLimitRaw))
+                    ? Math.max(0, Number(approvedLimitRaw))
+                    : 0;
+            const parentPolicyId = day.root_insurance_policy_id ?? undefined;
+            const activeForDay = shellTopUps.filter(
+                (row) =>
+                    isActiveTopUp(row, dayStart) &&
+                    (parentPolicyId == null ||
+                        row.InsurancePolicy.parent_insurance_policy_id ===
+                            parentPolicyId)
+            );
+            const resolved = await resolveEffectiveApprovedLimitFromTopUpRows(
+                activeForDay,
+                {
+                    asOfDate: dayStart,
+                    baseApprovedLimit:
+                        approvedLimitRaw != null
+                            ? new Prisma.Decimal(approvedLimit)
+                            : null,
+                    baseApprovedLimitCurrency:
+                        day.root_approved_limit_currency?.trim().toUpperCase() ??
+                        null,
+                    parentPrimaryPolicyId: parentPolicyId,
+                    outdatedDcl: day.root_outdated_dcl === true,
+                    excludedFromPolicy: day.root_excluded_from_policy === true,
+                    dbClient,
+                }
+            );
+            const topUpTotal = Math.max(0, resolved.topUpTotalInLimitCurrency);
             const effectiveLimit = Math.max(
                 0,
-                Number(day.root_effective_limit ?? 0)
+                resolved.effectiveApprovedLimit ?? approvedLimit
             );
             const poolGap = Math.max(0, poolAr - effectiveLimit);
             const poolTerms = Math.max(0, Number(day.pool_terms_breach ?? 0));
@@ -200,9 +287,20 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
                 Math.round(Number(day.pool_terms_breach_count ?? 0))
             );
             const poolAtRisk = Math.min(poolAr, poolGap + poolTerms);
+            const metrics = computeTopUpUsageMetrics({
+                ar: poolAr,
+                approvedLimit,
+                topUpTotal,
+            });
+            const policyUsagePct = Math.min(999.99, metrics.policyUsage * 100);
+            const topUpUsagePct = Math.min(999.99, metrics.topUpUsage * 100);
+            const effectiveUsagePct = Math.min(
+                999.99,
+                metrics.effectiveUsage * 100
+            );
 
             valueRows.push(
-                Prisma.sql`(${dayStart}::date, ${poolGap}::float8, ${poolAtRisk}::float8, ${poolAr}::float8, ${poolTerms}::float8, ${poolTermsCount}::int)`
+                Prisma.sql`(${dayStart}::date, ${poolGap}::float8, ${poolAtRisk}::float8, ${poolAr}::float8, ${poolTerms}::float8, ${poolTermsCount}::int, ${topUpTotal}::float8, ${effectiveLimit}::float8, ${activeForDay.length}::int, ${policyUsagePct}::float8, ${topUpUsagePct}::float8, ${effectiveUsagePct}::float8)`
             );
         }
 
@@ -216,14 +314,27 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
                     total_receivables = v.pool_ar,
                     usage_amount = v.pool_ar,
                     terms_breach_amount = v.pool_terms,
-                    terms_breach_count = v.pool_terms_count
+                    terms_breach_count = v.pool_terms_count,
+                    top_up_total = v.top_up_total,
+                    effective_approved_limit = v.effective_limit,
+                    active_top_up_count = v.active_top_up_count,
+                    policy_usage_pct = v.policy_usage_pct,
+                    top_up_usage_pct = v.top_up_usage_pct,
+                    effective_usage_pct = v.effective_usage_pct,
+                    usage_pct = v.effective_usage_pct
                 FROM (VALUES ${Prisma.join(valueRows)}) AS v(
                     snapshot_date,
                     pool_gap,
                     pool_at_risk,
                     pool_ar,
                     pool_terms,
-                    pool_terms_count
+                    pool_terms_count,
+                    top_up_total,
+                    effective_limit,
+                    active_top_up_count,
+                    policy_usage_pct,
+                    top_up_usage_pct,
+                    effective_usage_pct
                 )
                 WHERE t.account_id = ${accountId}
                   AND t.customer_id = ${shellId}
