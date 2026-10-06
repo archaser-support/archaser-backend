@@ -81,8 +81,9 @@ async function earliestCustomerArActivityDate(
 /**
  * Sum **leaf** member open AR vs shell effective limit for pool capacity gap;
  * approximate pool at-risk as min(pool AR, gap + Σ terms breach). Persist pool
- * AR / terms-breach onto the shell CTP. Stamp extra cover, effective limit, and
- * usage percents from **this shell’s** CustomerTopUp rows (not descendants).
+ * AR / at-risk / compliant (AR − at-risk) / health index / terms-breach onto
+ * the shell CTP. Stamp extra cover, effective limit, and usage percents from
+ * **this shell’s** CustomerTopUp rows (not descendants).
  * Zero gap/at-risk only on **leaf** children (nested shells keep their own
  * local overlay).
  *
@@ -287,6 +288,14 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
                 Math.round(Number(day.pool_terms_breach_count ?? 0))
             );
             const poolAtRisk = Math.min(poolAr, poolGap + poolTerms);
+            const poolCompliant = Math.max(0, poolAr - poolAtRisk);
+            const poolHealthIndex =
+                poolAr > 0
+                    ? Math.max(
+                          0,
+                          Math.min(100, (100 * poolCompliant) / poolAr)
+                      )
+                    : 100;
             const metrics = computeTopUpUsageMetrics({
                 ar: poolAr,
                 approvedLimit,
@@ -300,7 +309,7 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
             );
 
             valueRows.push(
-                Prisma.sql`(${dayStart}::date, ${poolGap}::float8, ${poolAtRisk}::float8, ${poolAr}::float8, ${poolTerms}::float8, ${poolTermsCount}::int, ${topUpTotal}::float8, ${effectiveLimit}::float8, ${activeForDay.length}::int, ${policyUsagePct}::float8, ${topUpUsagePct}::float8, ${effectiveUsagePct}::float8)`
+                Prisma.sql`(${dayStart}::date, ${poolGap}::float8, ${poolAtRisk}::float8, ${poolCompliant}::float8, ${poolHealthIndex}::float8, ${poolAr}::float8, ${poolTerms}::float8, ${poolTermsCount}::int, ${topUpTotal}::float8, ${effectiveLimit}::float8, ${activeForDay.length}::int, ${policyUsagePct}::float8, ${topUpUsagePct}::float8, ${effectiveUsagePct}::float8)`
             );
         }
 
@@ -311,6 +320,8 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
                 SET
                     capacity_gap_amount = v.pool_gap,
                     at_risk_exposure = v.pool_at_risk,
+                    compliant_exposure = v.pool_compliant,
+                    health_index = v.pool_health_index,
                     total_receivables = v.pool_ar,
                     usage_amount = v.pool_ar,
                     terms_breach_amount = v.pool_terms,
@@ -326,6 +337,8 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
                     snapshot_date,
                     pool_gap,
                     pool_at_risk,
+                    pool_compliant,
+                    pool_health_index,
                     pool_ar,
                     pool_terms,
                     pool_terms_count,

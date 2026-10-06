@@ -15,7 +15,7 @@ import {
 } from "./invoiceInsuranceFields";
 import {
     isFullOpenArAtRiskCustomer,
-    uncoveredExposureFieldsFromPolicyLink,
+    atRiskExposureFieldsFromPolicyLink,
 } from "./shared/policyExclusion";
 
 import {
@@ -730,8 +730,8 @@ export async function enrichCreditDashboardCustomerRows(
         if (needsPolicyRisk) {
             const ar = openArByCustomer.get(customerId) ?? 0;
             const policy = getCustomerPolicyRow(row);
-            const uncovered = isFullOpenArAtRiskCustomer(
-                uncoveredExposureFieldsFromPolicyLink({
+            const atRiskCohort = isFullOpenArAtRiskCustomer(
+                atRiskExposureFieldsFromPolicyLink({
                     insurancePolicyId:
                         policy?.insurance_policy_id as number | null | undefined,
                     exclusionReason: policy?.policy_exclusion_reason ?? null,
@@ -745,7 +745,7 @@ export async function enrichCreditDashboardCustomerRows(
                 )
             );
             const invoiceAllocated = computeCustomerRiskExposure({
-                uncovered: false,
+                atRiskCohort: false,
                 totalAr: ar,
                 invoices: atRiskInvoicesByCustomer.get(customerId) ?? [],
                 capacityGapAmount: gapCard,
@@ -754,7 +754,7 @@ export async function enrichCreditDashboardCustomerRows(
                 enriched.policy_risk_allocated = invoiceAllocated;
             }
             if (fields.has("at_risk_exposure")) {
-                enriched.at_risk_exposure = uncovered ? ar : invoiceAllocated;
+                enriched.at_risk_exposure = atRiskCohort ? ar : invoiceAllocated;
             }
         }
         if (needsWarningSummary && options.limitWarningByCustomerId) {

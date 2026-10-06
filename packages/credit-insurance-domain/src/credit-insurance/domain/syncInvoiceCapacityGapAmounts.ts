@@ -20,7 +20,7 @@ import { applyOpenArVatBasis } from "./openArVatBasis";
 import { resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
 import {
     hasActiveLinkedPolicy,
-    isUncoveredExposureCustomer,
+    isAtRiskExposureCustomer,
 } from "./policyExclusion";
 import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
@@ -149,7 +149,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
             excluded_from_policy: true,
         },
     });
-    const uncovered = isUncoveredExposureCustomer({
+    const atRiskCohort = isAtRiskExposureCustomer({
         hasLinkedPolicy: hasActiveLinkedPolicy(
             activePolicy?.insurance_policy_id
         ),
@@ -197,7 +197,7 @@ export async function syncInvoiceCapacityGapAmountsForCustomer(
         capacity_gap_amount_limit: Prisma.Decimal | null;
     }>;
 
-    if (uncovered) {
+    if (atRiskCohort) {
         const zeroIds = invoices
             .filter(
                 (inv) =>

@@ -204,6 +204,8 @@ export type CreditAsOfBackfillRunContext = {
      * Avoids re-reading CustomerPolicyTrend between sequential replay days.
      */
     priorDayTrendCostByKey?: Map<string, TrendCostPredecessorRow>;
+    /** Day-invariant dashboard summary inputs, filled lazily per scope. */
+    dashboardSummaryInputCache?: Map<string, Promise<unknown>>;
 };
 
 function isPolicyEffectivelyActiveOnDate(

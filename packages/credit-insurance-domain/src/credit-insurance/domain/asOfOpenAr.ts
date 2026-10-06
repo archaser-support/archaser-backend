@@ -251,7 +251,7 @@ export function asOfCapacityGapAmount(
 export type AsOfCapacityGapWaterfallScope = {
     effectiveLimit: number;
     limitCurrency: string | null;
-    /** Uncovered / outdated DCL — force invoice gaps to 0. */
+    /** At-risk / outdated DCL — force invoice gaps to 0. */
     zeroGaps?: boolean;
 };
 
@@ -1174,6 +1174,19 @@ export function computeAsOfOpenInvoiceLine(
         openCustomerAmount,
         status: classifyAsOfOpenStatus(line.dueDate, asOfDate),
     };
+}
+
+/**
+ * Keep only lines with non-zero as-of open on `asOfDate`. Apply after terms
+ * flags are overlaid — the MEP sibling sweep still needs closed history.
+ */
+export function filterAsOfOpenLines(
+    lines: AsOfOpenInvoiceLine[],
+    asOfDate: Date
+): AsOfOpenInvoiceLine[] {
+    return lines.filter(
+        (line) => computeAsOfOpenInvoiceLine(line, asOfDate) != null
+    );
 }
 
 function isTermsBreachLine(line: AsOfOpenInvoiceLine): boolean {

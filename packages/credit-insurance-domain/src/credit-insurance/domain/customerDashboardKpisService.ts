@@ -54,7 +54,7 @@ import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
 import {
     resolveFullOpenArAtRiskFromPolicyRows,
-    resolveUncoveredExposureFromPolicyRows,
+    resolveAtRiskExposureFromPolicyRows,
 } from "./termBreachResolver";
 import { listDescendantCustomerIds, resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
 
@@ -715,7 +715,7 @@ export async function getCustomerDashboardKpis(
         policyId
     );
 
-    const uncovered = resolveUncoveredExposureFromPolicyRows(
+    const atRiskCohort = resolveAtRiskExposureFromPolicyRows(
         policyRows,
         policyId
     );
@@ -759,13 +759,13 @@ export async function getCustomerDashboardKpis(
               }
           );
     const atRiskExposure = computeCustomerRiskExposure({
-        uncovered: fullArAtRisk,
+        atRiskCohort: fullArAtRisk,
         totalAr,
         invoices: atRiskInvoices,
         capacityGapAmount: fullArAtRisk ? undefined : capacityGapAmount,
     });
 
-    const uninsuredAmount = uncovered
+    const uninsuredAmount = atRiskCohort
         ? totalAr
         : scopedPolicyRow == null ||
           scopedPolicyRow.outdated_dcl === true ||
@@ -1062,7 +1062,7 @@ export async function getCustomerDashboardKpis(
                   }
               );
         atRiskExposureSecondary = computeCustomerRiskExposure({
-            uncovered: fullArAtRisk,
+            atRiskCohort: fullArAtRisk,
             totalAr: openArSecondary,
             invoices: atRiskInvoicesSecondary,
             capacityGapAmount: fullArAtRisk
@@ -1070,7 +1070,7 @@ export async function getCustomerDashboardKpis(
                 : (capacityGapAmountSecondary ?? 0),
         });
 
-        uninsuredAmountSecondary = uncovered ? openArSecondary : null;
+        uninsuredAmountSecondary = atRiskCohort ? openArSecondary : null;
     }
 
     return {

@@ -79,7 +79,7 @@ export {
     sweepReportingBreachForOverdueInvoiceIds,
 } from "./credit-insurance/domain/syncInvoiceReportingBreach";
 export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/insurancePolicyStatusCron";
-export { fetchUncoveredCustomerIdsForAccount } from "./credit-insurance/domain/termBreachResolver";
+export { fetchAtRiskCustomerIdsForAccount } from "./credit-insurance/domain/termBreachResolver";
 export { syncAllCustomerPolicyGapAmounts } from "./credit-insurance/domain/syncCustomerPolicyGapAmounts";
 export { takeCreditDashboardDailySnapshots } from "./credit-insurance/domain/creditDashboardSnapshotService";
 export { takeInsurancePolicyTrendSnapshots } from "./credit-insurance/domain/insurancePolicyTrendService";
