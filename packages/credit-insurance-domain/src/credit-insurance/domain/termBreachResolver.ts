@@ -2,10 +2,10 @@ import { applyOpenArVatBasis } from "./openArVatBasis";
 import { prisma } from "../domain-db";
 import {
     hasActiveLinkedPolicy,
-    isUncoveredExposureCustomer,
+    isAtRiskExposureCustomer,
     isFullOpenArAtRiskCustomer,
-    uncoveredExposureFieldsFromPolicyLink,
-    type UncoveredExposureFields,
+    atRiskExposureFieldsFromPolicyLink,
+    type AtRiskExposureFields,
 } from "./policyExclusion";
 import { invoiceHasTermsBreachFlag } from "./customerPolicyTrendTermsBreachByReason";
 import { shouldSetReportingBreach } from "./invoiceInsuranceFields";
@@ -24,7 +24,7 @@ export type TermBreachInvoiceRow = {
     ctvInvoiceAfterPolicyEnd?: boolean;
 };
 
-export type PolicyRowForUncoveredExposure = {
+export type PolicyRowForAtRiskExposure = {
     insurance_policy_id: number | null;
     is_active?: boolean;
     policy_exclusion_reason?: string | null;
@@ -97,17 +97,17 @@ export function sumFlagBasedTermsBreachOutstanding(
 }
 
 /**
- * Customer-level terms breach: uncovered → full open AR; else flag-based sum.
+ * Customer-level terms breach: at-risk cohort → full open AR; else flag-based sum.
  */
 export function resolveCustomerTermsBreachOutstanding(args: {
-    uncovered: boolean;
+    atRiskCohort: boolean;
     totalOpenAr: number;
     invoices: TermBreachInvoiceRow[];
     asOf: Date;
     excludeCapacityGapInvoices?: boolean;
     reportingBreachStartDate?: Date | null;
 }): number {
-    if (args.uncovered) {
+    if (args.atRiskCohort) {
         return Math.max(0, args.totalOpenAr);
     }
     return sumFlagBasedTermsBreachOutstanding(args.invoices, args.asOf, {
@@ -116,43 +116,43 @@ export function resolveCustomerTermsBreachOutstanding(args: {
     });
 }
 
-/** Portfolio Terms Breach card/chart: uncovered customers contribute zero. */
+/** Portfolio Terms Breach card/chart: at-risk customers contribute zero. */
 export function resolvePortfolioTermsBreachContribution(args: {
-    uncovered: boolean;
+    atRiskCohort: boolean;
     flagBasedAmount: number;
 }): number {
-    if (args.uncovered) {
+    if (args.atRiskCohort) {
         return 0;
     }
     return Math.max(0, args.flagBasedAmount);
 }
 
-export function resolveUncoveredExposureFromPolicyRows(
-    policyRows: PolicyRowForUncoveredExposure[],
+export function resolveAtRiskExposureFromPolicyRows(
+    policyRows: PolicyRowForAtRiskExposure[],
     policyId?: number | null
 ): boolean {
-    return isUncoveredExposureCustomer(
-        uncoveredExposureFieldsFromPolicyRows(policyRows, policyId)
+    return isAtRiskExposureCustomer(
+        atRiskExposureFieldsFromPolicyRows(policyRows, policyId)
     );
 }
 
 /** Full-AR at-risk: no policy rows, no linked policy, or pending-review only. */
 export function resolveFullOpenArAtRiskFromPolicyRows(
-    policyRows: PolicyRowForUncoveredExposure[],
+    policyRows: PolicyRowForAtRiskExposure[],
     policyId?: number | null
 ): boolean {
     if (policyRows.length === 0) {
         return true;
     }
     return isFullOpenArAtRiskCustomer(
-        uncoveredExposureFieldsFromPolicyRows(policyRows, policyId)
+        atRiskExposureFieldsFromPolicyRows(policyRows, policyId)
     );
 }
 
-export function uncoveredExposureFieldsFromPolicyRows(
-    policyRows: PolicyRowForUncoveredExposure[],
+export function atRiskExposureFieldsFromPolicyRows(
+    policyRows: PolicyRowForAtRiskExposure[],
     policyId?: number | null
-): UncoveredExposureFields {
+): AtRiskExposureFields {
     if (policyRows.length === 0) {
         return { hasLinkedPolicy: false, exclusionReason: null };
     }
@@ -163,7 +163,7 @@ export function uncoveredExposureFieldsFromPolicyRows(
               policyRows[0]
             : policyRows.find((row) => row.is_active) ?? policyRows[0];
 
-    return uncoveredExposureFieldsFromPolicyLink({
+    return atRiskExposureFieldsFromPolicyLink({
         insurancePolicyId: scopedRow?.insurance_policy_id,
         exclusionReason: scopedRow?.policy_exclusion_reason,
     });
@@ -245,8 +245,8 @@ export function aggregatePortfolioTermsBreachFromInvoices(
     };
 }
 
-/** Active-policy uncovered customers for notification suppression. */
-export async function fetchUncoveredCustomerIdsForAccount(
+/** Active-policy at-risk customers for notification suppression. */
+export async function fetchAtRiskCustomerIdsForAccount(
     accountId: number
 ): Promise<Set<number>> {
     const rows = await prisma.customer.findMany({
@@ -264,19 +264,19 @@ export async function fetchUncoveredCustomerIdsForAccount(
         },
     });
 
-    const uncovered = new Set<number>();
+    const atRiskIds = new Set<number>();
     for (const row of rows) {
         const policy = row.CustomerPolicy[0];
         if (
-            isUncoveredExposureCustomer({
+            isAtRiskExposureCustomer({
                 hasLinkedPolicy: hasActiveLinkedPolicy(
                     policy?.insurance_policy_id
                 ),
                 exclusionReason: policy?.policy_exclusion_reason,
             })
         ) {
-            uncovered.add(row.id);
+            atRiskIds.add(row.id);
         }
     }
-    return uncovered;
+    return atRiskIds;
 }

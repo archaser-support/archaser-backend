@@ -5,15 +5,15 @@ export {
     isCustomerPolicyExcluded,
     isNoPolicyExposureCardCustomer,
     isPendingReviewExclusion,
-    isUncoveredExposureCustomer,
+    isAtRiskExposureCustomer,
     isFullOpenArAtRiskCustomer,
     normalizePolicyExclusionReason,
     POLICY_EXCLUSION_REASONS,
-    uncoveredExposureFieldsFromPolicyLink,
+    atRiskExposureFieldsFromPolicyLink,
 } from "./shared/policyExclusion";
 
 export type {
     NoPolicyExposureCardFields,
     PolicyExclusionReason,
-    UncoveredExposureFields,
+    AtRiskExposureFields,
 } from "./shared/policyExclusion";

@@ -5,7 +5,7 @@
 
 import {
     hasActiveLinkedPolicy,
-    isUncoveredExposureCustomer,
+    isAtRiskExposureCustomer,
 } from "./policyExclusion";
 
 export type PolicyGapReadable = {
@@ -26,7 +26,7 @@ export type PolicyGapReadable = {
     approved_limit?: unknown;
 };
 
-/** Capacity gap is zeroed at read time when DCL is outdated or customer is uncovered. */
+/** Capacity gap is zeroed at read time when DCL is outdated or customer is in the at-risk cohort. */
 export function isPolicyCapacityGapSuppressed(c: PolicyGapReadable): boolean {
     if (c.outdated_dcl === true) {
         return true;
@@ -38,7 +38,7 @@ export function isPolicyCapacityGapSuppressed(c: PolicyGapReadable): boolean {
     const exclusionReason =
         c.policy_exclusion_reason ??
         (c.excluded_from_policy === true ? "excluded" : null);
-    return isUncoveredExposureCustomer({ hasLinkedPolicy, exclusionReason });
+    return isAtRiskExposureCustomer({ hasLinkedPolicy, exclusionReason });
 }
 
 /** Stored KPI capacity gap on CustomerPolicy (`max(0, AR − effective limit)`). */

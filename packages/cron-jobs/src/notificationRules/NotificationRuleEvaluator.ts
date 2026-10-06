@@ -195,7 +195,7 @@ export class PrismaNotificationRuleEvaluatorProvider
 {
     constructor(
         private readonly prisma: PrismaClient,
-        private readonly fetchUncoveredCustomerIds: (
+        private readonly fetchAtRiskCustomerIds: (
             accountId: number
         ) => Promise<Set<number>>,
         private readonly options?: {
@@ -220,7 +220,7 @@ export class PrismaNotificationRuleEvaluatorProvider
     }
 
     async getCapacityGapCustomers(accountId: number): Promise<CustomerSignal[]> {
-        const uncoveredIds = await this.fetchUncoveredCustomerIds(accountId);
+        const atRiskIds = await this.fetchAtRiskCustomerIds(accountId);
         const rows = await this.prisma.customerPolicy.findMany({
             where: {
                 Customer: { account_id: accountId },
@@ -237,7 +237,7 @@ export class PrismaNotificationRuleEvaluatorProvider
         });
         const unique = new Map<number, CustomerSignal>();
         rows.forEach((row) => {
-            if (uncoveredIds.has(row.customer_id)) {
+            if (atRiskIds.has(row.customer_id)) {
                 return;
             }
             unique.set(row.customer_id, {
@@ -262,7 +262,7 @@ export class PrismaNotificationRuleEvaluatorProvider
     async getEntryTermsBreachInvoices(
         accountId: number
     ): Promise<InvoiceSignal[]> {
-        const uncoveredIds = await this.fetchUncoveredCustomerIds(accountId);
+        const atRiskIds = await this.fetchAtRiskCustomerIds(accountId);
         return this.prisma.invoice
             .findMany({
                 where: {
@@ -288,7 +288,7 @@ export class PrismaNotificationRuleEvaluatorProvider
                     .filter(
                         (row) =>
                             row.customer_id == null ||
-                            !uncoveredIds.has(row.customer_id)
+                            !atRiskIds.has(row.customer_id)
                     )
                     .map((row) => ({
                         invoiceId: row.id,
