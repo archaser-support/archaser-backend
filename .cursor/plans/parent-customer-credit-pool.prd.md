@@ -1,7 +1,7 @@
 ---
 name: parent-customer-credit-pool
-overview: Shell parent roots own one credit policy pool; children inherit and lock; parent Dashboard shows BU-scoped rollups; portfolio/CDP/credit-dashboard reports count the root (descendant invoices attributed); parent change syncs today CTP+CDP fail-closed and scopes async CTP history with a stepped progress modal.
-source: grill-me session /start-work CU-869f9dx8q + grill 2026-09-30 shell-parent revision + 2026-10-01 report attribution + 2026-10-01 sync-progress modal grill
+overview: Shell parent roots own one credit policy pool; children inherit and lock policy and top-ups; parent Dashboard shows BU-scoped rollups; portfolio/CDP/credit-dashboard reports count the root (descendant invoices attributed); parent change syncs today CTP+CDP fail-closed and scopes async CTP history with a stepped progress modal.
+source: grill-me session /start-work CU-869f9dx8q + grill 2026-09-30 shell-parent revision + 2026-10-01 report attribution + 2026-10-01 sync-progress modal grill + 2026-10-06 connect top-up remirror grill
 clickup_task_url: https://app.clickup.com/t/869f9dx8q
 isProject: false
 ---
@@ -15,7 +15,7 @@ Credit insurance settings, approved limits, and capacity gaps live **per custome
 ## Solution
 
 1. **Shell root + one shared pool** (nesting allowed): the credit-pool root (and every mid-level node with children) is a **shell** — no invoices and no payments. Group open AR vs one effective limit (root approved limit + root top-ups only). **Shared capacity gap and pool at-risk live on the root only** (linked children’s live capacity gap = 0; CTP history zeros capacity gap and at-risk on children).
-2. **Inherit and lock:** On connect (any path that sets `parent_customer_id`), overwrite the child’s customer policy from the root (active **and** pending, including `customer_number_policy`) and keep mirroring while linked — **except capacity-gap snapshot fields, which stay 0 on children**. Hide **Edit policy** and **Top-up** on linked children. On disconnect, unlock and **leave** the last mirrored settings; recalculate that customer (or its new subtree pool) independently and **rebuild its CustomerPolicyTrend history** as standalone.
+2. **Inherit and lock:** On connect (any path that sets `parent_customer_id`), overwrite the child’s customer policy from the root (active **and** pending, including `customer_number_policy`) and keep mirroring while linked — **except capacity-gap snapshot fields, which stay 0 on children**. **Top-ups remirror the same way as policy (grill 2026-10-06):** cancel the child’s live top-up rows (`cancelled_at`), then copy every **uncancelled** root `CustomerTopUp` (past, current, and future windows) onto the child; empty root → cancel the child’s live top-ups with no new copies. Root top-up create/edit/cancel remirrors to all descendants. Shared extra cover still counts **root rows only** (child copies must not double the pool). Hide **Edit policy** and **Top-up** on linked children. On disconnect, unlock; **leave last mirrored policy**; **cancel all live top-ups** on the unbound customer (do not restore the pre-link rows; do not leave the last Group copies live). If that node still has descendants, remirror the subtree from it as the new root (those descendants end with no live top-ups either). Recalculate independently and **rebuild CustomerPolicyTrend history** as standalone.
 2b. **CTP + CDP sync on parent change (fail-closed for live today; async CTP history):** On save, synchronously rewrite **today’s** CustomerPolicyTrend + Credit Dashboard Daily Snapshot (CDP) for affected pool members / account scopes and fail-closed with the parent save. Then start a **scoped async CTP history job** (pool members from earliest invoice/payment → today) that overlays root gap/at-risk; it does **not** rewrite full CDP chart history (overnight / Portfolio Health Generate catch up). Treat today’s membership as always-on for past CTP days. Root CTP: only capacity gap + at-risk become pool totals; other fields stay the root’s own as-of (plus breach OR roll-up — see §6). Children: capacity gap + at-risk = 0 on history; **keep writing child CTP** otherwise (no per-child CDP rows).
 2c. **Progress modal during parent-change sync (grill 2026-10-01):** Open the credit-history refresh modal **immediately on Save** (not after the PUT returns). Keep sync **inside** the Save request (fail-closed). Extend the same `credit_pool_parent_history` job with a Save-time **`syncing`** phase and a `step` field the UI polls; then hand off to the existing async history phase (`running`). Modal shows a **checklist** of plain-language steps (remirror → capacity gap → today CTP → pool overlay → today CDP → breach/open-AR rollups → history). Bootstrap with “Starting…”. Modal is **not dismissible** while Save/syncing; on sync failure show failed step + error + Close (parent rolled back). After Save succeeds, history may keep today’s dismiss-while-running behavior.
 3. **Parent Dashboard (not Aggregated Data for credit):** Shell parents show **Dashboard** with aggregated credit cards and a **member table** (local subtree ∩ business-unit permissions) plus claim counts. Linked children keep **N/A** on those pool cards. **Hide Invoices and Payments** tabs on any customer that has children. Keep **Aggregated Data** tab only when collection content exists; do not put the credit KPI block there.
@@ -28,9 +28,11 @@ Credit insurance settings, approved limits, and capacity gaps live **per custome
 1. As a credit officer, I want a child’s policy settings to match the root parent when I link them, so that the hierarchy shares one credit posture.
 2. As a credit officer, I want linked children’s policy fields locked, so that nobody edits a child out of sync with the root.
 3. As a credit officer, I want Edit policy and Top-up hidden on a linked child, so that the UI makes the lock obvious.
-4. As a credit officer, I want only the root’s top-ups to raise the shared effective limit, so that child top-ups do not inflate the pool while linked.
-5. As a credit officer, I want child top-up rows to stay in the database but not apply while linked, so that disconnect can restore prior child top-up behavior without data loss.
-6. As a credit officer, I want disconnect to unlock the child and keep the last mirrored settings, so that the child is not wiped when leaving the hierarchy.
+4. As a credit officer, I want only the root’s top-up **rows** to raise the shared effective limit, so that copied child top-ups do not double-count the pool while linked.
+5. As a credit officer, I want linking a child to copy the root’s uncancelled top-ups onto the child (after cancelling the child’s live top-ups), so that top-ups stay aligned the same way as customer policy.
+5b. As a credit officer, I want later root top-up create/edit/cancel (including clearing all root top-ups) to remirror onto linked children, so that the pool does not drift.
+6. As a credit officer, I want disconnect to unlock the child and keep the last mirrored **policy**, so that policy is not wiped when leaving the hierarchy.
+6b. As a credit officer, I want disconnect to cancel the unbound customer’s **live top-ups** (and remirror that empty live set onto remaining descendants), so that Group copies and the child’s old top-ups do not stay live after unlink.
 7. As a credit officer, I want the same inheritance rules when parent is set via import or ERP (Enterprise Resource Planning) sync, so that nightly links stay consistent with the UI.
 8. As a credit officer, I want linking to succeed even if the root has no active policy yet, so that hierarchy setup is not blocked; children mirror empty until the root has a policy.
 9. As a credit officer, I want root policy edits (including pending versions) to remirror to all descendants, so that the pool stays aligned.
@@ -63,8 +65,9 @@ Credit insurance settings, approved limits, and capacity gaps live **per custome
 - **Shell root:** Any customer with children must not have invoices or payments. Block setting `parent_customer_id` when the new parent already has invoices/payments. Block creating new invoices/payments on customers that have children. Greenfield — no grandfather/migration path in this PRD.
 - **Canonical edits:** Only the top root may edit customer policy / top-ups for the pool. Linked customers (including mid-level shells that themselves have a parent) are locked for policy/top-up edits.
 - **Mirror:** On connect and on root policy change, copy root active + pending customer-policy settings (including `customer_number_policy`) onto each descendant’s `CustomerPolicy` rows as needed. Capacity-gap snapshot fields on linked children forced to 0. Empty root policy → clear/empty mirrors.
-- **Top-ups:** Shared effective limit = root `approved_limit` + root active top-ups only. Child top-ups ignored while linked; UI creates/edits hidden.
-- **Disconnect:** Clear `parent_customer_id`; unlock UI; leave mirrored policy data; stop applying root top-ups rule; recalculate gaps for the unbound customer and, if it has children, treat it as the new root of its subtree (remirror that subtree from the new root); sync today CTP+CDP fail-closed and enqueue scoped async CTP history for affected roots.
+- **Top-ups (connect remirror — grill 2026-10-06 D1–D8):** Same side-effect path as policy. On connect and on root top-up mutation: cancel descendant live top-ups, then insert copies of every **uncancelled** root row (all date windows; not cancelled history). Match/copy fields: insurance policy, start, end, type, amount, currency (plus notes/premium/audit as on the source). Empty root → cancel live descendant top-ups only. Shared effective limit = root `approved_limit` + **root** active top-ups only (ignore descendant copies in limit math). UI creates/edits hidden on linked children.
+- **Disconnect:** Clear `parent_customer_id`; unlock UI; leave mirrored **policy** data; **cancel all live top-ups** on the unbound customer (leave cancelled history; do not uncancel pre-link rows; do not keep last Group copies live); if it has children, treat it as the new root and remirror policy + top-ups from that node (live top-ups empty); sync today CTP+CDP fail-closed and enqueue scoped async CTP history for affected roots.
+- **Staging datafix (account 10149):** One-off lift of missing child top-ups **onto** empty shells is **not** this remirror. Plan: `.cursor/plans/lift-child-topups-to-shell-10149.plan.md` (copy cancelled history too; then cancel matching child rows; enqueue as-of rewrite).
 - **Gap pipeline:** Group-scope capacity gap / invoice waterfall (combined open invoices oldest-first against shared effective limit). Persist gap on root only; child invoice gaps = 0.
 - **Parent UI:** Hide Invoices + Payments tabs when `ChildCustomers` exist. Show Dashboard with pool rollup cards (replace N/A) + member table + claim counts. Linked children keep N/A on pool cards. Aggregated Data tab only if collection content exists.
 - **UI scope (mid-level):** Dashboard cards and member table = **local subtree ∩ business-unit permissions**. Domain/CDP/Portfolio/credit reports still use the full top-root pool (with descendant-invoice attribution).
@@ -80,7 +83,7 @@ Credit insurance settings, approved limits, and capacity gaps live **per custome
 
 ## Testing Decisions
 
-- Prefer **external behavior**: after connect, child settings match root and edits are blocked; shell guards reject non-empty parents and new AR on parents; shared gap equals group AR vs root effective limit; parent Dashboard shows rollups (children N/A); parent breach reflects children; disconnect leaves values and unlocks; portfolio/CDP/customer-grain reports omit children as customers but include child invoices under root on invoice-grain reports; parent save refreshes today CTP+CDP together and starts async CTP history.
+- Prefer **external behavior**: after connect, child **policy and uncancelled top-ups** match root and edits are blocked; shell guards reject non-empty parents and new AR on parents; shared gap equals group AR vs root effective limit (root top-up rows only); parent Dashboard shows rollups (children N/A); parent breach reflects children; disconnect leaves last **policy**, cancels live **top-ups**, and unlocks; portfolio/CDP/customer-grain reports omit children as customers but include child invoices under root on invoice-grain reports; parent save refreshes today CTP+CDP together and starts async CTP history.
 - Good tests assert outcomes (mirrored fields, gap amounts, exclusion counts, roll-up flags, report KPI card ≡ grid cohort), not internal SQL shape.
 - Prior art: customer policy apply/save, gap sync pipeline, customer dashboard KPIs, portfolio health cohort filters, as-of CDP writers, credit dashboard ViewBased markers.
 - Do **not** add automated tests unless the user explicitly asks in an implementation session.
@@ -106,7 +109,7 @@ Credit insurance settings, approved limits, and capacity gaps live **per custome
 | D1 | Shared limits/gaps | One pool |
 | D2 | Canonical settings | Root-only edits |
 | D3 | Connect existing child policy | Overwrite + mirror while linked |
-| D4 | Top-ups + child UI | Root top-ups only; hide Edit policy & Top-up on children |
+| D4 | Top-ups + child UI | **Revised 2026-10-06:** remirror like policy (see D1t–D8t). Hide Edit policy & Top-up on children. Shared limit still root rows only. |
 | D5 (orig) | Aggregated view | **Revised 2026-09-30:** fold credit into Dashboard (see D17′) |
 | D6 | Child header gap | Children N/A on pool cards; parent shows rollup |
 | D7 | Invoice gaps | One group waterfall (oldest first); persist on root only |
@@ -147,6 +150,14 @@ Credit insurance settings, approved limits, and capacity gaps live **per custome
 | D19′ | Member table | Local subtree ∩ BU permissions |
 | D20′ | UI card scope | Same as table (local ∩ BU) |
 | D21′ | Credit dashboard detail reports | Customer-grain: exclude linked children. Invoice-grain: include child invoices; attribute displayed customer to pool root (`attributePrismaInvoiceCustomersToCreditPoolRoots` on leaves + ViewBased execute). Zero-limit KPI = root `customer.count`. Shell-root `customerId` drill-down expands via `resolveInvoiceReportCustomerIds`. |
+| D1t | Connect top-ups | Overwrite like policy — copy root uncancelled top-ups onto the child |
+| D2t | Child’s old top-up rows | Cancel live rows (`cancelled_at`), then insert copies; keep cancelled history |
+| D3t | Keep in sync | Root top-up create/edit/cancel remirrors to all linked descendants |
+| D4t | Empty root top-ups | Cancel child’s live top-ups so they match empty |
+| D5t | Disconnect top-ups | Cancel **all live** top-ups on the unbound customer (unlike policy, which keeps last copy) |
+| D6t | Mid-level unlink | Remirror remaining descendants from the new root → they also have no live top-ups |
+| D7t | Which root rows to copy | Every **uncancelled** root top-up (past, current, future). Not cancelled history |
+| D8t | Shared limit while linked | Count **root** top-up rows only — child copies do not add extra cover |
 
 ### Discovery gates
 
@@ -165,7 +176,7 @@ Credit insurance settings, approved limits, and capacity gaps live **per custome
 
 - Customer `parent_customer_id` update paths (API mapper/service, import/billing connector parent resolution) + shell guards (`creditPoolShellGuards`)
 - Invoice/payment create paths — block when customer has children
-- CustomerPolicy apply/save + pending lifecycle; top-up list/create UI gating; `parentCustomerCreditInheritance` remirror
+- CustomerPolicy apply/save + pending lifecycle; top-up list/create UI gating; `parentCustomerCreditInheritance` remirror **policy and uncancelled top-ups** on connect / root mutation / disconnect
 - Gap pipeline (customer + invoice capacity gap sync) for group scope + root-only persist
 - Customer header (parent + children indications); Policies tab lock/hide; hide Invoices/Payments tabs on parents
 - Customer Dashboard cards/header N/A flip for parents; member table + claim counts; pool rollup helpers (`computeCreditPoolDashboardRollup`, `customerDashboardKpisService` pool expand)
@@ -198,7 +209,7 @@ Tracer-bullet breakdown published as commit-able markdown under `.cursor/plans/p
 
 | # | Title | File | Waiting on | User stories |
 |---|-------|------|------------|--------------|
-| 1 | Shell guards, inherit/lock, header links, breach roll-up | `issues/01-inherit-lock-header.md` | — | 1–11, 19, 22–23, 25–28 |
+| 1 | Shell guards, inherit/lock, header links, breach roll-up | `issues/01-inherit-lock-header.md` | — | 1–11, 5b, 6b, 19, 22–23, 25–28 |
 | 2 | Shared group capacity gap + invoice waterfall | `issues/02-group-gap-waterfall.md` | 01 | 12–13 |
 | 3 | Parent Dashboard rollups + member table (fold credit off Aggregated Data) | `issues/03-aggregated-data-credit.md` | 01 | 14–18, 22, 27 |
 | 4 | Portfolio/CDP/reports exclude + attribute + parent-change sync | `issues/04-portfolio-exclude-children.md` | 01 | 20–21, 29–31 |
