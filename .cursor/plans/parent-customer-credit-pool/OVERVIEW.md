@@ -1,6 +1,6 @@
 # Parent customer shared credit policy pool
 
-Shell parent roots own one shared credit policy pool: children inherit and lock settings; parent Dashboard shows BU-scoped rollups (children keep N/A); Portfolio/CDP/credit-dashboard reports count the root with descendant invoices attributed; parent-link change syncs **today** CTP+CDP fail-closed and scopes async CTP history.
+Shell parent roots own one shared credit policy pool: children inherit and lock **policy and top-ups**; parent Dashboard shows BU-scoped rollups (children keep N/A); Portfolio/CDP/credit-dashboard reports count the root with descendant invoices attributed; parent-link change syncs **today** CTP+CDP fail-closed and scopes async CTP history.
 
 **PRD:** `.cursor/plans/parent-customer-credit-pool.prd.md`
 
