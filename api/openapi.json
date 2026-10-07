@@ -8800,6 +8800,64 @@
         ]
       }
     },
+    "/api/entities/insurance-policies/{id}/save-preview": {
+      "post": {
+        "operationId": "InsurancePoliciesActionsController_savePreview",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Preview an insurance policy save: changed customer-push fields and affected customer counts",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/insurance-policies/{id}/cancel-pending": {
+      "post": {
+        "operationId": "InsurancePoliciesActionsController_cancelPending",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cancel the scheduled (future-dated) insurance policy revision",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/insurance-policies/{id}/customer-prefill": {
       "get": {
         "operationId": "InsurancePoliciesActionsController_customerPrefill",
@@ -8969,6 +9027,7 @@
           "entities"
         ],
         "summary": "Entity by id \u2014 insurance-policies",
+        "description": "Optional body `effective_date` (YYYY-MM-DD, UTC). Omitted or today applies live. A future date stores the form as the single pending revision (`pending_effective_date` + `pending_payload`) without changing live columns or customers.",
         "security": [
           {
             "bearer": []
@@ -8978,11 +9037,17 @@
           "200": {
             "description": "OK (legacy Pages API shape)"
           },
+          "400": {
+            "description": "Invalid or past effective_date (EFFECTIVE_DATE_INVALID / EFFECTIVE_DATE_IN_PAST), or future date without a customer-push field change (FUTURE_EFFECTIVE_DATE_REQUIRES_PUSH_CHANGE)"
+          },
           "401": {
             "description": "Unauthorized"
           },
           "404": {
             "description": "Not found / not strangler\u2019d"
+          },
+          "409": {
+            "description": "A pending revision already exists (INSURANCE_POLICY_PENDING_REVISION_EXISTS)"
           }
         }
       },
