@@ -95,8 +95,13 @@ export async function purgeCreditSnapshotsAfterInvoiceOrPaymentClear(args: {
 }
 
 /**
- * Delete CPT rows linked to inactive CustomerPolicy for the scope (all dates).
- * Complements per-day pruneInactiveCustomerPolicyTrendRows during rewrite.
+ * Delete CPT rows linked to inactive CustomerPolicy that are no longer valid
+ * history for the scope. Complements per-day pruneInactiveCustomerPolicyTrendRows.
+ *
+ * Keeps superseded-history CPT (inactive + null end + a later successor, or
+ * inactive with end_date and snapshot_date &lt; end). Deletes:
+ * - dated unassign / run-off: snapshot_date ≥ policy_change_end_date
+ * - orphan inactive (null end, no later successor): all CPT for that version
  */
 export async function deleteInactiveCustomerPolicyTrendRowsForScope(
     args: CreditSnapshotScopeArgs
@@ -108,14 +113,31 @@ export async function deleteInactiveCustomerPolicyTrendRowsForScope(
         USING "CustomerPolicy" cp
         WHERE t.customer_policy_id = cp.id
           AND cp.is_active = false
-          AND (
-            cp.policy_change_end_date IS NULL
-            OR t.snapshot_date >= cp.policy_change_end_date
-          )
           AND t.account_id = ${args.accountId}
           AND (
             ${customerIds == null}::boolean
             OR t.customer_id = ANY(${customerIds ?? []}::int[])
+          )
+          AND (
+            (
+              cp.policy_change_end_date IS NOT NULL
+              AND t.snapshot_date >= cp.policy_change_end_date
+            )
+            OR (
+              cp.policy_change_end_date IS NULL
+              AND NOT EXISTS (
+                SELECT 1
+                FROM "CustomerPolicy" later
+                WHERE later.customer_id = cp.customer_id
+                  AND (
+                    later.policy_change_start_date > cp.policy_change_start_date
+                    OR (
+                      later.policy_change_start_date = cp.policy_change_start_date
+                      AND later.id > cp.id
+                    )
+                  )
+              )
+            )
           )
     `;
 }
