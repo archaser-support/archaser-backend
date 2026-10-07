@@ -51,10 +51,13 @@ export class CronQueueService implements OnModuleDestroy {
         this.connection.on("error", (err) => {
             this.logger.warn(`Cron queue Redis: ${err.message}`);
         });
-        this.queue = new Queue(CRON_QUEUE_NAME, {
+        // Match worker: production compose sets BULLMQ_QUEUE=archaser-cron-prod.
+        const cronQueueName =
+            this.config.get<string>("BULLMQ_QUEUE") || CRON_QUEUE_NAME;
+        this.queue = new Queue(cronQueueName, {
             connection: this.connection,
         });
-        this.logger.log(`Cron queue ready (${CRON_QUEUE_NAME} @ ${redisUrl})`);
+        this.logger.log(`Cron queue ready (${cronQueueName} @ ${redisUrl})`);
         return this.queue;
     }
 
@@ -350,6 +353,92 @@ export class CronQueueService implements OnModuleDestroy {
             return {
                 queued: false,
                 reason: error instanceof Error ? error.message : "enqueue failed",
+            };
+        }
+    }
+
+    /**
+     * Snapshot waiting/active/failed plus sample waiting jobs for Grafana alert emails.
+     */
+    async getQueueBacklogSnapshot(
+        logicalQueue:
+            | "cron"
+            | "credit_asof_backfill"
+            | "account_vat_basis_refresh",
+        sampleLimit = 10
+    ): Promise<{
+        logicalQueue: string;
+        redisQueueName: string | null;
+        waiting: number;
+        active: number;
+        failed: number;
+        waitingJobs: Array<{ id: string; name: string }>;
+        error?: string;
+    }> {
+        const queue =
+            logicalQueue === "cron"
+                ? this.ensureQueue()
+                : logicalQueue === "credit_asof_backfill"
+                  ? this.ensureBackfillQueue()
+                  : this.ensureVatBasisRefreshQueue();
+        if (!queue) {
+            return {
+                logicalQueue,
+                redisQueueName: null,
+                waiting: 0,
+                active: 0,
+                failed: 0,
+                waitingJobs: [],
+                error: "BULLMQ_ENABLED=false or Redis unavailable",
+            };
+        }
+        const ready = await this.ensureRedisReady();
+        if (!ready.ok) {
+            return {
+                logicalQueue,
+                redisQueueName: queue.name,
+                waiting: 0,
+                active: 0,
+                failed: 0,
+                waitingJobs: [],
+                error: ready.reason ?? "Redis not ready",
+            };
+        }
+        try {
+            const counts = await queue.getJobCounts(
+                "waiting",
+                "active",
+                "failed"
+            );
+            const jobs = await queue.getJobs(
+                ["waiting"],
+                0,
+                Math.max(0, sampleLimit - 1),
+                true
+            );
+            return {
+                logicalQueue,
+                redisQueueName: queue.name,
+                waiting: counts.waiting ?? 0,
+                active: counts.active ?? 0,
+                failed: counts.failed ?? 0,
+                waitingJobs: jobs.map((job) => ({
+                    id: String(job.id ?? ""),
+                    name: job.name || "unknown",
+                })),
+            };
+        } catch (error) {
+            return {
+                logicalQueue,
+                redisQueueName: queue.name,
+                waiting: 0,
+                active: 0,
+                failed: 0,
+                waitingJobs: [],
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "getJobCounts failed",
             };
         }
     }
