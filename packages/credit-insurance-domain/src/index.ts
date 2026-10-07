@@ -244,6 +244,7 @@ export {
 } from "./credit-insurance/domain/asOfOpenArLedgerPreload";
 export {
     buildAsOfTermsMapFromActiveCustomerPolicies,
+    buildAsOfTermsMapForDate,
     buildCreditAsOfBackfillRunContext,
     createMinimalCreditAsOfBackfillRunContext,
     deriveDashboardSnapshotScopes,
@@ -252,6 +253,11 @@ export {
     type CreditAsOfBackfillRunContext,
     type CreditDashboardSnapshotScope,
 } from "./credit-insurance/domain/creditAsOfBackfillRunContext";
+export {
+    isCustomerPolicyVersionEffectiveOnDate,
+    selectCustomerPoliciesEffectiveOnDate,
+    selectCustomerPoliciesForTrendWriteOnDate,
+} from "./credit-insurance/domain/customerPolicyAsOfVersion";
 export {
     batchUpsertCustomerPolicyTrendRows,
     CUSTOMER_POLICY_TREND_BATCH_UPSERT_CHUNK_SIZE,

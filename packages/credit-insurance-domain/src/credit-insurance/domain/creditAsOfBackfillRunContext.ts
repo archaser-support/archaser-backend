@@ -18,6 +18,7 @@ import {
     asOfTermsScopeKey,
     type AsOfPolicyTermsForBreach,
 } from "./asOfOpenAr";
+import { buildAsOfTermsMapForDate } from "./customerPolicyAsOfVersion";
 
 const COLLECTION_LIVE = ["Active", "Inactive"] as const;
 
@@ -40,11 +41,16 @@ export type TopUpRowForTrendReplay = TopUpRowForResolution & {
     premium_currency: string | null;
 };
 
-/** Active {@link CustomerPolicy} rows loaded once per Generate / drain replay run. */
+/**
+ * CustomerPolicy versions loaded once per Generate / drain replay run.
+ * Includes the live active row, superseded inactive versions (terms history),
+ * and inactive run-off rows (`policy_change_end_date` set).
+ */
 export type ActiveCustomerPolicyForTrendSync = {
     id: number;
     customer_id: number;
     is_active: boolean;
+    policy_change_start_date: Date;
     policy_change_end_date: Date | null;
     insurance_policy_id: number | null;
     customer_number_policy: string | null;
@@ -82,7 +88,10 @@ export type ActiveCustomerPolicyForTrendSync = {
     } | null;
 };
 
-/** Terms map used by CPT + dashboard as-of overlay (Generate start and resume). */
+/**
+ * Map terms from an already day-filtered policy list.
+ * For Generate / history replay prefer {@link buildAsOfTermsMapForDate}.
+ */
 export function buildAsOfTermsMapFromActiveCustomerPolicies(
     policies: ActiveCustomerPolicyForTrendSync[]
 ): Map<string, AsOfPolicyTermsForBreach> {
@@ -111,6 +120,9 @@ export function buildAsOfTermsMapFromActiveCustomerPolicies(
     }
     return termsByCustomerAndPolicy;
 }
+
+/** Re-export day-scoped terms map (Generate / dashboard / CPT overlay). */
+export { buildAsOfTermsMapForDate };
 
 type CachedInsurancePolicy = {
     id: number;
@@ -250,9 +262,9 @@ export async function loadActiveCustomerPoliciesForTrendSync(
             OR: [
                 { is_active: true },
                 {
+                    // Superseded versions (terms history) + dated unassign run-off.
                     is_active: false,
                     status: "inactive",
-                    policy_change_end_date: { not: null },
                     insurance_policy_id: { not: null },
                 },
             ],
@@ -271,6 +283,7 @@ export async function loadActiveCustomerPoliciesForTrendSync(
             id: true,
             customer_id: true,
             is_active: true,
+            policy_change_start_date: true,
             policy_change_end_date: true,
             insurance_policy_id: true,
             customer_number_policy: true,

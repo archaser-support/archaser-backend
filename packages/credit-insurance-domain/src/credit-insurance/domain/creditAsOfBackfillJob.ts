@@ -25,7 +25,7 @@ import {
     isUtcCalendarToday,
 } from "./asOfOpenAr";
 import {
-    buildAsOfTermsMapFromActiveCustomerPolicies,
+    buildAsOfTermsMapForDate,
     buildCreditAsOfBackfillRunContext,
     createMinimalCreditAsOfBackfillRunContext,
     ensureCapacityGapsForBackfillRun,
@@ -579,13 +579,9 @@ export async function runCreditAsOfBackfillJob(
         }
 
         const ignoreReportingBreach = false;
-        const sharedTermsByCustomerAndPolicy =
+        const hasVersionedPolicies =
             useOptimizedReplayPath &&
-            runContext.activeCustomerPolicies.length > 0
-                ? buildAsOfTermsMapFromActiveCustomerPolicies(
-                      runContext.activeCustomerPolicies
-                  )
-                : null;
+            runContext.activeCustomerPolicies.length > 0;
 
         let pendingCheckpoint: {
             checkpointDate: Date;
@@ -732,11 +728,14 @@ export async function runCreditAsOfBackfillJob(
                 if (isUtcCalendarToday(day)) {
                     // Keep live reporting-breach + CTV; do not strip RB for today.
                     asOfTermsFlagsApplied = true;
-                } else if (sharedTermsByCustomerAndPolicy) {
+                } else if (hasVersionedPolicies) {
                     asOfLines = overlayAsOfTermsFlagsOnLines(
                         asOfLines,
                         day,
-                        sharedTermsByCustomerAndPolicy,
+                        buildAsOfTermsMapForDate(
+                            runContext.activeCustomerPolicies,
+                            day
+                        ),
                         {
                             ignoreReportingBreach,
                             mepBreachStartDate: runContext.mepBreachStartDate,
