@@ -14,6 +14,8 @@ import {
 } from "@prisma/client";
 import {
     AdminBackfillBlockingRewriteError,
+    applyDatedCustomerPolicyUnassign,
+    DatedCustomerPolicyUnassignError,
     deriveExcludedFromPolicy,
     ensureCustomerCapacityGapStored,
     freezeCustomerPolicyGapOnDeactivation,
@@ -369,6 +371,7 @@ export class CustomerPolicyService {
         | "switch"
         | "clear"
         | "pending"
+        | "unassign"
     > {
         if (!hasPolicyPayloadInBody(args.body)) {
             return "noop";
@@ -398,10 +401,10 @@ export class CustomerPolicyService {
             if (activeRow == null) {
                 return "noop";
             }
-            await this.clearActivePolicy(args.customerId, activeRow.id, args.userId);
-            await this.runPostSaveSync(args.customerId, payload);
-            await this.remirrorPoolAfterMutation(args);
-            return "clear";
+            throw new BadRequestException({
+                error: "Use Remove policy to unassign. Clearing the insurance policy on Save is not supported.",
+                code: "POLICY_UNASSIGN_REQUIRES_REMOVE",
+            });
         }
 
         if (nextPolicyId == null) {
@@ -584,6 +587,32 @@ export class CustomerPolicyService {
     }
 
     /**
+     * Policies-tab Remove policy: past/today applies run-off; a future date
+     * creates the single pending null-policy change (no rewrite until cron).
+     */
+    async applyUnassignFromPoliciesTab(args: {
+        customerId: number;
+        accountId: number;
+        userId: string;
+        unassignDate: unknown;
+    }): Promise<{ customerPolicyId: number }> {
+        try {
+            return await applyDatedCustomerPolicyUnassign({
+                customerId: args.customerId,
+                accountId: args.accountId,
+                userId: args.userId,
+                unassignDate:
+                    args.unassignDate == null
+                        ? null
+                        : parseOptionalDate(args.unassignDate, "unassign_date"),
+                dbClient: this.db,
+            });
+        } catch (error) {
+            this.rethrowUnassignError(error);
+        }
+    }
+
+    /**
      * Soft-cancel the single pending future policy change (status → inactive).
      * Unlocks Policies-tab saves; row remains in history. No rewrite.
      */
@@ -622,6 +651,44 @@ export class CustomerPolicyService {
             userId: args.userId,
         });
         return { id: pending.id };
+    }
+
+    private rethrowUnassignError(error: unknown): never {
+        if (error instanceof DatedCustomerPolicyUnassignError) {
+            switch (error.code) {
+                case "LINKED_CHILD_POLICY_LOCKED":
+                    throw new ForbiddenException({
+                        error: error.message,
+                        code: error.code,
+                    });
+                case "PENDING_POLICY_CHANGE_EXISTS":
+                    throw new ConflictException({
+                        error: error.message,
+                        code: error.code,
+                    });
+                case "NO_ACTIVE_POLICY":
+                    throw new NotFoundException({
+                        error: error.message,
+                        code: error.code,
+                    });
+                default:
+                    throw new BadRequestException({
+                        error: error.message,
+                        code: error.code,
+                    });
+            }
+        }
+        if (
+            error instanceof AdminBackfillBlockingRewriteError ||
+            (error instanceof Error &&
+                error.name === "AdminBackfillBlockingRewriteError")
+        ) {
+            throw new ConflictException({
+                error: error instanceof Error ? error.message : String(error),
+                code: "CREDIT_ASOF_BACKFILL_IN_PROGRESS",
+            });
+        }
+        throw error;
     }
 
     private async remirrorPoolAfterMutation(args: {
@@ -712,26 +779,6 @@ export class CustomerPolicyService {
                 code: "CUSTOMER_POLICY_TREND_REWRITE_FAILED",
             });
         }
-    }
-
-    private async clearActivePolicy(
-        customerId: number,
-        activeRowId: number,
-        userId: string
-    ): Promise<void> {
-        await freezeCustomerPolicyGapOnDeactivation(
-            customerId,
-            activeRowId,
-            this.db
-        );
-        await this.db.customerPolicy.updateMany({
-            where: { customer_id: customerId, is_active: true },
-            data: {
-                is_active: false,
-                status: "inactive",
-                modified_by: userId,
-            },
-        });
     }
 
     private async assertPolicyAssignable(

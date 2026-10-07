@@ -907,6 +907,8 @@ model CustomerPolicy {
   registration_fee_percent              Decimal?              @db.Decimal(10, 3)
   /// UTC calendar day this version becomes effective (rewrite floor for as-of snapshots).
   policy_change_start_date                    DateTime              @db.Date
+  /// First UTC day with no new invoices on this version (null = open-ended).
+  policy_change_end_date                      DateTime?             @db.Date
   /// active = live row; pending = future scheduled (slice 02); inactive = historical/cancelled.
   status                                customer_policy_status @default(inactive)
   is_active                             Boolean               @default(false)
