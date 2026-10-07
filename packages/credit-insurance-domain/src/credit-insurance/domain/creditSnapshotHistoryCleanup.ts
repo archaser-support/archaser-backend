@@ -108,6 +108,10 @@ export async function deleteInactiveCustomerPolicyTrendRowsForScope(
         USING "CustomerPolicy" cp
         WHERE t.customer_policy_id = cp.id
           AND cp.is_active = false
+          AND (
+            cp.policy_change_end_date IS NULL
+            OR t.snapshot_date >= cp.policy_change_end_date
+          )
           AND t.account_id = ${args.accountId}
           AND (
             ${customerIds == null}::boolean

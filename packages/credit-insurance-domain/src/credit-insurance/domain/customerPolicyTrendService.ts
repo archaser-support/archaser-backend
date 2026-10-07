@@ -56,6 +56,7 @@ import { resolveEffectiveApprovedLimitFromTopUpRows } from "./resolveEffectiveAp
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import { computeTopUpUsageMetrics } from "./invoiceCapacityGapAmounts";
 import { mapWithConcurrency, readEnvInt } from "./runWithConcurrency";
+import { toUtcDateOnly } from "./shared/insurancePolicyLifecycle";
 
 const CPT_COMPUTE_CONCURRENCY = readEnvInt(
     "CREDIT_ASOF_CPT_COMPUTE_CONCURRENCY",
@@ -659,7 +660,11 @@ async function computeCustomerPolicyTrendUpsertRow(
         cp.approved_limit != null
             ? new Prisma.Decimal(cp.approved_limit)
             : null;
-    if (accountHasTopUp && !atRiskCohort) {
+    const runOffDay =
+        cp.policy_change_end_date != null &&
+        toUtcDateOnly(snapshotDate).getTime() >=
+            toUtcDateOnly(cp.policy_change_end_date).getTime();
+    if (accountHasTopUp && !atRiskCohort && !runOffDay) {
         const resolved = await resolveEffectiveApprovedLimitFromTopUpRows(
             args.topUpsByCustomerId.get(cp.customer_id) ?? [],
             {
@@ -752,12 +757,14 @@ async function computeCustomerPolicyTrendUpsertRow(
         activeTopUpCount = null;
     }
 
-    const scopedTopUps = (args.topUpsByCustomerId.get(cp.customer_id) ?? []).filter(
-        (row) =>
-            cp.insurance_policy_id == null ||
-            row.InsurancePolicy.parent_insurance_policy_id ===
-                cp.insurance_policy_id
-    );
+    const scopedTopUps = runOffDay
+        ? []
+        : (args.topUpsByCustomerId.get(cp.customer_id) ?? []).filter(
+            (row) =>
+                cp.insurance_policy_id == null ||
+                row.InsurancePolicy.parent_insurance_policy_id ===
+                    cp.insurance_policy_id
+        );
     const todayLevels = computeCustomerDailyCostSnapshot({
         policyInput: {
             costCalculationMethod:
@@ -1378,12 +1385,25 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         )?.currency?.trim() ||
             null);
 
-    const activePolicies =
+    const loadedPolicies =
         runContext?.activeCustomerPolicies ??
         (await loadActiveCustomerPoliciesForTrendSync(accountId, {
             policyId: options?.policyId,
             customerIds: options?.customerIds,
         }));
+    const snapshotDay = toUtcDateOnly(snapshotDate);
+    const activePolicies = loadedPolicies.filter((cp) => {
+        if (cp.is_active) {
+            return true;
+        }
+        if (cp.policy_change_end_date == null) {
+            return false;
+        }
+        return (
+            snapshotDay.getTime() >=
+            toUtcDateOnly(cp.policy_change_end_date).getTime()
+        );
+    });
 
     const customerIds = Array.from(new Set(activePolicies.map((cp) => cp.customer_id)));
     const accountHasTopUp =
@@ -1603,7 +1623,19 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             })
     );
 
-    const upsertRows = computedRows.map((computed) => computed.row);
+    const upsertRows: CustomerPolicyTrendUpsertRow[] = [];
+    for (let i = 0; i < computedRows.length; i += 1) {
+        const computed = computedRows[i]!;
+        const cp = activePolicies[i]!;
+        if (
+            !cp.is_active &&
+            computed.row.usageAmount <= 0 &&
+            computed.row.totalReceivables <= 0
+        ) {
+            continue;
+        }
+        upsertRows.push(computed.row);
+    }
     if (nextPriorDayCache) {
         for (const computed of computedRows) {
             if (computed.priorDayEntry) {
@@ -1626,6 +1658,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             snapshotDate,
             policyId: options?.policyId,
             customerIds: options?.customerIds,
+            keepCustomerPolicyIds: upsertRows.map((row) => row.customerPolicyId),
         });
     }
 

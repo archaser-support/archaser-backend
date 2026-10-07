@@ -1,10 +1,11 @@
-import { prisma } from "../domain-db";
+import { type DbClient, prisma } from "../domain-db";
 import { enqueueAsOfRewrite } from "./asOfRewriteQueue";
 import { remirrorCreditPoolAfterPolicyMutation } from "./parentCustomerCreditInheritance";
 import { freezeCustomerPolicyGapOnDeactivation } from "./syncCustomerPolicyGapAmounts";
 import { syncCustomerInsuranceFields } from "./syncCustomerInsuranceFields";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
 import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
+import { applyDatedCustomerPolicyUnassign } from "./datedCustomerPolicyUnassign";
 
 export type ActivateDuePendingCustomerPoliciesResult = {
     activated: number;
@@ -12,15 +13,30 @@ export type ActivateDuePendingCustomerPoliciesResult = {
     failures: number;
 };
 
+export type ActivateDuePendingCustomerPoliciesOptions = {
+    dbClient?: DbClient;
+    applyDatedCustomerPolicyUnassign?: typeof applyDatedCustomerPolicyUnassign;
+};
+
 /**
  * Activate CustomerPolicy rows with status=pending whose policy_change_start_date is
  * on or before UTC today. Intended to run in the CPT daily cron **before**
  * today's tip and as-of rewrite drain so the tip sees the new active row.
+ *
+ * Pending unassign (null insurance_policy_id) uses the same dated-unassign apply
+ * as immediate Remove, then leaves the pending row inactive — never an active
+ * null-policy assignment. Ordinary pending policy rows still activate-to-active.
  */
-export async function activateDuePendingCustomerPolicies(): Promise<ActivateDuePendingCustomerPoliciesResult> {
+export async function activateDuePendingCustomerPolicies(
+    options?: ActivateDuePendingCustomerPoliciesOptions
+): Promise<ActivateDuePendingCustomerPoliciesResult> {
+    const db = options?.dbClient ?? prisma;
+    const applyUnassign =
+        options?.applyDatedCustomerPolicyUnassign ??
+        applyDatedCustomerPolicyUnassign;
     const todayUtc = startOfTodayUtc();
 
-    const duePending = await prisma.customerPolicy.findMany({
+    const duePending = await db.customerPolicy.findMany({
         where: {
             status: "pending",
             policy_change_start_date: { lte: todayUtc },
@@ -28,7 +44,10 @@ export async function activateDuePendingCustomerPolicies(): Promise<ActivateDueP
         select: {
             id: true,
             customer_id: true,
+            insurance_policy_id: true,
             policy_change_start_date: true,
+            created_by: true,
+            modified_by: true,
             Customer: { select: { account_id: true } },
         },
         orderBy: [{ policy_change_start_date: "asc" }, { id: "asc" }],
@@ -41,7 +60,22 @@ export async function activateDuePendingCustomerPolicies(): Promise<ActivateDueP
     for (const pending of duePending) {
         const accountId = pending.Customer.account_id;
         try {
-            const activeRow = await prisma.customerPolicy.findFirst({
+            if (pending.insurance_policy_id == null) {
+                await applyUnassign({
+                    customerId: pending.customer_id,
+                    accountId,
+                    userId:
+                        pending.modified_by ?? pending.created_by ?? "system",
+                    unassignDate: pending.policy_change_start_date,
+                    dbClient: db,
+                    activatingPendingId: pending.id,
+                });
+                activated += 1;
+                rewriteEnqueued += 1;
+                continue;
+            }
+
+            const activeRow = await db.customerPolicy.findFirst({
                 where: {
                     customer_id: pending.customer_id,
                     status: "active",
@@ -53,11 +87,11 @@ export async function activateDuePendingCustomerPolicies(): Promise<ActivateDueP
                 await freezeCustomerPolicyGapOnDeactivation(
                     pending.customer_id,
                     activeRow.id,
-                    prisma
+                    db
                 );
             }
 
-            await prisma.$transaction(async (tx) => {
+            await db.$transaction(async (tx) => {
                 if (activeRow) {
                     await tx.customerPolicy.updateMany({
                         where: {
@@ -81,7 +115,7 @@ export async function activateDuePendingCustomerPolicies(): Promise<ActivateDueP
 
             try {
                 await syncCustomerInsuranceFields(pending.customer_id, {
-                    dbClient: prisma,
+                    dbClient: db,
                     validateZeroLimitDate: false,
                 });
                 await ensureCustomerCapacityGapStored(pending.customer_id);
@@ -100,7 +134,7 @@ export async function activateDuePendingCustomerPolicies(): Promise<ActivateDueP
                 await remirrorCreditPoolAfterPolicyMutation(
                     pending.customer_id,
                     accountId,
-                    { dbClient: prisma }
+                    { dbClient: db }
                 );
             } catch {
                 // Pool remirror can catch up on next root policy touch.
