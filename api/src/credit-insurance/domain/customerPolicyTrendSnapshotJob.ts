@@ -1,4 +1,5 @@
 import {
+    activateDueInsurancePolicyRevisions,
     activateDuePendingCustomerPolicies,
     drainAsOfRewriteQueue,
     takeCustomerPolicyTrendSnapshots,
@@ -12,21 +13,48 @@ import {
  * registering this entrypoint in Nest/worker; never schedule both.
  */
 export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies: {
+    activatePolicyRevisions?: typeof activateDueInsurancePolicyRevisions;
     activatePending?: typeof activateDuePendingCustomerPolicies;
     takeSnapshots?: typeof takeCustomerPolicyTrendSnapshots;
     drainQueue?: typeof drainAsOfRewriteQueue;
 } = {}): Promise<{
+    policyRevisionActivation: Awaited<
+        ReturnType<typeof activateDueInsurancePolicyRevisions>
+    >;
     pendingActivation: Awaited<
         ReturnType<typeof activateDuePendingCustomerPolicies>
     >;
     snapshot: Awaited<ReturnType<typeof takeCustomerPolicyTrendSnapshots>>;
     drain: Awaited<ReturnType<typeof drainAsOfRewriteQueue>>;
 }> {
+    const activatePolicyRevisions =
+        dependencies.activatePolicyRevisions ??
+        activateDueInsurancePolicyRevisions;
     const activatePending =
         dependencies.activatePending ?? activateDuePendingCustomerPolicies;
     const takeSnapshots =
         dependencies.takeSnapshots ?? takeCustomerPolicyTrendSnapshots;
     const drainQueue = dependencies.drainQueue ?? drainAsOfRewriteQueue;
+
+    // Same order as the worker handler: policy revisions skip customers that
+    // still have a pending Customer Policy, so they run before it activates.
+    let policyRevisionActivation:
+        | Awaited<ReturnType<typeof activateDueInsurancePolicyRevisions>>
+        | undefined;
+    let policyRevisionActivationError: unknown;
+    try {
+        policyRevisionActivation = await activatePolicyRevisions();
+        if (
+            policyRevisionActivation.failures > 0 ||
+            policyRevisionActivation.rewriteEnqueueFailures > 0
+        ) {
+            policyRevisionActivationError = new Error(
+                `Pending insurance policy revision activation completed with ${policyRevisionActivation.failures} failures and ${policyRevisionActivation.rewriteEnqueueFailures} as-of rewrite enqueue failures`
+            );
+        }
+    } catch (error) {
+        policyRevisionActivationError = error;
+    }
 
     let pendingActivation:
         | Awaited<ReturnType<typeof activateDuePendingCustomerPolicies>>
@@ -74,6 +102,9 @@ export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies:
     if (snapshotError) {
         throw snapshotError;
     }
+    if (policyRevisionActivationError) {
+        throw policyRevisionActivationError;
+    }
     if (pendingActivationError) {
         throw pendingActivationError;
     }
@@ -81,6 +112,7 @@ export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies:
         throw drainError;
     }
     return {
+        policyRevisionActivation: policyRevisionActivation!,
         pendingActivation: pendingActivation!,
         snapshot: snapshot!,
         drain: drain!,
