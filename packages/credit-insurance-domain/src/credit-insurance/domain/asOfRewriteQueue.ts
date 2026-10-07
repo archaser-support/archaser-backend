@@ -364,6 +364,11 @@ export async function rewriteCustomerAsOfRange(
     input: RewriteCustomerAsOfRangeInput,
     options?: {
         dbClient?: PrismaClientLike;
+        /**
+         * Keep stored CPT days strictly before fromDate (dated unassign / run-off).
+         * Default false matches Generate/clear rewrite which drops pre-window history.
+         */
+        preserveHistoryBeforeFromDate?: boolean;
         syncCustomerPolicyTrendSnapshotForAccount?: DrainWriters["syncCustomerPolicyTrendSnapshotForAccount"];
     }
 ): Promise<RewriteCustomerAsOfRangeResult> {
@@ -458,15 +463,17 @@ export async function rewriteCustomerAsOfRange(
         dbClient: db,
     });
 
-    const { prepareCreditSnapshotHistoryForRewriteWindow } = await import(
-        "./creditSnapshotHistoryCleanup"
-    );
-    await prepareCreditSnapshotHistoryForRewriteWindow({
-        accountId: input.accountId,
-        fromDate,
-        customerIds,
-        dbClient: db,
-    });
+    if (!options?.preserveHistoryBeforeFromDate) {
+        const { prepareCreditSnapshotHistoryForRewriteWindow } = await import(
+            "./creditSnapshotHistoryCleanup"
+        );
+        await prepareCreditSnapshotHistoryForRewriteWindow({
+            accountId: input.accountId,
+            fromDate,
+            customerIds,
+            dbClient: db,
+        });
+    }
 
     const {
         loadAsOfOpenInvoiceLedgerRange,

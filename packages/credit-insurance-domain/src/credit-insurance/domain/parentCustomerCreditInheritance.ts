@@ -142,6 +142,7 @@ const MIRROR_POLICY_FIELD_KEYS = [
     "cost_percent",
     "registration_fee_percent",
     "policy_change_start_date",
+    "policy_change_end_date",
     "capacity_gap_amount",
     "capacity_gap_amount_date",
     "retained_capacity_gap",
