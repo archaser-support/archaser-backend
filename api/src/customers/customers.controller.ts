@@ -77,6 +77,18 @@ export class CustomersController {
         return this.customers.update(user, id, body);
     }
 
+    @Post(":id/policies/unassign")
+    @ApiOperation({
+        summary: "Remove customer policy from a UTC unassign date (Nest-native)",
+    })
+    async unassignPolicy(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.customers.unassignPolicy(user, id, body);
+    }
+
     @Post(":id/policies/cancel-pending")
     @ApiOperation({
         summary: "Cancel pending future customer policy change (Nest-native)",

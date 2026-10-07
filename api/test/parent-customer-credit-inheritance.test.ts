@@ -39,6 +39,7 @@ type PolicyRow = {
     cost_percent: number | null;
     registration_fee_percent: number | null;
     policy_change_start_date: Date;
+    policy_change_end_date: Date | null;
     status: "active" | "pending" | "inactive";
     is_active: boolean;
     capacity_gap_amount: number | null;
@@ -87,6 +88,7 @@ function emptyPolicy(
         cost_percent: null,
         registration_fee_percent: null,
         policy_change_start_date: new Date("2026-01-01"),
+        policy_change_end_date: null,
         capacity_gap_amount: null,
         capacity_gap_amount_date: null,
         retained_capacity_gap: null,

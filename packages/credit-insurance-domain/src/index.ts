@@ -168,6 +168,12 @@ export {
     type RewriteCustomerAsOfRangeResult,
 } from "./credit-insurance/domain/asOfRewriteQueue";
 export {
+    applyDatedCustomerPolicyUnassign,
+    clipCustomerTopUpsFromUnassignDay,
+    stripInvoicePolicyStampsFromUnassignDay,
+    DatedCustomerPolicyUnassignError,
+} from "./credit-insurance/domain/datedCustomerPolicyUnassign";
+export {
     activateDuePendingCustomerPolicies,
     type ActivateDuePendingCustomerPoliciesResult,
 } from "./credit-insurance/domain/activateDuePendingCustomerPolicies";

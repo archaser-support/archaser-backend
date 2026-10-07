@@ -44,6 +44,8 @@ export type TopUpRowForTrendReplay = TopUpRowForResolution & {
 export type ActiveCustomerPolicyForTrendSync = {
     id: number;
     customer_id: number;
+    is_active: boolean;
+    policy_change_end_date: Date | null;
     insurance_policy_id: number | null;
     customer_number_policy: string | null;
     approved_limit: Prisma.Decimal | null;
@@ -245,7 +247,15 @@ export async function loadActiveCustomerPoliciesForTrendSync(
     const db = options?.dbClient ?? defaultPrisma;
     return db.customerPolicy.findMany({
         where: {
-            is_active: true,
+            OR: [
+                { is_active: true },
+                {
+                    is_active: false,
+                    status: "inactive",
+                    policy_change_end_date: { not: null },
+                    insurance_policy_id: { not: null },
+                },
+            ],
             Customer: {
                 account_id: accountId,
                 collection_status: { in: [...COLLECTION_LIVE] },
@@ -260,6 +270,8 @@ export async function loadActiveCustomerPoliciesForTrendSync(
         select: {
             id: true,
             customer_id: true,
+            is_active: true,
+            policy_change_end_date: true,
             insurance_policy_id: true,
             customer_number_policy: true,
             approved_limit: true,
