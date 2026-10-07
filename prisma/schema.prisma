@@ -1203,6 +1203,12 @@ model InsurancePolicy {
   product_type                           insurance_policy_product_type?
   status                                 record_status                 @default(Draft)
   auto_activate_on_term_start            Boolean                       @default(false)
+  /// Single future-dated revision: UTC day it goes live. Null = no pending revision.
+  pending_effective_date                 DateTime?                     @db.Date
+  /// Full policy form snapshot (same body as policy PUT) applied on pending_effective_date.
+  pending_payload                        Json?
+  pending_created_at                     DateTime?                     @db.Timestamptz(6)
+  pending_created_by                     String?                       @db.VarChar
   created_by                             String?                       @db.VarChar
   modified_by                            String?                       @db.VarChar
   Account                                Account                       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_account_id_fkey")

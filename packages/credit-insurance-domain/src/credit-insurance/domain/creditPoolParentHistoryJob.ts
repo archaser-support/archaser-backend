@@ -356,7 +356,7 @@ export async function runCreditPoolParentHistoryJob(
         } = await import("./customerPolicyTrendService");
         const {
             buildCreditAsOfBackfillRunContext,
-            buildAsOfTermsMapFromActiveCustomerPolicies,
+            buildAsOfTermsMapForDate,
             ensureCapacityGapsForBackfillRun,
         } = await import("./creditAsOfBackfillRunContext");
         const {
@@ -382,12 +382,8 @@ export async function runCreditPoolParentHistoryJob(
         const ledger = await loadAsOfOpenInvoiceLedgerRange(accountId, to, {
             dbClient: db,
         });
-        const sharedTermsByCustomerAndPolicy =
-            runContext.activeCustomerPolicies.length > 0
-                ? buildAsOfTermsMapFromActiveCustomerPolicies(
-                      runContext.activeCustomerPolicies
-                  )
-                : null;
+        const hasVersionedPolicies =
+            runContext.activeCustomerPolicies.length > 0;
 
         let pendingCheckpoint: {
             checkpointDate: Date;
@@ -445,11 +441,14 @@ export async function runCreditPoolParentHistoryJob(
             let asOfTermsFlagsApplied = false;
             if (isUtcCalendarToday(day)) {
                 asOfTermsFlagsApplied = true;
-            } else if (sharedTermsByCustomerAndPolicy) {
+            } else if (hasVersionedPolicies) {
                 asOfLines = overlayAsOfTermsFlagsOnLines(
                     asOfLines,
                     day,
-                    sharedTermsByCustomerAndPolicy,
+                    buildAsOfTermsMapForDate(
+                        runContext.activeCustomerPolicies,
+                        day
+                    ),
                     {
                         ignoreReportingBreach: false,
                         mepBreachStartDate: runContext.mepBreachStartDate,
