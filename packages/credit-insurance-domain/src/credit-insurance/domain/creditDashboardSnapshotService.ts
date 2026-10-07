@@ -10,7 +10,7 @@ import {
     getCreditDashboardSummary,
 } from "./creditInsuranceDashboardService";
 import {
-    buildAsOfTermsMapFromActiveCustomerPolicies,
+    buildAsOfTermsMapForDate,
     deriveDashboardSnapshotScopes,
     type CreditAsOfBackfillRunContext,
     type CreditDashboardAccountSettings,
@@ -221,8 +221,9 @@ async function processDashboardSnapshotsForAccount(
         asOfLines = overlayAsOfTermsFlagsOnLines(
             asOfLines,
             snapshotDate,
-            buildAsOfTermsMapFromActiveCustomerPolicies(
-                runContext.activeCustomerPolicies
+            buildAsOfTermsMapForDate(
+                runContext.activeCustomerPolicies,
+                snapshotDate
             ),
             {
                 ignoreReportingBreach: ignoreReportingBreachEffective,

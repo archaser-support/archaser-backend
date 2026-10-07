@@ -19,7 +19,7 @@ Applies to:
 | Paid later | Invoice stays open on D if unpaid by D, even if Paid today | Skipping lines because live status is Paid and last payment was after D |
 | **Today’s snapshot tip** (`D` = UTC today) | Follow the **live book**: `status === Paid` ⇒ closed on today’s CPT/as-of write (even if `payment_date` is still in the future) | Reopening live-Paid invoices on today via future-dated payments (makes the policy-risk chart tip disagree with live At Risk) |
 | Limits / top-ups | Limits and top-ups effective on D (date-bounded) | Assuming today’s limit/top-up set for every past day without an as-of rule |
-| Terms / breaches | Flags recomputed (or overlaid) for D | Stamping today’s CTV / reporting flags onto past days without replay |
+| Terms / breaches | Flags recomputed (or overlaid) for D from the **CustomerPolicy version effective on D** (`policy_change_start_date` chain; unassign uses `policy_change_end_date`). Prehistory before the earliest version extends that version backward. | Stamping today’s CTV / reporting flags onto past days without replay; using only the live active row’s `max_payment_term` for every historical day |
 
 ### Known failure mode (do not reintroduce)
 
