@@ -158,8 +158,9 @@ export function pickCustomerPolicyVersioningSnapshot(
 }
 
 /**
- * Fields the Insurance Policy update path pushes onto active Customer Policies
- * (version-if-changed). Includes cost/fee so they share the same path.
+ * Fields the Insurance Policy update path may push onto active Customer Policies.
+ * Only fields that changed on the policy in that save are overlaid (version-if
+ * the customer still differs on those fields). Includes cost/fee.
  */
 export const POLICY_PUSH_CUSTOMER_FIELDS = [
     "mep_cutoff_day",
@@ -208,12 +209,27 @@ function policyPushFieldValuesEqual(
     }
 }
 
-/** True when any policy→customer push field differs between snapshots. */
+/**
+ * True when any of `fields` (default: all push fields) differs between
+ * snapshots. Used both for policy-before→after and customer vs policy-after.
+ */
 export function hasPolicyPushFieldChange(
     before: PolicyPushSnapshot,
-    after: PolicyPushSnapshot
+    after: PolicyPushSnapshot,
+    fields: readonly PolicyPushCustomerField[] = POLICY_PUSH_CUSTOMER_FIELDS
 ): boolean {
-    return POLICY_PUSH_CUSTOMER_FIELDS.some(
+    return fields.some(
+        (field) =>
+            !policyPushFieldValuesEqual(before[field], after[field], field)
+    );
+}
+
+/** Push fields whose values differ between two policy (or customer) snapshots. */
+export function listChangedPolicyPushFields(
+    before: PolicyPushSnapshot,
+    after: PolicyPushSnapshot
+): PolicyPushCustomerField[] {
+    return POLICY_PUSH_CUSTOMER_FIELDS.filter(
         (field) =>
             !policyPushFieldValuesEqual(before[field], after[field], field)
     );

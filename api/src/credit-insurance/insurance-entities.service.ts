@@ -18,8 +18,10 @@ import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import {
     hasPolicyPushFieldChange,
+    listChangedPolicyPushFields,
     pickPolicyPushSnapshot,
     POLICY_PUSH_CUSTOMER_FIELDS,
+    type PolicyPushCustomerField,
 } from "./domain/hasMeaningfulCustomerPolicyFieldChange";
 import { parseAnnualCreditAssessmentFee } from "./domain/annualCreditAssessmentFee";
 import { applyInsurancePolicyCommercialTerms } from "./domain/policyCommercialTerms";
@@ -93,11 +95,14 @@ function buildCustomerPolicyVersionFromPolicyPush(args: {
     oldRow: CustomerPolicy;
     policy: InsurancePolicy;
     userId: string;
+    /** Only these policy fields are overlaid; other push fields keep the customer value. */
+    fieldsToPush: readonly PolicyPushCustomerField[];
 }): Record<string, unknown> {
-    const { oldRow, policy, userId } = args;
+    const { oldRow, policy, userId, fieldsToPush } = args;
+    const pushSet = new Set(fieldsToPush);
     const pushed: Record<string, unknown> = {};
     for (const field of POLICY_PUSH_CUSTOMER_FIELDS) {
-        pushed[field] = policy[field];
+        pushed[field] = pushSet.has(field) ? policy[field] : oldRow[field];
     }
     return {
         customer_id: oldRow.customer_id,
@@ -356,7 +361,6 @@ export class InsuranceEntitiesService {
         if (entityType === "insurance-policies") {
             const policy = await this.db.insurancePolicy.findFirst({
                 where: { id: Number(id), account_id: accountId },
-                select: { policy_kind: true, start_date: true },
             });
             if (!policy) {
                 throw new NotFoundException({ error: "insurance-policies not found" });
@@ -393,6 +397,7 @@ export class InsuranceEntitiesService {
             }
             const userInfo = await this.accessScope.resolveUserInfo(user);
             const policyId = Number(id);
+            const policyPushBefore = pickPolicyPushSnapshot(policy);
             try {
                 const updated = await this.db.$transaction(
                     async (tx) => {
@@ -404,6 +409,20 @@ export class InsuranceEntitiesService {
                             } as never,
                         });
 
+                        const policyPushAfter = pickPolicyPushSnapshot(
+                            policyUpdate
+                        );
+                        const fieldsToPush = listChangedPolicyPushFields(
+                            policyPushBefore,
+                            policyPushAfter
+                        );
+
+                        // Only fields that changed on the policy are pushed.
+                        // Divergent customer values on untouched fields are kept.
+                        if (fieldsToPush.length === 0) {
+                            return policyUpdate;
+                        }
+
                         const activeRows = await tx.customerPolicy.findMany({
                             where: {
                                 insurance_policy_id: policyId,
@@ -412,16 +431,13 @@ export class InsuranceEntitiesService {
                             },
                         });
 
-                        const policyPushAfter = pickPolicyPushSnapshot(
-                            policyUpdate
-                        );
-
                         for (const oldRow of activeRows) {
-                            const before = pickPolicyPushSnapshot(oldRow);
+                            const customerSnap = pickPolicyPushSnapshot(oldRow);
                             if (
                                 !hasPolicyPushFieldChange(
-                                    before,
-                                    policyPushAfter
+                                    customerSnap,
+                                    policyPushAfter,
+                                    fieldsToPush
                                 )
                             ) {
                                 continue;
@@ -445,6 +461,7 @@ export class InsuranceEntitiesService {
                                     oldRow,
                                     policy: policyUpdate,
                                     userId: userInfo.userId,
+                                    fieldsToPush,
                                 }) as never,
                             });
 
