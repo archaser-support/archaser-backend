@@ -285,6 +285,7 @@ export type PortfolioUtilizationDailyPoint = {
 export type PortfolioUtilizationTopCustomer = {
     customerId: number;
     customerName: string;
+    policyNumber?: string | null;
     /** Mean daily usage_amount over available snapshot days in the range. */
     usageAmount: number;
     /** Mean daily total_receivables (open AR) over available snapshot days. */
@@ -298,12 +299,16 @@ export type PortfolioUtilizationTopCustomer = {
     approvedLimit?: number | null;
     /** Mean daily top-up cover in the range; null when none. */
     topUpTotal?: number | null;
+    /** Mean daily effective approved limit in the range. */
+    effectiveApprovedLimit?: number | null;
     policyUsagePct?: number | null;
     topUpUsagePct?: number | null;
     effectiveUsagePct?: number | null;
     barPolicyPct?: number;
     barTopUpPct?: number;
     barOverPct?: number;
+    /** Primary bar length: effective usage when top-up exists, else policy usage. */
+    usagePct?: number | null;
 };
 
 /** Per-customer utilization overshoot ranking (Bucket 1 KPI #2). */
@@ -2221,10 +2226,12 @@ type CptTopCustomerRow = {
     open_ar: number | string;
     approved_limit: number | string | null;
     top_up_total: number | string | null;
+    effective_approved_limit: number | string | null;
     /** Mean daily effective utilization % (null when no positive-limit day). */
     average_utilization_pct: number | string | null;
     person_name: string | null;
     company_name: string | null;
+    policy_number: string | null;
 };
 
 type CptTopCreditProtectionRow = {
@@ -2912,6 +2919,9 @@ async function fetchCptTopUtilizationCustomers(
             AVG(COALESCE(t.approved_limit, 0))::float8 AS approved_limit,
             AVG(COALESCE(t.top_up_total, 0))::float8 AS top_up_total,
             AVG(
+                COALESCE(t.effective_approved_limit, t.approved_limit, 0)
+            )::float8 AS effective_approved_limit,
+            AVG(
                 CASE
                     WHEN COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
                     THEN COALESCE(
@@ -2924,11 +2934,14 @@ async function fetchCptTopUtilizationCustomers(
                 END
             )::float8 AS average_utilization_pct,
             MAX(p.full_name) AS person_name,
-            MAX(co.name) AS company_name
+            MAX(co.name) AS company_name,
+            (ARRAY_AGG(ip.policy_number ORDER BY t.snapshot_date DESC)
+                FILTER (WHERE ip.policy_number IS NOT NULL))[1] AS policy_number
         FROM "CustomerPolicyTrend" t
         INNER JOIN "Customer" c ON c.id = t.customer_id
         LEFT JOIN "Person" p ON p.id = c.person_id
         LEFT JOIN "Company" co ON co.id = c.company_id
+        LEFT JOIN "InsurancePolicy" ip ON ip.id = t.insurance_policy_id
         WHERE t.account_id = ${accountId}
           AND t.snapshot_date >= ${options.fromDateUtc}::date
           AND t.snapshot_date <= ${options.toDateUtc}::date
@@ -2970,8 +2983,11 @@ async function fetchCptTopUtilizationCustomers(
         const openAr = toNumber(row.open_ar);
         const approvedLimitRaw = toNumber(row.approved_limit);
         const topUpTotalRaw = toNumber(row.top_up_total);
+        const effectiveLimitRaw = toNumber(row.effective_approved_limit);
         const approvedLimit = approvedLimitRaw > 0 ? approvedLimitRaw : null;
         const topUpTotal = topUpTotalRaw > 0 ? topUpTotalRaw : null;
+        const effectiveApprovedLimit =
+            effectiveLimitRaw > 0 ? effectiveLimitRaw : null;
         const utilizationPct =
             row.average_utilization_pct == null
                 ? null
@@ -2989,17 +3005,20 @@ async function fetchCptTopUtilizationCustomers(
         return {
             customerId: row.customer_id,
             customerName,
+            policyNumber: row.policy_number,
             usageAmount,
             openAr,
             utilizationPct,
             approvedLimit,
             topUpTotal,
+            effectiveApprovedLimit,
             policyUsagePct: segments.policyUsagePct,
             topUpUsagePct: segments.topUpUsagePct,
             effectiveUsagePct: segments.effectiveUsagePct,
             barPolicyPct: segments.barPolicyPct,
             barTopUpPct: segments.barTopUpPct,
             barOverPct: segments.barOverPct,
+            usagePct: segments.usagePct,
         };
     });
 }
