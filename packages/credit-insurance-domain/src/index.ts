@@ -198,6 +198,7 @@ export {
     toInsuranceEntityUpdateData,
     type ApplyInsurancePolicyUpdateResult,
 } from "./credit-insurance/domain/insurancePolicyUpdate";
+export { customerPolicySupersedeUpdateData } from "./credit-insurance/domain/customerPolicySupersede";
 export {
     planPolicyPushToCustomers,
     type PolicyPushCustomerPlan,

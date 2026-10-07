@@ -16,6 +16,7 @@ import { planPolicyPushToCustomers } from "./policyPushCustomerPlan";
 import { parseRegistrationFeePercent } from "./registrationFeePercent";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
 import { syncCustomerInsuranceFields } from "./syncCustomerInsuranceFields";
+import { customerPolicySupersedeUpdateData } from "./customerPolicySupersede";
 import { freezeCustomerPolicyGapOnDeactivation } from "./syncCustomerPolicyGapAmounts";
 
 /** Invalid Insurance Policy save body; the API maps it to 400. */
@@ -285,13 +286,16 @@ export async function applyInsurancePolicyUpdateWithCustomerPush(args: {
             oldRow.id,
             tx as never
         );
+        const versionStartDate =
+            oldRow.policy_change_start_date > args.customerVersionStartDate
+                ? oldRow.policy_change_start_date
+                : args.customerVersionStartDate;
         await tx.customerPolicy.update({
             where: { id: oldRow.id },
-            data: {
-                is_active: false,
-                status: "inactive",
-                modified_by: userId,
-            },
+            data: customerPolicySupersedeUpdateData({
+                nextVersionStartDate: versionStartDate,
+                modifiedBy: userId,
+            }),
         });
         await tx.customerPolicy.create({
             data: buildCustomerPolicyVersionFromPolicyPush({
