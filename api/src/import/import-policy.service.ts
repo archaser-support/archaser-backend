@@ -11,6 +11,7 @@ import {
     validateMonthEndCutoffPair,
 } from "../credit-insurance/domain/shared/monthEndCutoffFields";
 import {
+    customerPolicySupersedeUpdateData,
     deriveExcludedFromPolicy,
     isAllowedPolicyExclusionReason,
     normalizePolicyExclusionReason,
@@ -562,21 +563,21 @@ export class ImportPolicyService {
             });
         } else {
             action = "switch";
+            const switchStart = startOfTodayUtc();
             await this.db.$transaction(async (tx) => {
                 await tx.customerPolicy.updateMany({
                     where: { customer_id: customer.id, is_active: true },
-                    data: {
-                        is_active: false,
-                        status: "inactive",
-                        modified_by: context.userId,
-                    },
+                    data: customerPolicySupersedeUpdateData({
+                        nextVersionStartDate: switchStart,
+                        modifiedBy: context.userId,
+                    }),
                 });
                 await tx.customerPolicy.create({
                     data: {
                         customer_id: customer.id,
                         is_active: true,
                         status: "active",
-                        policy_change_start_date: startOfTodayUtc(),
+                        policy_change_start_date: switchStart,
                         created_by: context.userId,
                         ...patch,
                     } as never,
