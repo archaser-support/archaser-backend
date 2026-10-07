@@ -6,7 +6,7 @@ This document provides guidelines for working with Prisma ORM and database opera
 
 - **Schema Conventions**: Naming conventions (snake_case for DB, camelCase for Prisma), relations, indexes, and data types
 - **Date Handling**: Proper UTC timestamp storage and Date object usage (never strings in DB operations)
-- **Migration SQL Scripts**: Transaction handling, DBeaver-specific patterns, and safe migration practices
+- **Migration SQL Scripts**: No top-level `BEGIN`/`COMMIT` (runner already transactional), DBeaver recovery, and safe migration practices
 - **Query Patterns**: Best practices for Prisma queries, error handling, and data transformations
 
 All database operations must store timestamps in UTC and use Date objects (not strings) for date fields.
@@ -36,23 +36,29 @@ await prisma.model.update({ data: { date: dateString } });
 
 ## 🔧 Migration SQL Scripts for DBeaver
 
+### Feature PRs (CI)
+
+When a feature or PRD requires a database change, **commit a SQL script on the feature branch** under `prisma/migrations/` so CI/deploy can run it. Prisma schema edits and local `npx prisma db push` (or an ad-hoc `ALTER`) do **not** replace that file.
+
+- ❌ **Never** wrap the script in top-level `BEGIN;` / `COMMIT;` — the CI/deploy runner already opens a transaction
+- Mechanics, `IF NOT EXISTS`, and the rest of this file remain the source of truth for how to write the SQL
+
 ### Transaction Handling
 
-- **ALWAYS wrap scripts in transactions** (`BEGIN`/`COMMIT`) for safety
-- If a script fails, run `ROLLBACK;` before retrying
-- DBeaver may leave transactions in an aborted state after errors
+- ❌ **Do NOT wrap scripts in top-level `BEGIN;` / `COMMIT;`**
+- `npx prisma db execute --file …` (and the CI/deploy SQL runner) already run the file inside a transaction; nested `BEGIN` fails with *"there is already a transaction in progress"* and **breaks deployment**
+- Write plain statements only; rely on the runner’s outer transaction (or `psql` auto-commit per statement when run without an outer txn)
+- If a **manual DBeaver** session aborts mid-script, run `ROLLBACK;` before retrying
+- `DO $$ … BEGIN … END $$;` blocks are fine — that is PL/pgSQL, not a top-level transaction wrapper
 
 ```sql
--- ✅ CORRECT: Use transactions
-BEGIN;
-
+-- ✅ CORRECT: No top-level BEGIN/COMMIT (prisma db execute / deploy runner)
 -- Your INSERT/UPDATE/DELETE statements here
 
-COMMIT;
-
--- ❌ INCORRECT: No transaction protection
+-- ❌ INCORRECT: Nested transaction breaks prisma db execute and CI deploy
+BEGIN;
 INSERT INTO "Table" ...;
-UPDATE "Table" ...;
+COMMIT;
 ```
 
 ### Handling Unique Constraints
@@ -168,10 +174,7 @@ WHERE context = 'context_name'
 - **Include verification queries** at the end of scripts
 
 ```sql
--- ✅ CORRECT: Include verification queries
-COMMIT;
-
--- Verification queries:
+-- ✅ CORRECT: Include verification queries (commented; run after the script)
 -- SELECT account_id, COUNT(*) as report_count
 -- FROM "Report" 
 -- WHERE context = 'customer_unpaid_invoices' AND is_system = true
@@ -190,12 +193,10 @@ COMMIT;
 -- Description of what this script does
 --
 -- IMPORTANT NOTES:
--- 1. Execute this script on the database manually (DBeaver)
--- 2. Run ROLLBACK; if you see transaction errors
--- 3. After running, regenerate Prisma client: npx prisma generate
+-- 1. Prefer: npx prisma db execute --schema prisma/schema.prisma --file <this-file>
+-- 2. Do NOT add top-level BEGIN;/COMMIT; (runner already wraps in a transaction)
+-- 3. After schema changes, regenerate Prisma client: npx prisma generate
 -- ============================================================================
-
-BEGIN;
 
 -- Optional: Delete existing records (uncomment if needed)
 -- DELETE FROM "Table" WHERE condition;
@@ -206,8 +207,6 @@ SELECT ...
 FROM "Account" a
 WHERE a.deleted_at IS NULL
 ON CONFLICT (...) DO UPDATE SET ...;
-
-COMMIT;
 
 -- ============================================================================
 -- Verification queries:
@@ -220,7 +219,7 @@ COMMIT;
 
 1. **Missing ON CONFLICT**: Always handle unique constraint violations
 2. **Hardcoded account_id**: Use SELECT from Account table for all accounts
-3. **No transaction wrapper**: Always use BEGIN/COMMIT
+3. **Top-level BEGIN/COMMIT**: Never add them — breaks `prisma db execute` and CI deploy
 4. **Ignoring deleted accounts**: Always filter `WHERE deleted_at IS NULL`
 5. **Not updating modified_at**: Always update timestamps on conflict
 6. **Multiple defaults**: Ensure only one record has `is_default = true` per context

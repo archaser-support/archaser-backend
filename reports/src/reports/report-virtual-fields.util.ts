@@ -69,12 +69,16 @@ export function calculateDaysLeft(
 }
 
 export function extractTermsBreachReasonCodes(row: {
+    amount?: number | null;
     reporting_breach?: boolean | null;
     ctv_payment_term?: boolean | null;
     ctv_customer_overdue_mep?: boolean | null;
     ctv_outdated_dcl?: boolean | null;
     ctv_invoice_after_policy_end?: boolean | null;
 }): string {
+    if (row.amount != null && Number(row.amount) < 0) {
+        return "";
+    }
     const codes: string[] = [];
     if (row.reporting_breach) codes.push("reporting_breach");
     if (row.ctv_payment_term) codes.push("ctv_payment_term");
@@ -263,19 +267,26 @@ function resolveTermsBreachLabelLanguage(
 
 export function formatTermsBreachReasonForDisplay(
     codesJoined: string | null | undefined,
-    language?: string
+    language?: string,
+    options?: { mepCauseInvoiceNumber?: string | null }
 ): string {
     if (codesJoined == null || String(codesJoined).trim() === "") {
         return "";
     }
     const labelLanguage = resolveTermsBreachLabelLanguage(language);
     const labels = TERMS_BREACH_CAUSE_LABELS[labelLanguage];
+    const mepCause = options?.mepCauseInvoiceNumber?.trim();
     return String(codesJoined)
         .split(" · ")
         .map((code) => {
             const trimmed = code.trim();
             if (!trimmed) return "";
             const causeKey = TERMS_BREACH_CODE_TO_CAUSE[trimmed] ?? trimmed;
+            if (causeKey === "customer_overdue_mep" && mepCause) {
+                return labelLanguage === "he"
+                    ? `הפרת תנאים בעת יצירה (לקוח בפיגור MEP שנגרם מחשבונית ${mepCause})`
+                    : `Terms violation at creation (customer overdue MEP caused by ${mepCause})`;
+            }
             return labels[causeKey] ?? trimmed;
         })
         .filter(Boolean)
@@ -390,9 +401,11 @@ export function applyComputedFieldSelect(
             return true;
         }
         if (field === "terms_breach_reason") {
+            select.amount = true;
             select.reporting_breach = true;
             select.ctv_payment_term = true;
             select.ctv_customer_overdue_mep = true;
+            select.ctv_customer_overdue_mep_cause_invoice_number = true;
             select.ctv_outdated_dcl = true;
             select.ctv_invoice_after_policy_end = true;
             return true;

@@ -14,4 +14,10 @@ export interface JwtPayload {
     chart_palette_color?: string | null;
     currency?: string | null;
     sidebar_collapsed?: boolean | null;
+    /** NextAuth view-as; forwarded from session cookie into DualAuth req.user. */
+    view_as_user_id?: string | null;
+    view_as_user_role?: string | null;
+    view_as_user_account_id?: number | null;
+    view_as_user_name?: string | null;
+    view_as_user_account_name?: string | null;
 }

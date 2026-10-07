@@ -79,7 +79,7 @@ export {
     sweepReportingBreachForOverdueInvoiceIds,
 } from "./credit-insurance/domain/syncInvoiceReportingBreach";
 export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/insurancePolicyStatusCron";
-export { fetchUncoveredCustomerIdsForAccount } from "./credit-insurance/domain/termBreachResolver";
+export { fetchAtRiskCustomerIdsForAccount } from "./credit-insurance/domain/termBreachResolver";
 export { syncAllCustomerPolicyGapAmounts } from "./credit-insurance/domain/syncCustomerPolicyGapAmounts";
 export { takeCreditDashboardDailySnapshots } from "./credit-insurance/domain/creditDashboardSnapshotService";
 export { takeInsurancePolicyTrendSnapshots } from "./credit-insurance/domain/insurancePolicyTrendService";
@@ -101,6 +101,7 @@ export {
     invoiceOutstandingInLimitCurrency,
     parseImportDateToLocalCalendarDate,
     shouldSetReportingBreach,
+    isNegativeInvoiceAmount,
     computeCustomerRiskExposure,
 } from "./credit-insurance/domain/invoiceInsuranceFields";
 export {
@@ -109,8 +110,11 @@ export {
     type InvoiceInsuranceAsOfStamp,
 } from "./credit-insurance/domain/stampInvoiceInsuranceFieldsAsOf";
 export {
+    loadInvoiceNumbersById,
     resolveCreatedOverdueMepByInvoiceId,
+    resolveCreatedOverdueMepDetailsByInvoiceId,
     resolveCreatedOverdueMepForInvoice,
+    type CreatedOverdueMepResolution,
 } from "./credit-insurance/domain/createdOverdueMepAtInvoiceDate";
 
 // --- Calendar-day compare (shared by MEP/reporting gates and claims anniversary) ---
@@ -163,6 +167,12 @@ export {
     type RewriteCustomerAsOfRangeInput,
     type RewriteCustomerAsOfRangeResult,
 } from "./credit-insurance/domain/asOfRewriteQueue";
+export {
+    applyDatedCustomerPolicyUnassign,
+    clipCustomerTopUpsFromUnassignDay,
+    stripInvoicePolicyStampsFromUnassignDay,
+    DatedCustomerPolicyUnassignError,
+} from "./credit-insurance/domain/datedCustomerPolicyUnassign";
 export {
     activateDuePendingCustomerPolicies,
     type ActivateDuePendingCustomerPoliciesResult,
@@ -253,6 +263,15 @@ export {
     takeCreditDashboardDailySnapshotsForAccount,
 } from "./credit-insurance/domain/creditDashboardSnapshotService";
 export {
+    deleteCreditDashboardDailySnapshotsForAccount,
+    deleteCreditSnapshotHistoryBeforeDate,
+    deleteCustomerPolicyTrendForScope,
+    deleteInactiveCustomerPolicyTrendRowsForScope,
+    deleteInsurancePolicyTrendForAccount,
+    prepareCreditSnapshotHistoryForRewriteWindow,
+    purgeCreditSnapshotsAfterInvoiceOrPaymentClear,
+} from "./credit-insurance/domain/creditSnapshotHistoryCleanup";
+export {
     getCapacityGapReport,
     getCreditDashboardSummary,
     getNoPolicyExposureReport,
@@ -322,6 +341,7 @@ export {
 } from "./credit-insurance/domain/accountVatBasisRefreshJob";
 export {
     isActiveTopUp,
+    loadActiveTopUpsByCustomerIdForAccount,
     resolveEffectiveApprovedLimit,
     resolveEffectiveApprovedLimitFromTopUpRows,
     resolveTopUpTotalsForAsOfDates,
@@ -377,6 +397,14 @@ export {
     type LinkedCptCustomerDayRow,
 } from "./credit-insurance/domain/linkedCptCustomerDaySeries";
 export { deriveCapacityAndOvershootFromLinkedCptDaySeries } from "./credit-insurance/domain/deriveCapacityAndOvershootFromLinkedCptDaySeries";
+export {
+    emptyTopUpDrawSection,
+    isTopUpCoverDay,
+    isTopUpDrawDay,
+    mapLinkedCptDaySeriesToTopUpDrawSection,
+    type PortfolioTopUpDrawCustomer,
+    type PortfolioTopUpDrawSection,
+} from "./credit-insurance/domain/topUpDrawFromLinkedCpt";
 export {
     fetchCapacityGapDaysPeriodCustomers,
     fetchCapacityGapDaysPeriodSummary,
@@ -570,6 +598,7 @@ export { syncInvoiceCapacityGapAmountsForCustomer } from "./credit-insurance/dom
 export {
     accountHasCreditInsurance,
     createCreditPoolMembershipCache,
+    hydrateCreditPoolMembershipCacheForAccount,
     isLinkedCreditChild,
     listDescendantCustomerIds,
     onParentCustomerIdChanged,

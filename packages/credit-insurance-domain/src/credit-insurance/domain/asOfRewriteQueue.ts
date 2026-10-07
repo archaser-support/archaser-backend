@@ -364,6 +364,11 @@ export async function rewriteCustomerAsOfRange(
     input: RewriteCustomerAsOfRangeInput,
     options?: {
         dbClient?: PrismaClientLike;
+        /**
+         * Keep stored CPT days strictly before fromDate (dated unassign / run-off).
+         * Default false matches Generate/clear rewrite which drops pre-window history.
+         */
+        preserveHistoryBeforeFromDate?: boolean;
         syncCustomerPolicyTrendSnapshotForAccount?: DrainWriters["syncCustomerPolicyTrendSnapshotForAccount"];
     }
 ): Promise<RewriteCustomerAsOfRangeResult> {
@@ -457,6 +462,18 @@ export async function rewriteCustomerAsOfRange(
     runContext = await ensureCapacityGapsForBackfillRun(runContext, {
         dbClient: db,
     });
+
+    if (!options?.preserveHistoryBeforeFromDate) {
+        const { prepareCreditSnapshotHistoryForRewriteWindow } = await import(
+            "./creditSnapshotHistoryCleanup"
+        );
+        await prepareCreditSnapshotHistoryForRewriteWindow({
+            accountId: input.accountId,
+            fromDate,
+            customerIds,
+            dbClient: db,
+        });
+    }
 
     const {
         loadAsOfOpenInvoiceLedgerRange,
@@ -591,6 +608,18 @@ export async function drainAsOfRewriteQueue(options?: {
             runContext = await ensureCapacityGapsForBackfillRun(runContext, {
                 dbClient: db,
             });
+            // Fresh window only: drop inactive-CP CPT + days before from_date.
+            if (item.checkpoint_date == null) {
+                const { prepareCreditSnapshotHistoryForRewriteWindow } =
+                    await import("./creditSnapshotHistoryCleanup");
+                await prepareCreditSnapshotHistoryForRewriteWindow({
+                    accountId: item.account_id,
+                    fromDate: item.from_date,
+                    customerIds:
+                        customerIds.length > 0 ? customerIds : undefined,
+                    dbClient: db,
+                });
+            }
             const {
                 loadAsOfOpenInvoiceLedgerRange,
                 deriveAsOfOpenInvoiceCandidatesFromLedger,

@@ -15,6 +15,7 @@ import {
     type CreditAsOfBackfillRunContext,
     type CreditDashboardAccountSettings,
 } from "./creditAsOfBackfillRunContext";
+import { excludeLinkedChildCustomersFilter } from "./customerPolicyQueryHelpers";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
 import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron";
 import {
@@ -240,6 +241,9 @@ async function processDashboardSnapshotsForAccount(
         businessUnitIds
     );
 
+    if (runContext && !runContext.dashboardSummaryInputCache) {
+        runContext.dashboardSummaryInputCache = new Map();
+    }
     const summaryOptions = {
         asOfDate: snapshotDate,
         asOfLines,
@@ -248,6 +252,24 @@ async function processDashboardSnapshotsForAccount(
         accountSettings: options?.dashboardAccountSettings,
         skipPolicyExpirationLoad: options?.dashboardAccountSettings != null,
         ignoreReportingBreach: ignoreReportingBreachEffective,
+        snapshotOnly: true,
+        inputCache: runContext?.dashboardSummaryInputCache,
+    };
+
+    const topUpAggByBusinessUnit = new Map<string, Promise<TopUpSnapshotAgg>>();
+    const loadTopUpAgg = (businessUnitId: number | null | undefined) => {
+        const key = String(businessUnitId ?? "all");
+        let pending = topUpAggByBusinessUnit.get(key);
+        if (!pending) {
+            pending = fetchTopUpSnapshotAgg(
+                accountId,
+                snapshotDate,
+                businessUnitId,
+                options?.hasTopUpPolicies
+            );
+            topUpAggByBusinessUnit.set(key, pending);
+        }
+        return pending;
     };
 
     const computed = await mapWithConcurrency(
@@ -261,12 +283,7 @@ async function processDashboardSnapshotsForAccount(
                 true,
                 summaryOptions
             );
-            const topUpAgg = await fetchTopUpSnapshotAgg(
-                item.scope.accountId,
-                snapshotDate,
-                item.scope.businessUnitId,
-                options?.hasTopUpPolicies
-            );
+            const topUpAgg = await loadTopUpAgg(item.scope.businessUnitId);
             return {
                 accountId: item.scope.accountId,
                 policyId: item.scope.policyId,
@@ -329,6 +346,7 @@ async function fetchTopUpSnapshotAgg(
             end_date: { gte: snapshotDate },
             Customer: {
                 account_id: accountId,
+                ...excludeLinkedChildCustomersFilter(),
                 ...(businessUnitId != null
                     ? { business_unit_id: businessUnitId }
                     : {}),

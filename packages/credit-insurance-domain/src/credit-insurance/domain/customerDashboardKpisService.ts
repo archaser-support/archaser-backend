@@ -54,7 +54,7 @@ import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
 import {
     resolveFullOpenArAtRiskFromPolicyRows,
-    resolveUncoveredExposureFromPolicyRows,
+    resolveAtRiskExposureFromPolicyRows,
 } from "./termBreachResolver";
 import { listDescendantCustomerIds, resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
 
@@ -67,7 +67,7 @@ export type CustomerDashboardKpiCards = {
     /** Distinct open Due/Overdue invoices with any terms-breach flag (same membership as outstanding). */
     termsBreachInvoiceCount: number;
     capacityGapAmount: number;
-    /** Uninsured exposure: full open AR when excluded from policy, else stored uninsured (0 when outdated DCL). */
+    /** Uninsured amount: full open AR when excluded from policy, else stored uninsured (0 when outdated DCL). */
     uninsuredAmount: number;
     /** True when the scoped customer policy is excluded from policy. */
     isExcludedFromPolicy: boolean;
@@ -715,7 +715,7 @@ export async function getCustomerDashboardKpis(
         policyId
     );
 
-    const uncovered = resolveUncoveredExposureFromPolicyRows(
+    const atRiskCohort = resolveAtRiskExposureFromPolicyRows(
         policyRows,
         policyId
     );
@@ -759,13 +759,13 @@ export async function getCustomerDashboardKpis(
               }
           );
     const atRiskExposure = computeCustomerRiskExposure({
-        uncovered: fullArAtRisk,
+        atRiskCohort: fullArAtRisk,
         totalAr,
         invoices: atRiskInvoices,
         capacityGapAmount: fullArAtRisk ? undefined : capacityGapAmount,
     });
 
-    const uninsuredAmount = uncovered
+    const uninsuredAmount = atRiskCohort
         ? totalAr
         : scopedPolicyRow == null ||
           scopedPolicyRow.outdated_dcl === true ||
@@ -851,8 +851,12 @@ export async function getCustomerDashboardKpis(
         },
         invoiceCount: 0,
     };
-    const trailingDays = options?.days ?? 90;
-    // Trailing period cards + risk chart read this customer's CTP. For shells,
+    const trailingDays = 90;
+    const riskTrendDays = Math.max(
+        7,
+        Math.min(options?.days ?? 365, 365)
+    );
+    // Trailing period cards (90d) + risk chart (12 months) read this customer's CTP. For shells,
     // connect/daily overlay writes **local-subtree** pool AR / gap / at-risk /
     // terms-breach onto the shell row (PRD D11; nested shells kept).
     const [
@@ -867,7 +871,7 @@ export async function getCustomerDashboardKpis(
     ] = await Promise.all([
             getCustomerRiskExposureAmountTrendByPolicy(accountId, customerId, {
                 policyId,
-                days: trailingDays,
+                days: riskTrendDays,
             }),
             fullArAtRisk
                 ? Promise.resolve(emptyTermsBreachCounts)
@@ -1058,7 +1062,7 @@ export async function getCustomerDashboardKpis(
                   }
               );
         atRiskExposureSecondary = computeCustomerRiskExposure({
-            uncovered: fullArAtRisk,
+            atRiskCohort: fullArAtRisk,
             totalAr: openArSecondary,
             invoices: atRiskInvoicesSecondary,
             capacityGapAmount: fullArAtRisk
@@ -1066,7 +1070,7 @@ export async function getCustomerDashboardKpis(
                 : (capacityGapAmountSecondary ?? 0),
         });
 
-        uninsuredAmountSecondary = uncovered ? openArSecondary : null;
+        uninsuredAmountSecondary = atRiskCohort ? openArSecondary : null;
     }
 
     return {

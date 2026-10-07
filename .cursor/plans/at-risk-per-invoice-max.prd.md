@@ -87,7 +87,7 @@ If an earlier open invoice is paid and AR drops under 4000 → capacity gap **0*
 2. As a credit analyst, I want an invoice with only capacity gap to contribute its gap, so that over-limit exposure is still at risk when terms are fine.
 3. As a credit analyst, I want an invoice with only terms breach to contribute its full outstanding, so that policy-term risk is fully counted.
 4. As a credit analyst, I want an invoice with both gap and breach to contribute the larger of the two (not the sum), so that the same money is not double-counted.
-5. As a credit analyst, I want uncovered or excluded customers to show full open AR as at-risk, so that uninsured exposure stays conservative.
+5. As a credit analyst, I want uncovered or excluded customers to show full open AR as at-risk, so that at-risk exposure stays conservative.
 6. As a credit analyst, I want the Terms Breach card to keep summing full breach outstanding, so that breach monitoring is separate from at-risk.
 7. As a credit analyst, I want portfolio at-risk to be the sum of customer at-risk under the same rule, so that portfolio and customer views agree.
 8. As a credit analyst, I want portfolio totals without an extra policy max-cover residual, so that portfolio math does not invent risk beyond invoice max contributions.

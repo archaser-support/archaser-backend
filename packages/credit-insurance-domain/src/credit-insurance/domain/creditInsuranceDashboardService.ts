@@ -6,8 +6,6 @@ import { resolveCustomerFirstCurrency } from "./stringFormatters-stub";
 
 import { convertAmountToCurrencyLatestRate } from "./customerCreditInsuranceHeaderAmounts";
 import {
-    computeInvoiceLineOpenArInAccountCurrency,
-    fetchOpenReceivableByCustomerMapInAccountCurrency,
     fetchOpenReceivableForCustomerByCurrency,
     fetchOpenReceivableForCustomers,
     fetchOpenReceivableForCustomersByCurrency,
@@ -15,9 +13,11 @@ import {
 } from "./openReceivableByCustomerCurrency";
 import {
     applyOpenArVatBasis,
+    openArVatBasisLineSqlForKnownAccountSetting,
     OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL,
     OPEN_AR_VAT_BASIS_LINE_SQL,
 } from "./openArVatBasis";
+import { enrichCustomersWithPolicyScope } from "./enrichCustomersWithActivePolicy";
 import {
     ACTIVE_CUSTOMER_POLICY_NESTED_SELECT,
     applyBusinessUnitFilterToInvoiceWhere,
@@ -79,7 +79,11 @@ import {
     fetchCustomerImplicitBasePerLimitUnit,
     sumCustomerPolicyCapacityGapForAccount,
 } from "./invoiceCapacityGapAmounts";
-import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
+import {
+    loadActiveTopUpsByCustomerIdForAccount,
+    resolveEffectiveApprovedLimit,
+} from "./resolveEffectiveApprovedLimit";
+import { createCreditPoolMembershipCache } from "./parentCustomerCreditInheritance";
 import { storedCapacityGapAmount } from "./policyGapAmounts";
 import {
     aggregatePortfolioTermsBreachFromInvoices,
@@ -87,9 +91,8 @@ import {
 import {
     isFullOpenArAtRiskCustomer,
     isNoPolicyExposureCardCustomer,
-    uncoveredExposureFieldsFromPolicyLink,
+    atRiskExposureFieldsFromPolicyLink,
 } from "./policyExclusion";
-import { refreshCapacityGapsForAtRiskDrift } from "./refreshCapacityGapsForAtRiskDrift";
 import { isUtcCalendarToday } from "./asOfOpenAr";
 import type { CreditDashboardAccountSettings } from "./creditAsOfBackfillRunContext";
 
@@ -298,7 +301,14 @@ type CustomerForEffectiveLimitResolution = {
 async function buildEffectiveLimitByCustomerIdInAccountCurrency(
     accountCurrency: string,
     customers: CustomerForEffectiveLimitResolution[],
-    openArByCustomerId: Map<number, number>
+    openArByCustomerId: Map<number, number>,
+    resolveOptions?: {
+        membershipCache?: import("./parentCustomerCreditInheritance").CreditPoolMembershipCache;
+        preloadedTopUpsByOwnerId?: Map<
+            number,
+            import("./resolveEffectiveApprovedLimit").TopUpRowForResolution[]
+        >;
+    }
 ): Promise<Map<number, number>> {
     const convertPolicyLimitToAccount = async (
         policyCurrency: string,
@@ -340,6 +350,8 @@ async function buildEffectiveLimitByCustomerIdInAccountCurrency(
             outdatedDcl: c.outdated_dcl ?? false,
             excludedFromPolicy: c.excluded_from_policy ?? false,
             parentPrimaryPolicyId: c.policy_id ?? undefined,
+            membershipCache: resolveOptions?.membershipCache,
+            preloadedTopUpsByOwnerId: resolveOptions?.preloadedTopUpsByOwnerId,
         });
         const effectiveNum =
             resolved.effectiveApprovedLimit != null
@@ -798,25 +810,22 @@ type OpenArByCustomerRow = { customer_id: number; ar: number | null };
  */
 export async function fetchOpenReceivableByCustomerMap(
     accountId: number,
-    policyId?: number
+    policyId?: number,
+    customerIds?: number[]
 ): Promise<Map<number, number>> {
+    if (customerIds != null && customerIds.length === 0) {
+        return new Map();
+    }
     const line = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
-    const rows =
+    const policyFilter =
         policyId != null
-            ? await prisma.$queryRaw<OpenArByCustomerRow[]>`
-        SELECT i.customer_id,
-          COALESCE(SUM(${line}), 0)::float AS ar
-        FROM "Invoice" i
-        INNER JOIN "Customer" c ON c.id = i.customer_id
-        INNER JOIN "Account" a ON a.id = i.account_id
-        WHERE i.account_id = ${accountId}
-          AND c.account_id = ${accountId}
-          AND c.collection_status IN ('Active', 'Inactive')
-          AND i.policy_id = ${policyId}
-          AND i.status IN ('Due', 'Overdue')
-        GROUP BY i.customer_id
-      `
-            : await prisma.$queryRaw<OpenArByCustomerRow[]>`
+            ? Prisma.sql`AND i.policy_id = ${policyId}`
+            : Prisma.empty;
+    const customerFilter =
+        customerIds != null
+            ? Prisma.sql`AND i.customer_id IN (${Prisma.join(customerIds)})`
+            : Prisma.empty;
+    const rows = await prisma.$queryRaw<OpenArByCustomerRow[]>`
         SELECT i.customer_id,
           COALESCE(SUM(${line}), 0)::float AS ar
         FROM "Invoice" i
@@ -826,6 +835,8 @@ export async function fetchOpenReceivableByCustomerMap(
           AND c.account_id = ${accountId}
           AND c.collection_status IN ('Active', 'Inactive')
           AND i.status IN ('Due', 'Overdue')
+          ${policyFilter}
+          ${customerFilter}
         GROUP BY i.customer_id
       `;
     const m = new Map<number, number>();
@@ -906,90 +917,6 @@ export async function resolveOpenArOnPolicyInLimitCurrency(
 }
 
 /**
- * Terms-breach open outstanding per customer in account currency (latest FX).
- */
-async function fetchTermsBreachOutstandingByCustomerInAccountCurrency(
-    accountId: number,
-    accountCurrency: string,
-    policyId?: number,
-    excludeCapacityGapInvoices?: boolean,
-    businessUnitFilter?: Prisma.CustomerWhereInput
-): Promise<Map<number, number>> {
-    const accountCur = accountCurrency.trim().toUpperCase();
-    const netOfGap = excludeCapacityGapInvoices === true;
-    const account = await prisma.account.findUnique({
-        where: { id: accountId },
-        select: { amounts_include_vat: true },
-    });
-    const amountsIncludeVat = account?.amounts_include_vat !== false;
-    const invoices = await prisma.invoice.findMany({
-        where: applyBusinessUnitFilterToInvoiceWhere(
-            {
-                account_id: accountId,
-                status: { in: ["Due", "Overdue"] },
-                ...(policyId != null ? { policy_id: policyId } : {}),
-                Customer: {
-                    account_id: accountId,
-                    collection_status: { in: COLLECTION_LIVE },
-                },
-                OR: TERMS_BREACH_OR,
-                amount: { gte: 0 },
-            },
-            businessUnitFilter
-        ),
-        select: {
-            customer_id: true,
-            outstanding_debt: true,
-            customer_outstanding_debt: true,
-            amount: true,
-            amount_without_vat: true,
-            customer_currency: true,
-            capacity_gap_amount: true,
-        },
-    });
-
-    const map = new Map<number, number>();
-    for (const inv of invoices) {
-        if (inv.customer_id == null) {
-            continue;
-        }
-        const custCurrency = inv.customer_currency?.trim().toUpperCase();
-        const hasAccountOutstanding =
-            inv.outstanding_debt != null && inv.outstanding_debt !== 0;
-        let converted: number | null | undefined;
-        if (
-            !hasAccountOutstanding &&
-            custCurrency &&
-            custCurrency !== accountCur
-        ) {
-            const custOutstanding =
-                inv.customer_outstanding_debt != null
-                    ? Number(inv.customer_outstanding_debt)
-                    : 0;
-            const amount = inv.amount != null ? Number(inv.amount) : 0;
-            const val = custOutstanding !== 0 ? custOutstanding : amount;
-            converted = await convertAmountToCurrencyLatestRate(
-                custCurrency,
-                accountCur,
-                val
-            );
-        }
-        let line = computeInvoiceLineOpenArInAccountCurrency(
-            inv,
-            accountCur,
-            converted,
-            amountsIncludeVat
-        );
-        if (netOfGap) {
-            const gap = Math.max(0, Number(inv.capacity_gap_amount ?? 0));
-            line = Math.max(0, line - gap);
-        }
-        map.set(inv.customer_id, (map.get(inv.customer_id) ?? 0) + line);
-    }
-    return map;
-}
-
-/**
  * Terms-breach outstanding grouped by customer.
  * When {@link excludeCapacityGapInvoices} is true, each line is outstanding
  * minus capacity gap so at-risk does not double-count.
@@ -997,14 +924,24 @@ async function fetchTermsBreachOutstandingByCustomerInAccountCurrency(
 async function fetchTermsBreachOutstandingByCustomer(
     accountId: number,
     policyId?: number,
-    excludeCapacityGapInvoices?: boolean
+    excludeCapacityGapInvoices?: boolean,
+    customerIds?: number[]
 ): Promise<Map<number, number>> {
+    if (customerIds != null && customerIds.length === 0) {
+        return new Map();
+    }
     const line = termsBreachOutstandingLineSql(
         excludeCapacityGapInvoices === true
     );
-    const rows =
+    const policyFilter =
         policyId != null
-            ? await prisma.$queryRaw<TermsBreachByCustomerRow[]>`
+            ? Prisma.sql`AND i.policy_id = ${policyId}`
+            : Prisma.empty;
+    const customerFilter =
+        customerIds != null
+            ? Prisma.sql`AND i.customer_id IN (${Prisma.join(customerIds)})`
+            : Prisma.empty;
+    const rows = await prisma.$queryRaw<TermsBreachByCustomerRow[]>`
         SELECT i.customer_id,
           COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
@@ -1013,7 +950,6 @@ async function fetchTermsBreachOutstandingByCustomer(
         WHERE i.account_id = ${accountId}
           AND c.account_id = ${accountId}
           AND c.collection_status IN ('Active', 'Inactive')
-          AND i.policy_id = ${policyId}
           AND i.status IN ('Due', 'Overdue')
           AND i.amount >= 0
           AND (
@@ -1023,23 +959,8 @@ async function fetchTermsBreachOutstandingByCustomer(
             OR i.ctv_outdated_dcl = true
             OR i.ctv_invoice_after_policy_end = true
           )
-        GROUP BY i.customer_id
-      `
-            : await prisma.$queryRaw<TermsBreachByCustomerRow[]>`
-        SELECT i.customer_id,
-          COALESCE(SUM(${line}), 0)::float AS t
-        FROM "Invoice" i
-        INNER JOIN "Account" a ON a.id = i.account_id
-        WHERE i.account_id = ${accountId}
-          AND i.status IN ('Due', 'Overdue')
-          AND i.amount >= 0
-          AND (
-            i.reporting_breach = true
-            OR i.ctv_payment_term = true
-            OR i.ctv_customer_overdue_mep = true
-            OR i.ctv_outdated_dcl = true
-            OR i.ctv_invoice_after_policy_end = true
-          )
+          ${policyFilter}
+          ${customerFilter}
         GROUP BY i.customer_id
       `;
     const m = new Map<number, number>();
@@ -1069,8 +990,9 @@ export type CreditDashboardSummary = {
     /**
      * Sum of per-customer at-risk: no-policy / pending-review → full AR;
      * everyone else → Cap Gap + Terms − overlap (live), or invoice Σ max when as-of.
-     * Live portfolio refreshes drifted gaps before Cap Gap + At Risk reads.
-     * Portfolio total is the sum of customer at-risk only (no policy max-cover residual).
+     * Live portfolio uses stored capacity-gap amounts (ingest/cron keep them
+     * current). Portfolio total is the sum of customer at-risk only (no policy
+     * max-cover residual).
      */
     atRiskExposure: number;
     /**
@@ -1101,7 +1023,7 @@ export type CreditDashboardSummary = {
         /** Invoices per breach flag (counts may overlap across categories). */
         countByReason: TermsBreachCountByReason;
     };
-    /** Customers with no linked policy: count and total open AR (treated as uninsured in at-risk logic). */
+    /** Customers with no linked policy: count and total open AR (full open AR contributes to at-risk). */
     withoutPolicy: {
         customerCount: number;
         totalAmount: number;
@@ -1311,6 +1233,27 @@ async function aggregateTermsBreachForSummary(
     ];
 }
 
+/** Day-invariant summary inputs shared across scopes and days of one replay run. */
+export type CreditDashboardSummaryInputCache = Map<string, Promise<unknown>>;
+
+function memoizeSummaryInput<T>(
+    cache: CreditDashboardSummaryInputCache | undefined,
+    key: string,
+    load: () => Promise<T>
+): Promise<T> {
+    if (!cache) {
+        return load();
+    }
+    const hit = cache.get(key);
+    if (hit) {
+        return hit as Promise<T>;
+    }
+    const pending = load();
+    cache.set(key, pending);
+    pending.catch(() => cache.delete(key));
+    return pending;
+}
+
 export async function getCreditDashboardSummary(
     accountId: number,
     policyId?: number,
@@ -1337,8 +1280,20 @@ export async function getCreditDashboardSummary(
          * day-level single overlay). Skip per-scope MEP/terms overlay.
          */
         asOfTermsFlagsApplied?: boolean;
+        /**
+         * Daily snapshot upsert: skip blocks the snapshot row never stores
+         * (top-up block/alerts, policy usage, max-cover alerts, zero-limit count).
+         */
+        snapshotOnly?: boolean;
+        /**
+         * Replay run memo for live, day-invariant inputs (customers, pool
+         * expansion, capacity-gap rollup, reporting countdown, top-ups).
+         */
+        inputCache?: CreditDashboardSummaryInputCache;
     }
 ): Promise<CreditDashboardSummary> {
+    const snapshotOnly = options?.snapshotOnly === true;
+    const inputCache = options?.inputCache;
     // KPI totals count each shared parent/child pool once at the root.
     const whereCust = withExcludeLinkedChildCustomers(
         customersScoped(accountId, policyId, businessUnitFilter)
@@ -1364,10 +1319,12 @@ export async function getCreditDashboardSummary(
             options.accountSettings.creditScoreValidityWarningDays;
         limitExpirationWarnDays =
             options.accountSettings.customerLimitExpirationWarningDays;
-        const vatRow = await prisma.account.findUnique({
+        const vatRow = await memoizeSummaryInput(inputCache, "account:vat", () =>
+            prisma.account.findUnique({
                 where: { id: accountId },
                 select: { amounts_include_vat: true },
-            });
+            })
+        );
         amountsIncludeVat = vatRow?.amounts_include_vat !== false;
     } else {
         const accountRow = await (prisma.account.findUnique as any)({
@@ -1438,9 +1395,19 @@ export async function getCreditDashboardSummary(
               },
           });
 
-    const termsBreachVatLine = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
-    const [customersRaw, scopedPolicies, _overdueCount] = await Promise.all([
-        (prisma.customer.findMany as any)({
+    const termsBreachVatLine = Prisma.raw(
+        openArVatBasisLineSqlForKnownAccountSetting(amountsIncludeVat)
+    );
+    const scopeCacheKey = `${policyId ?? "all"}|${JSON.stringify(
+        businessUnitFilter ?? null
+    )}`;
+    const membershipCache = await memoizeSummaryInput(
+        inputCache,
+        "membershipCache",
+        async () => createCreditPoolMembershipCache()
+    );
+    const loadScopeCustomers = async () => {
+        const customersRaw = await ((prisma.customer.findMany as any)({
             where: whereCust,
             select: {
                 id: true,
@@ -1457,21 +1424,30 @@ export async function getCreditDashboardSummary(
                 total_overdue_amount: number | null;
                 overdue_block: boolean | null;
             }>
-        >,
+        >);
+        const ids = customersRaw.map((c) => c.id);
+        const [enriched, expansion] = await Promise.all([
+            enrichCustomersWithPolicyScope(customersRaw, policyId),
+            expandCreditPoolRootsToMembers(
+                accountId,
+                ids,
+                prisma,
+                membershipCache
+            ),
+        ]);
+        return { customerIds: ids, customers: enriched, poolExpansion: expansion };
+    };
+    const [scopeCustomers, scopedPolicies] = await Promise.all([
+        memoizeSummaryInput(
+            inputCache,
+            `scopeCustomers:${scopeCacheKey}`,
+            loadScopeCustomers
+        ),
         scopedPoliciesPromise,
-        prisma.customer.count({
-            where: { ...whereCust, overdue_block: true },
-        }),
-            ]);
-
-    const { enrichCustomersWithPolicyScope } = await import(
-        "./enrichCustomersWithActivePolicy"
-    );
-    const customers = await enrichCustomersWithPolicyScope(customersRaw, policyId);
-
-    const customerIds = customers.map((c) => c.id);
+    ]);
+    const { customerIds, customers, poolExpansion } = scopeCustomers;
     const allowedRootIds = new Set(customerIds);
-    const { memberIds: poolMemberIds, rootByMemberId } = await expandCreditPoolRootsToMembers(accountId, customerIds);
+    const { memberIds: poolMemberIds, rootByMemberId } = poolExpansion;
     const poolCustomerScope: Prisma.CustomerWhereInput = {
         id: { in: poolMemberIds.length > 0 ? poolMemberIds : [-1] },
     };
@@ -1488,8 +1464,9 @@ export async function getCreditDashboardSummary(
         },
     ];
 
-    const [invAgg, rcInvoices] = await Promise.all([
-        poolMemberIds.length === 0
+    const [invAgg, rcInvoices, liveOpenArAndTerms] = await Promise.all([
+        // As-of days always replace live terms totals from the day's lines.
+        poolMemberIds.length === 0 || asOfDate != null
             ? Promise.resolve(emptyTermsAgg)
             : useScopedTermsBreachAgg
               ? aggregateTermsBreachForSummary(
@@ -1507,7 +1484,6 @@ export async function getCreditDashboardSummary(
           COUNT(*) FILTER (WHERE i.ctv_invoice_after_policy_end = true)::int AS cnt_after_policy_end
      FROM "Invoice" i
     INNER JOIN "Customer" c ON c.id = i.customer_id
-    INNER JOIN "Account" a ON a.id = i.account_id
     WHERE i.account_id = ${accountId}
       AND c.account_id = ${accountId}
       AND c.collection_status IN ('Active', 'Inactive')
@@ -1531,7 +1507,6 @@ export async function getCreditDashboardSummary(
           COUNT(*) FILTER (WHERE i.ctv_invoice_after_policy_end = true)::int AS cnt_after_policy_end
      FROM "Invoice" i
     INNER JOIN "Customer" c ON c.id = i.customer_id
-    INNER JOIN "Account" a ON a.id = i.account_id
     WHERE i.account_id = ${accountId}
       AND c.account_id = ${accountId}
       AND c.collection_status IN ('Active', 'Inactive')
@@ -1547,22 +1522,45 @@ export async function getCreditDashboardSummary(
       )`,
         poolMemberIds.length === 0
             ? Promise.resolve([])
-            : prisma.invoice.findMany({
-                  where: withInvoiceCustomerPolicyFilter(
-                      {
-                          ...reportingCountdownOpenWhere(accountId, windowDays),
-                          customer_id: { in: poolMemberIds },
-                      },
-                      policyId
+            : memoizeSummaryInput(
+                  inputCache,
+                  `reportingCountdown:${scopeCacheKey}:${windowDays}`,
+                  () =>
+                      prisma.invoice.findMany({
+                          where: withInvoiceCustomerPolicyFilter(
+                              {
+                                  ...reportingCountdownOpenWhere(
+                                      accountId,
+                                      windowDays
+                                  ),
+                                  customer_id: { in: poolMemberIds },
+                              },
+                              policyId
+                          ),
+                          select: {
+                              customer_id: true,
+                              outstanding_debt: true,
+                              customer_outstanding_debt: true,
+                              amount: true,
+                              amount_without_vat: true,
+                          },
+                      })
+              ),
+        asOfDate == null
+            ? Promise.all([
+                  fetchOpenReceivableByCustomerMap(
+                      accountId,
+                      policyId,
+                      poolMemberIds
                   ),
-                  select: {
-                      customer_id: true,
-                      outstanding_debt: true,
-                      customer_outstanding_debt: true,
-                      amount: true,
-                      amount_without_vat: true,
-                  },
-              }),
+                  fetchTermsBreachOutstandingByCustomer(
+                      accountId,
+                      policyId,
+                      false,
+                      poolMemberIds
+                  ),
+              ])
+            : Promise.resolve(null),
             ]);
 
     let preparedAsOfLines:
@@ -1632,21 +1630,10 @@ export async function getCreditDashboardSummary(
             { allowedRootIds }
         );
     } else {
-        const [openArRaw, termsRaw] = await Promise.all([
-            fetchOpenReceivableByCustomerMapInAccountCurrency(
-                accountId,
-                accountCurrency,
-                { customerIds: poolMemberIds, policyId }
-            ),
-            fetchTermsBreachOutstandingByCustomerInAccountCurrency(
-                accountId,
-                accountCurrency,
-                policyId,
-                false,
-                // Pool members already scoped to included roots (BU applied on roots).
-                undefined
-            ),
-                ]);
+        const [openArRaw, termsRaw] = liveOpenArAndTerms ?? [
+            new Map<number, number>(),
+            new Map<number, number>(),
+        ];
         openArByCustomer = attributeAmountsToCreditPoolRoots(
             openArRaw,
             rootByMemberId,
@@ -1666,8 +1653,8 @@ export async function getCreditDashboardSummary(
         }
         return 0;
     };
-    const scopedUncoveredFields = (c: (typeof customers)[number]) =>
-        uncoveredExposureFieldsFromPolicyLink({
+    const scopedAtRiskFields = (c: (typeof customers)[number]) =>
+        atRiskExposureFieldsFromPolicyLink({
             insurancePolicyId: c.policy_id,
             exclusionReason: c.policy_exclusion_reason,
         });
@@ -1675,30 +1662,15 @@ export async function getCreditDashboardSummary(
         c: (typeof customers)[number]
     ): boolean =>
         isNoPolicyExposureCardCustomer({
-            ...scopedUncoveredFields(c),
+            ...scopedAtRiskFields(c),
             openAr: openArForCustomer(c),
         });
     const isFullArAtRiskCohortCustomer = (
         c: (typeof customers)[number]
-    ): boolean => isFullOpenArAtRiskCustomer(scopedUncoveredFields(c));
+    ): boolean => isFullOpenArAtRiskCustomer(scopedAtRiskFields(c));
     const dashboardCustomers = includeNoPolicyExposure
         ? customers
         : customers.filter((c) => !isNoPolicyExposureCohortCustomer(c));
-
-    if (asOfDate == null) {
-        const insuredIdsForGapRefresh = dashboardCustomers
-            .filter(
-                (c) =>
-                    !isFullArAtRiskCohortCustomer(c) &&
-                    openArForCustomer(c) > 0
-            )
-            .map((c) => c.id);
-        await refreshCapacityGapsForAtRiskDrift({
-                    accountId,
-                    customerIds: insuredIdsForGapRefresh,
-                    policyId,
-                });
-    }
 
     let totalReceivables = 0;
     for (const c of dashboardCustomers) {
@@ -1757,18 +1729,20 @@ export async function getCreditDashboardSummary(
     }
 
     const policyMaxCoverInAccount = new Map(
-        await Promise.all(
-            Array.from(policyArUsage.entries()).map(async ([pid, row]) => {
-                const maxInAccount = await convertPolicyLimitToAccount(
-                    row.policyCurrency,
-                    row.maxCover
-                );
-                return [pid, maxInAccount] as const;
-            })
-                )
+        snapshotOnly
+            ? []
+            : await Promise.all(
+                  Array.from(policyArUsage.entries()).map(async ([pid, row]) => {
+                      const maxInAccount = await convertPolicyLimitToAccount(
+                          row.policyCurrency,
+                          row.maxCover
+                      );
+                      return [pid, maxInAccount] as const;
+                  })
+              )
     );
 
-    const policyMaxCoverAlerts = Array.from(policyArUsage.entries())
+    const policyMaxCoverAlerts = (snapshotOnly ? [] : Array.from(policyArUsage.entries()))
         .map(([alertPolicyId, row]) => {
             const maxCoverAccount =
                 policyMaxCoverInAccount.get(alertPolicyId) ?? row.maxCover;
@@ -1802,9 +1776,90 @@ export async function getCreditDashboardSummary(
         .filter((row): row is NonNullable<typeof row> => row != null)
         .sort((a, b) => a.endDate.localeCompare(b.endDate));
 
-    const accountHasTopUp =
-        options?.hasTopUpPolicies ??
-        (await hasTopUpPolicies(accountId));
+    const insuredCustomerIdsForAtRisk = dashboardCustomers
+        .filter((c) => {
+            if (isFullArAtRiskCohortCustomer(c)) {
+                return false;
+            }
+            return openArForCustomer(c) > 0;
+        })
+        .map((c) => c.id);
+    const insuredAtRiskRootIds = new Set(insuredCustomerIdsForAtRisk);
+    const insuredPoolMemberIdsForAtRisk = [
+        ...expandRootIdSetToPoolMembers(
+            insuredCustomerIdsForAtRisk,
+            rootByMemberId
+        ),
+    ];
+
+    const [
+        accountHasTopUp,
+        policyGapRollup,
+        zeroLimitWarningsCount,
+        liveAtRiskInvoicesByCustomer,
+        preloadedTopUpsByOwnerId,
+    ] = await Promise.all([
+        options?.hasTopUpPolicies != null
+            ? Promise.resolve(options.hasTopUpPolicies)
+            : hasTopUpPolicies(accountId),
+        memoizeSummaryInput(
+            inputCache,
+            `capacityGapRollup:${scopeCacheKey}`,
+            () =>
+                sumCustomerPolicyCapacityGapForAccount(accountId, {
+                    policyId,
+                    businessUnitFilter,
+                })
+        ),
+        snapshotOnly
+            ? Promise.resolve(0)
+            : prisma.customer.count({
+            where: {
+                AND: [
+                    withExcludeLinkedChildCustomers(
+                        mergeDashboardBusinessUnitIntoCustomerScope(
+                            {
+                                account_id: accountId,
+                                collection_status: { in: COLLECTION_LIVE },
+                            },
+                            businessUnitFilter
+                        )
+                    ),
+                    {
+                        CustomerPolicy: {
+                            some: {
+                                is_active: true,
+                                approved_limit: 0,
+                                insurance_policy_id:
+                                    policyId != null ? policyId : { not: null },
+                            },
+                        },
+                    },
+                ],
+            },
+        }),
+        asOfDate == null
+            ? fetchAtRiskInvoiceInputsByCustomerMap(accountId, {
+                  policyId: policyId ?? undefined,
+                  customerIds: insuredPoolMemberIdsForAtRisk,
+              }).then((map) =>
+                  attributeListsToCreditPoolRoots(map, rootByMemberId, {
+                      allowedRootIds: insuredAtRiskRootIds,
+                  })
+              )
+            : Promise.resolve(null),
+        memoizeSummaryInput(
+            inputCache,
+            `activeTopUps:${today.toISOString().slice(0, 10)}`,
+            () => loadActiveTopUpsByCustomerIdForAccount(accountId, today)
+        ),
+    ]);
+    const topUpResolveOptions = {
+        membershipCache,
+        preloadedTopUpsByOwnerId: accountHasTopUp
+            ? preloadedTopUpsByOwnerId
+            : undefined,
+    };
 
     let topUpBlock: TopUpDashboardBlock | null = null;
     let topUpExpirationAlerts: TopUpExpiringSoonAlert[] = [];
@@ -1813,32 +1868,37 @@ export async function getCreditDashboardSummary(
     let topUpCoverRemaining = 0;
     let topUpCoverOverEffective = 0;
 
-    if (accountHasTopUp) {
-        const topUpMetrics = await computeTopUpDashboardMetrics({
-                    accountId,
-                    accountCurrency,
-                    expiringWindowDays: Math.max(30, limitExpirationWarnDays),
-                    primaryPolicyId: policyId,
-                    customers: dashboardCustomers.map((c) => ({
-                        id: c.id,
-                        policy_id: c.policy_id,
-                        approved_limit: c.approved_limit,
-                        approved_limit_currency: c.approved_limit_currency,
-                        outdated_dcl: c.outdated_dcl,
-                        excluded_from_policy: c.excluded_from_policy,
-                    })),
-                    openArByCustomerId: openArByCustomer,
-                });
-        topUpBlock = topUpMetrics.topUp;
+    if (accountHasTopUp && !snapshotOnly) {
         const { getTopUpExpiringSoonAlerts } = await import(
             "./creditInsuranceTopUpDashboardService"
         );
-        topUpExpirationAlerts = await getTopUpExpiringSoonAlerts(
-                    accountId,
-                    7,
-                    policyId,
-                    businessUnitFilter
-                );
+        const [topUpMetrics, alerts] = await Promise.all([
+            computeTopUpDashboardMetrics({
+                accountId,
+                accountCurrency,
+                expiringWindowDays: Math.max(30, limitExpirationWarnDays),
+                primaryPolicyId: policyId,
+                customers: dashboardCustomers.map((c) => ({
+                    id: c.id,
+                    policy_id: c.policy_id,
+                    approved_limit: c.approved_limit,
+                    approved_limit_currency: c.approved_limit_currency,
+                    outdated_dcl: c.outdated_dcl,
+                    excluded_from_policy: c.excluded_from_policy,
+                })),
+                openArByCustomerId: openArByCustomer,
+                membershipCache,
+                preloadedTopUpsByOwnerId,
+            }),
+            getTopUpExpiringSoonAlerts(
+                accountId,
+                7,
+                policyId,
+                businessUnitFilter
+            ),
+        ]);
+        topUpBlock = topUpMetrics.topUp;
+        topUpExpirationAlerts = alerts;
         topUpCoverTotal = topUpMetrics.policyUsageTopUp.topUpCoverTotal;
         topUpCoverUsed = topUpMetrics.policyUsageTopUp.topUpCoverUsed;
         topUpCoverRemaining = topUpMetrics.policyUsageTopUp.topUpCoverRemaining;
@@ -1847,7 +1907,7 @@ export async function getCreditDashboardSummary(
     }
 
     const policyLimitUsageRows: PolicyLimitUsageRowInput[] = [];
-    for (const c of dashboardCustomers) {
+    for (const c of snapshotOnly ? [] : dashboardCustomers) {
         const approvedLimitRaw =
             c.approved_limit != null
                 ? new Prisma.Decimal(c.approved_limit).toNumber()
@@ -1882,6 +1942,7 @@ export async function getCreditDashboardSummary(
                 excludedFromPolicy: c.excluded_from_policy ?? false,
                 parentPrimaryPolicyId: policyId,
                 asOfDate: today,
+                ...topUpResolveOptions,
             });
             const topUpInLimitCurrency = Math.max(
                 0,
@@ -1912,11 +1973,6 @@ export async function getCreditDashboardSummary(
         policyLimitUsageRows,
         today
     );
-
-    const policyGapRollup = await sumCustomerPolicyCapacityGapForAccount(accountId, {
-                policyId,
-                businessUnitFilter,
-            });
     const capacityTotal = policyGapRollup.gapBaseTotal;
     const customerOverLimit = policyGapRollup.customerOverLimitCount;
     const capacityGapByCustomerId = new Map<number, number>();
@@ -2080,35 +2136,20 @@ export async function getCreditDashboardSummary(
         ? await buildEffectiveLimitByCustomerIdInAccountCurrency(
                       accountCurrency,
                       dashboardCustomers,
-                      openArByCustomer
+                      openArByCustomer,
+                      topUpResolveOptions
                   )
         : new Map<number, number>();
 
     /**
      * Portfolio at-risk / compliant: sum of per-customer shared formula
-     * (uncovered → full AR; insured → Σ max(gap, breach)); no policy max-cover residual.
+     * (at-risk cohort → full AR; insured → Σ max(gap, breach)); no policy max-cover residual.
      * As-of snapshot days use payment-ledger open invoices for that day.
      */
     let atRiskExposure = 0;
     let policyRiskExposure = 0;
     let policyRiskExposureCustomerCount = 0;
     let grossRiskExposure = 0;
-
-    const insuredCustomerIdsForAtRisk = dashboardCustomers
-        .filter((c) => {
-            if (isFullArAtRiskCohortCustomer(c)) {
-                return false;
-            }
-            return openArForCustomer(c) > 0;
-        })
-        .map((c) => c.id);
-    const insuredAtRiskRootIds = new Set(insuredCustomerIdsForAtRisk);
-    const insuredPoolMemberIdsForAtRisk = [
-        ...expandRootIdSetToPoolMembers(
-            insuredCustomerIdsForAtRisk,
-            rootByMemberId
-        ),
-    ];
 
     const atRiskInvoicesByCustomer =
         asOfDate != null
@@ -2187,6 +2228,8 @@ export async function getCreditDashboardSummary(
                                   parentPrimaryPolicyId:
                                       policyId ?? c.policy_id ?? undefined,
                                   asOfDate,
+                                  membershipCache,
+                                  preloadedTopUpsByOwnerId,
                               }
                           );
                           effectiveLimit = Math.max(
@@ -2238,34 +2281,27 @@ export async function getCreditDashboardSummary(
                       }
                   );
               })()
-            : attributeListsToCreditPoolRoots(
-                  await fetchAtRiskInvoiceInputsByCustomerMap(accountId, {
-                              policyId: policyId ?? undefined,
-                              customerIds: insuredPoolMemberIdsForAtRisk,
-                          }),
-                  rootByMemberId,
-                  { allowedRootIds: insuredAtRiskRootIds }
-              );
+            : (liveAtRiskInvoicesByCustomer ?? new Map());
 
     for (const c of dashboardCustomers) {
         const ar = openArForCustomer(c);
         if (ar <= 0) {
             continue;
         }
-        const uncovered = isFullArAtRiskCohortCustomer(c);
-        const invoices = uncovered
+        const atRiskCohort = isFullArAtRiskCohortCustomer(c);
+        const invoices = atRiskCohort
             ? []
             : (atRiskInvoicesByCustomer.get(c.id) ?? []);
         const allocated = computeCustomerRiskExposure({
-            uncovered,
+            atRiskCohort,
             totalAr: ar,
             invoices,
             capacityGapAmount:
-                uncovered || asOfDate != null
+                atRiskCohort || asOfDate != null
                     ? undefined
                     : (capacityGapByCustomerId.get(c.id) ?? 0),
         });
-        if (!uncovered) {
+        if (!atRiskCohort) {
             policyRiskExposure += allocated;
             policyRiskExposureCustomerCount += 1;
         }
@@ -2335,32 +2371,6 @@ export async function getCreditDashboardSummary(
         reportingCount += 1;
         reportingTotal += lineOutstanding(inv, amountsIncludeVat);
     }
-
-    const zeroLimitWarningsCount = await prisma.customer.count({
-        where: {
-            AND: [
-                withExcludeLinkedChildCustomers(
-                    mergeDashboardBusinessUnitIntoCustomerScope(
-                        {
-                            account_id: accountId,
-                            collection_status: { in: COLLECTION_LIVE },
-                        },
-                        businessUnitFilter
-                    )
-                ),
-                {
-                    CustomerPolicy: {
-                        some: {
-                            is_active: true,
-                            approved_limit: 0,
-                            insurance_policy_id:
-                                policyId != null ? policyId : { not: null },
-                        },
-                    },
-                },
-            ],
-        },
-    });
 
     return {
         healthIndex,
@@ -3089,13 +3099,13 @@ export async function getPolicyRiskExposureReport(
         if (c.InsurancePolicy == null) {
             continue;
         }
-        const uncovered = isFullOpenArAtRiskCustomer(
-            uncoveredExposureFieldsFromPolicyLink({
+        const atRiskCohort = isFullOpenArAtRiskCustomer(
+            atRiskExposureFieldsFromPolicyLink({
                 insurancePolicyId: c.policy_id,
                 exclusionReason: c.policy_exclusion_reason,
             })
         );
-        if (uncovered) {
+        if (atRiskCohort) {
             continue;
         }
         const ar = openArFor(c);
@@ -3105,7 +3115,7 @@ export async function getPolicyRiskExposureReport(
         const gap = dashboardCapacityGapFromStored(c);
         const tb = termsOutstandingByCustomer.get(c.id) ?? 0;
         const allocated = computeCustomerRiskExposure({
-            uncovered: false,
+            atRiskCohort: false,
             totalAr: ar,
             invoices: atRiskInvoicesByCustomer.get(c.id) ?? [],
             capacityGapAmount: gap,
@@ -3190,7 +3200,7 @@ export async function getNoPolicyExposureReport(
     let list = all.filter((c) => {
         const ar = openArByCustomer.get(c.id) ?? 0;
         return isNoPolicyExposureCardCustomer({
-            ...uncoveredExposureFieldsFromPolicyLink({
+            ...atRiskExposureFieldsFromPolicyLink({
                 insurancePolicyId: c.policy_id,
                 exclusionReason: c.policy_exclusion_reason,
             }),

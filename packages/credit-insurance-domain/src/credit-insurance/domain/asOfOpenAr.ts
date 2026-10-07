@@ -10,6 +10,7 @@ import {
     computeInvoiceInsuranceRowData,
     computeLimitExcessOverEffective,
     isEligibleForCustomerMepOverdue,
+    isIgnoredForMepOverdueBlock,
     isNegativeInvoiceAmount,
     type CustomerAtRiskInvoiceInput,
 } from "./invoiceInsuranceFields";
@@ -210,6 +211,8 @@ export type AsOfOpenInvoiceLine = {
     inCapacityGap: boolean;
     capacityGapAmount?: number;
     actualReportingDate?: Date | null;
+    /** Skip for overdue_block only; AR / gap / aging still include the line. */
+    mepIgnored?: boolean;
 };
 
 /** Policy terms used to recompute invoice breach flags as of a snapshot day. */
@@ -248,7 +251,7 @@ export function asOfCapacityGapAmount(
 export type AsOfCapacityGapWaterfallScope = {
     effectiveLimit: number;
     limitCurrency: string | null;
-    /** Uncovered / outdated DCL — force invoice gaps to 0. */
+    /** At-risk / outdated DCL — force invoice gaps to 0. */
     zeroGaps?: boolean;
 };
 
@@ -492,6 +495,9 @@ export function asOfCustomerOverdueBlockAt(
     let oldestOverdueDue: Date | null = null;
     let oldestOverdueIssueDate: Date | null = null;
     for (const line of customerLines) {
+        if (isIgnoredForMepOverdueBlock(line.mepIgnored)) {
+            continue;
+        }
         if (!isInvoiceInMepBreachScope(line.invoiceDate, mepBreachStartDate)) {
             continue;
         }
@@ -612,6 +618,7 @@ const MS_PER_UTC_DAY = 86_400_000;
  * rescans (CPT Generate bottleneck when one customer has hundreds of invoices).
  */
 export type OldestOverdueAtIssue = {
+    invoiceId: number;
     dueDate: Date;
     invoiceDate: Date;
 };
@@ -632,6 +639,9 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
     const cands: Cand[] = [];
     for (const line of customerLines) {
         if (!isEligibleForCustomerMepOverdue(line.amount)) {
+            continue;
+        }
+        if (isIgnoredForMepOverdueBlock(line.mepIgnored)) {
             continue;
         }
         if (
@@ -694,16 +704,26 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
     let cachedMin: OldestOverdueAtIssue | null = null;
     let cachedMinDueMs: number | null = null;
 
-    function pickMinInvoiceDate(
+    function pickOldestIssue(
         byInvoiceId: Map<number, Date>
-    ): Date | null {
-        let best: Date | null = null;
-        for (const invoiceDate of byInvoiceId.values()) {
-            if (!best || invoiceDate.getTime() < best.getTime()) {
-                best = invoiceDate;
+    ): { invoiceId: number; invoiceDate: Date } | null {
+        let bestId: number | null = null;
+        let bestDate: Date | null = null;
+        for (const [invoiceId, invoiceDate] of byInvoiceId) {
+            if (
+                !bestDate ||
+                invoiceDate.getTime() < bestDate.getTime() ||
+                (invoiceDate.getTime() === bestDate.getTime() &&
+                    invoiceId < (bestId ?? Number.POSITIVE_INFINITY))
+            ) {
+                bestId = invoiceId;
+                bestDate = invoiceDate;
             }
         }
-        return best;
+        if (bestId == null || !bestDate) {
+            return null;
+        }
+        return { invoiceId: bestId, invoiceDate: bestDate };
     }
 
     function recomputeMin(): void {
@@ -714,12 +734,16 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
                 continue;
             }
             if (cachedMinDueMs == null || ms < cachedMinDueMs) {
-                const invoiceDate = pickMinInvoiceDate(meta.byInvoiceId);
-                if (!invoiceDate) {
+                const oldest = pickOldestIssue(meta.byInvoiceId);
+                if (!oldest) {
                     continue;
                 }
                 cachedMinDueMs = ms;
-                cachedMin = { dueDate: meta.dueDate, invoiceDate };
+                cachedMin = {
+                    invoiceId: oldest.invoiceId,
+                    dueDate: meta.dueDate,
+                    invoiceDate: oldest.invoiceDate,
+                };
             }
         }
     }
@@ -739,15 +763,19 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
         if (cachedMinDueMs == null || cand.dueDateMs < cachedMinDueMs) {
             cachedMinDueMs = cand.dueDateMs;
             cachedMin = {
+                invoiceId: cand.invoiceId,
                 dueDate: cand.dueDate,
                 invoiceDate: cand.invoiceDate,
             };
         } else if (cachedMinDueMs === cand.dueDateMs) {
             if (
                 !cachedMin ||
-                cand.invoiceDateMs < cachedMin.invoiceDate.getTime()
+                cand.invoiceDateMs < cachedMin.invoiceDate.getTime() ||
+                (cand.invoiceDateMs === cachedMin.invoiceDate.getTime() &&
+                    cand.invoiceId < cachedMin.invoiceId)
             ) {
                 cachedMin = {
+                    invoiceId: cand.invoiceId,
                     dueDate: cand.dueDate,
                     invoiceDate: cand.invoiceDate,
                 };
@@ -768,9 +796,13 @@ export function oldestOverdueDueAtEachInvoiceIssueDate(
                 recomputeMin();
             }
         } else if (cachedMinDueMs === cand.dueDateMs) {
-            const invoiceDate = pickMinInvoiceDate(prev.byInvoiceId);
-            cachedMin = invoiceDate
-                ? { dueDate: prev.dueDate, invoiceDate }
+            const oldest = pickOldestIssue(prev.byInvoiceId);
+            cachedMin = oldest
+                ? {
+                      invoiceId: oldest.invoiceId,
+                      dueDate: prev.dueDate,
+                      invoiceDate: oldest.invoiceDate,
+                  }
                 : null;
             if (!cachedMin) {
                 recomputeMin();
@@ -828,6 +860,16 @@ export function overlayAsOfTermsFlagsOnLine(
         oldestOverdueAtIssue?: OldestOverdueAtIssue | null;
     }
 ): AsOfOpenInvoiceLine {
+    if (isNegativeInvoiceAmount(line.amount)) {
+        return {
+            ...line,
+            reportingBreach: false,
+            ctvPaymentTerm: false,
+            ctvCustomerOverdueMep: false,
+            ctvOutdatedDcl: false,
+            ctvInvoiceAfterPolicyEnd: false,
+        };
+    }
     const asOfStatus = classifyAsOfOpenStatus(line.dueDate, asOfDate);
     const row = computeInvoiceInsuranceRowData({
         status: asOfStatus as invoice_status,
@@ -945,6 +987,16 @@ export function overlayAsOfTermsFlagsOnLines(
         );
         const terms = exact ?? fallback;
         if (!terms) {
+            if (isNegativeInvoiceAmount(line.amount)) {
+                return {
+                    ...line,
+                    reportingBreach: false,
+                    ctvPaymentTerm: false,
+                    ctvCustomerOverdueMep: false,
+                    ctvOutdatedDcl: false,
+                    ctvInvoiceAfterPolicyEnd: false,
+                };
+            }
             if (options?.ignoreReportingBreach) {
                 return { ...line, reportingBreach: false };
             }
@@ -1124,6 +1176,19 @@ export function computeAsOfOpenInvoiceLine(
     };
 }
 
+/**
+ * Keep only lines with non-zero as-of open on `asOfDate`. Apply after terms
+ * flags are overlaid — the MEP sibling sweep still needs closed history.
+ */
+export function filterAsOfOpenLines(
+    lines: AsOfOpenInvoiceLine[],
+    asOfDate: Date
+): AsOfOpenInvoiceLine[] {
+    return lines.filter(
+        (line) => computeAsOfOpenInvoiceLine(line, asOfDate) != null
+    );
+}
+
 function isTermsBreachLine(line: AsOfOpenInvoiceLine): boolean {
     if (isNegativeInvoiceAmount(line.amount)) {
         return false;
@@ -1161,6 +1226,7 @@ type AsOfInvoiceSqlRow = {
     actual_reporting_date: Date | null;
     last_payment_date: Date | null;
     status: string;
+    mep_ignored: boolean;
 };
 
 function mapSqlRow(
@@ -1199,6 +1265,7 @@ function mapSqlRow(
         lastPaymentDate: row.last_payment_date,
         liveClosed: row.status === "Paid",
         openAmountTolerance,
+        mepIgnored: Boolean(row.mep_ignored),
     };
 }
 
@@ -1252,7 +1319,8 @@ export async function loadAsOfOpenInvoiceCandidates(
             COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
             i.actual_reporting_date,
             p.last_payment_date,
-            i.status::text AS status
+            i.status::text AS status,
+            COALESCE(i.mep_ignored, false) AS mep_ignored
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
         INNER JOIN "Account" a ON a.id = i.account_id

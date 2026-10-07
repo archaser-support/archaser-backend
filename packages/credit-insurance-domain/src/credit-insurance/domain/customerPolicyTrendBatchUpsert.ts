@@ -176,9 +176,12 @@ export async function pruneInactiveCustomerPolicyTrendRows(args: {
     snapshotDate: Date;
     policyId?: number;
     customerIds?: number[];
+    /** Inactive CPT rows upserted this run (run-off) must not be deleted. */
+    keepCustomerPolicyIds?: number[];
     dbClient?: DbClient;
 }): Promise<number> {
     const db = args.dbClient ?? defaultPrisma;
+    const keepIds = args.keepCustomerPolicyIds ?? [];
     return db.$executeRaw`
         DELETE FROM "CustomerPolicyTrend" t
         USING "CustomerPolicy" cp
@@ -193,6 +196,10 @@ export async function pruneInactiveCustomerPolicyTrendRows(args: {
           AND (
             ${args.customerIds == null}::boolean
             OR t.customer_id = ANY(${args.customerIds ?? []}::int[])
+          )
+          AND (
+            ${keepIds.length === 0}::boolean
+            OR t.customer_policy_id <> ALL(${keepIds}::int[])
           )
     `;
 }

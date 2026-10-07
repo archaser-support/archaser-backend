@@ -24,7 +24,7 @@ import {
 import { resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
 import {
     hasActiveLinkedPolicy,
-    isUncoveredExposureCustomer,
+    isAtRiskExposureCustomer,
 } from "./policyExclusion";
 import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
@@ -91,7 +91,7 @@ type UninsuredWriteFields = Pick<
 >;
 
 /**
- * Uninsured exposure (open AR beyond the approved limit) plus the FX date it was
+ * Uninsured amount (open AR beyond the approved limit) plus the FX date it was
  * resolved on, for the account total and the top-2 invoice-currency buckets.
  */
 async function resolveUninsuredFields(params: {
@@ -241,7 +241,7 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
 
     const activePolicyRow =
         policyRows.find((row) => row.is_active) ?? policyRows[0];
-    const uncovered = isUncoveredExposureCustomer({
+    const atRiskCohort = isAtRiskExposureCustomer({
         hasLinkedPolicy: hasActiveLinkedPolicy(
             activePolicyRow.insurance_policy_id
         ),
@@ -250,7 +250,7 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
 
     const membersToWrite = freezeSingleRow ? [customerId] : memberIds;
 
-    if (uncovered) {
+    if (atRiskCohort) {
         for (const memberId of membersToWrite) {
             const memberPolicies = freezeSingleRow
                 ? policyRows
@@ -409,7 +409,7 @@ export async function syncCustomerPolicyGapAmountsForCustomer(
                 ? capacityGapKpi
                 : Math.max(0, gapLimit);
 
-        // Uninsured exposure is AR-bucket based, so it comes from the bucket
+        // Uninsured amount is AR-bucket based, so it comes from the bucket
         // computation. Capacity gap card is AR − effective limit.
         const uninsuredFields = await resolveUninsuredFields({
             accountId: customer.account_id,

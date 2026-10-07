@@ -6,6 +6,9 @@
  * One SQL scan; callers derive KPI-specific customer metrics in memory.
  * Conditional aggregates preserve capacity/stale “positive limit” day semantics
  * while still returning zero-limit days for overshoot / limit-capped.
+ *
+ * Roots only (`parent_customer_id` null), including credit-pool shells.
+ * Extra cover is the shell’s own CPT `top_up_total` (not descendant rows).
  */
 
 import { prisma } from "../domain-db";
@@ -34,6 +37,10 @@ export type LinkedCptCustomerDayRow = {
     approvedTotalReceivables: number;
     usageAmount: number;
     effectiveLimitSum: number;
+    /** Base approved limit summed for the customer×day. */
+    approvedLimitSum: number;
+    /** Active top-up cover summed for the customer×day. */
+    topUpTotalSum: number;
     /** Size-weighted util when limit > 0; else null. */
     effectiveUsagePct: number | null;
     totalReceivables: number;
@@ -49,6 +56,8 @@ type LinkedCptCustomerDayRawRow = {
     approved_total_receivables: number | string | null;
     usage_amount: number | string | null;
     effective_limit_sum: number | string | null;
+    approved_limit_sum: number | string | null;
+    top_up_total_sum: number | string | null;
     effective_usage_pct: number | string | null;
     total_receivables: number | string | null;
     compliant_exposure: number | string | null;
@@ -153,6 +162,8 @@ export async function fetchLinkedCptCustomerDaySeries(
             SUM(
                 COALESCE(t.effective_approved_limit, t.approved_limit, 0)
             )::float8 AS effective_limit_sum,
+            SUM(COALESCE(t.approved_limit, 0))::float8 AS approved_limit_sum,
+            SUM(COALESCE(t.top_up_total, 0))::float8 AS top_up_total_sum,
             AVG(
                 CASE
                     WHEN COALESCE(t.effective_approved_limit, t.approved_limit, 0) > 0
@@ -228,6 +239,8 @@ export async function fetchLinkedCptCustomerDaySeries(
             ),
             usageAmount,
             effectiveLimitSum: limitSum,
+            approvedLimitSum: Math.max(0, toNumber(row.approved_limit_sum)),
+            topUpTotalSum: Math.max(0, toNumber(row.top_up_total_sum)),
             effectiveUsagePct,
             totalReceivables: toNumber(row.total_receivables),
             compliantExposure: toNumber(row.compliant_exposure),

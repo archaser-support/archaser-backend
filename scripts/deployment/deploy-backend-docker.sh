@@ -344,6 +344,52 @@ ensure_backend_compose_network() {
     "${DOCKER[@]}" network rm "$net" >/dev/null 2>&1 || true
 }
 
+# Production joins archaser-mongo-shared; the mongo service lives in the staging compose project.
+ensure_shared_mongo_running() {
+    local uri_line uri staging_compose staging_env
+    uri_line="$(grep -E '^[[:space:]]*(export[[:space:]]+)?MONGODB_URI=' "$ENV_TARGET" | tail -n1 || true)"
+    if [[ -z "$uri_line" ]]; then
+        return 0
+    fi
+    uri="$(printf '%s\n' "$uri_line" | sed -E 's/^[[:space:]]*(export[[:space:]]+)?MONGODB_URI=//')"
+    uri="${uri%\"}"
+    uri="${uri#\"}"
+    uri="${uri%\'}"
+    uri="${uri#\'}"
+    uri="$(printf '%s' "$uri" | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')"
+    if [[ "$uri" != mongodb://mongo:* ]]; then
+        log "MONGODB_URI host is not compose mongo — skipping shared Mongo preflight"
+        return 0
+    fi
+
+    staging_compose="$BACKEND_DIR/docker-compose.backend.staging.yml"
+    staging_env="$BACKEND_DIR/.env.staging"
+    if [[ ! -f "$staging_env" && "$ENVIRONMENT" == "staging" ]]; then
+        staging_env="$ENV_TARGET"
+    fi
+    if [[ ! -f "$staging_compose" || ! -f "$staging_env" ]]; then
+        echo "Warning: cannot preflight shared Mongo (missing staging compose or .env.staging)"
+        return 0
+    fi
+
+    log "Ensuring shared Docker Mongo is running (archaser-mongo-shared)"
+    if ! BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
+        --project-name archaser-backend-staging \
+        --env-file "$staging_env" \
+        -f "$staging_compose" \
+        up -d mongo --wait; then
+        log "compose --wait unavailable or timed out — starting mongo without wait"
+        if ! BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
+            --project-name archaser-backend-staging \
+            --env-file "$staging_env" \
+            -f "$staging_compose" \
+            up -d mongo; then
+            echo "Error: shared Mongo failed to start. Crons refuse partial account freeze when Mongo is down."
+            exit 1
+        fi
+    fi
+}
+
 recreate_backend_stack() {
     stop_legacy_backend_projects
     log "Recreating backend stack (down → up; bind-mounted dist/ and env apply only in new containers)"
@@ -690,6 +736,7 @@ log "Applying SQL migrations for $ENVIRONMENT"
 node "$ROOT_DIR/scripts/deployment/apply-sql-migrations.js"
 
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
+ensure_shared_mongo_running
 recreate_backend_stack
 
 if [[ "$NO_GRAFANA" != "true" ]]; then

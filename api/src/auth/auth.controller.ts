@@ -35,6 +35,7 @@ import {
     ResetPasswordDto,
     ScopeProbeResponseDto,
 } from "./dto/auth-response.dto";
+import { DualAuthGuard } from "./dual-auth.guard";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 
 @ApiTags("auth")
@@ -54,9 +55,9 @@ export class AuthController {
     }
 
     @Get("me")
-    @UseGuards(JwtAuthGuard)
+    @UseGuards(DualAuthGuard)
     @ApiBearerAuth()
-    @ApiOperation({ summary: "Validate Bearer JWT and return profile claims" })
+    @ApiOperation({ summary: "Validate auth and return profile + account shell" })
     @ApiOkResponse({ type: MeResponseDto })
     @ApiUnauthorizedResponse({ description: "Missing or invalid token" })
     me(@Req() req: Request & { user: JwtPayload }): Promise<MeResponseDto> {

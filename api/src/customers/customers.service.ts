@@ -990,6 +990,26 @@ export class CustomersService {
         return this.getById(user, id);
     }
 
+    /**
+     * Remove the active insurance policy from a required UTC unassign date.
+     */
+    async unassignPolicy(
+        user: JwtPayload,
+        id: number,
+        body: Record<string, unknown>
+    ) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const { accountId, effectiveUserId } =
+            await this.assertCustomerInAccount(userInfo, id);
+        await this.customerPolicy.applyUnassignFromPoliciesTab({
+            customerId: id,
+            accountId,
+            userId: effectiveUserId,
+            unassignDate: body.unassign_date,
+        });
+        return this.getById(user, id);
+    }
+
     /** Resolve account scope + assert the customer belongs to it (nested-path guard). */
     private async assertCustomerInAccount(
         userInfo: AccessUserInfo,

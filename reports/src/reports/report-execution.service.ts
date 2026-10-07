@@ -551,9 +551,12 @@ export class ReportExecutionService {
                     warningRows.map((r) => [r.customerId, r])
                 );
             }
+            const enrichmentLanguage =
+                body.language || user.language || undefined;
             rows = await enrichCreditDashboardCustomerRows(rows, {
                 accountId,
                 policyId: creditDashboardPolicyId,
+                accountLanguage: enrichmentLanguage,
                 requestedFields: requestedCustomerFields,
                 limitWarningByCustomerId,
                 asOfDate: creditDashboardAsOfDate,
@@ -1303,6 +1306,17 @@ export class ReportExecutionService {
                 .map((f) => f.field)
         );
 
+        if (primaryTable === "Invoice") {
+            select.amount = true;
+            select.reporting_breach = true;
+            select.ctv_payment_term = true;
+            select.ctv_customer_overdue_mep = true;
+            select.ctv_customer_overdue_mep_cause_invoice_number = true;
+            select.ctv_customer_excluded_from_policy = true;
+            select.ctv_outdated_dcl = true;
+            select.ctv_invoice_after_policy_end = true;
+        }
+
         if (primaryTable === "Customer") {
             if (fieldNames.has("parent_customer_name")) {
                 select.parent_customer_id = true;
@@ -1905,7 +1919,14 @@ export class ReportExecutionService {
             ) {
                 const label = formatTermsBreachReasonForDisplay(
                     String(value),
-                    language
+                    language,
+                    {
+                        mepCauseInvoiceNumber:
+                            typeof row.ctv_customer_overdue_mep_cause_invoice_number ===
+                            "string"
+                                ? row.ctv_customer_overdue_mep_cause_invoice_number
+                                : null,
+                    }
                 );
                 if (label) {
                     value = label;
@@ -1974,6 +1995,30 @@ export class ReportExecutionService {
         // after view transforms overwrite/reshape rows.
         if (primaryTable === "Customer" && out.customer_id == null && row.id != null) {
             out.customer_id = row.id;
+        }
+        if (primaryTable === "Invoice") {
+            const cause =
+                row.ctv_customer_overdue_mep_cause_invoice_number ?? null;
+            out.ctv_customer_overdue_mep_cause_invoice_number = cause;
+            out["Invoice.ctv_customer_overdue_mep_cause_invoice_number"] =
+                cause;
+            const violationFlags = [
+                "reporting_breach",
+                "ctv_payment_term",
+                "ctv_customer_overdue_mep",
+                "ctv_customer_excluded_from_policy",
+                "ctv_outdated_dcl",
+                "ctv_invoice_after_policy_end",
+            ] as const;
+            for (const flag of violationFlags) {
+                const value = row[flag];
+                if (out[flag] === undefined) {
+                    out[flag] = value ?? false;
+                }
+                if (out[`Invoice.${flag}`] === undefined) {
+                    out[`Invoice.${flag}`] = value ?? false;
+                }
+            }
         }
         return out;
     }
