@@ -727,6 +727,132 @@
                 "x": 0,
                 "y": 29
             },
+            "id": 320,
+            "title": "Worker Queue Depth",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "lineWidth": 2,
+                        "showPoints": "never",
+                        "spanNulls": true
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 30
+            },
+            "id": 321,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "archaser_bullmq_queue_waiting{instance=\"Production\"}",
+                    "legendFormat": "{{queue}} waiting",
+                    "refId": "A"
+                }
+            ],
+            "title": "BullMQ Waiting by Queue",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "lineWidth": 2,
+                        "showPoints": "never",
+                        "spanNulls": true
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 30
+            },
+            "id": 322,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "archaser_bullmq_queue_active{instance=\"Production\"}",
+                    "legendFormat": "{{queue}} active",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "archaser_bullmq_queue_failed{instance=\"Production\"}",
+                    "legendFormat": "{{queue}} failed",
+                    "refId": "B"
+                }
+            ],
+            "title": "BullMQ Active / Failed by Queue",
+            "type": "timeseries"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 38
+            },
             "id": 310,
             "title": "Cron Intensity & Logs",
             "type": "row"
@@ -740,7 +866,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 30
+                "y": 39
             },
             "id": 104,
             "options": {
@@ -771,7 +897,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 30
+                "y": 39
             },
             "id": 105,
             "options": {
