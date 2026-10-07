@@ -318,6 +318,138 @@ groups:
           severity: high
           type: cron
 
+      - uid: bullmq-cron-queue-waiting-stag
+        title: Worker Cron Queue Waiting High
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_bullmq_queue_waiting{instance="Staging",queue="cron"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 5
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          alert_details_type: "bullmq_cron_queue_backlog"
+          summary: "Main cron BullMQ waiting jobs high ({{ $values.A.Value }})"
+          description: "Worker cron queue waiting count stayed above 5 for 10m. Email lists waiting/active/failed plus sample waiting job ids."
+        labels:
+          severity: medium
+          type: cron
+
+      - uid: bullmq-backfill-queue-waiting-stag
+        title: Worker Backfill Queue Waiting High
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_bullmq_queue_waiting{instance="Staging",queue="credit_asof_backfill"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 20
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          alert_details_type: "bullmq_backfill_queue_backlog"
+          summary: "Credit as-of backfill BullMQ waiting jobs high ({{ $values.A.Value }})"
+          description: "Backfill queue waiting count stayed above 20 for 10m. Email lists waiting/active/failed plus sample waiting job ids."
+        labels:
+          severity: medium
+          type: cron
+
+      - uid: bullmq-vat-queue-waiting-stag
+        title: Worker VAT Queue Waiting High
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_bullmq_queue_waiting{instance="Staging",queue="account_vat_basis_refresh"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 10
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          alert_details_type: "bullmq_vat_queue_backlog"
+          summary: "VAT basis refresh BullMQ waiting jobs high ({{ $values.A.Value }})"
+          description: "VAT refresh queue waiting count stayed above 10 for 10m. Email lists waiting/active/failed plus sample waiting job ids."
+        labels:
+          severity: medium
+          type: cron
+
       # ============================================================
       # High Priority Alerts - Collection Periods
       # ============================================================

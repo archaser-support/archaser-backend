@@ -16,6 +16,9 @@ const KNOWN_ALERT_DETAIL_TYPES = new Set([
   'no_system_activities_24h',
   'stuck_import_jobs',
   'stale_disputes',
+  'bullmq_cron_queue_backlog',
+  'bullmq_backfill_queue_backlog',
+  'bullmq_vat_queue_backlog',
 ]);
 
 /** After normalizeCandidate(), map common title/UID shapes onto known types. */
@@ -38,6 +41,12 @@ const NORMALIZED_ALIASES = {
   stuck_import_jobs: 'stuck_import_jobs',
   stale_disputes_detected: 'stale_disputes',
   stale_disputes: 'stale_disputes',
+  bullmq_cron_queue_backlog: 'bullmq_cron_queue_backlog',
+  worker_cron_queue_waiting_high: 'bullmq_cron_queue_backlog',
+  bullmq_backfill_queue_backlog: 'bullmq_backfill_queue_backlog',
+  worker_backfill_queue_waiting_high: 'bullmq_backfill_queue_backlog',
+  bullmq_vat_queue_backlog: 'bullmq_vat_queue_backlog',
+  worker_vat_queue_waiting_high: 'bullmq_vat_queue_backlog',
 };
 
 function normalizeCandidate(raw) {

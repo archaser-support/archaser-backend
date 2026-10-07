@@ -173,6 +173,132 @@
                 "x": 0,
                 "y": 11
             },
+            "id": 150,
+            "title": "Worker Queue Depth",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "lineWidth": 2,
+                        "showPoints": "never",
+                        "spanNulls": true
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 12
+            },
+            "id": 151,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "archaser_bullmq_queue_waiting{instance=\"Production\"}",
+                    "legendFormat": "{{queue}} waiting",
+                    "refId": "A"
+                }
+            ],
+            "title": "BullMQ Waiting by Queue",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "lineWidth": 2,
+                        "showPoints": "never",
+                        "spanNulls": true
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 12
+            },
+            "id": 152,
+            "options": {
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "archaser_bullmq_queue_active{instance=\"Production\"}",
+                    "legendFormat": "{{queue}} active",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "archaser_bullmq_queue_failed{instance=\"Production\"}",
+                    "legendFormat": "{{queue}} failed",
+                    "refId": "B"
+                }
+            ],
+            "title": "BullMQ Active / Failed by Queue",
+            "type": "timeseries"
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 20
+            },
             "id": 200,
             "title": "Automation & Collection Periods",
             "type": "row"
@@ -209,7 +335,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 12
+                "y": 21
             },
             "id": 201,
             "options": {
@@ -269,7 +395,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 12
+                "y": 21
             },
             "id": 202,
             "options": {
@@ -329,7 +455,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 20
+                "y": 29
             },
             "id": 203,
             "options": {
@@ -362,7 +488,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 28
+                "y": 37
             },
             "id": 300,
             "title": "Activities",
@@ -400,7 +526,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 29
+                "y": 38
             },
             "id": 301,
             "options": {
@@ -433,7 +559,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 37
+                "y": 46
             },
             "id": 400,
             "title": "Communications (Last 24h)",
@@ -471,7 +597,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 38
+                "y": 47
             },
             "id": 401,
             "options": {
@@ -531,7 +657,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 38
+                "y": 47
             },
             "id": 402,
             "options": {
@@ -564,7 +690,7 @@
                 "h": 1,
                 "w": 24,
                 "x": 0,
-                "y": 46
+                "y": 55
             },
             "id": 500,
             "title": "Customers & Invoices",
@@ -602,7 +728,7 @@
                 "h": 10,
                 "w": 24,
                 "x": 0,
-                "y": 47
+                "y": 56
             },
             "id": 501,
             "options": {
@@ -627,7 +753,7 @@
                     "refId": "A"
                 }
             ],
-            "title": "Overdue \u2014 open period category N/A",
+            "title": "Overdue — open period category N/A",
             "type": "table",
             "description": "Customers with overdue exposure while the open collection period has no current_category (shown as N/A in the app)."
         }

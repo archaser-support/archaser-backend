@@ -1,10 +1,53 @@
 import { Injectable } from "@nestjs/common";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
+import { CronQueueService } from "../queue/cron-queue.service";
 
 @Injectable()
 export class AlertDetailsService {
-    constructor(private readonly db: DatabaseService) {}
+    constructor(
+        private readonly db: DatabaseService,
+        private readonly cronQueue: CronQueueService
+    ) {}
+
+    private async bullmqQueueBacklogDetails(
+        type: string,
+        logicalQueue:
+            | "cron"
+            | "credit_asof_backfill"
+            | "account_vat_basis_refresh",
+        limitNum: number,
+        drilldownHint: string
+    ) {
+        const snap = await this.cronQueue.getQueueBacklogSnapshot(
+            logicalQueue,
+            limitNum
+        );
+        return {
+            type,
+            count: snap.waiting,
+            details: [
+                {
+                    logical_queue: snap.logicalQueue,
+                    redis_queue: snap.redisQueueName ?? "N/A",
+                    waiting: snap.waiting,
+                    active: snap.active,
+                    failed: snap.failed,
+                    error: snap.error ?? "N/A",
+                },
+                ...snap.waitingJobs.map((job) => ({
+                    waiting_job_id: job.id || "N/A",
+                    waiting_job_name: job.name,
+                })),
+            ],
+            runbook: [
+                "1. Open Grafana Cron Health → Worker Queue Depth and confirm waiting/active/failed.",
+                "2. Check the worker process is running and not stuck on a long job (active=1 for long periods).",
+                "3. Inspect Redis/BullMQ for failed jobs; clear or retry failures if they block drain.",
+                `4. Grafana drilldown: ${drilldownHint}.`,
+            ].join(" "),
+        };
+    }
 
     async getDetails(type: string, limitNum: number) {
         const currentTime = new Date();
@@ -701,6 +744,30 @@ export class AlertDetailsService {
                         "3. Inspect cron failure counts and application logs for workflow errors.",
                     ].join(" "),
                 });
+            }
+            case "bullmq_cron_queue_backlog": {
+                return this.bullmqQueueBacklogDetails(
+                    type,
+                    "cron",
+                    limitNum,
+                    "Worker Cron Queue Waiting"
+                );
+            }
+            case "bullmq_backfill_queue_backlog": {
+                return this.bullmqQueueBacklogDetails(
+                    type,
+                    "credit_asof_backfill",
+                    limitNum,
+                    "Worker Backfill Queue Waiting"
+                );
+            }
+            case "bullmq_vat_queue_backlog": {
+                return this.bullmqQueueBacklogDetails(
+                    type,
+                    "account_vat_basis_refresh",
+                    limitNum,
+                    "Worker VAT Queue Waiting"
+                );
             }
             case "stuck_import_jobs": {
                 const where = {
