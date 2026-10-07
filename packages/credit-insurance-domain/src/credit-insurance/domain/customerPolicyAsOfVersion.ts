@@ -41,9 +41,10 @@ function isStrictlyLaterVersion(
  * Whether a CustomerPolicy version supplies terms/limits on as-of day D.
  *
  * - Version starts on/before D.
- * - Unassign/run-off: `policy_change_end_date` is the first day the version is
- *   no longer the live attachment (D &lt; end). Superseding versions do **not**
- *   set end_date — the next version's start closes the prior one.
+ * - Unassign/run-off and supersede: `policy_change_end_date` is the first day
+ *   the version is no longer the live attachment (D &lt; end). New writers set
+ *   end_date to the next version's start; legacy rows may still have null end
+ *   and are closed by the next version's start (see successor check below).
  * - When D is before every recorded start, the earliest version is extended
  *   backward (prehistory before copy-on-write dating).
  */

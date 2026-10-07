@@ -15,6 +15,7 @@ import {
 import {
     AdminBackfillBlockingRewriteError,
     applyDatedCustomerPolicyUnassign,
+    customerPolicySupersedeUpdateData,
     DatedCustomerPolicyUnassignError,
     deriveExcludedFromPolicy,
     ensureCustomerCapacityGapStored,
@@ -515,11 +516,10 @@ export class CustomerPolicyService {
             await this.db.$transaction(async (tx) => {
                 await tx.customerPolicy.updateMany({
                     where: { customer_id: args.customerId, is_active: true },
-                    data: {
-                        is_active: false,
-                        status: "inactive",
-                        modified_by: args.userId,
-                    },
+                    data: customerPolicySupersedeUpdateData({
+                        nextVersionStartDate: changeDate,
+                        modifiedBy: args.userId,
+                    }),
                 });
                 await tx.customerPolicy.create({
                     data: {
@@ -561,11 +561,10 @@ export class CustomerPolicyService {
         await this.db.$transaction(async (tx) => {
             await tx.customerPolicy.update({
                 where: { id: activeRow.id },
-                data: {
-                    is_active: false,
-                    status: "inactive",
-                    modified_by: args.userId,
-                },
+                data: customerPolicySupersedeUpdateData({
+                    nextVersionStartDate: changeDate,
+                    modifiedBy: args.userId,
+                }),
             });
             await tx.customerPolicy.create({
                 data: {
