@@ -38,6 +38,34 @@ export class InsurancePoliciesActionsController {
         return this.insurance.bulkReplacePolicy(user, body);
     }
 
+    @Post(":id/save-preview")
+    @HttpCode(200)
+    @ApiOperation({
+        summary:
+            "Preview an insurance policy save: changed customer-push fields and affected customer counts",
+    })
+    @ApiUnauthorizedResponse({ description: "Missing Bearer or session cookie" })
+    async savePreview(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.insurance.previewInsurancePolicySave(user, id, body);
+    }
+
+    @Post(":id/cancel-pending")
+    @HttpCode(200)
+    @ApiOperation({
+        summary: "Cancel the scheduled (future-dated) insurance policy revision",
+    })
+    @ApiUnauthorizedResponse({ description: "Missing Bearer or session cookie" })
+    async cancelPending(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        return this.insurance.cancelPendingInsurancePolicyRevision(user, id);
+    }
+
     @Get(":id/customer-prefill")
     @ApiOperation({
         summary: "Prefill customer insurance fields from policy / named / country",

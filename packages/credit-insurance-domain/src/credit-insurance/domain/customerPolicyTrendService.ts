@@ -17,7 +17,6 @@ import {
     isUtcCalendarToday,
     type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
-    type AsOfPolicyTermsForBreach,
 } from "./asOfOpenAr";
 import { buildCustomerPolicyTrendSnapshotPayload } from "./customerPolicyTrendSnapshotPayload";
 import {
@@ -36,6 +35,10 @@ import {
     type TopUpRowForTrendReplay,
     type TrendCostPredecessorRow,
 } from "./creditAsOfBackfillRunContext";
+import {
+    buildAsOfTermsMapForDate,
+    selectCustomerPoliciesForTrendWriteOnDate,
+} from "./customerPolicyAsOfVersion";
 import {
     batchUpsertCustomerPolicyTrendRows,
     pruneInactiveCustomerPolicyTrendRows,
@@ -1391,19 +1394,11 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             policyId: options?.policyId,
             customerIds: options?.customerIds,
         }));
-    const snapshotDay = toUtcDateOnly(snapshotDate);
-    const activePolicies = loadedPolicies.filter((cp) => {
-        if (cp.is_active) {
-            return true;
-        }
-        if (cp.policy_change_end_date == null) {
-            return false;
-        }
-        return (
-            snapshotDay.getTime() >=
-            toUtcDateOnly(cp.policy_change_end_date).getTime()
-        );
-    });
+    /** Live attachment / run-off on day D — not "today's active for all history". */
+    const activePolicies = selectCustomerPoliciesForTrendWriteOnDate(
+        loadedPolicies,
+        snapshotDate
+    );
 
     const customerIds = Array.from(new Set(activePolicies.map((cp) => cp.customer_id)));
     const accountHasTopUp =
@@ -1473,30 +1468,10 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         }
     }
 
-    const termsByCustomerAndPolicy = new Map<string, AsOfPolicyTermsForBreach>();
-    for (const cp of activePolicies) {
-        const terms: AsOfPolicyTermsForBreach = {
-            maxPaymentTerm: cp.max_payment_term,
-            maxAllowedMep: cp.max_allowed_mep,
-            reportingDays: cp.reporting_days,
-            mepCutoffDay: cp.mep_cutoff_day,
-            mepSubstituteExtraDays: cp.mep_substitute_extra_days,
-            reportingCutoffDay: cp.reporting_cutoff_day,
-            reportingSubstituteExtraDays: cp.reporting_substitute_extra_days,
-            paymentTermCutoffDay: cp.payment_term_cutoff_day,
-            paymentTermSubstituteDay:
-                cp.payment_term_substitute_day,
-            policyEndDate: cp.InsurancePolicy?.end_date ?? null,
-        };
-        termsByCustomerAndPolicy.set(
-            asOfTermsScopeKey(cp.customer_id, cp.insurance_policy_id),
-            terms
-        );
-        const fallbackKey = asOfTermsScopeKey(cp.customer_id, null);
-        if (!termsByCustomerAndPolicy.has(fallbackKey)) {
-            termsByCustomerAndPolicy.set(fallbackKey, terms);
-        }
-    }
+    const termsByCustomerAndPolicy = buildAsOfTermsMapForDate(
+        loadedPolicies,
+        snapshotDate
+    );
     if (options?.asOfTermsFlagsApplied !== true) {
         /**
          * Today: keep live Invoice CTV (no as-of MEP overlay) so CPT tip matches

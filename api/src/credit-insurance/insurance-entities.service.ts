@@ -1,85 +1,48 @@
 import {
     BadRequestException,
+    ConflictException,
     ForbiddenException,
     Injectable,
     NotFoundException,
 } from "@nestjs/common";
-import type { CustomerPolicy, InsurancePolicy } from "@prisma/client";
+import { Prisma, type InsurancePolicy } from "@prisma/client";
 import {
+    applyInsurancePolicyUpdateWithCustomerPush,
+    CLEARED_INSURANCE_POLICY_PENDING_REVISION,
+    coercePolicyDateFields,
     enqueueAsOfRewrite,
-    ensureCustomerCapacityGapStored,
-    freezeCustomerPolicyGapOnDeactivation,
+    enqueueInsurancePolicyUpdateAsOfRewrite,
+    INSURANCE_POLICY_PUSH_TRANSACTION_TIMEOUT_MS,
+    InsurancePolicyUpdateDataError,
+    loadPolicyPushCandidates,
+    omitNullTopUpTermDates,
+    prepareInsurancePolicyUpdateData,
     startOfTodayUtc,
-    syncCustomerInsuranceFields,
+    toInsuranceEntityUpdateData,
 } from "@archaser/credit-insurance-domain";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import {
-    hasPolicyPushFieldChange,
+    listChangedPolicyPushFields,
     pickPolicyPushSnapshot,
-    POLICY_PUSH_CUSTOMER_FIELDS,
+    type PolicyPushCustomerField,
 } from "./domain/hasMeaningfulCustomerPolicyFieldChange";
+import { planPolicyPushToCustomers } from "./domain/policyPushCustomerPlan";
+import { resolveInsurancePolicySaveEffectiveDate } from "./domain/insurancePolicySaveEffectiveDate";
 import { parseAnnualCreditAssessmentFee } from "./domain/annualCreditAssessmentFee";
 import { applyInsurancePolicyCommercialTerms } from "./domain/policyCommercialTerms";
 import { parseRegistrationFeePercent } from "./domain/registrationFeePercent";
 
-/** Match customers.parseDateOnly — YYYY-MM-DD → UTC midnight Date. */
-function parseDateOnly(value: unknown): Date | null {
-    if (value instanceof Date) {
-        return Number.isNaN(value.getTime()) ? null : value;
-    }
-    if (value == null) {
-        return null;
-    }
-    const raw = String(value).trim();
-    if (!raw) {
-        return null;
-    }
-    const ymd = raw.slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
-        return null;
-    }
-    const parsed = new Date(`${ymd}T00:00:00.000Z`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function coercePolicyDateFields(data: Record<string, unknown>): void {
-    for (const field of ["start_date", "end_date"] as const) {
-        if (!(field in data)) {
-            continue;
+function withPolicyDataBadRequest<T>(run: () => T): T {
+    try {
+        return run();
+    } catch (error) {
+        if (error instanceof InsurancePolicyUpdateDataError) {
+            throw new BadRequestException({ error: error.message });
         }
-        const value = data[field];
-        if (value == null || value === "") {
-            continue;
-        }
-        if (value instanceof Date && !Number.isNaN(value.getTime())) {
-            data[field] = new Date(
-                Date.UTC(
-                    value.getUTCFullYear(),
-                    value.getUTCMonth(),
-                    value.getUTCDate()
-                )
-            );
-            continue;
-        }
-        const parsed = parseDateOnly(value);
-        if (!parsed) {
-            throw new BadRequestException({
-                error: `${field} must be YYYY-MM-DD`,
-            });
-        }
-        data[field] = parsed;
-    }
-}
-
-/** TopUp UI omits term dates; DB requires them — drop nulls so update keeps existing values. */
-function omitNullTopUpTermDates(data: Record<string, unknown>): void {
-    for (const field of ["start_date", "end_date"] as const) {
-        if (field in data && (data[field] == null || data[field] === "")) {
-            delete data[field];
-        }
+        throw error;
     }
 }
 
@@ -87,41 +50,62 @@ function hasUsablePolicyTermDate(value: unknown): boolean {
     return value instanceof Date && !Number.isNaN(value.getTime());
 }
 
-const POLICY_PUSH_TRANSACTION_TIMEOUT_MS = 120_000;
-
-function buildCustomerPolicyVersionFromPolicyPush(args: {
-    oldRow: CustomerPolicy;
-    policy: InsurancePolicy;
-    userId: string;
-}): Record<string, unknown> {
-    const { oldRow, policy, userId } = args;
-    const pushed: Record<string, unknown> = {};
-    for (const field of POLICY_PUSH_CUSTOMER_FIELDS) {
-        pushed[field] = policy[field];
+function resolveSaveEffectiveDateOrThrow(raw: unknown): {
+    effectiveDate: Date;
+    isFuture: boolean;
+} {
+    const resolved = resolveInsurancePolicySaveEffectiveDate(
+        raw,
+        startOfTodayUtc()
+    );
+    if (!resolved.ok) {
+        throw new BadRequestException({
+            error:
+                resolved.code === "EFFECTIVE_DATE_IN_PAST"
+                    ? "effective_date must be today or a future date"
+                    : "effective_date must be a valid date (YYYY-MM-DD)",
+            code: resolved.code,
+        });
     }
-    return {
-        customer_id: oldRow.customer_id,
-        is_active: true,
-        status: "active",
-        policy_change_start_date: startOfTodayUtc(),
-        created_by: userId,
-        modified_by: userId,
-        insurance_policy_id: oldRow.insurance_policy_id,
-        customer_number_policy: oldRow.customer_number_policy,
-        approved_limit: oldRow.approved_limit,
-        approved_limit_currency: oldRow.approved_limit_currency,
-        approved_limit_expiration_date: oldRow.approved_limit_expiration_date,
-        zero_limit_date: oldRow.zero_limit_date,
-        limit_type: oldRow.limit_type,
-        excluded_from_policy: oldRow.excluded_from_policy,
-        policy_exclusion_reason: oldRow.policy_exclusion_reason,
-        credit_score: oldRow.credit_score,
-        credit_score_input_date: oldRow.credit_score_input_date,
-        active_customer_since: oldRow.active_customer_since,
-        outdated_dcl: oldRow.outdated_dcl,
-        ...pushed,
-    };
+    return resolved;
 }
+
+function pendingRevisionExistsError(): ConflictException {
+    return new ConflictException({
+        error: "A scheduled policy change exists. Cancel it before making further policy changes.",
+        code: "INSURANCE_POLICY_PENDING_REVISION_EXISTS",
+    });
+}
+
+function assertNoPendingInsurancePolicyRevision(
+    policy: Pick<InsurancePolicy, "pending_effective_date">
+): void {
+    if (policy.pending_effective_date != null) {
+        throw pendingRevisionExistsError();
+    }
+}
+
+function policyPushValueForDisplay(value: unknown): string | null {
+    if (value === null || value === undefined || value === "") {
+        return null;
+    }
+    return String(value);
+}
+
+export type InsurancePolicySavePreview = {
+    policy_id: number;
+    /** True when ≥1 customer-push field changed; the UI must confirm before PUT. */
+    requires_confirmation: boolean;
+    changed_fields: Array<{
+        field: PolicyPushCustomerField;
+        old_value: string | null;
+        new_value: string | null;
+        customer_count: number;
+    }>;
+    unique_customer_count: number;
+    skipped_pending_customer_count: number;
+    active_customer_count: number;
+};
 
 export const INSURANCE_ENTITY_TYPES = [
     "insurance-policies",
@@ -285,6 +269,8 @@ export class InsuranceEntitiesService {
         if (entityType === "insurance-policies") {
             return serializeBigInt({
                 ...row,
+                pending_changed_fields:
+                    this.listPendingRevisionChangedPushFields(row),
                 NamedPolicy: await this.attachNamedCustomers(
                     accountId,
                     row.NamedPolicy ?? []
@@ -345,136 +331,47 @@ export class InsuranceEntitiesService {
         await this.getById(entityType, user, id);
         const accountId = await this.accountId(user);
 
-        const data: Record<string, unknown> = { ...body };
-        delete data.id;
-        delete data.account_id;
-        delete data.insurance_policy_id;
-        delete data.created_at;
-        delete data.created_by;
-        delete data.InsurancePolicy;
+        const data = toInsuranceEntityUpdateData(body);
 
         if (entityType === "insurance-policies") {
-            const policy = await this.db.insurancePolicy.findFirst({
-                where: { id: Number(id), account_id: accountId },
-                select: { policy_kind: true, start_date: true },
-            });
-            if (!policy) {
-                throw new NotFoundException({ error: "insurance-policies not found" });
-            }
-            coercePolicyDateFields(data);
-            if (policy.policy_kind === "TopUp") {
-                omitNullTopUpTermDates(data);
-            }
-            if ("registration_fee_percent" in data) {
-                data.registration_fee_percent = parseRegistrationFeePercent(
-                    data.registration_fee_percent,
-                    policy.policy_kind
-                );
-            }
-            if ("annual_credit_assessment_fee" in data) {
-                data.annual_credit_assessment_fee =
-                    parseAnnualCreditAssessmentFee(
-                        data.annual_credit_assessment_fee,
-                        policy.policy_kind
-                    );
-            }
-            try {
-                applyInsurancePolicyCommercialTerms(data, policy.policy_kind, {
-                    mode: "update",
-                });
-            } catch (error) {
-                const message =
-                    error instanceof Error ? error.message : String(error);
-                throw new BadRequestException({
-                    error:
-                        message ||
-                        "Invalid insurance policy commercial terms",
-                });
-            }
+            const policy = await this.findAccountPolicyOrThrow(
+                accountId,
+                Number(id)
+            );
+            assertNoPendingInsurancePolicyRevision(policy);
+            const effective = resolveSaveEffectiveDateOrThrow(
+                body.effective_date
+            );
+            const formSnapshot = { ...data };
+            this.prepareInsurancePolicyUpdateData(policy, data);
             const userInfo = await this.accessScope.resolveUserInfo(user);
-            const policyId = Number(id);
-            try {
-                const updated = await this.db.$transaction(
-                    async (tx) => {
-                        const policyUpdate = await tx.insurancePolicy.update({
-                            where: { id: policyId },
-                            data: {
-                                ...data,
-                                modified_by: userInfo.userId,
-                            } as never,
-                        });
-
-                        const activeRows = await tx.customerPolicy.findMany({
-                            where: {
-                                insurance_policy_id: policyId,
-                                is_active: true,
-                                Customer: { account_id: accountId },
-                            },
-                        });
-
-                        const policyPushAfter = pickPolicyPushSnapshot(
-                            policyUpdate
-                        );
-
-                        for (const oldRow of activeRows) {
-                            const before = pickPolicyPushSnapshot(oldRow);
-                            if (
-                                !hasPolicyPushFieldChange(
-                                    before,
-                                    policyPushAfter
-                                )
-                            ) {
-                                continue;
-                            }
-
-                            await freezeCustomerPolicyGapOnDeactivation(
-                                oldRow.customer_id,
-                                oldRow.id,
-                                tx as never
-                            );
-                            await tx.customerPolicy.update({
-                                where: { id: oldRow.id },
-                                data: {
-                                    is_active: false,
-                                    status: "inactive",
-                                    modified_by: userInfo.userId,
-                                },
-                            });
-                            await tx.customerPolicy.create({
-                                data: buildCustomerPolicyVersionFromPolicyPush({
-                                    oldRow,
-                                    policy: policyUpdate,
-                                    userId: userInfo.userId,
-                                }) as never,
-                            });
-
-                            // Same post-save sync as customer Policies tab
-                            // (core + capacity gap). Does not recompute invoice
-                            // target_mep_date / target_reporting_date.
-                            await syncCustomerInsuranceFields(
-                                oldRow.customer_id,
-                                {
-                                    dbClient: tx as never,
-                                    validateZeroLimitDate: false,
-                                }
-                            );
-                            await ensureCustomerCapacityGapStored(
-                                oldRow.customer_id,
-                                { dbClient: tx as never }
-                            );
-                        }
-
-                        return policyUpdate;
-                    },
-                    { timeout: POLICY_PUSH_TRANSACTION_TIMEOUT_MS }
-                );
-                await enqueueAsOfRewrite({
+            if (effective.isFuture) {
+                return this.schedulePendingInsurancePolicyRevision({
                     accountId,
-                    fromDate:
-                        updated.start_date < policy.start_date
-                            ? updated.start_date
-                            : policy.start_date,
-                    toDate: new Date(),
+                    policy,
+                    preparedData: data,
+                    formSnapshot,
+                    effectiveDate: effective.effectiveDate,
+                    userId: userInfo.userId,
+                });
+            }
+            try {
+                const { policy: updated } = await this.db.$transaction(
+                    (tx) =>
+                        applyInsurancePolicyUpdateWithCustomerPush({
+                            tx,
+                            accountId,
+                            policyBefore: policy,
+                            data,
+                            userId: userInfo.userId,
+                            customerVersionStartDate: startOfTodayUtc(),
+                        }),
+                    { timeout: INSURANCE_POLICY_PUSH_TRANSACTION_TIMEOUT_MS }
+                );
+                await enqueueInsurancePolicyUpdateAsOfRewrite({
+                    accountId,
+                    before: policy,
+                    after: updated,
                 });
                 return serializeBigInt(updated);
             } catch (error) {
@@ -499,6 +396,174 @@ export class InsuranceEntitiesService {
         return serializeBigInt(updated);
     }
 
+    /**
+     * Dry-run of an Insurance Policy save: which customer-push fields change
+     * and how many active Customer Policies the PUT would version. Takes the
+     * same body as PUT; nothing is written.
+     */
+    async previewInsurancePolicySave(
+        user: JwtPayload,
+        policyId: number,
+        body: Record<string, unknown>
+    ): Promise<InsurancePolicySavePreview> {
+        const accountId = await this.accountId(user);
+        const policy = await this.findAccountPolicyOrThrow(accountId, policyId);
+        assertNoPendingInsurancePolicyRevision(policy);
+        const data = toInsuranceEntityUpdateData(body);
+        this.prepareInsurancePolicyUpdateData(policy, data);
+        const policyAfter = { ...policy, ...data } as InsurancePolicy;
+
+        const { activeRows, pendingCustomerIds } =
+            await loadPolicyPushCandidates(this.db, accountId, policyId);
+        const plan = planPolicyPushToCustomers({
+            policyBefore: policy,
+            policyAfter,
+            activeRows,
+            pendingCustomerIds,
+        });
+
+        return {
+            policy_id: policyId,
+            requires_confirmation: plan.fieldsToPush.length > 0,
+            changed_fields: plan.fieldsToPush.map((field) => ({
+                field,
+                old_value: policyPushValueForDisplay(policy[field]),
+                new_value: policyPushValueForDisplay(policyAfter[field]),
+                customer_count: plan.customerCountByField[field],
+            })),
+            unique_customer_count: plan.uniqueCustomerCount,
+            skipped_pending_customer_count: plan.skippedPendingCustomerCount,
+            active_customer_count: new Set(
+                activeRows.map((row) => row.customer_id)
+            ).size,
+        };
+    }
+
+    /**
+     * Future-dated save: store the form snapshot as the single pending
+     * revision. Live policy columns and Customer Policies are not touched
+     * until activation; no as-of rewrite is enqueued.
+     */
+    private async schedulePendingInsurancePolicyRevision(args: {
+        accountId: number;
+        policy: InsurancePolicy;
+        preparedData: Record<string, unknown>;
+        formSnapshot: Record<string, unknown>;
+        effectiveDate: Date;
+        userId: string;
+    }) {
+        const { accountId, policy } = args;
+        const changedPushFields = listChangedPolicyPushFields(
+            pickPolicyPushSnapshot(policy),
+            pickPolicyPushSnapshot({
+                ...policy,
+                ...args.preparedData,
+            } as InsurancePolicy)
+        );
+        if (changedPushFields.length === 0) {
+            throw new BadRequestException({
+                error: "A future effective date is only allowed when customer policy terms change",
+                code: "FUTURE_EFFECTIVE_DATE_REQUIRES_PUSH_CHANGE",
+            });
+        }
+        const result = await this.db.insurancePolicy.updateMany({
+            where: {
+                id: policy.id,
+                account_id: accountId,
+                pending_effective_date: null,
+            },
+            data: {
+                pending_effective_date: args.effectiveDate,
+                pending_payload: args.formSnapshot as Prisma.InputJsonObject,
+                pending_created_at: new Date(),
+                pending_created_by: args.userId,
+            },
+        });
+        if (result.count === 0) {
+            throw pendingRevisionExistsError();
+        }
+        return serializeBigInt(
+            await this.findAccountPolicyOrThrow(accountId, policy.id)
+        );
+    }
+
+    /** Clear the pending revision; unlocks the policy form. No customer writes. */
+    async cancelPendingInsurancePolicyRevision(
+        user: JwtPayload,
+        policyId: number
+    ): Promise<{ id: number }> {
+        const accountId = await this.accountId(user);
+        const policy = await this.findAccountPolicyOrThrow(accountId, policyId);
+        const result =
+            policy.pending_effective_date == null
+                ? { count: 0 }
+                : await this.db.insurancePolicy.updateMany({
+                      where: {
+                          id: policyId,
+                          account_id: accountId,
+                          pending_effective_date: { not: null },
+                      },
+                      data: CLEARED_INSURANCE_POLICY_PENDING_REVISION,
+                  });
+        if (result.count === 0) {
+            throw new NotFoundException({
+                error: "No scheduled policy change to cancel",
+                code: "INSURANCE_POLICY_PENDING_REVISION_NOT_FOUND",
+            });
+        }
+        return { id: policyId };
+    }
+
+    /** Push fields the pending snapshot changes vs the live policy (banner summary). */
+    private listPendingRevisionChangedPushFields(
+        policy: InsurancePolicy
+    ): PolicyPushCustomerField[] {
+        const payload = policy.pending_payload;
+        if (
+            policy.pending_effective_date == null ||
+            payload == null ||
+            typeof payload !== "object" ||
+            Array.isArray(payload)
+        ) {
+            return [];
+        }
+        const data = toInsuranceEntityUpdateData(
+            payload as Record<string, unknown>
+        );
+        try {
+            this.prepareInsurancePolicyUpdateData(policy, data);
+        } catch {
+            return [];
+        }
+        return listChangedPolicyPushFields(
+            pickPolicyPushSnapshot(policy),
+            pickPolicyPushSnapshot({ ...policy, ...data } as InsurancePolicy)
+        );
+    }
+
+    private async findAccountPolicyOrThrow(
+        accountId: number,
+        policyId: number
+    ): Promise<InsurancePolicy> {
+        const policy = await this.db.insurancePolicy.findFirst({
+            where: { id: policyId, account_id: accountId },
+        });
+        if (!policy) {
+            throw new NotFoundException({ error: "insurance-policies not found" });
+        }
+        return policy;
+    }
+
+    /** Normalize a PUT body in place (dates, fees, commercial terms). */
+    private prepareInsurancePolicyUpdateData(
+        policy: InsurancePolicy,
+        data: Record<string, unknown>
+    ): void {
+        withPolicyDataBadRequest(() =>
+            prepareInsurancePolicyUpdateData(policy, data)
+        );
+    }
+
     async create(
         entityType: InsuranceEntityType,
         user: JwtPayload,
@@ -510,7 +575,7 @@ export class InsuranceEntitiesService {
             const policyKind =
                 body.policy_kind === "TopUp" ? "TopUp" : "Primary";
             const createData: Record<string, unknown> = { ...body };
-            coercePolicyDateFields(createData);
+            withPolicyDataBadRequest(() => coercePolicyDateFields(createData));
             if (policyKind === "TopUp") {
                 omitNullTopUpTermDates(createData);
                 const parentId = Number(createData.parent_insurance_policy_id);
