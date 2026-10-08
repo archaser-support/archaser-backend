@@ -17,6 +17,8 @@ export interface ReportFormula {
     format: FormulaResultFormat;
     currencySource?: string;
     aggregation?: FormulaAggregation;
+    /** Not shown as a column; still usable in filters and other formulas. */
+    hidden?: boolean;
 }
 
 export const FORMULA_OUTPUT_KEY_PREFIX = "formula:";

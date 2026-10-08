@@ -1813,12 +1813,12 @@ model InvoicePayment {
   invoice_id                            Int?
   customer_currency                     String    @db.VarChar(50)
   payment_date                          DateTime  @db.Date
-  amount                                Float     @db.Real
+  amount                                Decimal   @db.Decimal(20, 4)
   payment_method                        String    @db.VarChar(100)
   reference                             String    @db.VarChar(100)
   customer_id                           Int
   account_id                            Int
-  customer_amount                       Float     @db.Real
+  customer_amount                       Decimal   @db.Decimal(20, 4)
   invoice_number                        String?   @db.VarChar(100)
   created_at                            DateTime? @default(now()) @db.Timestamptz(6)
   modified_at                           DateTime? @default(now()) @db.Timestamptz(6)

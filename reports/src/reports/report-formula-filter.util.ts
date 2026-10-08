@@ -5,21 +5,14 @@ import {
     type ReportFormula,
 } from "./report-formula/types";
 
-export const FORMULA_FILTER_GROUPING_CONFLICT_CODE =
-    "FORMULA_FILTER_GROUPING_CONFLICT" as const;
 export const ORPHAN_FORMULA_FILTER_CODE = "ORPHAN_FORMULA_FILTER" as const;
 
-export type FormulaFilterGuardErrorCode =
-    | typeof FORMULA_FILTER_GROUPING_CONFLICT_CODE
-    | typeof ORPHAN_FORMULA_FILTER_CODE;
+export type FormulaFilterGuardErrorCode = typeof ORPHAN_FORMULA_FILTER_CODE;
 
 export type FormulaFilterGuardFailure = {
     errorCode: FormulaFilterGuardErrorCode;
     message: string;
 };
-
-const FORMULA_FILTER_GROUPING_CONFLICT_MESSAGE =
-    "Formula filters cannot be used with grouping. Remove the formula filter(s) or the grouping.";
 
 const ORPHAN_FORMULA_FILTER_MESSAGE =
     "A filter references a formula that is not on this report. Remove or update the filter.";
@@ -44,27 +37,13 @@ export function partitionFiltersByFormulaTarget(filters: ReportFilterDto[]): {
     return { databaseFilters, formulaFilters };
 }
 
-function isGroupedReportConfig(config: {
-    grouping?: string[] | null;
-    fields?: Array<{ aggregation?: string | null }> | null;
-}): boolean {
-    const hasGrouping = (config.grouping?.length ?? 0) > 0;
-    const hasAggregatedField = (config.fields || []).some(
-        (field) => !!field.aggregation
-    );
-    return hasGrouping || hasAggregatedField;
-}
-
 /**
- * Hard guards for formula filters: orphan formula ids and grouping conflict.
- * Returns the first failure, or null when filters are allowed.
- * Orphan checks run before grouping so a deleted formula is never silent.
+ * Hard guard for formula filters: a filter must reference a formula on the report.
+ * On grouped reports formula filters run per detail row, before grouping.
  */
 export function findFormulaFilterGuardFailure(params: {
     filters: Array<{ field?: string | null }> | null | undefined;
     formulas?: Array<Pick<ReportFormula, "id">> | null;
-    grouping?: string[] | null;
-    fields?: Array<{ aggregation?: string | null }> | null;
 }): FormulaFilterGuardFailure | null {
     const filters = Array.isArray(params.filters) ? params.filters : [];
     const formulaFilters = filters.filter((filter) =>
@@ -86,18 +65,6 @@ export function findFormulaFilterGuardFailure(params: {
         return {
             errorCode: ORPHAN_FORMULA_FILTER_CODE,
             message: ORPHAN_FORMULA_FILTER_MESSAGE,
-        };
-    }
-
-    if (
-        isGroupedReportConfig({
-            grouping: params.grouping,
-            fields: params.fields,
-        })
-    ) {
-        return {
-            errorCode: FORMULA_FILTER_GROUPING_CONFLICT_CODE,
-            message: FORMULA_FILTER_GROUPING_CONFLICT_MESSAGE,
         };
     }
 
@@ -152,20 +119,16 @@ function matchNumericFormulaCompare(
 }
 
 /**
- * Match a single formula filter against a row's raw formula value
- * (`row[formula:<id>]`). Blank/null never matches equals / not_equals /
- * greater / less comparisons — only is_empty / is_not_empty.
+ * Match a raw numeric value against a report filter operator / value.
+ * Blank/null never matches equals / not_equals / greater / less
+ * comparisons — only is_empty / is_not_empty.
  */
-export function rowMatchesFormulaFilter(
-    row: Record<string, unknown>,
-    filter: ReportFilterDto
+export function valueMatchesNumericFilter(
+    raw: unknown,
+    operator: string | undefined,
+    value: unknown
 ): boolean {
-    const field = filter.field;
-    if (!isFormulaFilterField(field)) {
-        return true;
-    }
-    const raw = row[field];
-    const op = (filter.operator || "equals").toLowerCase();
+    const op = (operator || "equals").toLowerCase();
 
     switch (op) {
         case "is_empty":
@@ -176,7 +139,7 @@ export function rowMatchesFormulaFilter(
         case "equals":
             return matchNumericFormulaCompare(
                 raw,
-                filter.value,
+                value,
                 (actual, expected) => actual === expected
             );
         case "!=":
@@ -184,14 +147,14 @@ export function rowMatchesFormulaFilter(
         case "not":
             return matchNumericFormulaCompare(
                 raw,
-                filter.value,
+                value,
                 (actual, expected) => actual !== expected
             );
         case ">":
         case "greater_than":
             return matchNumericFormulaCompare(
                 raw,
-                filter.value,
+                value,
                 (actual, expected) => actual > expected
             );
         case ">=":
@@ -199,14 +162,14 @@ export function rowMatchesFormulaFilter(
         case "greater_than_or_equal":
             return matchNumericFormulaCompare(
                 raw,
-                filter.value,
+                value,
                 (actual, expected) => actual >= expected
             );
         case "<":
         case "less_than":
             return matchNumericFormulaCompare(
                 raw,
-                filter.value,
+                value,
                 (actual, expected) => actual < expected
             );
         case "<=":
@@ -214,13 +177,28 @@ export function rowMatchesFormulaFilter(
         case "less_than_or_equal":
             return matchNumericFormulaCompare(
                 raw,
-                filter.value,
+                value,
                 (actual, expected) => actual <= expected
             );
         default:
             // Unknown operators do not match.
             return false;
     }
+}
+
+/**
+ * Match a single formula filter against a row's raw formula value
+ * (`row[formula:<id>]`).
+ */
+export function rowMatchesFormulaFilter(
+    row: Record<string, unknown>,
+    filter: ReportFilterDto
+): boolean {
+    const field = filter.field;
+    if (!isFormulaFilterField(field)) {
+        return true;
+    }
+    return valueMatchesNumericFilter(row[field], filter.operator, filter.value);
 }
 
 /** Keep rows that satisfy every formula filter (AND). */

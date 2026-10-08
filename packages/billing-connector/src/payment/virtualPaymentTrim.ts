@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { resolveInvoicePaidTolerance } from "../invoice/invoicePaidTolerance";
 import { commitOps } from "../import/bulkWrite";
 import { findManyInChunks, PRISMA_IN_CHUNK } from "../import/prismaInChunks";
+import { toMoneyNumber } from "./moneyNumber";
 
 export const VIRTUAL_PAYMENT_METHOD = "virtual";
 
@@ -27,7 +28,7 @@ export type VirtualInvoiceAmounts = {
 export type VirtualLinkedPayment = {
     id: number;
     invoice_id: number | null;
-    customer_amount: number | null;
+    customer_amount: unknown;
     payment_date: Date | null;
     payment_method: string | null;
     reference: string | null;
@@ -107,7 +108,7 @@ export function sumRealCustomerPaidExcludingVirtual(
         if (isVirtualPaymentMethod(payment.payment_method)) {
             continue;
         }
-        realCustomerPaid += payment.customer_amount ?? 0;
+        realCustomerPaid += toMoneyNumber(payment.customer_amount);
         if (
             payment.payment_date &&
             (latestRealPaymentDate === null ||
