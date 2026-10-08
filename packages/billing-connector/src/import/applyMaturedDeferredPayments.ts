@@ -11,6 +11,7 @@ import {
 } from "../invoice/linkDeferredPaymentAndRecalc";
 import { findManyInChunks } from "./prismaInChunks";
 import { alignPaymentToInvoiceCurrency } from "../payment/alignPaymentToInvoiceCurrency";
+import { toMoneyNumber } from "../payment/moneyNumber";
 import { isVirtualPaymentMethod } from "../payment/virtualPaymentTrim";
 
 export interface MaturityResult {
@@ -196,7 +197,7 @@ async function buildMaturedReconcileCloseCandidates(
             paymentDate: payment.payment_date,
             rawErpRow: rawErpRowFromMaturedPayment({
                 reference: payment.reference ?? "",
-                customer_amount: payment.customer_amount ?? 0,
+                customer_amount: toMoneyNumber(payment.customer_amount),
                 invoice_number: invoice.invoice_number,
             }),
         });
@@ -390,7 +391,7 @@ export async function applyMaturedDeferredPayments(
                 paymentDate: row.payment_date,
                 rawErpRow: rawErpRowFromMaturedPayment({
                     reference: row.reference,
-                    customer_amount: row.customer_amount,
+                    customer_amount: toMoneyNumber(row.customer_amount),
                     invoice_number: row.invoice_number,
                 }),
             });
