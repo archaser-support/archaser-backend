@@ -1,5 +1,10 @@
 import type { DbClient } from "../domain-db";
 
+import {
+    toCauseDueDateYmd,
+    type CreatedOverdueMepCauseColumns,
+} from "./createdOverdueMepAtInvoiceDate";
+
 /** Rows per UPDATE … FROM UNNEST / updateMany id list. */
 export const BULK_INVOICE_UPDATE_CHUNK = 500;
 
@@ -9,16 +14,38 @@ export type InvoiceTargetDateWrite = {
     target_mep_date: Date | null;
 };
 
-export type InvoiceCtvSnapshotWrite = {
+export type InvoiceCtvSnapshotWrite = CreatedOverdueMepCauseColumns & {
     id: number;
     /** When non-null, set `policy_id`; otherwise leave existing policy. */
     policyIdToSet: number | null;
     ctv_customer_overdue_mep: boolean;
-    ctv_customer_overdue_mep_cause_invoice_number: string | null;
     ctv_customer_excluded_from_policy: boolean;
     ctv_outdated_dcl: boolean;
     ctv_invoice_after_policy_end: boolean;
 };
+
+/** UNNEST-ready arrays for {@link CreatedOverdueMepCauseColumns}. */
+export function toCreatedOverdueMepCauseArrays(
+    rows: CreatedOverdueMepCauseColumns[]
+): {
+    causeNumbers: Array<string | null>;
+    causeDueDates: Array<string | null>;
+    causeOutstandings: Array<number | null>;
+    daysPastMeps: Array<number | null>;
+} {
+    return {
+        causeNumbers: rows.map(
+            (row) => row.ctv_customer_overdue_mep_cause_invoice_number
+        ),
+        causeDueDates: rows.map((row) =>
+            toCauseDueDateYmd(row.ctv_customer_overdue_mep_cause_due_date)
+        ),
+        causeOutstandings: rows.map(
+            (row) => row.ctv_customer_overdue_mep_cause_outstanding
+        ),
+        daysPastMeps: rows.map((row) => row.ctv_customer_overdue_mep_days_past),
+    };
+}
 
 /**
  * Bulk-set `target_reporting_date` / `target_mep_date` via one UPDATE per chunk.
@@ -74,9 +101,8 @@ export async function bulkUpdateInvoiceCtvSnapshots(
         const ids = chunk.map((row) => row.id);
         const policyIds = chunk.map((row) => row.policyIdToSet);
         const overdueMeps = chunk.map((row) => row.ctv_customer_overdue_mep);
-        const overdueMepCauses = chunk.map(
-            (row) => row.ctv_customer_overdue_mep_cause_invoice_number
-        );
+        const { causeNumbers, causeDueDates, causeOutstandings, daysPastMeps } =
+            toCreatedOverdueMepCauseArrays(chunk);
         const excluded = chunk.map(
             (row) => row.ctv_customer_excluded_from_policy
         );
@@ -91,6 +117,12 @@ export async function bulkUpdateInvoiceCtvSnapshots(
                 ctv_customer_overdue_mep = data.ctv_customer_overdue_mep,
                 ctv_customer_overdue_mep_cause_invoice_number =
                     data.ctv_customer_overdue_mep_cause_invoice_number,
+                ctv_customer_overdue_mep_cause_due_date =
+                    data.ctv_customer_overdue_mep_cause_due_date::date,
+                ctv_customer_overdue_mep_cause_outstanding =
+                    data.ctv_customer_overdue_mep_cause_outstanding,
+                ctv_customer_overdue_mep_days_past =
+                    data.ctv_customer_overdue_mep_days_past,
                 ctv_customer_excluded_from_policy =
                     data.ctv_customer_excluded_from_policy,
                 ctv_outdated_dcl = data.ctv_outdated_dcl,
@@ -102,8 +134,14 @@ export async function bulkUpdateInvoiceCtvSnapshots(
                     UNNEST(${policyIds}::int[]) AS policy_id,
                     UNNEST(${overdueMeps}::boolean[])
                         AS ctv_customer_overdue_mep,
-                    UNNEST(${overdueMepCauses}::text[])
+                    UNNEST(${causeNumbers}::text[])
                         AS ctv_customer_overdue_mep_cause_invoice_number,
+                    UNNEST(${causeDueDates}::text[])
+                        AS ctv_customer_overdue_mep_cause_due_date,
+                    UNNEST(${causeOutstandings}::float8[])
+                        AS ctv_customer_overdue_mep_cause_outstanding,
+                    UNNEST(${daysPastMeps}::int[])
+                        AS ctv_customer_overdue_mep_days_past,
                     UNNEST(${excluded}::boolean[])
                         AS ctv_customer_excluded_from_policy,
                     UNNEST(${outdatedDcls}::boolean[]) AS ctv_outdated_dcl,
