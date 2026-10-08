@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { ACCOUNT_BACKGROUND_JOB_KIND } from "./accountBackgroundJob";
 import { type DbClient } from "../domain-db";
 
@@ -104,6 +105,80 @@ export async function loadAccountBackgroundJobLease(
         LIMIT 1
     `;
     return rows[0] ?? null;
+}
+
+export type AccountSnapshotLeaseBlocker = {
+    accountId: number;
+    jobKind: string;
+    status: string;
+};
+
+/**
+ * Generate / parent-history jobs that own an account's snapshot days, so
+ * other writers (rewrite drain, nightly tips) must skip the account. A
+ * `running` Generate stops blocking once its heartbeat is stale (dead worker,
+ * reclaim pending); `paused` Generate resumes from its checkpoint and
+ * parent-history has no steady heartbeat, so those block until they end.
+ */
+export async function loadAccountSnapshotLeaseBlockers(
+    accountIds: number[],
+    db: PrismaClientLike,
+    now: Date = new Date()
+): Promise<Map<number, AccountSnapshotLeaseBlocker>> {
+    const blockers = new Map<number, AccountSnapshotLeaseBlocker>();
+    if (accountIds.length === 0) {
+        return blockers;
+    }
+    const staleCutoff = creditAsOfHeartbeatStaleCutoff(now);
+    const rows = await db.$queryRaw<
+        Array<{ account_id: number; job_kind: string; status: string }>
+    >`
+        SELECT account_id, job_kind, status
+        FROM "AccountBackgroundJob"
+        WHERE account_id IN (${Prisma.join(accountIds)})
+          AND job_kind IN (${CREDIT_ASOF_KIND}, ${PARENT_HISTORY_KIND})
+          AND status IN ('running', 'paused')
+          AND NOT (
+            job_kind = ${CREDIT_ASOF_KIND}
+            AND status = 'running'
+            AND updated_at < ${staleCutoff}
+          )
+    `;
+    for (const row of rows) {
+        const accountId = Number(row.account_id);
+        if (!blockers.has(accountId)) {
+            blockers.set(accountId, {
+                accountId,
+                jobKind: row.job_kind,
+                status: row.status,
+            });
+        }
+    }
+    return blockers;
+}
+
+export async function findAccountSnapshotLeaseBlocker(
+    accountId: number,
+    db: PrismaClientLike,
+    now: Date = new Date()
+): Promise<AccountSnapshotLeaseBlocker | null> {
+    const blockers = await loadAccountSnapshotLeaseBlockers(
+        [accountId],
+        db,
+        now
+    );
+    return blockers.get(accountId) ?? null;
+}
+
+export function warnSnapshotWriterSkippedForLease(
+    writer: string,
+    blocker: AccountSnapshotLeaseBlocker
+): void {
+    console.warn(`[${writer}] skipped account: snapshot job holds lease`, {
+        accountId: blocker.accountId,
+        blockingJobKind: blocker.jobKind,
+        blockingJobStatus: blocker.status,
+    });
 }
 
 export async function loadParentHistoryLease(
