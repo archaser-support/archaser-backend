@@ -9,6 +9,7 @@
 import {
     linkDeferredPaymentsAndRecalcBatch,
     resolveInvoicePaidRecalcOptions,
+    toMoneyNumber,
 } from "@archaser/billing-connector";
 import {
     computeInvoiceCapacityGapContribution,
@@ -453,8 +454,8 @@ export async function replayCustomerArImport(
                 id: p.id,
                 invoiceNumber: p.invoice_number!,
                 paymentDate: p.payment_date,
-                amount: p.amount,
-                customerAmount: p.customer_amount,
+                amount: toMoneyNumber(p.amount),
+                customerAmount: toMoneyNumber(p.customer_amount),
                 invoiceId: p.invoice_id,
             }));
 
