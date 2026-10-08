@@ -270,6 +270,24 @@ function formatFormulaValue(
     }
 }
 
+export function formatAggregatedFormulaValue(
+    value: number,
+    formula: ReportFormula,
+    sampleRow: Record<string, unknown>,
+    fields: FormulaField[],
+    locale: string,
+    accountCurrency: string
+): string | null {
+    return formatFormulaValue(
+        new Prisma.Decimal(value),
+        formula,
+        sampleRow,
+        fields,
+        locale,
+        accountCurrency
+    ).formatted;
+}
+
 export function mergeFormulaOperandFieldsIntoConfig<
     T extends FormulaReportConfig,
 >(config: T, metadataTables: FormulaMetadataTable[]): T {

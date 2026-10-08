@@ -50,6 +50,7 @@ import {
 import {
     extractCustomerPolicyReportField,
     isCustomerPolicyBackedReportField,
+    isCustomerPolicyFeeRateReportField,
     mergeActiveCustomerPolicySelect,
 } from "@archaser/credit-insurance-domain";
 import {
@@ -62,7 +63,9 @@ import {
     mergeInvoiceViolationDetailsSelect,
 } from "./report-invoice-violation-details.util";
 import {
+    applyCustomerPolicyRateFiltersToRows,
     mergeAndWhere,
+    pickCustomerPolicyRateFilters,
     splitFiltersByTable,
 } from "./report-filter.util";
 import {
@@ -300,8 +303,6 @@ export class ReportExecutionService {
         const formulaFilterGuard = findFormulaFilterGuardFailure({
             filters: normalizedFilters,
             formulas: config.formulas,
-            grouping: config.grouping,
-            fields: config.fields,
         });
         if (formulaFilterGuard) {
             throw new BadRequestException({
@@ -316,6 +317,12 @@ export class ReportExecutionService {
             databaseFilters,
             primaryTable
         );
+        const customerPolicyRateFilters = pickCustomerPolicyRateFilters(
+            databaseFilters,
+            primaryTable
+        );
+        const hasCustomerPolicyRateFilters =
+            customerPolicyRateFilters.length > 0;
 
         const nestedWhere: PrismaWhere = {};
         const relationMap = RELATION_FROM_PRIMARY[primaryTable] || {};
@@ -352,6 +359,12 @@ export class ReportExecutionService {
         const fields = allFields;
         const nonAggregatedFields = allFields.filter((f) => !f.aggregation);
         const select = this.buildSelect(primaryTable, fields);
+        if (hasCustomerPolicyRateFilters) {
+            mergeActiveCustomerPolicySelect(
+                select,
+                customerPolicyRateFilters.map((f) => f.field)
+            );
+        }
         this.applyNestedRelationSelectFilters(
             primaryTable,
             select,
@@ -476,9 +489,12 @@ export class ReportExecutionService {
             needsComputedFormattedSort ||
             needsPolicyBackedFormattedSort ||
             needsGroupedExecution;
-        // Formula filters require compute → filter → paginate on the full
-        // database-filtered set (correct totals; not "filter current page").
-        const needsFullFetch = needsInMemorySort || hasFormulaFilters;
+        // Formula / Customer fee-rate filters require filter → paginate on the
+        // full database-filtered set (correct totals; not "filter current page").
+        const needsFullFetch =
+            needsInMemorySort ||
+            hasFormulaFilters ||
+            hasCustomerPolicyRateFilters;
 
         // In-memory sorts cannot use SQL orderBy; formula-filter full fetch still can.
         const orderBy = needsInMemorySort
@@ -519,6 +535,14 @@ export class ReportExecutionService {
                     customer_id?: number | null;
                     Customer?: Record<string, unknown> | null;
                 }>
+            );
+        }
+
+        if (hasCustomerPolicyRateFilters && Array.isArray(rows)) {
+            rows = applyCustomerPolicyRateFiltersToRows(
+                rows,
+                customerPolicyRateFilters,
+                creditDashboardPolicyId
             );
         }
 
@@ -646,7 +670,7 @@ export class ReportExecutionService {
         let resultRows = formulaResult.rows;
         let aggregationTotals: Record<string, number> | undefined;
 
-        // Formula filters are rejected when grouping is configured (guard above).
+        // Formula filters keep matching detail rows; grouping runs afterwards.
         if (hasFormulaFilters) {
             resultRows = applyFormulaFiltersToRows(
                 resultRows,
@@ -711,7 +735,11 @@ export class ReportExecutionService {
             );
             totalRecords = resultRows.length;
             resultRows = resultRows.slice(skip, skip + limit);
-        } else if (hasFormulaFilters) {
+        } else if (
+            hasFormulaFilters ||
+            // The credit-dashboard sort above already paginated.
+            (hasCustomerPolicyRateFilters && !needsCreditDashboardInMemorySort)
+        ) {
             totalRecords = resultRows.length;
             resultRows = resultRows.slice(skip, skip + limit);
         }
@@ -1133,6 +1161,18 @@ export class ReportExecutionService {
                 f.field === "InsurancePolicy.policy_number"
             ) {
                 this.applyCustomerPolicyNumberSelect(ensureRelSelect(rel));
+                continue;
+            }
+            if (
+                f.table === "Customer" &&
+                isCustomerPolicyFeeRateReportField(f.field)
+            ) {
+                mergeActiveCustomerPolicySelect(ensureRelSelect(rel), [
+                    f.field,
+                ]);
+                if (isPrismaScalarField(primaryTable, "policy_id")) {
+                    select.policy_id = true;
+                }
                 continue;
             }
             if (f.table === "Customer" && f.field === "category") {
@@ -1935,14 +1975,7 @@ export class ReportExecutionService {
             ) {
                 const label = formatTermsBreachReasonForDisplay(
                     String(value),
-                    language,
-                    {
-                        mepCauseInvoiceNumber:
-                            typeof row.ctv_customer_overdue_mep_cause_invoice_number ===
-                            "string"
-                                ? row.ctv_customer_overdue_mep_cause_invoice_number
-                                : null,
-                    }
+                    language
                 );
                 if (label) {
                     value = label;
@@ -2178,6 +2211,19 @@ export class ReportExecutionService {
             f.field === "InsurancePolicy.policy_number"
         ) {
             return nested ? this.extractCustomerPolicyNumber(nested) : null;
+        }
+        if (
+            f.table === "Customer" &&
+            isCustomerPolicyFeeRateReportField(f.field)
+        ) {
+            return nested
+                ? extractCustomerPolicyReportField(
+                      nested,
+                      f.field,
+                      row,
+                      scopedPolicyId
+                  )
+                : null;
         }
         if (f.field.includes(".")) {
             return this.getNestedValue(nested, f.field) ?? null;
