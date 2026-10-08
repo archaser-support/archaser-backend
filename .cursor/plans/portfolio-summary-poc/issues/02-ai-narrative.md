@@ -1,6 +1,6 @@
 # 02 — AI analysis and Hebrew narrative
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-data-bundle-skeleton-pdf](01-data-bundle-skeleton-pdf.md)
 **User stories:** 1–15, 17–19, 21
@@ -22,11 +22,11 @@ Every quoted number must trace to a bundle field. If data coverage is incomplete
 
 ## Acceptance criteria
 
-- [ ] All sections above are present in Hebrew
+- [x] All sections above are present in Hebrew
 - [ ] Every number in the narrative matches a bundle field and the dashboard
-- [ ] Each insight states the number behind it and a concrete implication for the customer
-- [ ] Incomplete snapshot coverage is disclosed when present
-- [ ] The narrative source is kept in the gitignored local workspace, not committed
+- [x] Each insight states the number behind it and a concrete implication for the customer
+- [x] Incomplete snapshot coverage is disclosed when present
+- [x] The narrative source is kept in the gitignored local workspace, not committed
 
 ## How to test
 
