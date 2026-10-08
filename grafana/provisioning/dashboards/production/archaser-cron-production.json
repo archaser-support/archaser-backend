@@ -853,6 +853,206 @@
                 "x": 0,
                 "y": 38
             },
+            "id": 330,
+            "title": "Stuck / overdue cron jobs",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "description": "Jobs whose next_run is more than 5 minutes in the past (same rule as overdue alerts). Empty table means nothing is stuck.",
+            "gridPos": {
+                "h": 10,
+                "w": 24,
+                "x": 0,
+                "y": 39
+            },
+            "id": 331,
+            "title": "Stuck cron jobs (name, overdue duration, time since last run)",
+            "type": "table",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "(time() - archaser_cron_job_next_run_timestamp_seconds{instance=\"Production\"}) > 300",
+                    "format": "table",
+                    "instant": true,
+                    "legendFormat": "Overdue by",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "(time() - archaser_cron_job_last_run_timestamp_seconds{instance=\"Production\"}) and on(job_name) ((time() - archaser_cron_job_next_run_timestamp_seconds{instance=\"Production\"}) > 300)",
+                    "format": "table",
+                    "instant": true,
+                    "legendFormat": "Not run for",
+                    "refId": "B"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "(archaser_cron_job_last_run_timestamp_seconds{instance=\"Production\"} * 1000) and on(job_name) ((time() - archaser_cron_job_next_run_timestamp_seconds{instance=\"Production\"}) > 300)",
+                    "format": "table",
+                    "instant": true,
+                    "legendFormat": "Last run",
+                    "refId": "C"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "Prometheus"
+                    },
+                    "expr": "(archaser_cron_job_next_run_timestamp_seconds{instance=\"Production\"} * 1000) and on(job_name) ((time() - archaser_cron_job_next_run_timestamp_seconds{instance=\"Production\"}) > 300)",
+                    "format": "table",
+                    "instant": true,
+                    "legendFormat": "Scheduled next run",
+                    "refId": "D"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {
+                        "align": "auto",
+                        "displayMode": "auto",
+                        "filterable": true
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Overdue by"
+                        },
+                        "properties": [
+                            {
+                                "id": "unit",
+                                "value": "dtdurations"
+                            },
+                            {
+                                "id": "custom.displayMode",
+                                "value": "color-background"
+                            },
+                            {
+                                "id": "thresholds",
+                                "value": {
+                                    "mode": "absolute",
+                                    "steps": [
+                                        {
+                                            "color": "yellow",
+                                            "value": null
+                                        },
+                                        {
+                                            "color": "orange",
+                                            "value": 3600
+                                        },
+                                        {
+                                            "color": "red",
+                                            "value": 86400
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Not run for"
+                        },
+                        "properties": [
+                            {
+                                "id": "unit",
+                                "value": "dtdurations"
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Last run"
+                        },
+                        "properties": [
+                            {
+                                "id": "unit",
+                                "value": "dateTimeAsIso"
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Scheduled next run"
+                        },
+                        "properties": [
+                            {
+                                "id": "unit",
+                                "value": "dateTimeAsIso"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "showHeader": true,
+                "sortBy": [
+                    {
+                        "desc": true,
+                        "displayName": "Overdue by"
+                    }
+                ]
+            },
+            "transformations": [
+                {
+                    "id": "joinByField",
+                    "options": {
+                        "byField": "job_name",
+                        "mode": "outer"
+                    }
+                },
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": true,
+                            "Time 1": true,
+                            "Time 2": true,
+                            "Time 3": true,
+                            "Time 4": true
+                        },
+                        "indexByName": {
+                            "job_name": 0,
+                            "Value #A": 1,
+                            "Value #B": 2,
+                            "Value #C": 3,
+                            "Value #D": 4
+                        },
+                        "renameByName": {
+                            "job_name": "Cron job",
+                            "Value #A": "Overdue by",
+                            "Value #B": "Not run for",
+                            "Value #C": "Last run",
+                            "Value #D": "Scheduled next run"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 49
+            },
             "id": 310,
             "title": "Cron Intensity & Logs",
             "type": "row"
@@ -866,7 +1066,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 0,
-                "y": 39
+                "y": 50
             },
             "id": 104,
             "options": {
@@ -879,7 +1079,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum by(source) (count_over_time({service=\"archaser-core\", environment=\"production\"} |~ \"(?i)cron\" [$__interval]))",
+                    "expr": "sum by(source) (count_over_time({service=\"archaser-core\", environment=\"production\"} |~ \"(?i)(\\\\[cron|cron-jobs:|bullmq|CronQueue|repeatable)\" !~ \"(?i)ngalert|Sending alerts to local notifier|rule_uid=\" [$__interval]))",
                     "format": "heatmap",
                     "legendFormat": "{{source}}",
                     "refId": "A"
@@ -897,7 +1097,7 @@
                 "h": 8,
                 "w": 12,
                 "x": 12,
-                "y": 39
+                "y": 50
             },
             "id": 105,
             "options": {
@@ -907,7 +1107,7 @@
             },
             "targets": [
                 {
-                    "expr": "{service=\"archaser-core\", environment=\"production\"} |~ \"(?i)cron\"",
+                    "expr": "{service=\"archaser-core\", environment=\"production\"} |~ \"(?i)(\\\\[cron|cron-jobs:|bullmq|CronQueue|repeatable)\" !~ \"(?i)ngalert|Sending alerts to local notifier|rule_uid=\"",
                     "refId": "A"
                 }
             ],
@@ -924,6 +1124,6 @@
     ],
     "timezone": "browser",
     "uid": "archaser-cron-v1-prod",
-    "version": 2,
+    "version": 4,
     "weekStart": ""
 }
