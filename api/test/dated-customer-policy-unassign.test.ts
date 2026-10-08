@@ -428,10 +428,10 @@ describe("dated customer policy unassign", () => {
 
         expect(policies[0]!.is_active).toBe(false);
         expect(policies[0]!.status).toBe("inactive");
-        expect(policies[0]!.policy_change_end_date).toBeNull();
+        expect(policies[0]!.policy_change_end_date).toEqual(utcDay("2026-08-31"));
         expect(policies[1]!.is_active).toBe(false);
         expect(policies[1]!.status).toBe("inactive");
-        expect(policies[1]!.policy_change_end_date).toBeNull();
+        expect(policies[1]!.policy_change_end_date).toEqual(utcDay("2026-10-06"));
         expect(rewrite).toHaveBeenCalledWith(
             expect.objectContaining({ fromDate: utcDay("2026-07-01") }),
             expect.anything()

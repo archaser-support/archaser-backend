@@ -158,30 +158,46 @@ export function selectCustomerPoliciesEffectiveOnDate<
 }
 
 /**
- * CPT writers on day D: version effective on D, plus dated-unassign run-off rows
- * (inactive with `policy_change_end_date` and D ≥ end).
+ * CPT writers on day D: version effective on D, plus dated-unassign run-off
+ * rows (inactive with `policy_change_end_date` and D ≥ end) for customers with
+ * no effective version on D — superseded versions also carry an end date and
+ * must not double-count AR next to their successor. One run-off row per
+ * customer + insurance policy (latest ended version); zero-length (voided)
+ * versions never write run-off.
  */
 export function selectCustomerPoliciesForTrendWriteOnDate<
     T extends CustomerPolicyVersionForAsOf,
 >(policies: readonly T[], asOfDate: Date): T[] {
     const dayMs = toUtcDateOnly(asOfDate).getTime();
     const effective = selectCustomerPoliciesEffectiveOnDate(policies, asOfDate);
-    const selected = new Map<number, T>();
-    for (const cp of effective) {
-        selected.set(cp.id, cp);
-    }
+    const customersWithEffective = new Set(effective.map((cp) => cp.customer_id));
+    const runOffByScope = new Map<string, T>();
     for (const cp of policies) {
-        if (cp.insurance_policy_id == null || cp.is_active) {
+        if (
+            cp.insurance_policy_id == null ||
+            cp.is_active ||
+            cp.policy_change_end_date == null ||
+            customersWithEffective.has(cp.customer_id)
+        ) {
             continue;
         }
-        if (cp.policy_change_end_date == null) {
+        const endMs = toUtcDateOnly(cp.policy_change_end_date).getTime();
+        const startMs = toUtcDateOnly(cp.policy_change_start_date).getTime();
+        if (dayMs < endMs || endMs <= startMs) {
             continue;
         }
-        if (dayMs >= toUtcDateOnly(cp.policy_change_end_date).getTime()) {
-            selected.set(cp.id, cp);
+        const key = `${cp.customer_id}:${cp.insurance_policy_id}`;
+        const prior = runOffByScope.get(key);
+        if (
+            prior == null ||
+            endMs > toUtcDateOnly(prior.policy_change_end_date!).getTime() ||
+            (endMs === toUtcDateOnly(prior.policy_change_end_date!).getTime() &&
+                isStrictlyLaterVersion(cp, prior))
+        ) {
+            runOffByScope.set(key, cp);
         }
     }
-    return Array.from(selected.values());
+    return [...effective, ...runOffByScope.values()];
 }
 
 /**
