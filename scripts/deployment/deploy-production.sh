@@ -156,7 +156,7 @@ if [ $START_STEP -le 2 ]; then
 
     tar -czf "$SRC_DIR/$artifact_name" \
         -C "$BUILD_SOURCE" "$BUILD_DIR" \
-        -C "$SRC_DIR" frontend/public frontend/next.config.js frontend/package.json frontend/nest-api-rewrite.cjs frontend/i18nConfig.ts frontend/middleware.ts backend/prisma package.json package-lock.json backend/ecosystem.config.js backend/scripts/deployment/fix-routes-manifest.js frontend/shared/templates/emails frontend/.env.production backend/.env.production \
+        -C "$SRC_DIR" frontend/public frontend/next.config.js frontend/package.json frontend/nest-api-rewrite.cjs frontend/i18nConfig.ts frontend/middleware.ts backend/prisma package.json package-lock.json backend/ecosystem.config.js backend/scripts/deployment/fix-routes-manifest.js backend/scripts/deployment/silence-db-disconnect-alerts.sh frontend/shared/templates/emails frontend/.env.production backend/.env.production \
         backend/grafana \
 
     if [ ! -f "$artifact_name" ]; then
@@ -208,6 +208,13 @@ if [ $START_STEP -le 4 ]; then
 
     echo '-> Verifying routes-manifest.json...'
     node backend/scripts/deployment/fix-routes-manifest.js
+
+    echo '-> Silencing production MongoDB/PostgreSQL Disconnected alerts for deploy window...'
+    if [ -f backend/scripts/deployment/silence-db-disconnect-alerts.sh ]; then
+      MONITORING_ENV=production bash backend/scripts/deployment/silence-db-disconnect-alerts.sh || echo 'WARNING: could not create Grafana silence; deploy continues (DB disconnect emails may fire during restart).'
+    else
+      echo 'WARNING: silence-db-disconnect-alerts.sh missing; skipping alert mute'
+    fi
 
     echo '-> Reloading Application ($PM2_APP_NAME)...'
     pm2 restart backend/ecosystem.config.js --only $PM2_APP_NAME --env production || pm2 start backend/ecosystem.config.js --only $PM2_APP_NAME --env production

@@ -28,6 +28,9 @@ Examples:
   bash scripts/deployment/deploy-backend-docker.sh --env staging
   bash scripts/deployment/deploy-backend-docker.sh --env production --no-grafana
 
+Production deploys best-effort mute MongoDB/PostgreSQL Disconnected alerts for 15m
+(see silence-db-disconnect-alerts.sh). Failure to silence does not abort deploy.
+
 Manual compose on the shared EC2 (always pass the deploy project name):
   docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml …
   docker compose -p archaser-backend-production -f docker-compose.backend.production.yml …
@@ -734,6 +737,18 @@ fi
 # Failure exits before recreate_backend_stack, so the previous containers stay up.
 log "Applying SQL migrations for $ENVIRONMENT"
 node "$ROOT_DIR/scripts/deployment/apply-sql-migrations.js"
+
+if [[ "$ENVIRONMENT" == "production" ]]; then
+    SILENCE_SCRIPT="$BACKEND_DIR/scripts/deployment/silence-db-disconnect-alerts.sh"
+    if [[ -f "$SILENCE_SCRIPT" ]]; then
+        log "Silencing production MongoDB/PostgreSQL Disconnected alerts for deploy window"
+        if ! MONITORING_ENV=production bash "$SILENCE_SCRIPT"; then
+            echo "WARNING: could not create Grafana silence; deploy continues (DB disconnect emails may fire during restart)."
+        fi
+    else
+        echo "WARNING: silence-db-disconnect-alerts.sh missing; skipping alert mute"
+    fi
+fi
 
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
 ensure_shared_mongo_running
