@@ -11,6 +11,7 @@ import {
     fetchOpenReceivableForCustomerByCurrency,
     getCustomerTermsBreachOutstandingSum,
     getCustomerTermsBreachOutstandingSumByCurrency,
+    loadCustomerScopeAtRiskRows,
     resolveOpenArOnPolicyInLimitCurrency,
 } from "./creditInsuranceDashboardService";
 import {
@@ -746,18 +747,19 @@ export async function getCustomerDashboardKpis(
             : policyRows.find((row) => row.is_active) ?? policyRows[0];
     const isExcludedFromPolicy = scopedPolicyRow?.excluded_from_policy === true;
 
+    const atRiskScopeRows = fullArAtRisk
+        ? []
+        : await loadCustomerScopeAtRiskRows(accountId, customerId, {
+              ...(policyId != null ? { policyId } : {}),
+              ...(poolCustomerIds != null
+                  ? { customerIds: poolCustomerIds }
+                  : {}),
+          });
     const atRiskInvoices = fullArAtRisk
         ? []
-        : await fetchCustomerAtRiskInvoiceInputs(
-              accountId,
-              customerId,
-              {
-                  ...(policyId != null ? { policyId } : {}),
-                  ...(poolCustomerIds != null
-                      ? { customerIds: poolCustomerIds }
-                      : {}),
-              }
-          );
+        : await fetchCustomerAtRiskInvoiceInputs(accountId, customerId, {
+              scopeRows: atRiskScopeRows,
+          });
     const atRiskExposure = computeCustomerRiskExposure({
         atRiskCohort: fullArAtRisk,
         totalAr,
@@ -1054,12 +1056,7 @@ export async function getCustomerDashboardKpis(
                   accountId,
                   customerId,
                   secondaryCurrency,
-                  {
-                      policyId: policyId ?? undefined,
-                      ...(poolCustomerIds != null
-                          ? { customerIds: poolCustomerIds }
-                          : {}),
-                  }
+                  { scopeRows: atRiskScopeRows }
               );
         atRiskExposureSecondary = computeCustomerRiskExposure({
             atRiskCohort: fullArAtRisk,

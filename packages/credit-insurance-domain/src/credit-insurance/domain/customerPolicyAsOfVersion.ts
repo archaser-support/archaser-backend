@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+
 import { toUtcDateOnly } from "./shared/insurancePolicyLifecycle";
 import {
     asOfTermsScopeKey,
@@ -181,6 +183,22 @@ export function selectCustomerPoliciesForTrendWriteOnDate<
     }
     return Array.from(selected.values());
 }
+
+/**
+ * SQL `ORDER BY` tail for `DISTINCT ON (t.customer_id, t.snapshot_date)` that
+ * keeps one CPT row per customer per day, matching
+ * {@link selectCustomerPoliciesEffectiveOnDate}: the effective version's row
+ * wins over dated-unassign run-off rows; run-off is used only when no
+ * effective row exists. Requires aliases `t` ("CustomerPolicyTrend") and `cp`
+ * (`LEFT JOIN "CustomerPolicy" cp ON cp.id = t.customer_policy_id`).
+ */
+export const customerPolicyTrendEffectiveRowOrderSql = Prisma.sql`
+    (cp.policy_change_end_date IS NOT NULL
+        AND t.snapshot_date >= cp.policy_change_end_date) ASC NULLS LAST,
+    (cp.policy_change_start_date > t.snapshot_date) ASC NULLS LAST,
+    cp.policy_change_start_date DESC NULLS LAST,
+    t.customer_policy_id DESC NULLS LAST
+`;
 
 function termsFromPolicy(
     cp: CustomerPolicyVersionForAsOf

@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "../domain-db";
 import { ACCOUNT_BACKGROUND_JOB_KIND } from "./accountBackgroundJob";
+import { loadAccountSnapshotLeaseBlockers } from "./accountBackgroundJobLease";
 import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
 
 type PrismaClientLike = PrismaClient;
@@ -10,11 +11,9 @@ type RawCapableClient = {
 };
 
 /**
- * Nest copy of the frontend as-of rewrite queue core.
- *
- * This module is intentionally not scheduled. Until cutover, frontend's
- * Customer Policy Trend cron is the sole live drain owner. Disable that job
- * before enabling the Nest entrypoint; never run both schedulers.
+ * As-of rewrite queue core. The Customer Policy Trend cron
+ * (`packages/cron-jobs` handler) is the only scheduled drain owner; never
+ * schedule a second drain.
  */
 export const REWRITE_QUEUE_STALE_PROCESSING_MS = 60 * 60 * 1000;
 
@@ -348,6 +347,38 @@ type DrainWriters = {
     ) => Promise<unknown>;
 };
 
+/** Interactive rewrite only: non-fatal, CTP rows are already written. */
+async function overlayRewrittenCreditPoolShells(args: {
+    accountId: number;
+    customerIds?: number[];
+    fromDate: Date;
+    toDate: Date;
+    dbClient: PrismaClientLike;
+}): Promise<void> {
+    try {
+        const { overlayCreditPoolShellsForRange } = await import(
+            "./syncCreditPoolPolicyTrendsAfterParentChange"
+        );
+        await overlayCreditPoolShellsForRange({
+            accountId: args.accountId,
+            customerIds: args.customerIds,
+            fromDate: args.fromDate,
+            toDate: args.toDate,
+            dbClient: args.dbClient,
+        });
+    } catch (overlayError) {
+        console.error("[AsOfRewrite] pool shell range overlay failed", {
+            accountId: args.accountId,
+            fromDate: args.fromDate.toISOString().slice(0, 10),
+            toDate: args.toDate.toISOString().slice(0, 10),
+            errorMessage:
+                overlayError instanceof Error
+                    ? overlayError.message
+                    : String(overlayError),
+        });
+    }
+}
+
 /**
  * Synchronously rewrite Customer Policy Trend snapshots for one or more
  * customers from fromDate through toDate (inclusive UTC days).
@@ -365,16 +396,20 @@ export async function rewriteCustomerAsOfRange(
     options?: {
         dbClient?: PrismaClientLike;
         /**
-         * Keep stored CPT days strictly before fromDate (dated unassign / run-off).
-         * Default false matches Generate/clear rewrite which drops pre-window history.
+         * Skip the inactive-CP CPT prune (dated unassign keeps run-off rows).
+         * History before fromDate is never deleted by a rewrite.
          */
         preserveHistoryBeforeFromDate?: boolean;
+        /** Caller overlays the pool shells for the range itself. */
+        skipCreditPoolShellOverlay?: boolean;
         syncCustomerPolicyTrendSnapshotForAccount?: DrainWriters["syncCustomerPolicyTrendSnapshotForAccount"];
     }
 ): Promise<RewriteCustomerAsOfRangeResult> {
     const db = options?.dbClient ?? prisma;
-    const customerIds = (input.customerIds ?? []).filter(Number.isFinite);
-    if (customerIds.length === 0) {
+    const requestedCustomerIds = (input.customerIds ?? []).filter(
+        Number.isFinite
+    );
+    if (requestedCustomerIds.length === 0) {
         return { daysRewritten: 0, skipped: true };
     }
 
@@ -449,6 +484,15 @@ export async function rewriteCustomerAsOfRange(
             await import("./customerPolicyTrendService")
         ).syncCustomerPolicyTrendSnapshotForAccount;
 
+    const { withCreditPoolShellIds } = await import(
+        "./syncCreditPoolPolicyTrendsAfterParentChange"
+    );
+    const customerIds = await withCreditPoolShellIds({
+        accountId: input.accountId,
+        customerIds: requestedCustomerIds,
+        dbClient: db,
+    });
+
     const {
         buildCreditAsOfBackfillRunContext,
         ensureCapacityGapsForBackfillRun,
@@ -469,7 +513,6 @@ export async function rewriteCustomerAsOfRange(
         );
         await prepareCreditSnapshotHistoryForRewriteWindow({
             accountId: input.accountId,
-            fromDate,
             customerIds,
             dbClient: db,
         });
@@ -497,8 +540,19 @@ export async function rewriteCustomerAsOfRange(
             asOfLines,
             mepBreachStartDate: runContext.mepBreachStartDate,
             runContext,
+            skipCreditPoolShellOverlay: true,
         });
         daysRewritten += 1;
+    }
+
+    if (!options?.skipCreditPoolShellOverlay && daysRewritten > 0) {
+        await overlayRewrittenCreditPoolShells({
+            accountId: input.accountId,
+            customerIds,
+            fromDate,
+            toDate,
+            dbClient: db,
+        });
     }
 
     return { daysRewritten, skipped: false };
@@ -545,23 +599,11 @@ export async function drainAsOfRewriteQueue(options?: {
         LIMIT ${maxItems}
     `;
 
-    const blockingAccountIds = new Set<number>();
-    if (pending.length > 0) {
-        const accountIds = Array.from(
-            new Set(pending.map((item) => item.account_id))
-        );
-        const blocking = await db.$queryRaw<Array<{ account_id: number }>>`
-            SELECT account_id
-            FROM "AccountBackgroundJob"
-            WHERE account_id IN (${Prisma.join(accountIds)})
-              AND job_kind IN (
-                ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_ASOF_BACKFILL},
-                ${ACCOUNT_BACKGROUND_JOB_KIND.CREDIT_POOL_PARENT_HISTORY}
-              )
-              AND status IN ('running', 'paused')
-        `;
-        blocking.forEach((row) => blockingAccountIds.add(row.account_id));
-    }
+    const leaseBlockers = await loadAccountSnapshotLeaseBlockers(
+        Array.from(new Set(pending.map((item) => item.account_id))),
+        db,
+        now
+    );
 
     let itemsProcessed = 0;
     let daysRewritten = 0;
@@ -569,7 +611,7 @@ export async function drainAsOfRewriteQueue(options?: {
     let skippedForBackfill = 0;
 
     for (const item of pending) {
-        if (blockingAccountIds.has(item.account_id)) {
+        if (leaseBlockers.has(item.account_id)) {
             skippedForBackfill += 1;
             continue;
         }
@@ -584,9 +626,20 @@ export async function drainAsOfRewriteQueue(options?: {
         }
 
         try {
-            const customerIds = (item.customer_ids ?? []).filter(
+            const itemCustomerIds = (item.customer_ids ?? []).filter(
                 Number.isFinite
             );
+            const { withCreditPoolShellIds } = await import(
+                "./syncCreditPoolPolicyTrendsAfterParentChange"
+            );
+            const customerIds =
+                itemCustomerIds.length > 0
+                    ? await withCreditPoolShellIds({
+                          accountId: item.account_id,
+                          customerIds: itemCustomerIds,
+                          dbClient: db,
+                      })
+                    : itemCustomerIds;
             const resumeFrom = resolveRewriteDrainStart(
                 item.from_date,
                 item.checkpoint_date
@@ -608,13 +661,12 @@ export async function drainAsOfRewriteQueue(options?: {
             runContext = await ensureCapacityGapsForBackfillRun(runContext, {
                 dbClient: db,
             });
-            // Fresh window only: drop inactive-CP CPT + days before from_date.
+            // Fresh window only: drop inactive-CP CPT.
             if (item.checkpoint_date == null) {
                 const { prepareCreditSnapshotHistoryForRewriteWindow } =
                     await import("./creditSnapshotHistoryCleanup");
                 await prepareCreditSnapshotHistoryForRewriteWindow({
                     accountId: item.account_id,
-                    fromDate: item.from_date,
                     customerIds:
                         customerIds.length > 0 ? customerIds : undefined,
                     dbClient: db,
@@ -641,6 +693,7 @@ export async function drainAsOfRewriteQueue(options?: {
                     asOfLines,
                     mepBreachStartDate: runContext.mepBreachStartDate,
                     runContext,
+                    skipCreditPoolShellOverlay: true,
                 });
                 await takeDashboard(item.account_id, {
                     snapshotDate: day,
@@ -654,9 +707,22 @@ export async function drainAsOfRewriteQueue(options?: {
                 `;
                 daysRewritten += 1;
             }
+            // Full item window: days before a resume checkpoint were written
+            // by an earlier attempt that never reached this overlay.
+            const { overlayCreditPoolShellsForRange } = await import(
+                "./syncCreditPoolPolicyTrendsAfterParentChange"
+            );
+            await overlayCreditPoolShellsForRange({
+                accountId: item.account_id,
+                customerIds:
+                    customerIds.length > 0 ? customerIds : undefined,
+                fromDate: item.from_date,
+                toDate: item.to_date,
+                dbClient: db,
+            });
             await db.$executeRaw`
                 UPDATE "CreditAsOfRewriteQueue"
-                SET status = 'done', updated_at = ${now}
+                SET status = 'done', last_error = NULL, updated_at = ${now}
                 WHERE id = ${item.id}
             `;
             itemsProcessed += 1;

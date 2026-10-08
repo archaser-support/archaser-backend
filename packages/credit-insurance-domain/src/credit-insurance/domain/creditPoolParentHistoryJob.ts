@@ -469,6 +469,7 @@ export async function runCreditPoolParentHistoryJob(
                 mepBreachStartDate: runContext.mepBreachStartDate,
                 runContext,
                 asOfTermsFlagsApplied,
+                skipCreditPoolShellOverlay: true,
             });
 
             daysDone = i + 1;
@@ -481,31 +482,17 @@ export async function runCreditPoolParentHistoryJob(
 
         // One bulk pool overlay for the whole window (not per-day SQL).
         if (shellIds.size > 0 && daysDone > 0) {
-            try {
-                const { overlayPoolCapacityGapAndAtRiskOnTrends } =
-                    await import(
-                        "./syncCreditPoolPolicyTrendsAfterParentChange"
-                    );
-                await overlayPoolCapacityGapAndAtRiskOnTrends({
-                    accountId,
-                    rootCustomerIds: [...shellIds],
-                    fromDate: from,
-                    toDate: to,
-                    dbClient: db,
-                    cache,
-                });
-            } catch (overlayError) {
-                console.error(
-                    "[CreditPoolParentHistory] bulk pool overlay failed",
-                    {
-                        accountId,
-                        errorMessage:
-                            overlayError instanceof Error
-                                ? overlayError.message
-                                : String(overlayError),
-                    }
-                );
-            }
+            const { overlayPoolCapacityGapAndAtRiskOnTrends } = await import(
+                "./syncCreditPoolPolicyTrendsAfterParentChange"
+            );
+            await overlayPoolCapacityGapAndAtRiskOnTrends({
+                accountId,
+                rootCustomerIds: [...shellIds],
+                fromDate: from,
+                toDate: to,
+                dbClient: db,
+                cache,
+            });
         }
 
         const final = await loadJob(accountId, db);

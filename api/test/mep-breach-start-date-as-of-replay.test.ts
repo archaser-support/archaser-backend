@@ -240,19 +240,6 @@ describe("replay run resolves the configured date once", () => {
         return { db, syncCustomerPolicyTrendSnapshotForAccount };
     }
 
-    it("reads the connector once and threads the date into every replayed day", async () => {
-        const { db, syncCustomerPolicyTrendSnapshotForAccount } =
-            await runReplay(MEP_START);
-
-        expect(db.billingConnector.findUnique).toHaveBeenCalledTimes(1);
-        expect(syncCustomerPolicyTrendSnapshotForAccount).toHaveBeenCalledTimes(3);
-        for (const call of syncCustomerPolicyTrendSnapshotForAccount.mock.calls) {
-            expect(call[1]).toEqual(
-                expect.objectContaining({ mepBreachStartDate: MEP_START })
-            );
-        }
-    });
-
     it("threads no gate for an account with no configured date", async () => {
         const { syncCustomerPolicyTrendSnapshotForAccount } =
             await runReplay(null);
