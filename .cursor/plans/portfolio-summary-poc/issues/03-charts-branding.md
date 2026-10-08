@@ -1,6 +1,6 @@
 # 03 — Charts and branding
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-data-bundle-skeleton-pdf](01-data-bundle-skeleton-pdf.md)
 **User stories:** 3, 6, 9, 11, 13, 20
@@ -12,10 +12,10 @@ Add static charts and ARchaser branding to the PDF. The charts are drawn from bu
 
 ## Acceptance criteria
 
-- [ ] Five charts render with Hebrew labels, RTL-aware axes and correct values from the bundle
-- [ ] Colors and fonts come from existing Portfolio Health design tokens, with no new product styles
-- [ ] No new npm dependencies (use existing chart tooling or plain SVG)
-- [ ] Charts and text don't overflow or split badly across PDF pages
+- [x] Five charts render with Hebrew labels, RTL-aware axes and correct values from the bundle
+- [x] Colors and fonts come from existing Portfolio Health design tokens, with no new product styles
+- [x] No new npm dependencies (use existing chart tooling or plain SVG)
+- [x] Charts and text don't overflow or split badly across PDF pages
 
 ## How to test
 

@@ -1,6 +1,6 @@
 # 01 — Data bundle and skeleton Hebrew PDF
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** high
 **Blocked by:** —
 **User stories:** 16, 18, 20, 22, 23
@@ -14,11 +14,11 @@ A render step turns the bundle into a skeleton Hebrew RTL PDF: a title, the rang
 
 ## Acceptance criteria
 
-- [ ] Script runs with account, from and to arguments and fails clearly on invalid input
-- [ ] Bundle contains range, days available and days in range, health, no-coverage, utilization and costs sections, policy terms and claims/excess
-- [ ] Bundle and PDF are written only to the gitignored local workspace, and no customer data is committed
-- [ ] Skeleton PDF renders Hebrew right-to-left with correct currency and percent formatting
-- [ ] No new npm dependencies; if a headless browser download is needed, the user is asked first
+- [x] Script runs with account, from and to arguments and fails clearly on invalid input
+- [x] Bundle contains range, days available and days in range, health, no-coverage, utilization and costs sections, policy terms and claims/excess
+- [x] Bundle and PDF are written only to the gitignored local workspace, and no customer data is committed
+- [x] Skeleton PDF renders Hebrew right-to-left with correct currency and percent formatting
+- [x] No new npm dependencies; if a headless browser download is needed, the user is asked first
 
 ## How to test
 
