@@ -1,5 +1,7 @@
 # Deploy silence for DB disconnect alerts
 
+**ClickUp:** [Silence MongoDB/PostgreSQL disconnect alerts during production deploy](https://app.clickup.com/t/869fefd6u)
+
 ## Overview
 
 Production deploys restart Nest (`pm2` or Docker). While the API is restarting or MongoDB is reconnecting, gauges `archaser_db_mongodb_connected` / `archaser_db_postgres_connected` can stay at `0` longer than the Grafana rule `for: 2m`, which fires critical email for **MongoDB Disconnected** / **PostgreSQL Disconnected**.
