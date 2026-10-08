@@ -1,4 +1,9 @@
+import {
+    extractCustomerPolicyReportField,
+    isCustomerPolicyFeeRateReportField,
+} from "@archaser/credit-insurance-domain";
 import { ReportFilterDto } from "./dto/execute-report.dto";
+import { valueMatchesNumericFilter } from "./report-formula-filter.util";
 import {
     computedFieldToPrismaWhere,
     isComputedReportField,
@@ -83,12 +88,14 @@ function datePresetToPrisma(
             case "less_than":
                 return { lt: startBound };
             case "<=":
+            case "less_or_equal":
             case "less_than_or_equal":
                 return { lte: endBound };
             case ">":
             case "greater_than":
                 return { gt: endBound };
             case ">=":
+            case "greater_or_equal":
             case "greater_than_or_equal":
                 return { gte: startBound };
             case "!=":
@@ -151,12 +158,14 @@ export function operatorToPrisma(
         case "greater_than":
             return { gt: coerceDateTimeBound(v, "start") };
         case ">=":
+        case "greater_or_equal":
         case "greater_than_or_equal":
             return { gte: coerceDateTimeBound(v, "start") };
         case "<":
         case "less_than":
             return { lt: coerceDateTimeBound(v, "end") };
         case "<=":
+        case "less_or_equal":
         case "less_than_or_equal":
             return { lte: coerceDateTimeBound(v, "end") };
         case "contains":
@@ -495,6 +504,59 @@ export function splitFiltersByTable(
     }
 
     return { primary, nested };
+}
+
+function customerFilterLeaf(field: string): string {
+    return field.startsWith("Customer.")
+        ? field.slice("Customer.".length)
+        : field;
+}
+
+/**
+ * Customer fee-rate filters (active CustomerPolicy rate, else InsurancePolicy
+ * rate) cannot be expressed as Prisma where on the to-many join, so
+ * splitFiltersByTable skips them and they run on fetched rows instead.
+ */
+export function pickCustomerPolicyRateFilters(
+    filters: ReportFilterDto[],
+    primaryTable: string
+): ReportFilterDto[] {
+    if (primaryTable !== "Customer") {
+        return [];
+    }
+    return filters
+        .filter(
+            (f) =>
+                f?.table === "Customer" &&
+                !!f.field &&
+                isCustomerPolicyFeeRateReportField(customerFilterLeaf(f.field))
+        )
+        .map((f) => ({ ...f, field: customerFilterLeaf(f.field) }));
+}
+
+/** Keep Customer rows whose resolved fee rates satisfy every filter (AND). */
+export function applyCustomerPolicyRateFiltersToRows<T>(
+    rows: T[],
+    filters: ReportFilterDto[],
+    scopedPolicyId?: number
+): T[] {
+    if (!filters.length) {
+        return rows;
+    }
+    return rows.filter((row) =>
+        filters.every((f) =>
+            valueMatchesNumericFilter(
+                extractCustomerPolicyReportField(
+                    row,
+                    f.field,
+                    undefined,
+                    scopedPolicyId
+                ),
+                f.operator,
+                f.value
+            )
+        )
+    );
 }
 
 export function mergeAndWhere(

@@ -1,5 +1,6 @@
 import { getFieldOutputKey } from "./report.constants";
-import { ReportFormula } from "./report-formula/types";
+import { getFormulaOutputKey, ReportFormula } from "./report-formula/types";
+import { formatAggregatedFormulaValue } from "./report-formula/formula-execution";
 import { formatMoneyIso } from "./format-money.util";
 
 export type AggregationType = "SUM" | "AVG" | "COUNT" | "MIN" | "MAX";
@@ -172,6 +173,9 @@ export function applyGroupingAndAggregation(
     const fields = config.fields || [];
     const groupingKeys = config.grouping || [];
     const aggregatedFields = fields.filter((field) => isAggregatedField(field));
+    const aggregatedFormulas = (config.formulas || []).filter(
+        (formula) => !!formula.aggregation
+    );
     const hasAggregatedFields = aggregatedFields.length > 0;
     const hasGrouping = groupingKeys.length > 0;
 
@@ -275,6 +279,29 @@ export function applyGroupingAndAggregation(
                     }
                 }
             }
+        }
+
+        for (const formula of aggregatedFormulas) {
+            const outputKey = getFormulaOutputKey(formula.id);
+            const values = groupRows
+                .map((row) => coerceToNumber(row[outputKey]))
+                .filter((value): value is number => value !== null);
+            const aggregated = calculateAggregation(
+                values,
+                String(formula.aggregation)
+            );
+            groupedRow[outputKey] = aggregated;
+            groupedRow[`___formatted_${outputKey}`] =
+                aggregated === null
+                    ? null
+                    : formatAggregatedFormulaValue(
+                          aggregated,
+                          formula,
+                          sampleRow ?? {},
+                          fields,
+                          locale,
+                          accountCurrency
+                      );
         }
 
         groupedRows.push(groupedRow);
