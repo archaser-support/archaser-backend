@@ -12,6 +12,7 @@ import { resolveInvoicePaymentCloseDates } from "./invoicePaymentCloseDates";
 import { resolveAccountBillingExtension } from "../extensions";
 import type { ExtensionLinkedPayment } from "../extensions/types";
 import { shrinkOrDeleteVirtualPaymentsForInvoiceIds } from "../payment/virtualPaymentTrim";
+import { toMoneyNumber } from "../payment/moneyNumber";
 import { paymentsEffectiveAsOf } from "./paymentsEffectiveAsOf";
 
 export type LinkDeferredPaymentAndRecalcResult = {
@@ -149,6 +150,29 @@ const LINKED_PAYMENT_RECALC_SELECT = {
     reference: true,
 } as const;
 
+/** Prisma money columns are Decimal; coerce to number for paid-recalc math. */
+function toLinkedPaymentForRecalc(payment: {
+    id: number;
+    payment_date: Date;
+    amount: unknown;
+    customer_amount: unknown;
+    payment_method: string | null;
+    reference: string | null;
+}): LinkedPaymentForRecalc {
+    return {
+        id: payment.id,
+        payment_date: payment.payment_date,
+        amount:
+            payment.amount == null ? null : toMoneyNumber(payment.amount),
+        customer_amount:
+            payment.customer_amount == null
+                ? null
+                : toMoneyNumber(payment.customer_amount),
+        payment_method: payment.payment_method,
+        reference: payment.reference,
+    };
+}
+
 function hasForcePaidClose(
     payments: LinkedPaymentForRecalc[],
     isForcePaidClose?: (payment: ExtensionLinkedPayment) => boolean
@@ -233,8 +257,8 @@ function buildInvoicePaidUpdate(
     let totalCustomerPaid = 0;
 
     for (const payment of effectivePayments) {
-        totalPaid += payment.amount ?? 0;
-        totalCustomerPaid += payment.customer_amount ?? 0;
+        totalPaid += toMoneyNumber(payment.amount);
+        totalCustomerPaid += toMoneyNumber(payment.customer_amount);
     }
 
     const newOutstanding = (invoice.net_amount ?? 0) - totalPaid;
@@ -442,9 +466,9 @@ export async function bulkLinkDeferredPayments(
         if (aligned.length > 0) {
             const ids = aligned.map((row) => row.paymentId);
             const invoiceIds = aligned.map((row) => row.invoiceId);
-            const amounts = aligned.map((row) => row.amount ?? 0);
-            const customerAmounts = aligned.map(
-                (row) => row.customer_amount ?? 0
+            const amounts = aligned.map((row) => toMoneyNumber(row.amount));
+            const customerAmounts = aligned.map((row) =>
+                toMoneyNumber(row.customer_amount)
             );
             const currencies = aligned.map(
                 (row) => row.customer_currency ?? ""
@@ -512,7 +536,7 @@ export async function recalculateInvoiceFromLinkedPayments(
         where: { id: invoiceId },
         data: buildInvoicePaidUpdate(
             invoice,
-            linkedPayments,
+            linkedPayments.map(toLinkedPaymentForRecalc),
             { ...options, isForcePaidClose },
             new Date(),
             paidTolerance
@@ -562,7 +586,7 @@ export async function recalculateInvoicesFromLinkedPayments(
     for (const payment of linkedPayments) {
         if (payment.invoice_id == null) continue;
         const list = paymentsByInvoiceId.get(payment.invoice_id) ?? [];
-        list.push(payment);
+        list.push(toLinkedPaymentForRecalc(payment));
         paymentsByInvoiceId.set(payment.invoice_id, list);
     }
 

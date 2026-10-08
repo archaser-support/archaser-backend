@@ -551,6 +551,11 @@ export {
 } from "./payment/virtualPaymentTrim";
 
 export {
+    sameMoneyAmount,
+    toMoneyNumber,
+} from "./payment/moneyNumber";
+
+export {
     INVOICE_PAID_TOLERANCE,
     INVOICE_PAID_TOLERANCE_MAX,
     INVOICE_PAID_TOLERANCE_MIN,
