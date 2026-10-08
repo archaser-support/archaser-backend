@@ -57,6 +57,11 @@ import {
     getFieldLinkMetadata,
 } from "./report-link.util";
 import {
+    buildInvoiceViolationDetails,
+    INVOICE_VIOLATION_DETAILS_KEY,
+    mergeInvoiceViolationDetailsSelect,
+} from "./report-invoice-violation-details.util";
+import {
     mergeAndWhere,
     splitFiltersByTable,
 } from "./report-filter.util";
@@ -353,6 +358,12 @@ export class ReportExecutionService {
             nested,
             relationMap
         );
+        const includeViolationDetails =
+            primaryTable === "Invoice" &&
+            body.includeInvoiceCreditInsuranceViolationFields === true;
+        if (includeViolationDetails) {
+            mergeInvoiceViolationDetailsSelect(select);
+        }
         const needsGroupedExecution = reportNeedsGroupedExecution(config);
 
         const reportUniqueName = (report as { unique_name?: string | null })
@@ -609,8 +620,8 @@ export class ReportExecutionService {
                   language,
                   accountCurrency
               )
-            : rows.map((row) =>
-                  this.formatRow(
+            : rows.map((row) => {
+                  const out = this.formatRow(
                       row,
                       primaryTable,
                       nonAggregatedFields,
@@ -619,8 +630,13 @@ export class ReportExecutionService {
                       timezone,
                       language,
                       accountCurrency
-                  )
-              );
+                  );
+                  if (includeViolationDetails) {
+                      out[INVOICE_VIOLATION_DETAILS_KEY] =
+                          buildInvoiceViolationDetails(row);
+                  }
+                  return out;
+              });
         const formulaResult = applyFormulasToRows(data, config, {
             locale,
             metadataTables: REPORT_METADATA.tables,

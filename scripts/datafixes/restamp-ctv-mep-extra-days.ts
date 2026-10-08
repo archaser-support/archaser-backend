@@ -1,15 +1,17 @@
 /**
  * One-time restamp of created-in-MEP (`ctv_customer_overdue_mep`) after Extra Days
- * were wired into the shared customer overdue-block math.
+ * were wired into the shared customer overdue-block math. Also backfills MEP cause
+ * snapshot columns (due date / outstanding / days past MEP) used by the breach tooltip.
  *
- * For customers with a MEP cutoff + Extra Days pair:
- *   1. syncCustomerInsuranceFields (overdue_block uses Extra Days)
- *   2. refreshCtvSnapshotsForInvoiceIds for Due / Overdue / Paid invoices
+ * Default cohort: active CustomerPolicy with MEP cutoff + Extra Days.
+ * `--all-customers`: every customer with an active policy (needed for account-wide
+ * tooltip snapshot backfill).
  *
  * Usage:
  *   npx tsx scripts/datafixes/restamp-ctv-mep-extra-days.ts --dry-run
  *   npx tsx scripts/datafixes/restamp-ctv-mep-extra-days.ts --fix
  *   npx tsx scripts/datafixes/restamp-ctv-mep-extra-days.ts --account 10149 --fix
+ *   npx tsx scripts/datafixes/restamp-ctv-mep-extra-days.ts --account 10149 --all-customers --fix
  *   npx tsx scripts/datafixes/restamp-ctv-mep-extra-days.ts --customer 4036 --dry-run
  */
 import "dotenv/config";
@@ -27,6 +29,7 @@ const INVOICE_CHUNK = 500;
 function parseArgs(argv: string[]): {
     dryRun: boolean;
     fix: boolean;
+    allCustomers: boolean;
     accountId: number | null;
     customerId: number | null;
 } {
@@ -35,6 +38,7 @@ function parseArgs(argv: string[]): {
     if (dryRun === fix) {
         throw new Error("Pass exactly one of --dry-run or --fix");
     }
+    const allCustomers = argv.includes("--all-customers");
     const accountIndex = argv.indexOf("--account");
     const customerIndex = argv.indexOf("--customer");
     const accountRaw =
@@ -54,7 +58,7 @@ function parseArgs(argv: string[]): {
     ) {
         throw new Error("--customer <id> must be a positive integer");
     }
-    return { dryRun, fix, accountId, customerId };
+    return { dryRun, fix, allCustomers, accountId, customerId };
 }
 
 async function main(): Promise<void> {
@@ -66,8 +70,12 @@ async function main(): Promise<void> {
         const policies = await prisma.customerPolicy.findMany({
             where: {
                 is_active: true,
-                mep_cutoff_day: { not: null },
-                mep_substitute_extra_days: { not: null },
+                ...(args.allCustomers
+                    ? {}
+                    : {
+                          mep_cutoff_day: { not: null },
+                          mep_substitute_extra_days: { not: null },
+                      }),
                 ...(args.customerId != null
                     ? { customer_id: args.customerId }
                     : {}),
@@ -84,7 +92,9 @@ async function main(): Promise<void> {
             new Set(policies.map((row) => row.customer_id))
         );
         console.log(
-            `Customers with MEP cutoff pair: ${customerIds.length}` +
+            (args.allCustomers
+                ? `Customers with active policy: ${customerIds.length}`
+                : `Customers with MEP cutoff pair: ${customerIds.length}`) +
                 (args.accountId != null ? ` (account ${args.accountId})` : "") +
                 (args.customerId != null
                     ? ` (customer ${args.customerId})`
@@ -105,6 +115,7 @@ async function main(): Promise<void> {
                 id: true,
                 status: true,
                 ctv_customer_overdue_mep: true,
+                ctv_customer_overdue_mep_cause_due_date: true,
             },
         });
 
@@ -118,10 +129,18 @@ async function main(): Promise<void> {
         const flaggedBefore = invoices.filter(
             (row) => row.ctv_customer_overdue_mep
         ).length;
+        const mepMissingSnapshot = invoices.filter(
+            (row) =>
+                row.ctv_customer_overdue_mep &&
+                row.ctv_customer_overdue_mep_cause_due_date == null
+        ).length;
 
         console.log("Invoice counts by status:", byStatus);
         console.log(
             `Invoices currently flagged ctv_customer_overdue_mep: ${flaggedBefore}`
+        );
+        console.log(
+            `MEP-flagged with missing cause snapshot (due date null): ${mepMissingSnapshot}`
         );
 
         if (args.dryRun) {
@@ -161,10 +180,19 @@ async function main(): Promise<void> {
 
         const after = await prisma.invoice.findMany({
             where: { id: { in: invoiceIds } },
-            select: { id: true, ctv_customer_overdue_mep: true },
+            select: {
+                id: true,
+                ctv_customer_overdue_mep: true,
+                ctv_customer_overdue_mep_cause_due_date: true,
+            },
         });
         const flaggedAfter = after.filter(
             (row) => row.ctv_customer_overdue_mep
+        ).length;
+        const mepMissingSnapshotAfter = after.filter(
+            (row) =>
+                row.ctv_customer_overdue_mep &&
+                row.ctv_customer_overdue_mep_cause_due_date == null
         ).length;
         const cleared = flaggedBefore - flaggedAfter;
 
@@ -172,6 +200,9 @@ async function main(): Promise<void> {
         console.log(
             `Flagged before → after: ${flaggedBefore} → ${flaggedAfter}` +
                 (cleared > 0 ? ` (cleared ${cleared})` : "")
+        );
+        console.log(
+            `MEP missing snapshot before → after: ${mepMissingSnapshot} → ${mepMissingSnapshotAfter}`
         );
     } finally {
         await prisma.$disconnect();

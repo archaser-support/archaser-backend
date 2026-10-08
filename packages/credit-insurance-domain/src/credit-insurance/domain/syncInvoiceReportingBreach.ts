@@ -4,8 +4,11 @@ import {
     bulkUpdateInvoiceBooleanByValue,
     bulkUpdateInvoiceCtvSnapshots,
     bulkUpdateInvoiceTargetDates,
+    type InvoiceCtvSnapshotWrite,
 } from "./bulkInvoiceUpdates";
 import {
+    buildCreatedOverdueMepCauseColumns,
+    isSameCreatedOverdueMepCauseColumns,
     loadInvoiceNumbersById,
     resolveCreatedOverdueMepDetailsByInvoiceId,
     type CreatedOverdueMepResolution,
@@ -565,6 +568,9 @@ export async function refreshCtvSnapshotsForInvoiceIds(
             policy_id: true,
             ctv_customer_overdue_mep: true,
             ctv_customer_overdue_mep_cause_invoice_number: true,
+            ctv_customer_overdue_mep_cause_due_date: true,
+            ctv_customer_overdue_mep_cause_outstanding: true,
+            ctv_customer_overdue_mep_days_past: true,
             ctv_customer_excluded_from_policy: true,
             ctv_outdated_dcl: true,
             ctv_invoice_after_policy_end: true,
@@ -638,15 +644,7 @@ export async function refreshCtvSnapshotsForInvoiceIds(
               });
     const policyById = new Map(policies.map((p) => [p.id, p]));
 
-    const pending: Array<{
-        id: number;
-        policyIdToSet: number | null;
-        ctv_customer_overdue_mep: boolean;
-        ctv_customer_overdue_mep_cause_invoice_number: string | null;
-        ctv_customer_excluded_from_policy: boolean;
-        ctv_outdated_dcl: boolean;
-        ctv_invoice_after_policy_end: boolean;
-    }> = [];
+    const pending: InvoiceCtvSnapshotWrite[] = [];
 
     for (const inv of rows) {
         if (!inv.Customer) {
@@ -692,18 +690,16 @@ export async function refreshCtvSnapshotsForInvoiceIds(
         // policy-scoped read path stops skipping the invoice.
         const policyIdPatch = inv.policy_id == null && cid != null;
 
-        const causeInvoiceId =
-            overdueMepByInvoiceId.get(inv.id)?.causeInvoiceId ?? null;
-        const causeInvoiceNumber =
-            snap.ctv_customer_overdue_mep && causeInvoiceId != null
-                ? causeNumbers.get(causeInvoiceId) ?? null
-                : null;
+        const causeColumns = buildCreatedOverdueMepCauseColumns(
+            snap.ctv_customer_overdue_mep,
+            overdueMepByInvoiceId.get(inv.id),
+            causeNumbers
+        );
 
         const unchanged =
             !policyIdPatch &&
             snap.ctv_customer_overdue_mep === inv.ctv_customer_overdue_mep &&
-            causeInvoiceNumber ===
-                inv.ctv_customer_overdue_mep_cause_invoice_number &&
+            isSameCreatedOverdueMepCauseColumns(causeColumns, inv) &&
             snap.ctv_customer_excluded_from_policy ===
                 inv.ctv_customer_excluded_from_policy &&
             snap.ctv_outdated_dcl === inv.ctv_outdated_dcl &&
@@ -718,7 +714,7 @@ export async function refreshCtvSnapshotsForInvoiceIds(
             id: inv.id,
             policyIdToSet: policyIdPatch ? cid : null,
             ctv_customer_overdue_mep: snap.ctv_customer_overdue_mep,
-            ctv_customer_overdue_mep_cause_invoice_number: causeInvoiceNumber,
+            ...causeColumns,
             ctv_customer_excluded_from_policy:
                 snap.ctv_customer_excluded_from_policy,
             ctv_outdated_dcl: snap.ctv_outdated_dcl,

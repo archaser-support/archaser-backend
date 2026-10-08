@@ -1,13 +1,18 @@
 import { type DbClient, prisma } from "../domain-db";
 
 import {
+    asOfPaymentSumKey,
+    computeAsOfOpenInvoiceLine,
     oldestOverdueDueAtEachInvoiceIssueDate,
     loadAsOfOpenInvoiceCandidates,
+    loadAsOfPaymentSumsForInvoiceDays,
+    toUtcDayStart,
     type AsOfOpenInvoiceLine,
     type CustomerOverdueMepMonthEnd,
+    type OldestOverdueAtIssue,
 } from "./asOfOpenAr";
 import {
-    computeCustomerOverdueBlock,
+    computeCustomerDaysPastMep,
     isEligibleForCustomerMepOverdue,
 } from "./invoiceInsuranceFields";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
@@ -22,9 +27,19 @@ export type InvoiceForCreatedOverdueMep = {
     amount: number | null;
 };
 
+/** Cause invoice as of the flagged invoice's issue date (frozen with the flag). */
+export type CreatedOverdueMepCauseSnapshot = {
+    dueDate: Date;
+    /** Customer-currency open amount on the flagged invoice's issue date. */
+    outstandingCustomerAmount: number | null;
+    /** Flagged issue date − customer MEP deadline (overdue-block math). */
+    daysPastMep: number | null;
+};
+
 export type CreatedOverdueMepResolution = {
     flagged: boolean;
     causeInvoiceId: number | null;
+    cause: CreatedOverdueMepCauseSnapshot | null;
 };
 
 /**
@@ -53,7 +68,11 @@ export async function resolveCreatedOverdueMepDetailsByInvoiceId(args: {
         return result;
     }
     for (const invoice of args.invoices) {
-        result.set(invoice.id, { flagged: false, causeInvoiceId: null });
+        result.set(invoice.id, {
+            flagged: false,
+            causeInvoiceId: null,
+            cause: null,
+        });
     }
     if (args.maxAllowedMep == null) {
         return result;
@@ -96,6 +115,11 @@ export async function resolveCreatedOverdueMepDetailsByInvoiceId(args: {
         mepBreachStartDate
     );
 
+    const flaggedCauses: Array<{
+        invoice: InvoiceForCreatedOverdueMep;
+        oldest: OldestOverdueAtIssue;
+        daysPastMep: number;
+    }> = [];
     for (const invoice of eligible) {
         if (
             !isInvoiceInMepBreachScope(
@@ -106,7 +130,7 @@ export async function resolveCreatedOverdueMepDetailsByInvoiceId(args: {
             continue;
         }
         const oldest = oldestByInvoiceId.get(invoice.id) ?? null;
-        const flagged = computeCustomerOverdueBlock({
+        const daysPastMep = computeCustomerDaysPastMep({
             oldestInvoiceOverdueDate: oldest?.dueDate ?? null,
             maxAllowedMepDays: args.maxAllowedMep,
             today: invoice.invoice_date,
@@ -114,10 +138,83 @@ export async function resolveCreatedOverdueMepDetailsByInvoiceId(args: {
             mepCutoffDay: args.monthEnd?.mepCutoffDay,
             mepSubstituteExtraDays: args.monthEnd?.mepSubstituteExtraDays,
         });
+        if (oldest && daysPastMep != null && daysPastMep > 0) {
+            flaggedCauses.push({ invoice, oldest, daysPastMep });
+        }
+    }
+
+    const lineById = new Map(lines.map((line) => [line.invoiceId, line]));
+    const outstandingByInvoiceId = await resolveCauseOutstandingAtIssueDate(
+        args.accountId,
+        flaggedCauses.map(({ invoice, oldest }) => ({
+            flaggedInvoiceId: invoice.id,
+            asOfDate: invoice.invoice_date,
+            causeLine: lineById.get(oldest.invoiceId),
+        })),
+        args.db ?? prisma
+    );
+
+    for (const { invoice, oldest, daysPastMep } of flaggedCauses) {
         result.set(invoice.id, {
-            flagged,
-            causeInvoiceId: flagged ? oldest?.invoiceId ?? null : null,
+            flagged: true,
+            causeInvoiceId: oldest.invoiceId,
+            cause: {
+                dueDate: oldest.dueDate,
+                outstandingCustomerAmount:
+                    outstandingByInvoiceId.get(invoice.id) ?? null,
+                daysPastMep,
+            },
         });
+    }
+    return result;
+}
+
+/**
+ * Cause line open (customer currency) on each flagged invoice's issue date.
+ * Lines are loaded with payments up to the batch's latest issue date, so a
+ * cause paid between the two days is re-summed as of the earlier day.
+ */
+async function resolveCauseOutstandingAtIssueDate(
+    accountId: number,
+    requests: Array<{
+        flaggedInvoiceId: number;
+        asOfDate: Date;
+        causeLine: AsOfOpenInvoiceLine | undefined;
+    }>,
+    db: DbClient
+): Promise<Map<number, number | null>> {
+    const result = new Map<number, number | null>();
+    const needsResum = requests.filter(
+        (request): request is typeof request & { causeLine: AsOfOpenInvoiceLine } =>
+            request.causeLine != null &&
+            request.causeLine.lastPaymentDate != null &&
+            toUtcDayStart(request.causeLine.lastPaymentDate).getTime() >
+                toUtcDayStart(request.asOfDate).getTime()
+    );
+    const sums = await loadAsOfPaymentSumsForInvoiceDays(
+        accountId,
+        needsResum.map((request) => ({
+            invoiceId: request.causeLine.invoiceId,
+            asOfDate: request.asOfDate,
+        })),
+        db
+    );
+    for (const request of requests) {
+        if (!request.causeLine) {
+            result.set(request.flaggedInvoiceId, null);
+            continue;
+        }
+        const resummed = sums.get(
+            asOfPaymentSumKey(request.causeLine.invoiceId, request.asOfDate)
+        );
+        const computed = computeAsOfOpenInvoiceLine(
+            resummed ? { ...request.causeLine, ...resummed } : request.causeLine,
+            request.asOfDate
+        );
+        result.set(
+            request.flaggedInvoiceId,
+            computed ? computed.openCustomerAmount : null
+        );
     }
     return result;
 }
@@ -159,6 +256,64 @@ export async function resolveCreatedOverdueMepForInvoice(args: {
         db: args.db,
     });
     return byId.get(args.invoice.id) ?? false;
+}
+
+/** Invoice columns written with `ctv_customer_overdue_mep` (cause + frozen snapshot). */
+export type CreatedOverdueMepCauseColumns = {
+    ctv_customer_overdue_mep_cause_invoice_number: string | null;
+    ctv_customer_overdue_mep_cause_due_date: Date | null;
+    ctv_customer_overdue_mep_cause_outstanding: number | null;
+    ctv_customer_overdue_mep_days_past: number | null;
+};
+
+const EMPTY_CAUSE_COLUMNS: CreatedOverdueMepCauseColumns = {
+    ctv_customer_overdue_mep_cause_invoice_number: null,
+    ctv_customer_overdue_mep_cause_due_date: null,
+    ctv_customer_overdue_mep_cause_outstanding: null,
+    ctv_customer_overdue_mep_days_past: null,
+};
+
+/** All null unless the invoice is flagged and the cause has an invoice number. */
+export function buildCreatedOverdueMepCauseColumns(
+    flagged: boolean,
+    resolution: CreatedOverdueMepResolution | undefined,
+    causeNumbers: Map<number, string>
+): CreatedOverdueMepCauseColumns {
+    const causeId = resolution?.causeInvoiceId ?? null;
+    const causeNumber =
+        flagged && causeId != null ? causeNumbers.get(causeId) ?? null : null;
+    if (causeNumber == null) {
+        return EMPTY_CAUSE_COLUMNS;
+    }
+    const cause = resolution?.cause ?? null;
+    return {
+        ctv_customer_overdue_mep_cause_invoice_number: causeNumber,
+        ctv_customer_overdue_mep_cause_due_date: cause?.dueDate ?? null,
+        ctv_customer_overdue_mep_cause_outstanding:
+            cause?.outstandingCustomerAmount ?? null,
+        ctv_customer_overdue_mep_days_past: cause?.daysPastMep ?? null,
+    };
+}
+
+/** `YYYY-MM-DD` (UTC calendar day, as stored in `@db.Date`) or null. */
+export function toCauseDueDateYmd(value: Date | null | undefined): string | null {
+    return value ? toUtcDayStart(value).toISOString().slice(0, 10) : null;
+}
+
+export function isSameCreatedOverdueMepCauseColumns(
+    a: CreatedOverdueMepCauseColumns,
+    b: CreatedOverdueMepCauseColumns
+): boolean {
+    return (
+        a.ctv_customer_overdue_mep_cause_invoice_number ===
+            b.ctv_customer_overdue_mep_cause_invoice_number &&
+        toCauseDueDateYmd(a.ctv_customer_overdue_mep_cause_due_date) ===
+            toCauseDueDateYmd(b.ctv_customer_overdue_mep_cause_due_date) &&
+        a.ctv_customer_overdue_mep_cause_outstanding ===
+            b.ctv_customer_overdue_mep_cause_outstanding &&
+        a.ctv_customer_overdue_mep_days_past ===
+            b.ctv_customer_overdue_mep_days_past
+    );
 }
 
 export async function loadInvoiceNumbersById(
