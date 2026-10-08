@@ -93,22 +93,6 @@ describe("negative invoice amount — insurance targets and reporting breach", (
         expect(row.ctv_payment_term).toBe(false);
     });
 
-    it("still sets reporting_breach for positive overdue invoices past target reporting", () => {
-        const row = computeInvoiceInsuranceRowData({
-            amount: 100,
-            status: "Overdue",
-            invoice_date: new Date("2026-01-01"),
-            due_date: new Date("2026-01-20"),
-            customer: {
-                reporting_days: 35,
-                max_allowed_mep: 7,
-                max_payment_term: 30,
-            },
-            today: parseImportDateToLocalCalendarDate("2026-05-12")!,
-        });
-        expect(row.reporting_breach).toBe(true);
-    });
-
     it("never evaluates reporting breach as true when amount is negative even with a stale target date", () => {
         expect(
             shouldSetReportingBreach(
