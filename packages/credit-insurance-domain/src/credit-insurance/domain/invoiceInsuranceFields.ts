@@ -397,7 +397,7 @@ export function computeCreatedTermsViolationCustomerOverdueMep(
  * if Customer MEP were that same deadline (oldest is never after oldest+MEP). The implemented rule is
  * **today > Customer MEP (deadline)**.
  */
-export function computeCustomerOverdueBlock(args: {
+export type CustomerOverdueBlockArgs = {
     oldestInvoiceOverdueDate: Date | null | undefined;
     maxAllowedMepDays: number | null | undefined;
     today?: Date;
@@ -405,15 +405,23 @@ export function computeCustomerOverdueBlock(args: {
     oldestInvoiceIssueDate?: Date | null;
     mepCutoffDay?: number | null;
     mepSubstituteExtraDays?: number | null;
-}): boolean {
+};
+
+/**
+ * Days `today` is past the customer MEP deadline (see
+ * {@link computeCustomerOverdueBlock}); `null` when no deadline applies.
+ * Positive ⇔ overdue_block.
+ */
+export function computeCustomerDaysPastMep(
+    args: CustomerOverdueBlockArgs
+): number | null {
     const { oldestInvoiceOverdueDate, maxAllowedMepDays } = args;
-    const today = args.today ?? new Date();
     if (
         !oldestInvoiceOverdueDate ||
         maxAllowedMepDays === null ||
         maxAllowedMepDays === undefined
     ) {
-        return false;
+        return null;
     }
     const customerMepDeadline = computeTargetMepDate(
         oldestInvoiceOverdueDate,
@@ -425,9 +433,19 @@ export function computeCustomerOverdueBlock(args: {
         }
     );
     if (!customerMepDeadline) {
-        return false;
+        return null;
     }
-    return differenceInCalendarDays(today, customerMepDeadline) > 0;
+    return differenceInCalendarDays(
+        args.today ?? new Date(),
+        customerMepDeadline
+    );
+}
+
+export function computeCustomerOverdueBlock(
+    args: CustomerOverdueBlockArgs
+): boolean {
+    const daysPastMep = computeCustomerDaysPastMep(args);
+    return daysPastMep != null && daysPastMep > 0;
 }
 
 export function computeCreatedTermsViolationCustomerExcludedFromPolicy(

@@ -110,10 +110,14 @@ export {
     type InvoiceInsuranceAsOfStamp,
 } from "./credit-insurance/domain/stampInvoiceInsuranceFieldsAsOf";
 export {
+    buildCreatedOverdueMepCauseColumns,
+    isSameCreatedOverdueMepCauseColumns,
     loadInvoiceNumbersById,
     resolveCreatedOverdueMepByInvoiceId,
     resolveCreatedOverdueMepDetailsByInvoiceId,
     resolveCreatedOverdueMepForInvoice,
+    toCauseDueDateYmd,
+    type CreatedOverdueMepCauseColumns,
     type CreatedOverdueMepResolution,
 } from "./credit-insurance/domain/createdOverdueMepAtInvoiceDate";
 
@@ -198,7 +202,10 @@ export {
     toInsuranceEntityUpdateData,
     type ApplyInsurancePolicyUpdateResult,
 } from "./credit-insurance/domain/insurancePolicyUpdate";
-export { customerPolicySupersedeUpdateData } from "./credit-insurance/domain/customerPolicySupersede";
+export {
+    closeCustomerPolicyVersionsFromDate,
+    customerPolicySupersedeUpdateData,
+} from "./credit-insurance/domain/customerPolicySupersede";
 export {
     planPolicyPushToCustomers,
     type PolicyPushCustomerPlan,
@@ -209,6 +216,7 @@ export {
     hasMeaningfulCustomerPolicyFieldChange,
     pickCustomerPolicyVersioningSnapshot,
     POLICY_PUSH_CUSTOMER_FIELDS,
+    POLICY_PUSH_ALWAYS_ALIGN_FIELDS,
     hasPolicyPushFieldChange,
     listChangedPolicyPushFields,
     pickPolicyPushSnapshot,

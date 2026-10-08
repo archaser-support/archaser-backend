@@ -1265,6 +1265,77 @@ export async function loadAsOfOpenInvoiceCandidates(
     return rows.map((row) => mapSqlRow(row, openAmountTolerance));
 }
 
+export type AsOfPaymentSumRequest = { invoiceId: number; asOfDate: Date };
+
+export type AsOfPaymentSums = Pick<
+    AsOfOpenInvoiceLine,
+    "paymentsOnOrBeforeAsOf" | "paymentsCustomerOnOrBeforeAsOf"
+>;
+
+/** Map key for {@link loadAsOfPaymentSumsForInvoiceDays}. */
+export function asOfPaymentSumKey(invoiceId: number, asOfDate: Date): string {
+    return `${invoiceId}:${toUtcDayStart(asOfDate).toISOString().slice(0, 10)}`;
+}
+
+/**
+ * Payment-ledger sums on/before each requested calendar day (same day bound as
+ * {@link loadAsOfOpenInvoiceCandidates}), for re-evaluating a preloaded line
+ * on an earlier day than the one it was loaded for.
+ */
+export async function loadAsOfPaymentSumsForInvoiceDays(
+    accountId: number,
+    requests: AsOfPaymentSumRequest[],
+    db: DbClient = defaultPrisma
+): Promise<Map<string, AsOfPaymentSums>> {
+    const result = new Map<string, AsOfPaymentSums>();
+    const unique = new Map<string, AsOfPaymentSumRequest>();
+    for (const request of requests) {
+        unique.set(asOfPaymentSumKey(request.invoiceId, request.asOfDate), request);
+    }
+    if (unique.size === 0) {
+        return result;
+    }
+    const invoiceIds = Array.from(unique.values()).map((r) => r.invoiceId);
+    const dayAfters = Array.from(unique.values()).map((r) =>
+        utcDayAfterExclusive(r.asOfDate).toISOString()
+    );
+    const rows = await db.$queryRaw<
+        Array<{
+            invoice_id: number;
+            day_after: Date;
+            paid_amount: number | null;
+            paid_customer_amount: number | null;
+        }>
+    >`
+        SELECT
+            d.invoice_id,
+            d.day_after,
+            COALESCE(SUM(COALESCE(ip.amount, 0)), 0)::float AS paid_amount,
+            COALESCE(SUM(COALESCE(ip.customer_amount, 0)), 0)::float
+                AS paid_customer_amount
+        FROM (
+            SELECT
+                UNNEST(${invoiceIds}::int[]) AS invoice_id,
+                UNNEST(${dayAfters}::text[])::timestamptz AS day_after
+        ) AS d
+        LEFT JOIN "InvoicePayment" ip
+            ON ip.invoice_id = d.invoice_id
+           AND ip.account_id = ${accountId}
+           AND ip.payment_date < d.day_after
+        GROUP BY d.invoice_id, d.day_after
+    `;
+    for (const row of rows) {
+        const asOf = new Date(new Date(row.day_after).getTime() - MS_PER_UTC_DAY);
+        result.set(asOfPaymentSumKey(Number(row.invoice_id), asOf), {
+            paymentsOnOrBeforeAsOf: Number(row.paid_amount ?? 0),
+            paymentsCustomerOnOrBeforeAsOf: Number(
+                row.paid_customer_amount ?? 0
+            ),
+        });
+    }
+    return result;
+}
+
 function lineMatchesScope(
     line: AsOfOpenInvoiceLine,
     options?: { customerId?: number; policyId?: number | null }

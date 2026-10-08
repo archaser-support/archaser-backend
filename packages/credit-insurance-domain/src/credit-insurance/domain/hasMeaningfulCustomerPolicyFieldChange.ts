@@ -160,7 +160,9 @@ export function pickCustomerPolicyVersioningSnapshot(
 /**
  * Fields the Insurance Policy update path may push onto active Customer Policies.
  * Only fields that changed on the policy in that save are overlaid (version-if
- * the customer still differs on those fields). Includes cost/fee.
+ * the customer still differs on those fields), plus
+ * {@link POLICY_PUSH_ALWAYS_ALIGN_FIELDS} which realign even when unchanged
+ * on the policy. Includes cost/fee.
  */
 export const POLICY_PUSH_CUSTOMER_FIELDS = [
     "mep_cutoff_day",
@@ -178,6 +180,15 @@ export const POLICY_PUSH_CUSTOMER_FIELDS = [
 
 export type PolicyPushCustomerField =
     (typeof POLICY_PUSH_CUSTOMER_FIELDS)[number];
+
+/**
+ * Always compared to active Customer Policies on save (even if the policy
+ * value did not change). Registration fee must stay in lockstep with the
+ * master policy so Portfolio Health costs never drop the markup.
+ */
+export const POLICY_PUSH_ALWAYS_ALIGN_FIELDS = [
+    "registration_fee_percent",
+] as const satisfies readonly PolicyPushCustomerField[];
 
 export type PolicyPushSnapshot = Partial<
     Record<PolicyPushCustomerField, unknown>
