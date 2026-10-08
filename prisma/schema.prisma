@@ -1754,6 +1754,12 @@ model Invoice {
   ctv_customer_overdue_mep          Boolean                   @default(false)
   /// Invoice number of the oldest overdue that set customer MEP on this invoice's issue date.
   ctv_customer_overdue_mep_cause_invoice_number String?       @db.VarChar(100)
+  /// Cause invoice due date (snapshot with the MEP flag).
+  ctv_customer_overdue_mep_cause_due_date       DateTime?     @db.Date
+  /// Cause invoice open amount in customer currency on this invoice's issue date.
+  ctv_customer_overdue_mep_cause_outstanding    Float?
+  /// Days this invoice's issue date is past the customer MEP deadline (month-end cutoff + extra days).
+  ctv_customer_overdue_mep_days_past            Int?
   /// Snapshot at create/import: Customer.excluded_from_policy.
   ctv_customer_excluded_from_policy Boolean                   @default(false)
   /// Snapshot at create/import: credit score / DCL info expired vs invoice issue date (policy validity months).

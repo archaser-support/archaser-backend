@@ -24,6 +24,7 @@ describe("planPolicyPushToCustomers", () => {
             policyAfter: { ...policyBefore },
             activeRows: [row(1), row(2)],
             pendingCustomerIds: new Set(),
+            alwaysAlignFields: [],
         });
         expect(plan.fieldsToPush).toEqual([]);
         expect(plan.rowsToVersion).toEqual([]);
@@ -37,11 +38,36 @@ describe("planPolicyPushToCustomers", () => {
             policyAfter: { ...policyBefore, cost_percent: 0.3 },
             activeRows: [row(1), row(2, { cost_percent: "0.30" })],
             pendingCustomerIds: new Set(),
+            alwaysAlignFields: [],
         });
         // Customer 1 diverges on max_payment_term (120 vs 180) but that field
         // did not change on the policy, so only cost_percent counts.
         expect(plan.fieldsToPush).toEqual(["cost_percent"]);
         expect(plan.customerCountByField).toEqual({ cost_percent: 1 });
+        expect(plan.rowsToVersion.map((r) => r.customer_id)).toEqual([1]);
+        expect(plan.uniqueCustomerCount).toBe(1);
+    });
+
+    it("realigns registration_fee_percent when customers diverge even if policy unchanged", () => {
+        const plan = planPolicyPushToCustomers({
+            policyBefore: {
+                ...policyBefore,
+                registration_fee_percent: 30,
+            },
+            policyAfter: {
+                ...policyBefore,
+                registration_fee_percent: 30,
+            },
+            activeRows: [
+                row(1, { registration_fee_percent: null }),
+                row(2, { registration_fee_percent: 30 }),
+            ],
+            pendingCustomerIds: new Set(),
+        });
+        expect(plan.fieldsToPush).toEqual(["registration_fee_percent"]);
+        expect(plan.customerCountByField).toEqual({
+            registration_fee_percent: 1,
+        });
         expect(plan.rowsToVersion.map((r) => r.customer_id)).toEqual([1]);
         expect(plan.uniqueCustomerCount).toBe(1);
     });
@@ -60,6 +86,7 @@ describe("planPolicyPushToCustomers", () => {
                 row(3, { cost_percent: "0.4", reporting_days: 45 }),
             ],
             pendingCustomerIds: new Set(),
+            alwaysAlignFields: [],
         });
         expect(plan.fieldsToPush).toEqual(["reporting_days", "cost_percent"]);
         expect(plan.customerCountByField).toEqual({
@@ -75,6 +102,7 @@ describe("planPolicyPushToCustomers", () => {
             policyAfter: { ...policyBefore, cost_percent: "0.5" },
             activeRows: [row(1), row(2), row(3, { cost_percent: "0.5" })],
             pendingCustomerIds: new Set([2, 3]),
+            alwaysAlignFields: [],
         });
         expect(plan.rowsToVersion.map((r) => r.customer_id)).toEqual([1]);
         expect(plan.customerCountByField).toEqual({ cost_percent: 1 });

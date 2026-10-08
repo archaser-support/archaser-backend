@@ -6,8 +6,6 @@ import {
 import { parseAnnualCreditAssessmentFee } from "./annualCreditAssessmentFee";
 import { enqueueAsOfRewrite } from "./asOfRewriteQueue";
 import {
-    listChangedPolicyPushFields,
-    pickPolicyPushSnapshot,
     POLICY_PUSH_CUSTOMER_FIELDS,
     type PolicyPushCustomerField,
 } from "./hasMeaningfulCustomerPolicyFieldChange";
@@ -253,19 +251,6 @@ export async function applyInsurancePolicyUpdateWithCustomerPush(args: {
         where: { id: policyBefore.id },
         data: { ...args.data, modified_by: userId } as never,
     });
-    if (
-        listChangedPolicyPushFields(
-            pickPolicyPushSnapshot(policyBefore),
-            pickPolicyPushSnapshot(policy)
-        ).length === 0
-    ) {
-        return {
-            policy,
-            fieldsToPush: [],
-            versionedCustomerIds: [],
-            skippedPendingCustomerCount: 0,
-        };
-    }
 
     const { activeRows, pendingCustomerIds } = await loadPolicyPushCandidates(
         tx,
@@ -279,6 +264,15 @@ export async function applyInsurancePolicyUpdateWithCustomerPush(args: {
             activeRows,
             pendingCustomerIds,
         });
+
+    if (rowsToVersion.length === 0) {
+        return {
+            policy,
+            fieldsToPush,
+            versionedCustomerIds: [],
+            skippedPendingCustomerCount,
+        };
+    }
 
     for (const oldRow of rowsToVersion) {
         await freezeCustomerPolicyGapOnDeactivation(

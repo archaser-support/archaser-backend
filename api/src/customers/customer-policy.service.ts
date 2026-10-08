@@ -15,7 +15,7 @@ import {
 import {
     AdminBackfillBlockingRewriteError,
     applyDatedCustomerPolicyUnassign,
-    customerPolicySupersedeUpdateData,
+    closeCustomerPolicyVersionsFromDate,
     DatedCustomerPolicyUnassignError,
     deriveExcludedFromPolicy,
     ensureCustomerCapacityGapStored,
@@ -477,12 +477,20 @@ export class CustomerPolicyService {
                 changeDate,
                 "active"
             );
-            await this.db.customerPolicy.create({
-                data: {
-                    customer_id: args.customerId,
-                    created_by: args.userId,
-                    ...writeData,
-                } as never,
+            await this.db.$transaction(async (tx) => {
+                await closeCustomerPolicyVersionsFromDate({
+                    db: tx,
+                    customerId: args.customerId,
+                    fromDate: changeDate,
+                    modifiedBy: args.userId,
+                });
+                await tx.customerPolicy.create({
+                    data: {
+                        customer_id: args.customerId,
+                        created_by: args.userId,
+                        ...writeData,
+                    } as never,
+                });
             });
             await this.runPostSaveSync(args.customerId, effectivePayload);
             await this.rewriteFromChangeDate(
@@ -514,12 +522,11 @@ export class CustomerPolicyService {
                 this.db
             );
             await this.db.$transaction(async (tx) => {
-                await tx.customerPolicy.updateMany({
-                    where: { customer_id: args.customerId, is_active: true },
-                    data: customerPolicySupersedeUpdateData({
-                        nextVersionStartDate: changeDate,
-                        modifiedBy: args.userId,
-                    }),
+                await closeCustomerPolicyVersionsFromDate({
+                    db: tx,
+                    customerId: args.customerId,
+                    fromDate: changeDate,
+                    modifiedBy: args.userId,
                 });
                 await tx.customerPolicy.create({
                     data: {
@@ -559,12 +566,11 @@ export class CustomerPolicyService {
             this.db
         );
         await this.db.$transaction(async (tx) => {
-            await tx.customerPolicy.update({
-                where: { id: activeRow.id },
-                data: customerPolicySupersedeUpdateData({
-                    nextVersionStartDate: changeDate,
-                    modifiedBy: args.userId,
-                }),
+            await closeCustomerPolicyVersionsFromDate({
+                db: tx,
+                customerId: args.customerId,
+                fromDate: changeDate,
+                modifiedBy: args.userId,
             });
             await tx.customerPolicy.create({
                 data: {
