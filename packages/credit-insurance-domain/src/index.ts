@@ -336,7 +336,6 @@ export {
 } from "./credit-insurance/domain/creditDashboardSnapshotService";
 export {
     deleteCreditDashboardDailySnapshotsForAccount,
-    deleteCreditSnapshotHistoryBeforeDate,
     deleteCustomerPolicyTrendForScope,
     deleteInactiveCustomerPolicyTrendRowsForScope,
     deleteInsurancePolicyTrendForAccount,

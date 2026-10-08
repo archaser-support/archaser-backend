@@ -59,6 +59,12 @@ export type CreditPoolDashboardRollup = {
     kpis: CreditPoolDashboardKpis;
 };
 
+function withoutCapacityGaps(
+    invoices: readonly CustomerAtRiskInvoiceInput[]
+): CustomerAtRiskInvoiceInput[] {
+    return invoices.map((invoice) => ({ ...invoice, capacityGapAmount: 0 }));
+}
+
 function numOrNull(value: number | null | undefined): number | null {
     if (value == null) {
         return null;
@@ -101,10 +107,12 @@ export function computeCreditPoolDashboardRollup(args: {
         const overdue = Number(member.total_overdue_amount ?? 0) || 0;
         const totalAr = Math.max(0, due + overdue);
         poolTotalAr += totalAr;
-        const invoices = [
-            ...(args.atRiskInvoicesByCustomer.get(member.id) ?? []),
-        ];
-        allPoolAtRiskInvoices.push(...invoices);
+        // Invoice gaps come from the pool-wide waterfall; they only offset the
+        // root Cap Gap card, never a child's (always 0) gap leg.
+        const invoices = args.atRiskInvoicesByCustomer.get(member.id) ?? [];
+        allPoolAtRiskInvoices.push(
+            ...(isViewingPoolRoot ? invoices : withoutCapacityGaps(invoices))
+        );
 
         capacityGapByCustomer.set(
             member.id,
@@ -117,7 +125,7 @@ export function computeCreditPoolDashboardRollup(args: {
                 member.id,
                 computeCustomerRiskExposure({
                     totalAr,
-                    invoices,
+                    invoices: withoutCapacityGaps(invoices),
                     capacityGapAmount: 0,
                 })
             );

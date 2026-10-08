@@ -94,6 +94,10 @@ import {
     atRiskExposureFieldsFromPolicyLink,
 } from "./policyExclusion";
 import { isUtcCalendarToday } from "./asOfOpenAr";
+import {
+    loadLiveAtRiskInvoiceRows,
+    type LiveAtRiskInvoiceRow,
+} from "./liveAtRiskInvoiceRows";
 import type { CreditDashboardAccountSettings } from "./creditAsOfBackfillRunContext";
 
 const COLLECTION_LIVE: record_status[] = [record_status.Active, record_status.Inactive];
@@ -640,22 +644,15 @@ export async function getCustomerTermsBreachOutstandingByCurrencyForAtRisk(
     );
 }
 
-type AtRiskInvoiceSqlRow = {
-    outstanding: number | null;
-    capacity_gap_amount: number | null;
-    has_terms_breach: boolean | null;
-};
-
 /**
- * Open Due/Overdue invoices for per-invoice at-risk (account-currency gap + outstanding).
- * Outstanding basis matches terms-breach line SQL; breach = any persisted terms-breach flag.
+ * Live rows for one customer's at-risk scope. Capacity gaps sit on the pool
+ * root's Cap Gap card, so they only count when `customerId` is the pool root.
  */
-export async function fetchCustomerAtRiskInvoiceInputs(
+export async function loadCustomerScopeAtRiskRows(
     accountId: number,
     customerId: number,
     options?: { policyId?: number; customerIds?: readonly number[] }
-): Promise<CustomerAtRiskInvoiceInput[]> {
-    const policyId = options?.policyId;
+): Promise<LiveAtRiskInvoiceRow[]> {
     const scopeIds =
         options?.customerIds != null && options.customerIds.length > 0
             ? [...new Set(options.customerIds.filter(Number.isFinite))]
@@ -663,30 +660,41 @@ export async function fetchCustomerAtRiskInvoiceInputs(
     if (scopeIds.length === 0) {
         return [];
     }
-    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
-    const rows = await prisma.$queryRaw<AtRiskInvoiceSqlRow[]>`
-        SELECT
-          (${outstanding})::float AS outstanding,
-          COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
-          (
-            i.reporting_breach = true
-            OR i.ctv_payment_term = true
-            OR i.ctv_customer_overdue_mep = true
-            OR i.ctv_outdated_dcl = true
-            OR i.ctv_invoice_after_policy_end = true
-          ) AS has_terms_breach
-        FROM "Invoice" i
-        INNER JOIN "Account" a ON a.id = i.account_id
-        WHERE i.account_id = ${accountId}
-          AND i.customer_id IN (${Prisma.join(scopeIds)})
-          AND i.status IN ('Due', 'Overdue')
-          AND i.amount >= 0
-          ${policyId != null ? Prisma.sql`AND i.policy_id = ${policyId}` : Prisma.empty}
-    `;
+    const rows = await loadLiveAtRiskInvoiceRows(accountId, {
+        customerIds: scopeIds,
+        policyId: options?.policyId,
+    });
+    return rows.map((row) =>
+        row.rootCustomerId === customerId
+            ? row
+            : { ...row, capacityGapAmount: 0, capacityGapAmountLimit: 0 }
+    );
+}
+
+type CustomerScopeAtRiskOptions = {
+    policyId?: number;
+    customerIds?: readonly number[];
+    /** Rows from {@link loadCustomerScopeAtRiskRows} for the same scope; skips the load. */
+    scopeRows?: readonly LiveAtRiskInvoiceRow[];
+};
+
+/**
+ * Open Due/Overdue invoices for per-invoice at-risk (account-currency gap + outstanding).
+ * Outstanding basis matches terms-breach line SQL; breach = any persisted terms-breach flag;
+ * gap = live net waterfall ({@link loadLiveAtRiskInvoiceRows}).
+ */
+export async function fetchCustomerAtRiskInvoiceInputs(
+    accountId: number,
+    customerId: number,
+    options?: CustomerScopeAtRiskOptions
+): Promise<CustomerAtRiskInvoiceInput[]> {
+    const rows =
+        options?.scopeRows ??
+        (await loadCustomerScopeAtRiskRows(accountId, customerId, options));
     return rows.map((row) => ({
-        outstanding: Math.max(0, Number(row.outstanding ?? 0)),
-        capacityGapAmount: Math.max(0, Number(row.capacity_gap_amount ?? 0)),
-        hasTermsBreach: row.has_terms_breach === true,
+        outstanding: row.outstanding,
+        capacityGapAmount: row.capacityGapAmount,
+        hasTermsBreach: row.hasTermsBreach,
     }));
 }
 
@@ -698,103 +706,46 @@ export async function fetchCustomerAtRiskInvoiceInputsByCurrency(
     accountId: number,
     customerId: number,
     currency: string,
-    options?: { policyId?: number; customerIds?: readonly number[] }
+    options?: CustomerScopeAtRiskOptions
 ): Promise<CustomerAtRiskInvoiceInput[]> {
     const code = currency.trim().toUpperCase();
     if (!code) {
         return [];
     }
-    const policyId = options?.policyId;
-    const scopeIds =
-        options?.customerIds != null && options.customerIds.length > 0
-            ? [...new Set(options.customerIds.filter(Number.isFinite))]
-            : [customerId];
-    if (scopeIds.length === 0) {
-        return [];
-    }
-    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL);
-    const rows = await prisma.$queryRaw<AtRiskInvoiceSqlRow[]>`
-        SELECT
-          (${outstanding})::float AS outstanding,
-          COALESCE(i.capacity_gap_amount_limit, 0)::float AS capacity_gap_amount,
-          (
-            i.reporting_breach = true
-            OR i.ctv_payment_term = true
-            OR i.ctv_customer_overdue_mep = true
-            OR i.ctv_outdated_dcl = true
-            OR i.ctv_invoice_after_policy_end = true
-          ) AS has_terms_breach
-        FROM "Invoice" i
-        INNER JOIN "Account" a ON a.id = i.account_id
-        WHERE i.account_id = ${accountId}
-          AND i.customer_id IN (${Prisma.join(scopeIds)})
-          AND UPPER(COALESCE(i.customer_currency, '')) = ${code}
-          AND i.status IN ('Due', 'Overdue')
-          AND i.amount >= 0
-          ${policyId != null ? Prisma.sql`AND i.policy_id = ${policyId}` : Prisma.empty}
-    `;
-    return rows.map((row) => ({
-        outstanding: Math.max(0, Number(row.outstanding ?? 0)),
-        capacityGapAmount: Math.max(0, Number(row.capacity_gap_amount ?? 0)),
-        hasTermsBreach: row.has_terms_breach === true,
-    }));
+    const rows =
+        options?.scopeRows ??
+        (await loadCustomerScopeAtRiskRows(accountId, customerId, options));
+    return rows
+        .filter((row) => row.customerCurrency === code)
+        .map((row) => ({
+            outstanding: row.customerOutstanding,
+            capacityGapAmount: row.capacityGapAmountLimit,
+            hasTermsBreach: row.hasTermsBreach,
+        }));
 }
-
-type AtRiskInvoiceByCustomerSqlRow = AtRiskInvoiceSqlRow & {
-    customer_id: number;
-};
 
 /**
  * Open Due/Overdue at-risk invoice inputs grouped by customer (account-currency gap + outstanding).
- * Same line basis as {@link fetchCustomerAtRiskInvoiceInputs}.
+ * Same line basis as {@link fetchCustomerAtRiskInvoiceInputs}; gaps cover the
+ * whole credit pool, so roll member lists onto pool roots before use.
  */
 export async function fetchAtRiskInvoiceInputsByCustomerMap(
     accountId: number,
     options?: { policyId?: number; customerIds?: number[] }
 ): Promise<Map<number, CustomerAtRiskInvoiceInput[]>> {
-    const customerIds = options?.customerIds;
-    if (customerIds != null && customerIds.length === 0) {
-        return new Map();
-    }
-    const policyId = options?.policyId;
-    const customerFilter =
-        customerIds != null
-            ? Prisma.sql`AND i.customer_id IN (${Prisma.join(customerIds)})`
-            : Prisma.empty;
-    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
-    const rows = await prisma.$queryRaw<AtRiskInvoiceByCustomerSqlRow[]>`
-        SELECT
-          i.customer_id,
-          (${outstanding})::float AS outstanding,
-          COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
-          (
-            i.reporting_breach = true
-            OR i.ctv_payment_term = true
-            OR i.ctv_customer_overdue_mep = true
-            OR i.ctv_outdated_dcl = true
-            OR i.ctv_invoice_after_policy_end = true
-          ) AS has_terms_breach
-        FROM "Invoice" i
-        INNER JOIN "Account" a ON a.id = i.account_id
-        WHERE i.account_id = ${accountId}
-          AND i.status IN ('Due', 'Overdue')
-          AND i.amount >= 0
-          ${customerFilter}
-          ${policyId != null ? Prisma.sql`AND i.policy_id = ${policyId}` : Prisma.empty}
-    `;
+    const rows = await loadLiveAtRiskInvoiceRows(accountId, {
+        customerIds: options?.customerIds,
+        policyId: options?.policyId,
+    });
     const map = new Map<number, CustomerAtRiskInvoiceInput[]>();
     for (const row of rows) {
-        const customerId = Number(row.customer_id);
-        if (!Number.isFinite(customerId)) {
-            continue;
-        }
-        const list = map.get(customerId) ?? [];
+        const list = map.get(row.customerId) ?? [];
         list.push({
-            outstanding: Math.max(0, Number(row.outstanding ?? 0)),
-            capacityGapAmount: Math.max(0, Number(row.capacity_gap_amount ?? 0)),
-            hasTermsBreach: row.has_terms_breach === true,
+            outstanding: row.outstanding,
+            capacityGapAmount: row.capacityGapAmount,
+            hasTermsBreach: row.hasTermsBreach,
         });
-        map.set(customerId, list);
+        map.set(row.customerId, list);
     }
     return map;
 }

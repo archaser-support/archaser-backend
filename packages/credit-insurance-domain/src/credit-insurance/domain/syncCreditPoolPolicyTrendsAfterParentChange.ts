@@ -22,6 +22,7 @@ import {
     inclusiveUtcDaySpan,
 } from "./creditPoolParentChangeTiming";
 import { customerIdsWithChildren } from "./creditPoolShellGuards";
+import { customerPolicyTrendEffectiveRowOrderSql } from "./customerPolicyAsOfVersion";
 import { computeTopUpUsageMetrics } from "./invoiceCapacityGapAmounts";
 import {
     createCreditPoolMembershipCache,
@@ -208,11 +209,19 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
                     t.customer_id = ${shellId}
                     AND COALESCE(t.excluded_from_policy, false)
                 ) AS root_excluded_from_policy
-            FROM "CustomerPolicyTrend" t
-            WHERE t.account_id = ${accountId}
-              AND t.customer_id IN (${Prisma.join(memberIds)})
-              AND t.snapshot_date >= ${fromDate}::date
-              AND t.snapshot_date <= ${toDate}::date
+            FROM (
+                SELECT DISTINCT ON (t.customer_id, t.snapshot_date) t.*
+                FROM "CustomerPolicyTrend" t
+                LEFT JOIN "CustomerPolicy" cp ON cp.id = t.customer_policy_id
+                WHERE t.account_id = ${accountId}
+                  AND t.customer_id IN (${Prisma.join(memberIds)})
+                  AND t.snapshot_date >= ${fromDate}::date
+                  AND t.snapshot_date <= ${toDate}::date
+                ORDER BY
+                    t.customer_id,
+                    t.snapshot_date,
+                    ${customerPolicyTrendEffectiveRowOrderSql}
+            ) t
             GROUP BY t.snapshot_date
         `,
             dbClient.customerTopUp.findMany({
@@ -371,6 +380,124 @@ export async function overlayPoolCapacityGapAndAtRiskOnTrends(args: {
             },
         });
     }
+}
+
+/**
+ * Re-overlay today's CTP for one pool root from leaf CTP rows after a live
+ * member change. Non-fatal: interactive save paths must not fail on overlay.
+ */
+export async function overlayCreditPoolRootTrendToday(args: {
+    accountId: number;
+    rootCustomerId: number;
+    dbClient: DbClient;
+    cache?: CreditPoolMembershipCache;
+    source: string;
+}): Promise<void> {
+    const today = startOfTodayUtc();
+    try {
+        await overlayPoolCapacityGapAndAtRiskOnTrends({
+            accountId: args.accountId,
+            rootCustomerIds: [args.rootCustomerId],
+            fromDate: today,
+            toDate: today,
+            dbClient: args.dbClient,
+            cache: args.cache,
+        });
+    } catch (error) {
+        console.error("[ParentCustomerCredit] today CTP overlay failed", {
+            source: args.source,
+            accountId: args.accountId,
+            rootCustomerId: args.rootCustomerId,
+            errorName: error instanceof Error ? error.name : null,
+            errorMessage:
+                error instanceof Error ? error.message : String(error),
+        });
+    }
+}
+
+/**
+ * Every shell (pool root and nested shells) in the credit pools of
+ * `customerIds`. A leaf write changes the local overlay of each ancestor shell.
+ */
+export async function resolveCreditPoolShellIdsForCustomers(args: {
+    accountId: number;
+    customerIds: readonly number[];
+    dbClient: DbClient;
+    cache?: CreditPoolMembershipCache;
+}): Promise<number[]> {
+    const cache = args.cache ?? createCreditPoolMembershipCache();
+    const memberIds = new Set<number>();
+    for (const customerId of new Set(args.customerIds)) {
+        if (!Number.isFinite(customerId)) {
+            continue;
+        }
+        const pool = await resolveCreditPoolMemberIds(
+            customerId,
+            args.accountId,
+            args.dbClient,
+            cache
+        );
+        for (const id of pool.memberIds) {
+            memberIds.add(id);
+        }
+    }
+    return [...(await customerIdsWithChildren([...memberIds], args.dbClient))];
+}
+
+/** `customerIds` plus every shell of their credit pools (stable, no duplicates). */
+export async function withCreditPoolShellIds(args: {
+    accountId: number;
+    customerIds: readonly number[];
+    dbClient: DbClient;
+    cache?: CreditPoolMembershipCache;
+}): Promise<number[]> {
+    const shellIds = await resolveCreditPoolShellIdsForCustomers(args);
+    return [...new Set([...args.customerIds, ...shellIds])];
+}
+
+/**
+ * One range overlay after a multi-day replay whose per-day writes passed
+ * `skipCreditPoolShellOverlay`. Scoped replays overlay the pools of
+ * `customerIds`; account-wide replays overlay every shell on the account.
+ * Shell CTP rows must already exist for the range (overlay only UPDATEs).
+ */
+export async function overlayCreditPoolShellsForRange(args: {
+    accountId: number;
+    fromDate: Date;
+    toDate: Date;
+    dbClient: DbClient;
+    customerIds?: readonly number[];
+    cache?: CreditPoolMembershipCache;
+}): Promise<void> {
+    const cache = args.cache ?? createCreditPoolMembershipCache();
+    const shellIds =
+        args.customerIds != null && args.customerIds.length > 0
+            ? await resolveCreditPoolShellIdsForCustomers({
+                  accountId: args.accountId,
+                  customerIds: args.customerIds,
+                  dbClient: args.dbClient,
+                  cache,
+              })
+            : (
+                  await args.dbClient.customer.findMany({
+                      where: {
+                          account_id: args.accountId,
+                          ChildCustomers: { some: {} },
+                      },
+                      select: { id: true },
+                  })
+              ).map((row) => row.id);
+    if (shellIds.length === 0) {
+        return;
+    }
+    await overlayPoolCapacityGapAndAtRiskOnTrends({
+        accountId: args.accountId,
+        rootCustomerIds: shellIds,
+        fromDate: toUtcDateOnly(args.fromDate),
+        toDate: toUtcDateOnly(args.toDate),
+        dbClient: args.dbClient,
+        cache,
+    });
 }
 
 async function rewriteCreditDashboardSnapshotsForRange(args: {
@@ -545,7 +672,7 @@ export async function syncCreditPoolPolicyTrendsAfterParentChange(args: {
                 fromDate: syncFromDate,
                 toDate,
             },
-            { dbClient: dbClient as never }
+            { dbClient: dbClient as never, skipCreditPoolShellOverlay: true }
         );
     } catch (error) {
         console.error("[ParentCustomerCredit] CTP rewrite failed", {
