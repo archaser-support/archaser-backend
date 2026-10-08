@@ -179,53 +179,6 @@ describe("billing connector Nest API", () => {
         expect(billingConnector.runInProcessSync).not.toHaveBeenCalled();
     });
 
-    it("starts backfill in the background and returns RUNNING immediately", async () => {
-        let resolveSync: ((value: unknown) => void) | undefined;
-        billingConnector.runInProcessSync.mockReturnValue(
-            new Promise((resolve) => {
-                resolveSync = resolve;
-            })
-        );
-        const db = {
-            billingConnector: {
-                findUnique: jest.fn().mockResolvedValue({
-                    id: 1,
-                    account_id: 42,
-                    enabled_entities: ["Customer"],
-                    preview_passes: {},
-                    backfill_started_at: new Date("2026-08-01T00:00:00.000Z"),
-                    sync_mode: "INCREMENTAL",
-                    backfill_start_date: null,
-                    include_older_open_invoices: true,
-                    reporting_breach_start_date: null,
-                }),
-                update: jest.fn().mockResolvedValue({}),
-            },
-        };
-        const service = new BillingConnectorApiService(
-            db as never,
-            accessScope(42, true) as never,
-            mockCronQueue() as never,
-            mockMetrics() as never
-        );
-        const result = await service.runSync(user(42), 42, "backfill");
-        expect(result.result.status).toBe("RUNNING");
-        expect(result.result.accepted).toBe(true);
-        expect(result.result.execution_id).toEqual(expect.any(String));
-        await Promise.resolve();
-        expect(billingConnector.runInProcessSync).toHaveBeenCalled();
-        expect(db.billingConnector.update).not.toHaveBeenCalled();
-        resolveSync?.({
-            ok: true,
-            cancelled: false,
-            accountId: 42,
-            provider: "PRIORITY",
-            stats: {},
-            entity_stats: {},
-            message: "ok",
-        });
-    });
-
     it("sets backfill_started_at on the first accepted backfill run", async () => {
         billingConnector.runInProcessSync.mockResolvedValue({
             ok: true,

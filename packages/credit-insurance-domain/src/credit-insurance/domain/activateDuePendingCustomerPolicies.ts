@@ -1,6 +1,7 @@
 import { type DbClient, prisma } from "../domain-db";
 import { enqueueAsOfRewrite } from "./asOfRewriteQueue";
 import { remirrorCreditPoolAfterPolicyMutation } from "./parentCustomerCreditInheritance";
+import { customerPolicySupersedeUpdateData } from "./customerPolicySupersede";
 import { freezeCustomerPolicyGapOnDeactivation } from "./syncCustomerPolicyGapAmounts";
 import { syncCustomerInsuranceFields } from "./syncCustomerInsuranceFields";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
@@ -98,10 +99,14 @@ export async function activateDuePendingCustomerPolicies(
                             customer_id: pending.customer_id,
                             status: "active",
                         },
-                        data: {
-                            status: "inactive",
-                            is_active: false,
-                        },
+                        data: customerPolicySupersedeUpdateData({
+                            nextVersionStartDate:
+                                pending.policy_change_start_date,
+                            modifiedBy:
+                                pending.modified_by ??
+                                pending.created_by ??
+                                "system",
+                        }),
                     });
                 }
                 await tx.customerPolicy.update({

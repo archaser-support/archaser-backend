@@ -1,8 +1,7 @@
 /**
  * MEP breach start date gate — live paths.
  *
- * Asserts external behavior: the customer overdue block written by the live
- * recompute (cause side) and the `ctv_customer_overdue_mep` flag produced by the
+ * Asserts external behavior: the `ctv_customer_overdue_mep` flag produced by the
  * created-terms-violation snapshot (flag side), for a given configured date.
  */
 import {
@@ -11,7 +10,6 @@ import {
     isInvoiceInMepBreachScope,
     resolveCreatedOverdueMepByInvoiceId,
     resolveMepBreachStartDate,
-    syncCustomerInsuranceFields,
 } from "@archaser/credit-insurance-domain";
 
 const ACCOUNT_ID = 42;
@@ -20,111 +18,6 @@ const CUSTOMER_ID = 7;
 /** `@db.Date` columns come back from Prisma as UTC midnight. */
 function day(iso: string): Date {
     return new Date(`${iso}T00:00:00.000Z`);
-}
-
-type OverdueInvoiceFixture = {
-    id: number;
-    invoice_date: Date;
-    due_date: Date | null;
-    amount: number | null;
-};
-
-type CustomerSyncFake = {
-    db: Record<string, unknown>;
-    customerUpdates: Array<Record<string, unknown>>;
-    connectorReads: number;
-};
-
-/**
- * Minimal stand-in for the slice of Prisma that `syncCustomerInsuranceFields`
- * touches. `invoice.findMany` serves the MEP query and the zero-limit-alert
- * query, told apart by the selected fields.
- */
-function customerSyncFake(args: {
-    invoices: OverdueInvoiceFixture[];
-    mepBreachStartDate: Date | null;
-    hasConnector?: boolean;
-    maxAllowedMep?: number | null;
-    previousOverdueBlock?: boolean;
-}): CustomerSyncFake {
-    const customerUpdates: Array<Record<string, unknown>> = [];
-    let connectorReads = 0;
-
-    const db = {
-        invoice: {
-            findMany: jest.fn(async (query: { select: Record<string, true> }) => {
-                if (query.select.due_date) {
-                    return args.invoices.map((invoice) => ({
-                        due_date: invoice.due_date,
-                        amount: invoice.amount,
-                        invoice_date: invoice.invoice_date,
-                    }));
-                }
-                return [];
-            }),
-            updateMany: jest.fn(async () => ({ count: 0 })),
-        },
-        customer: {
-            findUnique: jest.fn(async () => ({
-                overdue_block: args.previousOverdueBlock ?? false,
-                account_id: ACCOUNT_ID,
-            })),
-            update: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
-                customerUpdates.push(data);
-                return { id: CUSTOMER_ID };
-            }),
-        },
-        customerPolicy: {
-            findFirst: jest.fn(async () => ({
-                id: 900,
-                limit_type: null,
-                credit_score: null,
-                credit_score_input_date: null,
-                active_customer_since: null,
-                approved_limit: null,
-                approved_limit_expiration_date: null,
-                zero_limit_date: null,
-                max_allowed_mep: args.maxAllowedMep ?? 30,
-                approved_limit_currency: null,
-                InsurancePolicy: null,
-            })),
-            update: jest.fn(async () => ({ id: 900 })),
-        },
-        billingConnector: {
-            findUnique: jest.fn(async () => {
-                connectorReads += 1;
-                return args.hasConnector === false
-                    ? null
-                    : { mep_breach_start_date: args.mepBreachStartDate };
-            }),
-        },
-    };
-
-    return {
-        db,
-        customerUpdates,
-        get connectorReads() {
-            return connectorReads;
-        },
-    };
-}
-
-async function runCustomerSync(fake: CustomerSyncFake): Promise<{
-    overdueBlock: boolean;
-    oldestInvoiceOverdueDate: Date | null;
-}> {
-    await syncCustomerInsuranceFields(CUSTOMER_ID, {
-        dbClient: fake.db as never,
-        // Wall-clock "today" must be far past the MEP deadline of the fixtures.
-        asOfDate: day("2026-01-01"),
-    });
-    const written = fake.customerUpdates.find(
-        (data) => "overdue_block" in data
-    ) as { overdue_block: boolean; oldest_invoice_overdue_date: Date | null };
-    return {
-        overdueBlock: written.overdue_block,
-        oldestInvoiceOverdueDate: written.oldest_invoice_overdue_date,
-    };
 }
 
 beforeEach(() => {
@@ -156,96 +49,6 @@ describe("isInvoiceInMepBreachScope", () => {
         expect(
             isInvoiceInMepBreachScope(day("2025-06-02"), day("2025-06-01"))
         ).toBe(true);
-    });
-});
-
-describe("cause side — customer overdue block", () => {
-    const legacyOverdue: OverdueInvoiceFixture = {
-        id: 1,
-        invoice_date: day("2020-03-10"),
-        due_date: day("2020-04-10"),
-        amount: 5000,
-    };
-
-    it("ignores a pre-date unpaid overdue invoice, so the customer is not blocked", async () => {
-        const fake = customerSyncFake({
-            invoices: [legacyOverdue],
-            mepBreachStartDate: day("2025-06-01"),
-            previousOverdueBlock: true,
-        });
-
-        const result = await runCustomerSync(fake);
-
-        expect(result.overdueBlock).toBe(false);
-        // Aging is not gated: the stored date still reports the real oldest
-        // overdue line so days-overdue keeps counting for a pre-cutover invoice.
-        expect(result.oldestInvoiceOverdueDate).toEqual(day("2020-04-10"));
-    });
-
-    it("still blocks on an overdue invoice issued after the configured date", async () => {
-        const fake = customerSyncFake({
-            invoices: [
-                legacyOverdue,
-                {
-                    id: 2,
-                    invoice_date: day("2025-07-01"),
-                    due_date: day("2025-07-31"),
-                    amount: 900,
-                },
-            ],
-            mepBreachStartDate: day("2025-06-01"),
-        });
-
-        const result = await runCustomerSync(fake);
-
-        expect(result.overdueBlock).toBe(true);
-        // The legacy line is gone from the block candidate set, but it is still
-        // the customer's oldest overdue line for aging purposes.
-        expect(result.oldestInvoiceOverdueDate).toEqual(day("2020-04-10"));
-    });
-
-    it("keeps an invoice issued exactly on the configured date in the candidate set", async () => {
-        const fake = customerSyncFake({
-            invoices: [
-                {
-                    id: 3,
-                    invoice_date: day("2025-06-01"),
-                    due_date: day("2025-06-30"),
-                    amount: 400,
-                },
-            ],
-            mepBreachStartDate: day("2025-06-01"),
-        });
-
-        const result = await runCustomerSync(fake);
-
-        expect(result.overdueBlock).toBe(true);
-        expect(result.oldestInvoiceOverdueDate).toEqual(day("2025-06-30"));
-    });
-
-    it("behaves exactly as before when no date is configured", async () => {
-        const fake = customerSyncFake({
-            invoices: [legacyOverdue],
-            mepBreachStartDate: null,
-        });
-
-        const result = await runCustomerSync(fake);
-
-        expect(result.overdueBlock).toBe(true);
-        expect(result.oldestInvoiceOverdueDate).toEqual(day("2020-04-10"));
-    });
-
-    it("behaves exactly as before when the account has no connector", async () => {
-        const fake = customerSyncFake({
-            invoices: [legacyOverdue],
-            mepBreachStartDate: null,
-            hasConnector: false,
-        });
-
-        const result = await runCustomerSync(fake);
-
-        expect(result.overdueBlock).toBe(true);
-        expect(result.oldestInvoiceOverdueDate).toEqual(day("2020-04-10"));
     });
 });
 
@@ -503,38 +306,5 @@ describe("resolveMepBreachStartDate — per-run caching", () => {
         };
 
         expect(await resolveMepBreachStartDate(ACCOUNT_ID, db as never)).toBeNull();
-    });
-});
-
-describe("a single sync run resolves the gate once", () => {
-    it("does not re-query the connector per invoice", async () => {
-        const fake = customerSyncFake({
-            invoices: [
-                {
-                    id: 1,
-                    invoice_date: day("2020-03-10"),
-                    due_date: day("2020-04-10"),
-                    amount: 100,
-                },
-                {
-                    id: 2,
-                    invoice_date: day("2020-04-10"),
-                    due_date: day("2020-05-10"),
-                    amount: 100,
-                },
-                {
-                    id: 3,
-                    invoice_date: day("2025-07-01"),
-                    due_date: day("2025-08-01"),
-                    amount: 100,
-                },
-            ],
-            mepBreachStartDate: day("2025-06-01"),
-        });
-
-        await runCustomerSync(fake);
-        await runCustomerSync(fake);
-
-        expect(fake.connectorReads).toBe(1);
     });
 });

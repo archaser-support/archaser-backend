@@ -1,0 +1,257 @@
+import { Prisma } from "@prisma/client";
+
+/** User-editable Policies-tab fields that trigger copy-on-write when changed. */
+export const CUSTOMER_POLICY_VERSIONING_ALLOWLIST = [
+    "insurance_policy_id",
+    "customer_number_policy",
+    "limit_type",
+    "approved_limit",
+    "approved_limit_currency",
+    "approved_limit_expiration_date",
+    "zero_limit_date",
+    "max_payment_term",
+    "max_allowed_mep",
+    "reporting_days",
+    "mep_cutoff_day",
+    "mep_substitute_extra_days",
+    "reporting_cutoff_day",
+    "reporting_substitute_extra_days",
+    "payment_term_cutoff_day",
+    "payment_term_substitute_day",
+    "excluded_from_policy",
+    "policy_exclusion_reason",
+    "credit_score",
+    "credit_score_input_date",
+    "active_customer_since",
+] as const;
+
+export type CustomerPolicyVersioningField =
+    (typeof CUSTOMER_POLICY_VERSIONING_ALLOWLIST)[number];
+
+export type CustomerPolicyVersioningSnapshot = Partial<
+    Record<CustomerPolicyVersioningField, unknown>
+>;
+
+function normalizeString(value: unknown): string | null {
+    if (value === null || value === undefined || value === "") {
+        return null;
+    }
+    const trimmed = String(value).trim();
+    return trimmed === "" ? null : trimmed;
+}
+
+function decimalsEqual(a: unknown, b: unknown): boolean {
+    const left =
+        a === null || a === undefined || a === ""
+            ? null
+            : new Prisma.Decimal(String(a));
+    const right =
+        b === null || b === undefined || b === ""
+            ? null
+            : new Prisma.Decimal(String(b));
+    if (left === null && right === null) {
+        return true;
+    }
+    if (left === null || right === null) {
+        return false;
+    }
+    return left.equals(right);
+}
+
+function datesEqual(a: unknown, b: unknown): boolean {
+    const left =
+        a === null || a === undefined || a === ""
+            ? null
+            : new Date(String(a));
+    const right =
+        b === null || b === undefined || b === ""
+            ? null
+            : new Date(String(b));
+    if (left === null && right === null) {
+        return true;
+    }
+    if (left === null || right === null) {
+        return false;
+    }
+    if (Number.isNaN(left.getTime()) || Number.isNaN(right.getTime())) {
+        return false;
+    }
+    return left.getTime() === right.getTime();
+}
+
+function numbersEqual(a: unknown, b: unknown): boolean {
+    const left =
+        a === null || a === undefined || a === ""
+            ? null
+            : Number(a);
+    const right =
+        b === null || b === undefined || b === ""
+            ? null
+            : Number(b);
+    if (left === null && right === null) {
+        return true;
+    }
+    if (left === null || right === null) {
+        return false;
+    }
+    return left === right;
+}
+
+function customerPolicyFieldValuesEqual(
+    before: unknown,
+    after: unknown,
+    field: CustomerPolicyVersioningField
+): boolean {
+    switch (field) {
+        case "approved_limit":
+        case "credit_score":
+            return decimalsEqual(before, after);
+        case "approved_limit_expiration_date":
+        case "zero_limit_date":
+        case "credit_score_input_date":
+        case "active_customer_since":
+            return datesEqual(before, after);
+        case "insurance_policy_id":
+        case "max_payment_term":
+        case "max_allowed_mep":
+        case "reporting_days":
+        case "mep_cutoff_day":
+        case "mep_substitute_extra_days":
+        case "reporting_cutoff_day":
+        case "reporting_substitute_extra_days":
+        case "payment_term_cutoff_day":
+        case "payment_term_substitute_day":
+            return numbersEqual(before, after);
+        case "excluded_from_policy":
+            return Boolean(before) === Boolean(after);
+        case "customer_number_policy":
+        case "policy_exclusion_reason":
+        case "approved_limit_currency":
+        case "limit_type":
+            return normalizeString(before) === normalizeString(after);
+        default: {
+            const _exhaustive: never = field;
+            return _exhaustive;
+        }
+    }
+}
+
+export function hasMeaningfulCustomerPolicyFieldChange(
+    before: CustomerPolicyVersioningSnapshot,
+    after: CustomerPolicyVersioningSnapshot,
+    allowlist: readonly CustomerPolicyVersioningField[] = CUSTOMER_POLICY_VERSIONING_ALLOWLIST
+): boolean {
+    return allowlist.some(
+        (field) =>
+            !customerPolicyFieldValuesEqual(before[field], after[field], field)
+    );
+}
+
+export function pickCustomerPolicyVersioningSnapshot(
+    source: CustomerPolicyVersioningSnapshot
+): CustomerPolicyVersioningSnapshot {
+    const snapshot: CustomerPolicyVersioningSnapshot = {};
+    for (const field of CUSTOMER_POLICY_VERSIONING_ALLOWLIST) {
+        snapshot[field] = source[field];
+    }
+    return snapshot;
+}
+
+/**
+ * Fields the Insurance Policy update path may push onto active Customer Policies.
+ * Only fields that changed on the policy in that save are overlaid (version-if
+ * the customer still differs on those fields), plus
+ * {@link POLICY_PUSH_ALWAYS_ALIGN_FIELDS} which realign even when unchanged
+ * on the policy. Includes cost/fee.
+ */
+export const POLICY_PUSH_CUSTOMER_FIELDS = [
+    "mep_cutoff_day",
+    "mep_substitute_extra_days",
+    "reporting_cutoff_day",
+    "reporting_substitute_extra_days",
+    "payment_term_cutoff_day",
+    "payment_term_substitute_day",
+    "max_allowed_mep",
+    "reporting_days",
+    "max_payment_term",
+    "cost_percent",
+    "registration_fee_percent",
+] as const;
+
+export type PolicyPushCustomerField =
+    (typeof POLICY_PUSH_CUSTOMER_FIELDS)[number];
+
+/**
+ * Always compared to active Customer Policies on save (even if the policy
+ * value did not change). Registration fee must stay in lockstep with the
+ * master policy so Portfolio Health costs never drop the markup.
+ */
+export const POLICY_PUSH_ALWAYS_ALIGN_FIELDS = [
+    "registration_fee_percent",
+] as const satisfies readonly PolicyPushCustomerField[];
+
+export type PolicyPushSnapshot = Partial<
+    Record<PolicyPushCustomerField, unknown>
+>;
+
+function policyPushFieldValuesEqual(
+    before: unknown,
+    after: unknown,
+    field: PolicyPushCustomerField
+): boolean {
+    switch (field) {
+        case "cost_percent":
+        case "registration_fee_percent":
+            return decimalsEqual(before, after);
+        case "mep_cutoff_day":
+        case "mep_substitute_extra_days":
+        case "reporting_cutoff_day":
+        case "reporting_substitute_extra_days":
+        case "payment_term_cutoff_day":
+        case "payment_term_substitute_day":
+        case "max_allowed_mep":
+        case "reporting_days":
+        case "max_payment_term":
+            return numbersEqual(before, after);
+        default: {
+            const _exhaustive: never = field;
+            return _exhaustive;
+        }
+    }
+}
+
+/**
+ * True when any of `fields` (default: all push fields) differs between
+ * snapshots. Used both for policy-before→after and customer vs policy-after.
+ */
+export function hasPolicyPushFieldChange(
+    before: PolicyPushSnapshot,
+    after: PolicyPushSnapshot,
+    fields: readonly PolicyPushCustomerField[] = POLICY_PUSH_CUSTOMER_FIELDS
+): boolean {
+    return fields.some(
+        (field) =>
+            !policyPushFieldValuesEqual(before[field], after[field], field)
+    );
+}
+
+/** Push fields whose values differ between two policy (or customer) snapshots. */
+export function listChangedPolicyPushFields(
+    before: PolicyPushSnapshot,
+    after: PolicyPushSnapshot
+): PolicyPushCustomerField[] {
+    return POLICY_PUSH_CUSTOMER_FIELDS.filter(
+        (field) =>
+            !policyPushFieldValuesEqual(before[field], after[field], field)
+    );
+}
+
+export function pickPolicyPushSnapshot(
+    source: PolicyPushSnapshot
+): PolicyPushSnapshot {
+    const snapshot: PolicyPushSnapshot = {};
+    for (const field of POLICY_PUSH_CUSTOMER_FIELDS) {
+        snapshot[field] = source[field];
+    }
+    return snapshot;
+}

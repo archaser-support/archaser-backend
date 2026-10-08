@@ -10,13 +10,17 @@ import {
     getCreditDashboardSummary,
 } from "./creditInsuranceDashboardService";
 import {
-    buildAsOfTermsMapFromActiveCustomerPolicies,
+    buildAsOfTermsMapForDate,
     deriveDashboardSnapshotScopes,
     type CreditAsOfBackfillRunContext,
     type CreditDashboardAccountSettings,
 } from "./creditAsOfBackfillRunContext";
 import { excludeLinkedChildCustomersFilter } from "./customerPolicyQueryHelpers";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
+import {
+    findAccountSnapshotLeaseBlocker,
+    warnSnapshotWriterSkippedForLease,
+} from "./accountBackgroundJobLease";
 import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron";
 import {
     withReportingBreachIgnored,
@@ -221,8 +225,9 @@ async function processDashboardSnapshotsForAccount(
         asOfLines = overlayAsOfTermsFlagsOnLines(
             asOfLines,
             snapshotDate,
-            buildAsOfTermsMapFromActiveCustomerPolicies(
-                runContext.activeCustomerPolicies
+            buildAsOfTermsMapForDate(
+                runContext.activeCustomerPolicies,
+                snapshotDate
             ),
             {
                 ignoreReportingBreach: ignoreReportingBreachEffective,
@@ -453,6 +458,17 @@ export async function takeCreditDashboardDailySnapshots(options?: {
     for (const accountId of accountIds) {
         if (excludeAccountIds?.has(accountId)) {
             skippedAccountIds.push(accountId);
+            continue;
+        }
+        const leaseBlocker = await findAccountSnapshotLeaseBlocker(
+            accountId,
+            prisma
+        );
+        if (leaseBlocker) {
+            warnSnapshotWriterSkippedForLease(
+                "CreditDashboardSnapshot",
+                leaseBlocker
+            );
             continue;
         }
         const accountScopes = scopes.filter(

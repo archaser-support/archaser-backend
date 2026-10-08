@@ -1203,6 +1203,12 @@ model InsurancePolicy {
   product_type                           insurance_policy_product_type?
   status                                 record_status                 @default(Draft)
   auto_activate_on_term_start            Boolean                       @default(false)
+  /// Single future-dated revision: UTC day it goes live. Null = no pending revision.
+  pending_effective_date                 DateTime?                     @db.Date
+  /// Full policy form snapshot (same body as policy PUT) applied on pending_effective_date.
+  pending_payload                        Json?
+  pending_created_at                     DateTime?                     @db.Timestamptz(6)
+  pending_created_by                     String?                       @db.VarChar
   created_by                             String?                       @db.VarChar
   modified_by                            String?                       @db.VarChar
   Account                                Account                       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_account_id_fkey")
@@ -1748,6 +1754,12 @@ model Invoice {
   ctv_customer_overdue_mep          Boolean                   @default(false)
   /// Invoice number of the oldest overdue that set customer MEP on this invoice's issue date.
   ctv_customer_overdue_mep_cause_invoice_number String?       @db.VarChar(100)
+  /// Cause invoice due date (snapshot with the MEP flag).
+  ctv_customer_overdue_mep_cause_due_date       DateTime?     @db.Date
+  /// Cause invoice open amount in customer currency on this invoice's issue date.
+  ctv_customer_overdue_mep_cause_outstanding    Float?
+  /// Days this invoice's issue date is past the customer MEP deadline (month-end cutoff + extra days).
+  ctv_customer_overdue_mep_days_past            Int?
   /// Snapshot at create/import: Customer.excluded_from_policy.
   ctv_customer_excluded_from_policy Boolean                   @default(false)
   /// Snapshot at create/import: credit score / DCL info expired vs invoice issue date (policy validity months).
@@ -1801,12 +1813,12 @@ model InvoicePayment {
   invoice_id                            Int?
   customer_currency                     String    @db.VarChar(50)
   payment_date                          DateTime  @db.Date
-  amount                                Float     @db.Real
+  amount                                Decimal   @db.Decimal(20, 4)
   payment_method                        String    @db.VarChar(100)
   reference                             String    @db.VarChar(100)
   customer_id                           Int
   account_id                            Int
-  customer_amount                       Float     @db.Real
+  customer_amount                       Decimal   @db.Decimal(20, 4)
   invoice_number                        String?   @db.VarChar(100)
   created_at                            DateTime? @default(now()) @db.Timestamptz(6)
   modified_at                           DateTime? @default(now()) @db.Timestamptz(6)

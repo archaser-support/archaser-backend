@@ -1,7 +1,8 @@
 /**
  * Roll pool open-AR denormalized fields onto credit-pool shell parents so
- * header cards (due / overdue / days overdue) and root CTP usage reflect
- * descendant invoices (shell roots usually have no invoices of their own).
+ * header cards (due / overdue / days overdue) reflect descendant invoices
+ * (shell roots usually have no invoices of their own). Today's root CTP is
+ * re-overlaid from leaf CTP rows, never patched from live customer totals.
  *
  * Sums **leaf** descendants only (customers with no children) so nested shells
  * that already store rolled AR are not double-counted into ancestors — same
@@ -16,7 +17,6 @@ import {
     resolveCustomerCreditPoolRoot,
     type CreditPoolMembershipCache,
 } from "./parentCustomerCreditInheritance";
-import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
 
 function minDate(
     a: Date | null | undefined,
@@ -185,35 +185,33 @@ async function writeShellOpenAr(
     });
 }
 
-async function patchTodayRootCtpUsage(args: {
+async function overlayRootTrendToday(args: {
     accountId: number;
     rootId: number;
-    poolTotalAr: number;
     dbClient: DbClient;
+    cache: CreditPoolMembershipCache;
 }): Promise<void> {
-    const today = startOfTodayUtc();
-    await args.dbClient.customerPolicyTrend.updateMany({
-        where: {
-            account_id: args.accountId,
-            customer_id: args.rootId,
-            snapshot_date: today,
-        },
-        data: {
-            total_receivables: args.poolTotalAr,
-            usage_amount: args.poolTotalAr,
-        },
+    const { overlayCreditPoolRootTrendToday } = await import(
+        "./syncCreditPoolPolicyTrendsAfterParentChange"
+    );
+    await overlayCreditPoolRootTrendToday({
+        accountId: args.accountId,
+        rootCustomerId: args.rootId,
+        dbClient: args.dbClient,
+        cache: args.cache,
+        source: "rollupCreditPoolOpenAr",
     });
 }
 
 /**
  * Write local-descendant open AR onto a shell customer's live Customer row
- * and (for the top root) today's CTP usage / total_receivables.
+ * and (for the top root) re-overlay today's CTP from leaf CTP rows.
  */
 export async function rollupCreditPoolOpenArToShell(args: {
     shellCustomerId: number;
     accountId: number;
     dbClient?: DbClient;
-    /** When true, also patch today's root CTP usage/receivables. Default true. */
+    /** When true, also re-overlay today's root CTP. Default true. */
     updateTodayCtp?: boolean;
     cache?: CreditPoolMembershipCache;
 }): Promise<CreditPoolOpenArRollup | null> {
@@ -252,13 +250,11 @@ export async function rollupCreditPoolOpenArToShell(args: {
             cache
         );
         if (rootId === args.shellCustomerId) {
-            const poolTotalAr =
-                rollup.total_due_amount + rollup.total_overdue_amount;
-            await patchTodayRootCtpUsage({
+            await overlayRootTrendToday({
                 accountId: args.accountId,
                 rootId,
-                poolTotalAr,
                 dbClient,
+                cache,
             });
         }
     }
@@ -320,7 +316,7 @@ export async function rollupCreditPoolOpenArAfterMemberChange(args: {
         }
     }
 
-    let rootLeafRollup: CreditPoolOpenArRollup | null = null;
+    let rootRolledUp = false;
 
     for (const shellId of shellsToUpdate) {
         const leafMembers = leafRowsUnderShell(shellId, byId, childrenByParent);
@@ -330,19 +326,16 @@ export async function rollupCreditPoolOpenArAfterMemberChange(args: {
         const rollup = sumOpenArRollupFromMembers(leafMembers);
         await writeShellOpenAr(shellId, rollup, dbClient);
         if (shellId === rootCustomerId) {
-            rootLeafRollup = rollup;
+            rootRolledUp = true;
         }
     }
 
-    if (rootLeafRollup != null) {
-        const poolTotalAr =
-            rootLeafRollup.total_due_amount +
-            rootLeafRollup.total_overdue_amount;
-        await patchTodayRootCtpUsage({
+    if (rootRolledUp) {
+        await overlayRootTrendToday({
             accountId: args.accountId,
             rootId: rootCustomerId,
-            poolTotalAr,
             dbClient,
+            cache,
         });
     }
 }

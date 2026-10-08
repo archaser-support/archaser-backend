@@ -56,6 +56,10 @@ import {
     requeueAccountVatBasisRefreshBullJob,
     requeueCreditAsOfBackfillBullJob,
 } from "./backfill-bull-job.util";
+import {
+    registerBullmqQueueMetrics,
+    type BullmqQueueMetricHandles,
+} from "./bullmq-queue-metrics";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
 const BACKFILL_QUEUE_NAME =
@@ -106,6 +110,8 @@ class WorkerRuntimeService implements OnModuleDestroy {
     private backfillQueue: Queue | null = null;
     private vatBasisRefreshQueue: Queue | null = null;
     private prisma: PrismaClient | null = null;
+    private bullmqQueueMetrics: BullmqQueueMetricHandles | null = null;
+    private bullmqMetricsTimer: ReturnType<typeof setInterval> | null = null;
     readonly register = new Registry();
 
     constructor(private readonly config: ConfigService) {}
@@ -173,6 +179,17 @@ class WorkerRuntimeService implements OnModuleDestroy {
         this.vatBasisRefreshQueue = new Queue(VAT_BASIS_REFRESH_QUEUE_NAME, {
             connection: this.connection,
         });
+
+        this.bullmqQueueMetrics = registerBullmqQueueMetrics(this.register, {
+            cron: this.queue,
+            credit_asof_backfill: this.backfillQueue,
+            account_vat_basis_refresh: this.vatBasisRefreshQueue,
+        });
+        await this.bullmqQueueMetrics.refresh();
+        this.bullmqMetricsTimer = setInterval(() => {
+            void this.bullmqQueueMetrics?.refresh();
+        }, 15_000);
+        this.bullmqMetricsTimer.unref?.();
 
         try {
             this.prisma = createPrismaClient({
@@ -301,6 +318,10 @@ class WorkerRuntimeService implements OnModuleDestroy {
     }
 
     async onModuleDestroy(): Promise<void> {
+        if (this.bullmqMetricsTimer) {
+            clearInterval(this.bullmqMetricsTimer);
+            this.bullmqMetricsTimer = null;
+        }
         await this.vatBasisRefreshWorker?.close();
         await this.backfillWorker?.close();
         await this.worker?.close();

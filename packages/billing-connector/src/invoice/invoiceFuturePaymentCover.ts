@@ -1,8 +1,9 @@
 import { isWithinPaidTolerance } from "./invoicePaidTolerance";
+import { toMoneyNumber } from "../payment/moneyNumber";
 
 export type FutureCoverPayment = {
     payment_date: Date;
-    customer_amount: number | null;
+    customer_amount: unknown;
 };
 
 export type FutureCoverInvoice = {
@@ -32,7 +33,7 @@ export function isInvoiceFullyCoveredByFuturePayments(
 
     let totalCustomerPaid = 0;
     for (const payment of linkedPayments) {
-        totalCustomerPaid += payment.customer_amount ?? 0;
+        totalCustomerPaid += toMoneyNumber(payment.customer_amount);
     }
     const remaining =
         (invoice.customer_net_amount ?? 0) - totalCustomerPaid;

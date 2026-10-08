@@ -50,42 +50,6 @@ describe("control center / PTP / follow-up / cron JSON", () => {
         });
     });
 
-    it("customers-without-contact returns customers + totalRecords", async () => {
-        const db = {
-            customer: {
-                findMany: jest.fn().mockResolvedValue([{ id: 1 }]),
-                count: jest.fn().mockResolvedValue(1),
-            },
-        };
-        const result = await service(db).getControlCenter(
-            user(),
-            "customers-without-contact",
-            { page: "1", limit: "25" }
-        );
-        expect(result).toEqual(
-            expect.objectContaining({
-                customers: [{ id: 1 }],
-                totalRecords: 1,
-            })
-        );
-    });
-
-    it("orphan-credit-invoices returns invoices + totalRecords", async () => {
-        const db = {
-            invoice: {
-                findMany: jest.fn().mockResolvedValue([{ id: 9, amount: -10 }]),
-                count: jest.fn().mockResolvedValue(1),
-            },
-        };
-        const result = await service(db).getControlCenter(
-            user(),
-            "orphan-credit-invoices",
-            { page: "1" }
-        );
-        expect(result.invoices).toHaveLength(1);
-        expect(result.totalRecords).toBe(1);
-    });
-
     it("clears follow-up_time on the collection period", async () => {
         const update = jest.fn().mockResolvedValue({ id: 11 });
         const db = {

@@ -356,7 +356,7 @@ export async function runCreditPoolParentHistoryJob(
         } = await import("./customerPolicyTrendService");
         const {
             buildCreditAsOfBackfillRunContext,
-            buildAsOfTermsMapFromActiveCustomerPolicies,
+            buildAsOfTermsMapForDate,
             ensureCapacityGapsForBackfillRun,
         } = await import("./creditAsOfBackfillRunContext");
         const {
@@ -382,12 +382,8 @@ export async function runCreditPoolParentHistoryJob(
         const ledger = await loadAsOfOpenInvoiceLedgerRange(accountId, to, {
             dbClient: db,
         });
-        const sharedTermsByCustomerAndPolicy =
-            runContext.activeCustomerPolicies.length > 0
-                ? buildAsOfTermsMapFromActiveCustomerPolicies(
-                      runContext.activeCustomerPolicies
-                  )
-                : null;
+        const hasVersionedPolicies =
+            runContext.activeCustomerPolicies.length > 0;
 
         let pendingCheckpoint: {
             checkpointDate: Date;
@@ -445,11 +441,14 @@ export async function runCreditPoolParentHistoryJob(
             let asOfTermsFlagsApplied = false;
             if (isUtcCalendarToday(day)) {
                 asOfTermsFlagsApplied = true;
-            } else if (sharedTermsByCustomerAndPolicy) {
+            } else if (hasVersionedPolicies) {
                 asOfLines = overlayAsOfTermsFlagsOnLines(
                     asOfLines,
                     day,
-                    sharedTermsByCustomerAndPolicy,
+                    buildAsOfTermsMapForDate(
+                        runContext.activeCustomerPolicies,
+                        day
+                    ),
                     {
                         ignoreReportingBreach: false,
                         mepBreachStartDate: runContext.mepBreachStartDate,
@@ -470,6 +469,7 @@ export async function runCreditPoolParentHistoryJob(
                 mepBreachStartDate: runContext.mepBreachStartDate,
                 runContext,
                 asOfTermsFlagsApplied,
+                skipCreditPoolShellOverlay: true,
             });
 
             daysDone = i + 1;
@@ -482,31 +482,17 @@ export async function runCreditPoolParentHistoryJob(
 
         // One bulk pool overlay for the whole window (not per-day SQL).
         if (shellIds.size > 0 && daysDone > 0) {
-            try {
-                const { overlayPoolCapacityGapAndAtRiskOnTrends } =
-                    await import(
-                        "./syncCreditPoolPolicyTrendsAfterParentChange"
-                    );
-                await overlayPoolCapacityGapAndAtRiskOnTrends({
-                    accountId,
-                    rootCustomerIds: [...shellIds],
-                    fromDate: from,
-                    toDate: to,
-                    dbClient: db,
-                    cache,
-                });
-            } catch (overlayError) {
-                console.error(
-                    "[CreditPoolParentHistory] bulk pool overlay failed",
-                    {
-                        accountId,
-                        errorMessage:
-                            overlayError instanceof Error
-                                ? overlayError.message
-                                : String(overlayError),
-                    }
-                );
-            }
+            const { overlayPoolCapacityGapAndAtRiskOnTrends } = await import(
+                "./syncCreditPoolPolicyTrendsAfterParentChange"
+            );
+            await overlayPoolCapacityGapAndAtRiskOnTrends({
+                accountId,
+                rootCustomerIds: [...shellIds],
+                fromDate: from,
+                toDate: to,
+                dbClient: db,
+                cache,
+            });
         }
 
         const final = await loadJob(accountId, db);
