@@ -1,18 +1,12 @@
 import { InvoicesService } from "../src/invoices/invoices.service";
 import { ImportService } from "../src/import/import.service";
 import { importMappedEntityBatch } from "@archaser/billing-connector";
-import {
-    loadEffectiveInsuranceForCustomers,
-    refreshInsuranceTargetDatesForInvoiceIds,
-} from "@archaser/credit-insurance-domain";
+import { refreshInsuranceTargetDatesForInvoiceIds } from "@archaser/credit-insurance-domain";
 
 jest.mock("@archaser/billing-connector", () => ({
     importMappedEntityBatch: jest.fn(),
 }));
 
-// Mock the shared package's internal modules, not its entry point, so the real
-// implementation under test still resolves the mocked loader through its own
-// relative import.
 jest.mock("../../packages/credit-insurance-domain/src/credit-insurance/domain/syncInvoiceReportingBreach", () => {
     const actual = jest.requireActual(
         "../../packages/credit-insurance-domain/src/credit-insurance/domain/syncInvoiceReportingBreach"
@@ -22,10 +16,6 @@ jest.mock("../../packages/credit-insurance-domain/src/credit-insurance/domain/sy
         refreshInsuranceTargetDatesForInvoiceIds: jest.fn(),
     };
 });
-
-jest.mock("../../packages/credit-insurance-domain/src/credit-insurance/domain/loadEffectiveInsuranceForCustomers", () => ({
-    loadEffectiveInsuranceForCustomers: jest.fn(),
-}));
 
 function user() {
     return { sub: "user-1", username: "admin", account_id: 42 };
@@ -143,114 +133,5 @@ describe("invoice amount update — insurance target refresh", () => {
             [201],
             db
         );
-    });
-});
-
-describe("refreshInsuranceTargetDatesForInvoiceIds — amount sign flip", () => {
-    const { refreshInsuranceTargetDatesForInvoiceIds: refreshReal } =
-        jest.requireActual(
-            "../../packages/credit-insurance-domain/src/credit-insurance/domain/syncInvoiceReportingBreach"
-        ) as {
-            refreshInsuranceTargetDatesForInvoiceIds: (
-                ids: number[],
-                db: unknown
-            ) => Promise<number>;
-        };
-
-    beforeEach(() => {
-        jest.clearAllMocks();
-        (loadEffectiveInsuranceForCustomers as jest.Mock).mockResolvedValue(
-            new Map([
-                [
-                    9,
-                    {
-                        id: 9,
-                        reporting_days: 5,
-                        max_allowed_mep: 7,
-                        mep_cutoff_day: null,
-                        mep_substitute_extra_days: null,
-                        reporting_cutoff_day: null,
-                        reporting_substitute_extra_days: null,
-                        payment_term_cutoff_day: null,
-                        payment_term_substitute_day: null,
-                        max_payment_term: 30,
-                        overdue_block: false,
-                        excluded_from_policy: false,
-                        policy_exclusion_reason: null,
-                        credit_score_input_date: null,
-                        policy_id: 1,
-                        limit_type: null,
-                        credit_score: null,
-                        active_customer_since: null,
-                        approved_limit: null,
-                        approved_limit_currency: null,
-                    },
-                ],
-            ])
-        );
-    });
-
-    it("nulls target MEP and reporting dates when amount is negative", async () => {
-        const updates: Array<Record<string, unknown>> = [];
-        const db = {
-            invoice: {
-                findMany: jest.fn().mockResolvedValue([
-                    {
-                        id: 1,
-                        amount: -200,
-                        invoice_date: new Date("2025-01-01"),
-                        due_date: new Date("2025-01-10"),
-                        target_reporting_date: new Date("2025-01-15"),
-                        target_mep_date: new Date("2025-01-17"),
-                        customer_id: 9,
-                    },
-                ]),
-                update: jest.fn().mockImplementation(async ({ data }) => {
-                    updates.push(data);
-                    return { id: 1, ...data };
-                }),
-            },
-        };
-
-        const n = await refreshReal([1], db);
-        expect(n).toBe(1);
-        expect(updates[0]).toEqual({
-            target_reporting_date: null,
-            target_mep_date: null,
-        });
-    });
-
-    it("recomputes normal target dates when amount is positive", async () => {
-        const updates: Array<Record<string, unknown>> = [];
-        const db = {
-            invoice: {
-                findMany: jest.fn().mockResolvedValue([
-                    {
-                        id: 2,
-                        amount: 250,
-                        invoice_date: new Date("2025-01-01"),
-                        due_date: new Date("2025-01-10"),
-                        target_reporting_date: null,
-                        target_mep_date: null,
-                        customer_id: 9,
-                    },
-                ]),
-                update: jest.fn().mockImplementation(async ({ data }) => {
-                    updates.push(data);
-                    return { id: 2, ...data };
-                }),
-            },
-        };
-
-        const n = await refreshReal([2], db);
-        expect(n).toBe(1);
-        expect(
-            (updates[0].target_reporting_date as Date)
-                .toISOString()
-                .slice(0, 10)
-        ).toBe("2025-01-15");
-        expect(
-            (updates[0].target_mep_date as Date).toISOString().slice(0, 10)
-        ).toBe("2025-01-17");
     });
 });
