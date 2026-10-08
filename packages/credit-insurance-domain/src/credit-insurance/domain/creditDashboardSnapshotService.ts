@@ -17,6 +17,10 @@ import {
 } from "./creditAsOfBackfillRunContext";
 import { excludeLinkedChildCustomersFilter } from "./customerPolicyQueryHelpers";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
+import {
+    findAccountSnapshotLeaseBlocker,
+    warnSnapshotWriterSkippedForLease,
+} from "./accountBackgroundJobLease";
 import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron";
 import {
     withReportingBreachIgnored,
@@ -454,6 +458,17 @@ export async function takeCreditDashboardDailySnapshots(options?: {
     for (const accountId of accountIds) {
         if (excludeAccountIds?.has(accountId)) {
             skippedAccountIds.push(accountId);
+            continue;
+        }
+        const leaseBlocker = await findAccountSnapshotLeaseBlocker(
+            accountId,
+            prisma
+        );
+        if (leaseBlocker) {
+            warnSnapshotWriterSkippedForLease(
+                "CreditDashboardSnapshot",
+                leaseBlocker
+            );
             continue;
         }
         const accountScopes = scopes.filter(

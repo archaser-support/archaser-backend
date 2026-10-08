@@ -269,20 +269,22 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
                     : new Error("AR post-ingest retry drain failed");
         }
 
-        if (todayError) {
-            throw todayError;
+        const stepErrors = [
+            todayError,
+            policyRevisionActivationError,
+            pendingActivationError,
+            drainError,
+            retryError,
+        ].filter((error): error is Error => error != null);
+        if (stepErrors.length === 1) {
+            throw stepErrors[0];
         }
-        if (policyRevisionActivationError) {
-            throw policyRevisionActivationError;
-        }
-        if (pendingActivationError) {
-            throw pendingActivationError;
-        }
-        if (drainError) {
-            throw drainError;
-        }
-        if (retryError) {
-            throw retryError;
+        if (stepErrors.length > 1) {
+            throw new Error(
+                `Customer policy trend cron: ${stepErrors.length} steps failed — ${stepErrors
+                    .map((error) => error.message)
+                    .join("; ")}`
+            );
         }
 
         return {

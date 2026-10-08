@@ -3,8 +3,7 @@ import { Prisma, type invoice_status } from "@prisma/client";
 import { type DbClient, prisma as defaultPrisma } from "../domain-db";
 import { convertAmountToCurrencyLatestRate } from "./customerCreditInsuranceHeaderAmounts";
 import {
-    allocateLiveCapacityGapWaterfall,
-    compareInvoicesForLiveCapacityGapWaterfall,
+    allocateNetCapacityGapWaterfall,
     computeCreatedTermsViolationInvoiceAfterPolicyEnd,
     computeCustomerOverdueBlock,
     computeInvoiceInsuranceRowData,
@@ -13,6 +12,8 @@ import {
     isIgnoredForMepOverdueBlock,
     isNegativeInvoiceAmount,
     type CustomerAtRiskInvoiceInput,
+    type NetCapacityGapWaterfallRow,
+    type NetCapacityGapWaterfallScope,
 } from "./invoiceInsuranceFields";
 import { computeInvoiceLineOpenArInAccountCurrency } from "./openReceivableByCustomerCurrency";
 import { applyOpenArVatBasis } from "./openArVatBasis";
@@ -248,60 +249,12 @@ export function asOfCapacityGapAmount(
 }
 
 /** Effective limit + currency for one customer+policy as-of waterfall scope. */
-export type AsOfCapacityGapWaterfallScope = {
-    effectiveLimit: number;
-    limitCurrency: string | null;
-    /** At-risk / outdated DCL — force invoice gaps to 0. */
-    zeroGaps?: boolean;
-};
-
-function asOfOutstandingInLimitCurrency(
-    computed: AsOfOpenInvoiceComputed,
-    limitCurrency: string | null,
-    accountCurrency: string | null
-): number {
-    const limitCcy = limitCurrency?.trim().toUpperCase() ?? null;
-    const acct = accountCurrency?.trim().toUpperCase() ?? null;
-    if (limitCcy && acct && limitCcy === acct) {
-        return Math.max(0, computed.openAmount);
-    }
-    const cust = computed.customerCurrency?.trim().toUpperCase() ?? null;
-    if (limitCcy && cust && limitCcy === cust) {
-        return Math.max(
-            0,
-            computed.openCustomerAmount > 0
-                ? computed.openCustomerAmount
-                : computed.openAmount
-        );
-    }
-    return Math.max(0, computed.openAmount);
-}
-
-function asOfGapLimitToAccountCurrency(
-    gapLimit: number,
-    outstandingLimit: number,
-    openAmountAccount: number,
-    limitCurrency: string | null,
-    accountCurrency: string | null
-): number {
-    const limitCcy = limitCurrency?.trim().toUpperCase() ?? null;
-    const acct = accountCurrency?.trim().toUpperCase() ?? null;
-    if (gapLimit <= 0) {
-        return 0;
-    }
-    if (!limitCcy || !acct || limitCcy === acct) {
-        return gapLimit;
-    }
-    if (outstandingLimit > 0 && openAmountAccount > 0) {
-        return gapLimit * (openAmountAccount / outstandingLimit);
-    }
-    return gapLimit;
-}
+export type AsOfCapacityGapWaterfallScope = NetCapacityGapWaterfallScope;
 
 /**
  * Rewrite `capacityGapAmount` / `inCapacityGap` on as-of open lines using the
- * live waterfall as of `asOfDate` (oldest invoice_date first). Does not persist.
- * Scopes missing from the map keep sticky stored gaps.
+ * net waterfall as of `asOfDate` ({@link allocateNetCapacityGapWaterfall}).
+ * Does not persist. Scopes missing from the map keep sticky stored gaps.
  */
 export function overlayAsOfLiveCapacityGapWaterfallOnLines(
     lines: AsOfOpenInvoiceLine[],
@@ -315,17 +268,8 @@ export function overlayAsOfLiveCapacityGapWaterfallOnLines(
         return lines;
     }
 
-    type OpenRow = {
-        line: AsOfOpenInvoiceLine;
-        computed: AsOfOpenInvoiceComputed;
-        outstandingLimit: number;
-    };
-    const openByScope = new Map<string, OpenRow[]>();
-
+    const openByScope = new Map<string, NetCapacityGapWaterfallRow[]>();
     for (const line of lines) {
-        if (isNegativeInvoiceAmount(line.amount)) {
-            continue;
-        }
         const scopeKey = asOfTermsScopeKey(line.customerId, line.policyId);
         if (!options.scopeByCustomerPolicy.has(scopeKey)) {
             continue;
@@ -334,14 +278,15 @@ export function overlayAsOfLiveCapacityGapWaterfallOnLines(
         if (!computed) {
             continue;
         }
-        const scope = options.scopeByCustomerPolicy.get(scopeKey)!;
-        const outstandingLimit = asOfOutstandingInLimitCurrency(
-            computed,
-            scope.limitCurrency,
-            options.accountCurrency
-        );
         const bucket = openByScope.get(scopeKey) ?? [];
-        bucket.push({ line, computed, outstandingLimit });
+        bucket.push({
+            id: line.invoiceId,
+            openAccount: computed.openAmount,
+            openCustomer: computed.openCustomerAmount,
+            customerCurrency: computed.customerCurrency ?? null,
+            invoiceDate: line.invoiceDate ?? null,
+            dueDate: line.dueDate ?? null,
+        });
         openByScope.set(scopeKey, bucket);
     }
 
@@ -349,58 +294,16 @@ export function overlayAsOfLiveCapacityGapWaterfallOnLines(
         number,
         { capacityGapAmount: number; inCapacityGap: boolean }
     >();
-
     for (const [scopeKey, rows] of openByScope) {
-        const scope = options.scopeByCustomerPolicy.get(scopeKey)!;
-        if (scope.zeroGaps === true) {
-            for (const row of rows) {
-                gapByInvoiceId.set(row.line.invoiceId, {
-                    capacityGapAmount: 0,
-                    inCapacityGap: false,
-                });
-            }
-            continue;
-        }
-
-        const sorted = rows
-            .slice()
-            .sort((a, b) =>
-                compareInvoicesForLiveCapacityGapWaterfall(
-                    {
-                        invoice_date: a.line.invoiceDate,
-                        id: a.line.invoiceId,
-                    },
-                    {
-                        invoice_date: b.line.invoiceDate,
-                        id: b.line.invoiceId,
-                    }
-                )
-            );
-
-        const allocations = allocateLiveCapacityGapWaterfall({
-            effectiveLimit: scope.effectiveLimit,
-            openInvoices: sorted.map((row) => ({
-                id: row.line.invoiceId,
-                outstandingInLimitCurrency: row.outstandingLimit,
-            })),
-        });
-        const allocationById = new Map(
-            allocations.map((row) => [row.id, row] as const)
+        const allocations = allocateNetCapacityGapWaterfall(
+            rows,
+            options.scopeByCustomerPolicy.get(scopeKey)!,
+            options.accountCurrency
         );
-
-        for (const row of sorted) {
-            const allocation = allocationById.get(row.line.invoiceId);
-            const gapLimit = allocation?.capacityGapAmountLimit ?? 0;
-            const gapAccount = asOfGapLimitToAccountCurrency(
-                gapLimit,
-                row.outstandingLimit,
-                row.computed.openAmount,
-                scope.limitCurrency,
-                options.accountCurrency
-            );
-            gapByInvoiceId.set(row.line.invoiceId, {
-                capacityGapAmount: Math.max(0, gapAccount),
-                inCapacityGap: gapLimit > 0,
+        for (const [invoiceId, allocation] of allocations) {
+            gapByInvoiceId.set(invoiceId, {
+                capacityGapAmount: allocation.gapAccount,
+                inCapacityGap: allocation.gapLimit > 0,
             });
         }
     }
