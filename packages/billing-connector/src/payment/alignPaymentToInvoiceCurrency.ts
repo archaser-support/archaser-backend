@@ -8,6 +8,8 @@
  * (base amount / customer amount) is the only conversion factor available.
  */
 
+import { toMoneyNumber } from "./moneyNumber";
+
 export type InvoiceFxContext = {
     amount: number | null | undefined;
     customer_amount: number | null | undefined;
@@ -15,8 +17,8 @@ export type InvoiceFxContext = {
 };
 
 export type StoredPaymentAmounts = {
-    amount: number | null | undefined;
-    customer_amount: number | null | undefined;
+    amount: unknown;
+    customer_amount?: unknown;
     customer_currency: string | null | undefined;
 };
 
@@ -87,8 +89,11 @@ export function alignPaymentToInvoiceCurrency(
         return null;
     }
 
-    const baseAmount = payment.amount;
-    if (baseAmount == null || !Number.isFinite(baseAmount)) {
+    if (payment.amount == null) {
+        return null;
+    }
+    const baseAmount = toMoneyNumber(payment.amount);
+    if (!Number.isFinite(baseAmount)) {
         return null;
     }
 
