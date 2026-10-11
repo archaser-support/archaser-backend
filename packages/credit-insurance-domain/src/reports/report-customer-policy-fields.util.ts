@@ -15,11 +15,21 @@ export const CUSTOMER_POLICY_BACKED_REPORT_FIELDS = new Set([
     "zero_limit_date",
 ]);
 
+/** CustomerPolicy rates that fall back to the linked InsurancePolicy rate when null. */
+export const CUSTOMER_POLICY_FEE_RATE_REPORT_FIELDS = new Set([
+    "cost_percent",
+    "registration_fee_percent",
+]);
+
+export function isCustomerPolicyFeeRateReportField(field: string): boolean {
+    return CUSTOMER_POLICY_FEE_RATE_REPORT_FIELDS.has(field);
+}
+
 export function isCustomerPolicyBackedReportField(field: string): boolean {
     return (
         field === "policy_id" ||
         field === "InsurancePolicy.policy_number" ||
-        field === "registration_fee_percent" ||
+        isCustomerPolicyFeeRateReportField(field) ||
         field.startsWith("InsurancePolicy.") ||
         CUSTOMER_POLICY_BACKED_REPORT_FIELDS.has(field)
     );
@@ -114,11 +124,8 @@ export function extractCustomerPolicyReportField(
         return active.InsurancePolicy?.policy_number ?? null;
     }
 
-    if (field === "registration_fee_percent") {
-        const raw =
-            active.registration_fee_percent ??
-            active.InsurancePolicy?.registration_fee_percent ??
-            null;
+    if (isCustomerPolicyFeeRateReportField(field)) {
+        const raw = active[field] ?? active.InsurancePolicy?.[field] ?? null;
         if (raw === null || raw === undefined || raw === "") {
             return null;
         }
@@ -149,10 +156,33 @@ export function extractCustomerPolicyReportField(
     return null;
 }
 
+function ensureInsurancePolicySelectField(
+    target: Record<string, unknown>,
+    relationField: string
+): void {
+    const existing = target.InsurancePolicy as
+        | { select?: Record<string, boolean> }
+        | undefined;
+    if (!existing) {
+        target.InsurancePolicy = { select: { [relationField]: true } };
+    } else if (!existing.select) {
+        existing.select = { [relationField]: true };
+    } else {
+        existing.select[relationField] = true;
+    }
+}
+
 function mergePolicySelectFields(
     target: Record<string, unknown>,
     field: string
 ): void {
+    if (isCustomerPolicyFeeRateReportField(field)) {
+        target[field] = true;
+        target.insurance_policy_id = true;
+        ensureInsurancePolicySelectField(target, field);
+        return;
+    }
+
     if (
         field === "policy_id" ||
         field === "InsurancePolicy.policy_number" ||

@@ -25,7 +25,7 @@ import {
     isUtcCalendarToday,
 } from "./asOfOpenAr";
 import {
-    buildAsOfTermsMapFromActiveCustomerPolicies,
+    buildAsOfTermsMapForDate,
     buildCreditAsOfBackfillRunContext,
     createMinimalCreditAsOfBackfillRunContext,
     ensureCapacityGapsForBackfillRun,
@@ -332,6 +332,7 @@ type BackfillWriters = {
             runContext?: BackfillRunContext;
             asOfTermsFlagsApplied?: boolean;
             skipCreditPoolShellOverlay?: boolean;
+            throwOnCreditPoolShellOverlayError?: boolean;
             skipInactivePrune?: boolean;
         }
     ) => Promise<unknown>;
@@ -496,19 +497,43 @@ export async function runCreditAsOfBackfillJob(
             heartbeatTimer.unref();
         }
 
+        async function markRunFailed(
+            message: string
+        ): Promise<CreditAsOfBackfillJobView> {
+            const failed = await db.$executeRaw`
+                UPDATE "AccountBackgroundJob"
+                SET status = 'failed',
+                    last_error = ${message.slice(0, 1000)},
+                    updated_at = ${new Date()}
+                WHERE account_id = ${accountId}
+                  AND job_kind = ${CREDIT_ASOF_JOB_KIND}
+                  AND status = 'running'
+                  AND run_token = ${runToken}
+            `;
+            if (Number(failed) < 1) {
+                // Paused / reclaimed meanwhile: Retry re-runs finalize, but keep the cause visible.
+                console.error("[CreditAsOfBackfill] run failed after losing the lease", {
+                    accountId,
+                    errorMessage: message,
+                });
+            }
+            return getCreditAsOfBackfillJobStatus(accountId, {
+                dbClient: db,
+            });
+        }
+
         try {
         const resumeFrom = resolveRewriteDrainStart(
             jobFromDate,
             job.checkpoint_date
         );
 
-        // Fresh Generate window only: inactive-CP CPT purge + pre-from_date orphans.
+        // Fresh Generate window only: inactive-CP CPT purge.
         if (job.checkpoint_date == null) {
             const { prepareCreditSnapshotHistoryForRewriteWindow } =
                 await import("./creditSnapshotHistoryCleanup");
             await prepareCreditSnapshotHistoryForRewriteWindow({
                 accountId,
-                fromDate: jobFromDate,
                 dbClient: db,
             });
         }
@@ -579,13 +604,9 @@ export async function runCreditAsOfBackfillJob(
         }
 
         const ignoreReportingBreach = false;
-        const sharedTermsByCustomerAndPolicy =
+        const hasVersionedPolicies =
             useOptimizedReplayPath &&
-            runContext.activeCustomerPolicies.length > 0
-                ? buildAsOfTermsMapFromActiveCustomerPolicies(
-                      runContext.activeCustomerPolicies
-                  )
-                : null;
+            runContext.activeCustomerPolicies.length > 0;
 
         let pendingCheckpoint: {
             checkpointDate: Date;
@@ -636,70 +657,30 @@ export async function runCreditAsOfBackfillJob(
         );
         let lastCompletedDay: Date | null = null;
 
-        async function overlayCreditPoolShellsForRange(
-            fromDate: Date,
-            toDate: Date
-        ): Promise<void> {
-            try {
-                const shellRows = await db.customer.findMany({
-                    where: {
-                        account_id: accountId,
-                        ChildCustomers: { some: {} },
-                    },
-                    select: { id: true },
-                });
-                if (shellRows.length === 0) {
-                    return;
-                }
-                const { overlayPoolCapacityGapAndAtRiskOnTrends } =
-                    await import("./syncCreditPoolPolicyTrendsAfterParentChange");
-                await overlayPoolCapacityGapAndAtRiskOnTrends({
-                    accountId,
-                    rootCustomerIds: shellRows.map((row) => row.id),
-                    fromDate: toUtcDayStart(fromDate),
-                    toDate: toUtcDayStart(toDate),
-                    dbClient: db,
-                });
-            } catch (overlayError) {
-                // Do not fail the Generate job; live today overlay already ran on parent save.
-                console.error(
-                    "[ParentCustomerCredit] post-backfill pool overlay failed",
-                    {
-                        accountId,
-                        errorMessage:
-                            overlayError instanceof Error
-                                ? overlayError.message
-                                : String(overlayError),
-                    }
-                );
-            }
-        }
-
-        /** Per-day writers skip the inactive-CP prune and shell overlay; apply both once here. */
+        /**
+         * Per-day writers skip the inactive-CP prune and shell overlay; apply
+         * both once here. Failures propagate so the run ends `failed` and
+         * Retry (checkpoint kept) re-runs this over the full window.
+         */
         async function finalizeReplayedRange(
             fromDate: Date,
             toDate: Date
         ): Promise<void> {
-            try {
-                const { deleteInactiveCustomerPolicyTrendRowsForScope } =
-                    await import("./creditSnapshotHistoryCleanup");
-                await deleteInactiveCustomerPolicyTrendRowsForScope({
-                    accountId,
-                    dbClient: db,
-                });
-            } catch (pruneError) {
-                console.error(
-                    "[CreditAsOfBackfill] inactive customer policy trend prune failed",
-                    {
-                        accountId,
-                        errorMessage:
-                            pruneError instanceof Error
-                                ? pruneError.message
-                                : String(pruneError),
-                    }
-                );
-            }
-            await overlayCreditPoolShellsForRange(fromDate, toDate);
+            const { deleteInactiveCustomerPolicyTrendRowsForScope } =
+                await import("./creditSnapshotHistoryCleanup");
+            await deleteInactiveCustomerPolicyTrendRowsForScope({
+                accountId,
+                dbClient: db,
+            });
+            const { overlayCreditPoolShellsForRange } = await import(
+                "./syncCreditPoolPolicyTrendsAfterParentChange"
+            );
+            await overlayCreditPoolShellsForRange({
+                accountId,
+                fromDate,
+                toDate,
+                dbClient: db,
+            });
         }
 
         for (let i = 0; i < days.length; i++) {
@@ -732,11 +713,14 @@ export async function runCreditAsOfBackfillJob(
                 if (isUtcCalendarToday(day)) {
                     // Keep live reporting-breach + CTV; do not strip RB for today.
                     asOfTermsFlagsApplied = true;
-                } else if (sharedTermsByCustomerAndPolicy) {
+                } else if (hasVersionedPolicies) {
                     asOfLines = overlayAsOfTermsFlagsOnLines(
                         asOfLines,
                         day,
-                        sharedTermsByCustomerAndPolicy,
+                        buildAsOfTermsMapForDate(
+                            runContext.activeCustomerPolicies,
+                            day
+                        ),
                         {
                             ignoreReportingBreach,
                             mepBreachStartDate: runContext.mepBreachStartDate,
@@ -768,6 +752,7 @@ export async function runCreditAsOfBackfillJob(
                             skipCreditPoolShellOverlay:
                                 day.getTime() <
                                 perDayShellOverlayFrom.getTime(),
+                            throwOnCreditPoolShellOverlayError: true,
                             skipInactivePrune: true,
                         }
                     ),
@@ -788,28 +773,24 @@ export async function runCreditAsOfBackfillJob(
                     }
                 }
             } catch (error) {
-                const message =
+                let message =
                     error instanceof Error ? error.message : String(error);
                 await flushCheckpoint(true);
                 if (lastCompletedDay) {
-                    await finalizeReplayedRange(
-                        resumeFrom,
-                        lastCompletedDay
-                    );
+                    try {
+                        await finalizeReplayedRange(
+                            resumeFrom,
+                            lastCompletedDay
+                        );
+                    } catch (finalizeError) {
+                        message = `${message}; finalize: ${
+                            finalizeError instanceof Error
+                                ? finalizeError.message
+                                : String(finalizeError)
+                        }`;
+                    }
                 }
-                await db.$executeRaw`
-                    UPDATE "AccountBackgroundJob"
-                    SET status = 'failed',
-                        last_error = ${message.slice(0, 1000)},
-                        updated_at = ${now}
-                    WHERE account_id = ${accountId}
-                      AND job_kind = ${CREDIT_ASOF_JOB_KIND}
-                      AND status = 'running'
-                      AND run_token = ${runToken}
-                `;
-                return getCreditAsOfBackfillJobStatus(accountId, {
-                    dbClient: db,
-                });
+                return markRunFailed(message);
             }
 
             lastCompletedDay = day;
@@ -841,6 +822,10 @@ export async function runCreditAsOfBackfillJob(
               AND run_token = ${runToken}
         `;
         return getCreditAsOfBackfillJobStatus(accountId, { dbClient: db });
+        } catch (error) {
+            return markRunFailed(
+                error instanceof Error ? error.message : String(error)
+            );
         } finally {
             clearInterval(heartbeatTimer);
         }

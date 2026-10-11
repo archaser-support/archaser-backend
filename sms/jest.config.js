@@ -28,4 +28,4 @@ module.exports = {
             "<rootDir>/../packages/auth/src/index.ts",
     },
     testTimeout: 30000,
-};
+};                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           

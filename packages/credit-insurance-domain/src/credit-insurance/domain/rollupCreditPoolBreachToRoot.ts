@@ -7,13 +7,12 @@ import type { DbClient } from "../domain-db";
 import { prisma } from "../domain-db";
 import { computeOwnCustomerOverdueBlock } from "./computeOwnCustomerOverdueBlock";
 import { resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
-import { startOfTodayUtc } from "./shared/insurancePolicyLifecycle";
 
 /**
  * Set every pool member's `overdue_block` = OR of invoice-derived leaf blocks
  * (recomputed, so prior sibling contagion cannot stick). Solo customers are
- * left untouched. Also refresh today's root CTP `terms_breach_amount` / count
- * as the sum of member CTP rows when present.
+ * left untouched. Also re-overlay today's root CTP (terms breach, gap,
+ * at-risk, health) from leaf CTP rows.
  */
 export async function rollupCreditPoolBreachToRoot(args: {
     customerId: number;
@@ -110,41 +109,15 @@ export async function rollupCreditPoolBreachToRoot(args: {
         data: { overdue_block: overdueBlock },
     });
 
-    const today = startOfTodayUtc();
-    const memberTrends = await dbClient.customerPolicyTrend.findMany({
-        where: {
-            account_id: args.accountId,
-            customer_id: { in: [...memberIds] },
-            snapshot_date: today,
-        },
-        select: {
-            customer_id: true,
-            terms_breach_amount: true,
-            terms_breach_count: true,
-        },
+    const { overlayCreditPoolRootTrendToday } = await import(
+        "./syncCreditPoolPolicyTrendsAfterParentChange"
+    );
+    await overlayCreditPoolRootTrendToday({
+        accountId: args.accountId,
+        rootCustomerId,
+        dbClient,
+        source: "rollupCreditPoolBreachToRoot",
     });
-    if (memberTrends.length > 0) {
-        let amount = 0;
-        let count = 0;
-        for (const row of memberTrends) {
-            if (row.customer_id === rootCustomerId) {
-                continue;
-            }
-            amount += Number(row.terms_breach_amount ?? 0);
-            count += Number(row.terms_breach_count ?? 0);
-        }
-        await dbClient.customerPolicyTrend.updateMany({
-            where: {
-                account_id: args.accountId,
-                customer_id: rootCustomerId,
-                snapshot_date: today,
-            },
-            data: {
-                terms_breach_amount: amount,
-                terms_breach_count: count,
-            },
-        });
-    }
 
     return { rootCustomerId, overdueBlock };
 }

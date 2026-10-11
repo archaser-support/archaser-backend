@@ -831,14 +831,10 @@ export class ReportsService {
         const config = reportConfig as {
             filters?: Array<{ field?: string | null }>;
             formulas?: Array<{ id: string }>;
-            grouping?: string[];
-            fields?: Array<{ aggregation?: string | null }>;
         };
         const failure = findFormulaFilterGuardFailure({
             filters: config.filters,
             formulas: config.formulas,
-            grouping: config.grouping,
-            fields: config.fields,
         });
         if (failure) {
             throw new BadRequestException({

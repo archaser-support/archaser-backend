@@ -33,4 +33,4 @@ module.exports = {
             "<rootDir>/../packages/credit-insurance-domain/src/index.ts",
     },
     testTimeout: 30000,
-};
+};                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           

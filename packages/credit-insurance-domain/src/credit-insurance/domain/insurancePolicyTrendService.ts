@@ -4,6 +4,10 @@ import { prisma } from "../domain-db";
 
 import { fetchOpenReceivableByCustomerMap } from "./creditInsuranceDashboardService";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
+import {
+    findAccountSnapshotLeaseBlocker,
+    warnSnapshotWriterSkippedForLease,
+} from "./accountBackgroundJobLease";
 import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron";
 import {
@@ -521,6 +525,17 @@ export async function takeInsurancePolicyTrendSnapshots(options?: {
             : [];
 
     for (const account of accounts) {
+        const leaseBlocker = await findAccountSnapshotLeaseBlocker(
+            account.id,
+            prisma
+        );
+        if (leaseBlocker) {
+            warnSnapshotWriterSkippedForLease(
+                "InsurancePolicyTrend",
+                leaseBlocker
+            );
+            continue;
+        }
         const result = await syncInsurancePolicyTrendSnapshotForAccount(
             account.id,
             { snapshotDate }

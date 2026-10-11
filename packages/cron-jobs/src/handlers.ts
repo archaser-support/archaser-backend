@@ -6,6 +6,7 @@ import {
 } from "@archaser/billing-connector";
 import {
     bindCreditInsurancePrisma,
+    activateDueInsurancePolicyRevisions,
     activateDuePendingCustomerPolicies,
     drainAsOfRewriteQueue,
     syncAllCustomerPolicyGapAmounts,
@@ -153,6 +154,34 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
     timed("Customer Policy Trend Daily Snapshot", async () => {
         bindCreditInsurancePrisma(prisma);
 
+        // Insurance Policy revisions first: their customer push skips customers
+        // that still have a pending Customer Policy, so a customer revision
+        // activating today keeps its scheduled values instead of being
+        // overlaid by the policy push.
+        let policyRevisionActivation:
+            | Awaited<ReturnType<typeof activateDueInsurancePolicyRevisions>>
+            | undefined;
+        let policyRevisionActivationError: Error | undefined;
+        try {
+            policyRevisionActivation =
+                await activateDueInsurancePolicyRevisions();
+            if (
+                policyRevisionActivation.failures > 0 ||
+                policyRevisionActivation.rewriteEnqueueFailures > 0
+            ) {
+                policyRevisionActivationError = new Error(
+                    `Pending insurance policy revision activation: ${policyRevisionActivation.activated} activated, ${policyRevisionActivation.failures} failures, ${policyRevisionActivation.rewriteEnqueueFailures} as-of rewrite enqueue failures`
+                );
+            }
+        } catch (error: unknown) {
+            policyRevisionActivationError =
+                error instanceof Error
+                    ? error
+                    : new Error(
+                          "Pending insurance policy revision activation failed"
+                      );
+        }
+
         // Activate due pending customer policies before today's tip + drain so
         // the tip reflects newly activated limits and rewrite covers from the
         // change date.
@@ -240,23 +269,29 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
                     : new Error("AR post-ingest retry drain failed");
         }
 
-        if (todayError) {
-            throw todayError;
+        const stepErrors = [
+            todayError,
+            policyRevisionActivationError,
+            pendingActivationError,
+            drainError,
+            retryError,
+        ].filter((error): error is Error => error != null);
+        if (stepErrors.length === 1) {
+            throw stepErrors[0];
         }
-        if (pendingActivationError) {
-            throw pendingActivationError;
-        }
-        if (drainError) {
-            throw drainError;
-        }
-        if (retryError) {
-            throw retryError;
+        if (stepErrors.length > 1) {
+            throw new Error(
+                `Customer policy trend cron: ${stepErrors.length} steps failed — ${stepErrors
+                    .map((error) => error.message)
+                    .join("; ")}`
+            );
         }
 
         return {
-            message: `Customer policy trend snapshots: ${todayResult!.rowsUpserted} rows across ${todayResult!.accountsProcessed} accounts; pending activated: ${pendingActivation?.activated ?? 0}; AR post-ingest retries: ${retryResult?.itemsProcessed ?? 0}`,
+            message: `Customer policy trend snapshots: ${todayResult!.rowsUpserted} rows across ${todayResult!.accountsProcessed} accounts; policy revisions activated: ${policyRevisionActivation?.activated ?? 0}; pending activated: ${pendingActivation?.activated ?? 0}; AR post-ingest retries: ${retryResult?.itemsProcessed ?? 0}`,
             summary: {
                 ...todayResult,
+                policyRevisionActivation,
                 pendingActivation,
             },
         };

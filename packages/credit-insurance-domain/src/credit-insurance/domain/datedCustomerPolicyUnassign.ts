@@ -121,19 +121,28 @@ async function endCustomerPolicyVersionsForUnassign(args: {
             id: true,
             status: true,
             policy_change_start_date: true,
+            policy_change_end_date: true,
         },
     });
     for (const row of rows) {
         if (row.status === "pending") {
             continue;
         }
+        // Same rule as closeCustomerPolicyVersionsFromDate: end at the unassign
+        // day (or void versions starting on/after it); never extend an end.
         const versionStart = toUtcDateOnly(row.policy_change_start_date);
+        const targetEnd =
+            versionStart.getTime() > unassignDay.getTime()
+                ? versionStart
+                : unassignDay;
+        const shortensEnd =
+            row.policy_change_end_date == null ||
+            toUtcDateOnly(row.policy_change_end_date).getTime() >
+                targetEnd.getTime();
         await args.dbClient.customerPolicy.update({
             where: { id: row.id },
             data: {
-                ...(versionStart.getTime() < unassignDay.getTime()
-                    ? { policy_change_end_date: unassignDay }
-                    : {}),
+                ...(shortensEnd ? { policy_change_end_date: targetEnd } : {}),
                 is_active: false,
                 status: "inactive",
                 modified_by: args.userId,

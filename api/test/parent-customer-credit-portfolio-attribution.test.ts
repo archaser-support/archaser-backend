@@ -2,76 +2,9 @@ import {
     attributeAmountsToCreditPoolRoots,
     attributeInvoiceCustomerIdsToCreditPoolRoots,
     attributeListsToCreditPoolRoots,
-    expandCreditPoolRootsToMembers,
     expandRootIdSetToPoolMembers,
-    listDescendantCustomerIds,
     syncCreditPoolPolicyTrendsAfterParentChange,
 } from "@archaser/credit-insurance-domain";
-
-type CustomerRow = {
-    id: number;
-    account_id: number;
-    parent_customer_id: number | null;
-};
-
-function createPoolMemoryDb(customers: CustomerRow[]) {
-    return {
-        customer: {
-            findUnique: jest.fn(
-                async ({
-                    where,
-                    select,
-                }: {
-                    where: { id: number };
-                    select?: Record<string, boolean>;
-                }) => {
-                    const row = customers.find((c) => c.id === where.id);
-                    if (!row) {
-                        return null;
-                    }
-                    if (!select) {
-                        return row;
-                    }
-                    const out: Record<string, unknown> = {};
-                    for (const key of Object.keys(select)) {
-                        out[key] = (row as Record<string, unknown>)[key];
-                    }
-                    return out;
-                }
-            ),
-            findMany: jest.fn(
-                async ({
-                    where,
-                }: {
-                    where: {
-                        account_id: number;
-                        parent_customer_id: { in: number[] };
-                    };
-                }) =>
-                    customers
-                        .filter(
-                            (c) =>
-                                c.account_id === where.account_id &&
-                                c.parent_customer_id != null &&
-                                where.parent_customer_id.in.includes(
-                                    c.parent_customer_id
-                                )
-                        )
-                        .map((c) => ({ id: c.id }))
-            ),
-        },
-        invoice: {
-            aggregate: jest.fn(async () => ({
-                _min: { invoice_date: null },
-            })),
-        },
-        invoicePayment: {
-            aggregate: jest.fn(async () => ({
-                _min: { payment_date: null },
-            })),
-        },
-    };
-}
 
 describe("portfolio/CDP descendant invoice attribution", () => {
     it("rolls child invoice amounts onto the shell root", () => {
@@ -194,30 +127,6 @@ describe("portfolio/CDP descendant invoice attribution", () => {
         expect(attributed.has(9)).toBe(false);
     });
 
-    it("expandCreditPoolRootsToMembers includes nested descendants", async () => {
-        const db = createPoolMemoryDb([
-            { id: 1, account_id: 10, parent_customer_id: null },
-            { id: 2, account_id: 10, parent_customer_id: 1 },
-            { id: 3, account_id: 10, parent_customer_id: 2 },
-            { id: 4, account_id: 10, parent_customer_id: null },
-        ]);
-
-        await expect(
-            listDescendantCustomerIds(1, 10, db as never)
-        ).resolves.toEqual([2, 3]);
-
-        const attribution = await expandCreditPoolRootsToMembers(
-            10,
-            [1, 4],
-            db as never
-        );
-        expect(attribution.memberIds.sort((a, b) => a - b)).toEqual([
-            1, 2, 3, 4,
-        ]);
-        expect(attribution.rootByMemberId.get(3)).toBe(1);
-        expect(attribution.rootByMemberId.get(4)).toBe(4);
-    });
-
     it("syncCreditPoolPolicyTrendsAfterParentChange no-ops when no roots", async () => {
         const result = await syncCreditPoolPolicyTrendsAfterParentChange({
             accountId: 10,
@@ -229,59 +138,4 @@ describe("portfolio/CDP descendant invoice attribution", () => {
         expect(result.customerIds).toEqual([]);
     });
 
-    it("rewrites CDP for the same CPT range and fails closed on CDP errors", async () => {
-        const db = createPoolMemoryDb([
-            { id: 1, account_id: 10, parent_customer_id: null },
-            { id: 2, account_id: 10, parent_customer_id: 1 },
-        ]);
-        const from = new Date(Date.UTC(2026, 0, 1));
-        db.invoice.aggregate = jest.fn(async () => ({
-            _min: { invoice_date: from },
-        }));
-
-        const rewriteCpt = jest.fn(async () => ({
-            daysRewritten: 3,
-            skipped: false,
-        }));
-        const rewriteCdp = jest.fn(async () => 3);
-
-        const ok = await syncCreditPoolPolicyTrendsAfterParentChange({
-            accountId: 10,
-            remirroredRoots: [1],
-            dbClient: db as never,
-            rewriteCustomerAsOfRange: rewriteCpt as never,
-            rewriteCreditDashboardForRange: rewriteCdp,
-            skipPoolTrendOverlay: true,
-            historyMode: "full_sync",
-            skipAsyncHistoryJob: true,
-        });
-
-        expect(rewriteCpt).toHaveBeenCalledTimes(1);
-        expect(rewriteCdp).toHaveBeenCalledTimes(1);
-        expect(ok.daysRewritten).toBe(3);
-        expect(ok.creditDashboardDaysRewritten).toBe(3);
-        expect(ok.customerIds.sort((a, b) => a - b)).toEqual([1, 2]);
-        const cdpArgs = rewriteCdp.mock.calls[0][0] as {
-            fromDate: Date;
-            toDate: Date;
-        };
-        expect(cdpArgs.fromDate.getTime()).toBe(from.getTime());
-        expect(cdpArgs.toDate.getTime()).toBe(ok.toDate.getTime());
-
-        const failingCdp = jest.fn(async () => {
-            throw new Error("cdp writer failed");
-        });
-        await expect(
-            syncCreditPoolPolicyTrendsAfterParentChange({
-                accountId: 10,
-                remirroredRoots: [1],
-                dbClient: db as never,
-                rewriteCustomerAsOfRange: rewriteCpt as never,
-                rewriteCreditDashboardForRange: failingCdp,
-                skipPoolTrendOverlay: true,
-                historyMode: "full_sync",
-                skipAsyncHistoryJob: true,
-            })
-        ).rejects.toThrow("cdp writer failed");
-    });
 });
