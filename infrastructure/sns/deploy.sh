@@ -9,6 +9,16 @@ STACK_NAME="archaser-alert-sns"
 REGION="${AWS_REGION:-eu-north-1}"
 ENVIRONMENT="${ENVIRONMENT:-production}"
 ALERT_EMAIL="${ALERT_EMAIL:-nilotpal@archaser.com}"
+# grafana.archaser.com serves the Next app — never use it for alert links.
+# Match exact host only; *grafana.archaser.com* also hits portal/staging.
+_grafana_host="$(printf '%s' "${GRAFANA_BASE_URL:-}" | sed -E 's|^https?://||; s|/.*||' | tr '[:upper:]' '[:lower:]')"
+case "${_grafana_host}" in
+    grafana.archaser.com|www.grafana.archaser.com|grafana.production.archaser.com)
+        echo "WARNING: GRAFANA_BASE_URL=${GRAFANA_BASE_URL} is invalid; using environment default."
+        GRAFANA_BASE_URL=""
+        ;;
+esac
+unset _grafana_host
 if [ -z "${GRAFANA_BASE_URL:-}" ]; then
     if [ "$ENVIRONMENT" = "staging" ]; then
         GRAFANA_BASE_URL="https://grafana.staging.archaser.com"

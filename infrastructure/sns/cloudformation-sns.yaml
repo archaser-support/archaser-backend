@@ -61,6 +61,10 @@ Parameters:
       staging → https://grafana.staging.archaser.com.
       Do not use https://grafana.archaser.com (that host serves the Next.js app).
 
+Conditions:
+  HasCustomGrafanaBaseUrl: !Not [!Equals [!Ref GrafanaBaseUrl, '']]
+  IsStagingEnvironment: !Equals [!Ref Environment, staging]
+
 Resources:
   # SNS Topic for System Alerts (for Slack and other subscribers)
   AlertSNSTopic:
@@ -152,7 +156,15 @@ Resources:
           CLICKUP_CHAT_CHANNEL_ID: !Ref ClickUpChatChannelId
           CLICKUP_CHAT_WORKSPACE_ID: !Ref ClickUpChatWorkspaceId
           CLICKUP_CHAT_ENABLED: !Ref ClickUpChatEnabled
-          GRAFANA_BASE_URL: !Ref GrafanaBaseUrl
+          # Never leave empty/legacy grafana.archaser.com — email + ClickUp "View in Grafana"
+          # must use portal (prod) or staging host.
+          GRAFANA_BASE_URL: !If
+            - HasCustomGrafanaBaseUrl
+            - !Ref GrafanaBaseUrl
+            - !If
+              - IsStagingEnvironment
+              - https://grafana.staging.archaser.com
+              - https://grafana.portal.archaser.com
       # Real code is packaged from infrastructure/sns/lambda/ by deploy.sh
       # (aws lambda update-function-code). Stub keeps stack create/update valid.
       Code:

@@ -15,8 +15,11 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function formatAnnotationHtml(text, environment) {
-  return escapeHtml(rewriteGrafanaUrls(text, environment)).replace(/\n/g, '<br>');
+function formatAnnotationHtml(text, environment, alert) {
+  return escapeHtml(rewriteGrafanaUrls(text, environment, alert)).replace(
+    /\n/g,
+    '<br>'
+  );
 }
 
 function generateDetailsHtml(details) {
@@ -162,7 +165,7 @@ const generateHtmlEmail = (alertStatus, alertName, alerts, detailsByAlertIndex, 
           ${alert.annotations?.description ? `
           <tr>
             <td style="padding: 8px 0; color: #6b7280; vertical-align: top;">Description:</td>
-            <td style="padding: 8px 0; color: #374151;">${formatAnnotationHtml(alert.annotations.description, process.env.ENVIRONMENT)}</td>
+            <td style="padding: 8px 0; color: #374151;">${formatAnnotationHtml(alert.annotations.description, process.env.ENVIRONMENT, alert)}</td>
           </tr>
           ` : ''}
           ${metricValue ? `
@@ -247,7 +250,8 @@ const generatePlainText = (alertStatus, alertName, alerts, detailsByAlertIndex, 
     const summary = alert.annotations?.summary || 'No summary provided';
     const description = rewriteGrafanaUrls(
       alert.annotations?.description || '',
-      process.env.ENVIRONMENT
+      process.env.ENVIRONMENT,
+      alert
     );
     const alertDetails = detailsByAlertIndex?.[index] || null;
     const alertDashboardUrl = buildGrafanaDrilldownUrl(

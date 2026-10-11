@@ -64,7 +64,8 @@ function buildClickUpChatMarkdown({
     const summary = primary.annotations?.summary;
     const description = rewriteGrafanaUrls(
       primary.annotations?.description,
-      environment
+      environment,
+      primary
     );
     if (summary) {
       lines.push(summary);
@@ -81,7 +82,7 @@ function buildClickUpChatMarkdown({
 
   const generatorUrls = [];
   list.forEach((alert) => {
-    const url = rewriteGrafanaUrls(alert?.generatorURL, environment);
+    const url = rewriteGrafanaUrls(alert?.generatorURL, environment, alert);
     if (url && !generatorUrls.includes(url)) {
       generatorUrls.push(url);
     }
