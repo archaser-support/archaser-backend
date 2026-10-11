@@ -45,13 +45,23 @@ const REPORT_AUDIT_USERS_INCLUDE = {
     },
 } as const;
 
-/** Basic customer invoice-tab system reports — hidden when credit insurance is on. */
+/** Basic customer invoice-tab system reports — hidden when Policy Insights exist. */
 const CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES = [
     "all_unpaid_invoices",
     "due_invoices",
     "overdue_invoices",
     "all_invoices",
 ] as const;
+
+/** Seeded CI replacements for the basic four (unique_name contains credit_insurance). */
+const CUSTOMER_UNPAID_POLICY_INSIGHTS_UNIQUE_NAMES = [
+    "all_unpaid_invoices_credit_insurance_policy_insights",
+    "due_invoices_credit_insurance_policy_insights",
+    "overdue_invoices_credit_insurance_policy_insights",
+    "all_invoices_credit_insurance_policy_insights",
+] as const;
+
+const CUSTOMER_UNPAID_INVOICES_CONTEXT = "customer_unpaid_invoices";
 
 function isCreditInsuranceOnlyReport(report: {
     context?: string | null;
@@ -99,6 +109,10 @@ export class ReportsService {
         const filterCi =
             !(accountRow as { has_credit_insurance?: boolean } | null)
                 ?.has_credit_insurance;
+        const preferPolicyInsights =
+            !filterCi &&
+            context === CUSTOMER_UNPAID_INVOICES_CONTEXT &&
+            (await this.accountHasPolicyInsightsInvoiceReports(accountId));
 
         if (isDefaultRequest && context) {
             const defaultView = await this.resolveDefaultView(
@@ -106,7 +120,8 @@ export class ReportsService {
                 userId,
                 context,
                 role,
-                filterCi
+                filterCi,
+                preferPolicyInsights
             );
             if (!defaultView) {
                 return {
@@ -167,21 +182,14 @@ export class ReportsService {
                     ],
                 },
             });
-        } else if (context === "customer_unpaid_invoices") {
-            // Credit insurance active: on the customer Invoices tab only,
-            // show Policy Insights variants instead of the basic unpaid /
-            // due / overdue / all invoice system reports.
+        } else if (preferPolicyInsights) {
+            // Hide basic unpaid/due/overdue/all only when Policy Insights seeds exist.
             (where.AND as unknown[]).push({
-                OR: [
-                    { unique_name: null },
-                    {
-                        NOT: {
-                            unique_name: {
-                                in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
-                            },
-                        },
+                NOT: {
+                    unique_name: {
+                        in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
                     },
-                ],
+                },
             });
         }
 
@@ -466,13 +474,18 @@ export class ReportsService {
         const filterCi =
             !(accountRow as { has_credit_insurance?: boolean } | null)
                 ?.has_credit_insurance;
+        const preferPolicyInsights =
+            !filterCi &&
+            context === CUSTOMER_UNPAID_INVOICES_CONTEXT &&
+            (await this.accountHasPolicyInsightsInvoiceReports(accountId));
 
         const view = await this.resolveDefaultView(
             accountId,
             userId,
             context,
             role,
-            filterCi
+            filterCi,
+            preferPolicyInsights
         );
         return serializeBigInt({
             report: view ? this.formatReportDates(view) : null,
@@ -709,12 +722,28 @@ export class ReportsService {
         };
     }
 
+    private async accountHasPolicyInsightsInvoiceReports(
+        accountId: number
+    ): Promise<boolean> {
+        const count = await this.db.report.count({
+            where: {
+                account_id: accountId,
+                context: CUSTOMER_UNPAID_INVOICES_CONTEXT,
+                unique_name: {
+                    in: [...CUSTOMER_UNPAID_POLICY_INSIGHTS_UNIQUE_NAMES],
+                },
+            },
+        });
+        return count > 0;
+    }
+
     private async resolveDefaultView(
         accountId: number,
         userId: string,
         context: string,
         _role: string,
-        filterCi: boolean
+        filterCi: boolean,
+        preferPolicyInsights = false
     ) {
         const userDefault = await this.db.userDefaultReport.findFirst({
             where: { user_id: userId, context },
@@ -732,8 +761,7 @@ export class ReportsService {
             const blockedForNonCi =
                 filterCi && isCreditInsuranceOnlyReport(preferred);
             const blockedForCi =
-                !filterCi &&
-                context === "customer_unpaid_invoices" &&
+                preferPolicyInsights &&
                 isBasicCustomerUnpaidInvoiceReport(preferred.unique_name);
             if (!blockedForNonCi && !blockedForCi) {
                 return userDefault.Report;
@@ -752,21 +780,14 @@ export class ReportsService {
                     { unique_name: { contains: "credit_insurance" } },
                 ],
             };
-        } else if (context === "customer_unpaid_invoices") {
+        } else if (preferPolicyInsights) {
             where.AND = [
                 {
-                    OR: [
-                        { unique_name: null },
-                        {
-                            NOT: {
-                                unique_name: {
-                                    in: [
-                                        ...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES,
-                                    ],
-                                },
-                            },
+                    NOT: {
+                        unique_name: {
+                            in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
                         },
-                    ],
+                    },
                 },
             ];
         }
