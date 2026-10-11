@@ -259,8 +259,17 @@ disable_conflicting_sites() {
         2>/dev/null || true
 }
 
+install_maintenance_snippet() {
+    local src="$NGINX_SRC/snippets/archaser-maintenance.conf"
+    [[ -f "$src" ]] || die "Missing nginx snippet: $src"
+    run mkdir -p /etc/nginx/snippets
+    run cp "$src" /etc/nginx/snippets/archaser-maintenance.conf
+    log "Installed archaser maintenance page snippet"
+}
+
 install_repo_sites() {
     local entry site_name src_name src
+    install_maintenance_snippet
     log "Installing nginx site configs from $NGINX_SRC"
     for entry in "${SITE_MAP[@]}"; do
         site_name="${entry%%:*}"

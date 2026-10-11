@@ -296,6 +296,8 @@ if cert_exists "$API_DOMAIN" && cert_exists "$GRAFANA_DOMAIN"; then
     run cp "$tmpdir/archaser-staging-grafana" /etc/nginx/sites-available/archaser-staging-grafana
     run ln -sfn /etc/nginx/sites-available/archaser-staging-api /etc/nginx/sites-enabled/archaser-staging-api
     run ln -sfn /etc/nginx/sites-available/archaser-staging-grafana /etc/nginx/sites-enabled/archaser-staging-grafana
+    run mkdir -p /etc/nginx/snippets
+    run cp "$NGINX_SRC/snippets/archaser-maintenance.conf" /etc/nginx/snippets/archaser-maintenance.conf
     run nginx -t
     run systemctl reload nginx
     log "nginx TLS sites active for $API_DOMAIN and $GRAFANA_DOMAIN"
