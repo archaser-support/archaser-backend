@@ -1717,6 +1717,11 @@ export type CustomerPolicyTrendSnapshotRunResult = {
         gapDays: number;
         gapFillDaysApplied: number;
     }>;
+    /** First catch-up day (`YYYY-MM-DD`) per account that had missed days written. */
+    gapFilledAccounts: Array<{
+        accountId: number;
+        fromDate: string;
+    }>;
 };
 
 export async function takeCustomerPolicyTrendSnapshots(): Promise<CustomerPolicyTrendSnapshotRunResult> {
@@ -1728,6 +1733,8 @@ export async function takeCustomerPolicyTrendSnapshots(): Promise<CustomerPolicy
     const todayUtc = startOfTodayUtc();
     let rowsUpserted = 0;
     const gapFillWarnings: CustomerPolicyTrendSnapshotRunResult["gapFillWarnings"] =
+        [];
+    const gapFilledAccounts: CustomerPolicyTrendSnapshotRunResult["gapFilledAccounts"] =
         [];
 
     for (const account of accounts) {
@@ -1782,6 +1789,10 @@ export async function takeCustomerPolicyTrendSnapshots(): Promise<CustomerPolicy
                     asOfLines,
                 });
             }
+            gapFilledAccounts.push({
+                accountId: account.id,
+                fromDate: datesToSync[0]!.toISOString().slice(0, 10),
+            });
         }
 
         rowsUpserted += await syncCustomerPolicyTrendSnapshotForAccount(
@@ -1794,6 +1805,7 @@ export async function takeCustomerPolicyTrendSnapshots(): Promise<CustomerPolicy
         accountsProcessed: accounts.length,
         rowsUpserted,
         gapFillWarnings,
+        gapFilledAccounts,
     };
 }
 

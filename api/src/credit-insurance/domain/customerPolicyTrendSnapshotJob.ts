@@ -3,6 +3,7 @@ import {
     activateDuePendingCustomerPolicies,
     drainAsOfRewriteQueue,
     takeCustomerPolicyTrendSnapshots,
+    takeInsurancePolicyTrendRollups,
 } from "@archaser/credit-insurance-domain";
 
 /**
@@ -16,6 +17,7 @@ export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies:
     activatePolicyRevisions?: typeof activateDueInsurancePolicyRevisions;
     activatePending?: typeof activateDuePendingCustomerPolicies;
     takeSnapshots?: typeof takeCustomerPolicyTrendSnapshots;
+    rollUpPolicyTrends?: typeof takeInsurancePolicyTrendRollups;
     drainQueue?: typeof drainAsOfRewriteQueue;
 } = {}): Promise<{
     policyRevisionActivation: Awaited<
@@ -25,6 +27,7 @@ export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies:
         ReturnType<typeof activateDuePendingCustomerPolicies>
     >;
     snapshot: Awaited<ReturnType<typeof takeCustomerPolicyTrendSnapshots>>;
+    policyRollup: Awaited<ReturnType<typeof takeInsurancePolicyTrendRollups>>;
     drain: Awaited<ReturnType<typeof drainAsOfRewriteQueue>>;
 }> {
     const activatePolicyRevisions =
@@ -34,6 +37,8 @@ export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies:
         dependencies.activatePending ?? activateDuePendingCustomerPolicies;
     const takeSnapshots =
         dependencies.takeSnapshots ?? takeCustomerPolicyTrendSnapshots;
+    const rollUpPolicyTrends =
+        dependencies.rollUpPolicyTrends ?? takeInsurancePolicyTrendRollups;
     const drainQueue = dependencies.drainQueue ?? drainAsOfRewriteQueue;
 
     // Same order as the worker handler: policy revisions skip customers that
@@ -82,6 +87,20 @@ export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies:
         snapshotError = error;
     }
 
+    let policyRollup:
+        | Awaited<ReturnType<typeof takeInsurancePolicyTrendRollups>>
+        | undefined;
+    let policyRollupError: unknown;
+    if (snapshot) {
+        try {
+            policyRollup = await rollUpPolicyTrends({
+                gapFilledAccounts: snapshot.gapFilledAccounts,
+            });
+        } catch (error) {
+            policyRollupError = error;
+        }
+    }
+
     let drain:
         | Awaited<ReturnType<typeof drainAsOfRewriteQueue>>
         | undefined;
@@ -102,6 +121,9 @@ export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies:
     if (snapshotError) {
         throw snapshotError;
     }
+    if (policyRollupError) {
+        throw policyRollupError;
+    }
     if (policyRevisionActivationError) {
         throw policyRevisionActivationError;
     }
@@ -115,6 +137,7 @@ export async function runCustomerPolicyTrendSnapshotsWithAsOfDrain(dependencies:
         policyRevisionActivation: policyRevisionActivation!,
         pendingActivation: pendingActivation!,
         snapshot: snapshot!,
+        policyRollup: policyRollup!,
         drain: drain!,
     };
 }

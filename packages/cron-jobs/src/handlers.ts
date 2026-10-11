@@ -12,6 +12,7 @@ import {
     syncAllCustomerPolicyGapAmounts,
     takeCreditDashboardDailySnapshots,
     takeCustomerPolicyTrendSnapshots,
+    takeInsurancePolicyTrendRollups,
     takeInsurancePolicyTrendSnapshots,
 } from "@archaser/credit-insurance-domain";
 import { drainArPostIngestRetryQueue, countPendingArPostIngestCustomers } from "./credit/arPostIngestRetryQueue";
@@ -217,6 +218,23 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
                     : new Error("Customer policy trend snapshot cron failed");
         }
 
+        let policyRollup:
+            | Awaited<ReturnType<typeof takeInsurancePolicyTrendRollups>>
+            | undefined;
+        let policyRollupError: Error | undefined;
+        if (todayResult) {
+            try {
+                policyRollup = await takeInsurancePolicyTrendRollups({
+                    gapFilledAccounts: todayResult.gapFilledAccounts,
+                });
+            } catch (error: unknown) {
+                policyRollupError =
+                    error instanceof Error
+                        ? error
+                        : new Error("Insurance policy trend roll-up failed");
+            }
+        }
+
         let drainError: Error | undefined;
         try {
             const drain = await drainAsOfRewriteQueue();
@@ -271,6 +289,7 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
 
         const stepErrors = [
             todayError,
+            policyRollupError,
             policyRevisionActivationError,
             pendingActivationError,
             drainError,
@@ -291,6 +310,7 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
             message: `Customer policy trend snapshots: ${todayResult!.rowsUpserted} rows across ${todayResult!.accountsProcessed} accounts; policy revisions activated: ${policyRevisionActivation?.activated ?? 0}; pending activated: ${pendingActivation?.activated ?? 0}; AR post-ingest retries: ${retryResult?.itemsProcessed ?? 0}`,
             summary: {
                 ...todayResult,
+                policyRollup,
                 policyRevisionActivation,
                 pendingActivation,
             },

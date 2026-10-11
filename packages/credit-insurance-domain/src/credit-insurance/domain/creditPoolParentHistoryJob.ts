@@ -495,6 +495,20 @@ export async function runCreditPoolParentHistoryJob(
             });
         }
 
+        if (daysDone > 0) {
+            const { rollUpInsurancePolicyTrendFromCustomerPolicyTrend } =
+                await import("./insurancePolicyTrendService");
+            await rollUpInsurancePolicyTrendFromCustomerPolicyTrend(
+                {
+                    accountId,
+                    customerIds: payload.customerIds,
+                    fromDate: from,
+                    toDate: days[daysDone - 1]!,
+                },
+                { dbClient: db }
+            );
+        }
+
         const final = await loadJob(accountId, db);
         if (
             final?.status === "running" &&

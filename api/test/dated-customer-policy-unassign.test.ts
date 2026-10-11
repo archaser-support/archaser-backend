@@ -81,33 +81,53 @@ function createMemoryDb(args: {
             findFirst: jest.fn(
                 async ({
                     where,
+                    orderBy,
                 }: {
                     where: {
                         customer_id: number;
                         is_active?: boolean;
-                        status?: string;
+                        insurance_policy_id?: number | null;
+                        status?: string | { not: string };
                     };
+                    orderBy?: unknown;
                 }) => {
-                    return (
-                        policies.find((row) => {
-                            if (row.customer_id !== where.customer_id) {
+                    const matches = policies.filter((row) => {
+                        if (row.customer_id !== where.customer_id) {
+                            return false;
+                        }
+                        if (typeof where.status === "string") {
+                            if (row.status !== where.status) {
                                 return false;
                             }
-                            if (
-                                where.status != null &&
-                                row.status !== where.status
-                            ) {
-                                return false;
-                            }
-                            if (
-                                where.is_active != null &&
-                                row.is_active !== where.is_active
-                            ) {
-                                return false;
-                            }
-                            return true;
-                        }) ?? null
-                    );
+                        } else if (
+                            where.status != null &&
+                            row.status === where.status.not
+                        ) {
+                            return false;
+                        }
+                        if (
+                            where.insurance_policy_id !== undefined &&
+                            row.insurance_policy_id !== where.insurance_policy_id
+                        ) {
+                            return false;
+                        }
+                        if (
+                            where.is_active != null &&
+                            row.is_active !== where.is_active
+                        ) {
+                            return false;
+                        }
+                        return true;
+                    });
+                    if (orderBy != null) {
+                        matches.sort(
+                            (a, b) =>
+                                a.policy_change_start_date.getTime() -
+                                    b.policy_change_start_date.getTime() ||
+                                a.id - b.id
+                        );
+                    }
+                    return matches[0] ?? null;
                 }
             ),
             update: jest.fn(
@@ -239,7 +259,7 @@ function createMemoryDb(args: {
                     where: {
                         customer_id: number;
                         policy_id: number;
-                        invoice_date: { gte: Date };
+                        OR: { invoice_date: { gte?: Date; lt?: Date } }[];
                     };
                     data: { policy_id: null };
                 }) => {
@@ -251,7 +271,15 @@ function createMemoryDb(args: {
                         if (row.policy_id !== where.policy_id) {
                             continue;
                         }
-                        if (row.invoice_date.getTime() < where.invoice_date.gte.getTime()) {
+                        const day = row.invoice_date.getTime();
+                        const matchesDate = where.OR.some(
+                            ({ invoice_date }) =>
+                                (invoice_date.gte != null &&
+                                    day >= invoice_date.gte.getTime()) ||
+                                (invoice_date.lt != null &&
+                                    day < invoice_date.lt.getTime())
+                        );
+                        if (!matchesDate) {
                             continue;
                         }
                         row.policy_id = data.policy_id;
@@ -376,7 +404,7 @@ describe("dated customer policy unassign", () => {
         ).rejects.toMatchObject({ code: "NO_ACTIVE_POLICY" });
     });
 
-    it("allows unassign before later copy-on-write versions when the date is on or after the product start", async () => {
+    it("allows unassign before older versions: adds one Removed row and leaves older versions unchanged", async () => {
         const policies: PolicyRow[] = [
             {
                 id: 5,
@@ -386,7 +414,7 @@ describe("dated customer policy unassign", () => {
                 policy_change_end_date: null,
                 status: "inactive",
                 is_active: false,
-                modified_by: null,
+                modified_by: "earlier-user",
             },
             {
                 id: 6,
@@ -399,11 +427,25 @@ describe("dated customer policy unassign", () => {
                 modified_by: null,
             },
         ];
+        const invoices: InvoiceRow[] = [
+            {
+                id: 1,
+                customer_id: 10,
+                policy_id: 77,
+                invoice_date: utcDay("2026-06-15"),
+            },
+            {
+                id: 2,
+                customer_id: 10,
+                policy_id: 77,
+                invoice_date: utcDay("2026-09-10"),
+            },
+        ];
         const db = createMemoryDb({
             customers: [{ id: 10, account_id: 1, parent_customer_id: null }],
             policies,
             topUps: [],
-            invoices: [],
+            invoices,
             insurancePolicies: [{ id: 77, start_date: utcDay("2024-04-01") }],
         });
         const rewrite = jest.fn(async () => ({
@@ -426,19 +468,36 @@ describe("dated customer policy unassign", () => {
             refreshTermsFlags: false,
         });
 
-        expect(policies[0]!.is_active).toBe(false);
-        expect(policies[0]!.status).toBe("inactive");
-        expect(policies[0]!.policy_change_end_date).toEqual(utcDay("2026-08-31"));
-        expect(policies[1]!.is_active).toBe(false);
-        expect(policies[1]!.status).toBe("inactive");
-        expect(policies[1]!.policy_change_end_date).toEqual(utcDay("2026-10-06"));
+        expect(policies[0]).toMatchObject({
+            policy_change_end_date: null,
+            status: "inactive",
+            modified_by: "earlier-user",
+        });
+        expect(policies[1]).toMatchObject({
+            is_active: false,
+            status: "inactive",
+            policy_change_end_date: null,
+            modified_by: "u",
+        });
+        expect(policies).toHaveLength(3);
+        expect(policies[2]).toMatchObject({
+            insurance_policy_id: null,
+            policy_change_start_date: utcDay("2026-07-01"),
+            policy_change_end_date: null,
+            status: "inactive",
+            is_active: false,
+            modified_by: "u",
+        });
+        // Before the first version (no prehistory) and after the remove day.
+        expect(invoices[0]!.policy_id).toBeNull();
+        expect(invoices[1]!.policy_id).toBeNull();
         expect(rewrite).toHaveBeenCalledWith(
             expect.objectContaining({ fromDate: utcDay("2026-07-01") }),
             expect.anything()
         );
     });
 
-    it("ends TF1, strips later invoices, clips top-ups, and rewrites from the unassign day", async () => {
+    it("deactivates TF1, adds a Removed row, strips later invoices, clips top-ups, and rewrites from the unassign day", async () => {
         const policies: PolicyRow[] = [
             {
                 id: 5,
@@ -504,7 +563,13 @@ describe("dated customer policy unassign", () => {
         expect(result.customerPolicyId).toBe(5);
         expect(policies[0]!.is_active).toBe(false);
         expect(policies[0]!.status).toBe("inactive");
-        expect(policies[0]!.policy_change_end_date).toEqual(utcDay("2026-03-15"));
+        expect(policies[0]!.policy_change_end_date).toBeNull();
+        expect(policies[1]).toMatchObject({
+            insurance_policy_id: null,
+            policy_change_start_date: utcDay("2026-03-15"),
+            policy_change_end_date: null,
+            status: "inactive",
+        });
         expect(invoices[0]!.policy_id).toBe(77);
         expect(invoices[1]!.policy_id).toBeNull();
         expect(topUps[0]!.end_date).toEqual(utcDay("2026-03-14"));
@@ -771,9 +836,12 @@ describe("dated customer policy unassign", () => {
         expect(result.failures).toBe(0);
         expect(policies[0]!.is_active).toBe(false);
         expect(policies[0]!.status).toBe("inactive");
-        expect(policies[0]!.policy_change_end_date).toEqual(todayUtc);
+        expect(policies[0]!.policy_change_end_date).toBeNull();
+        // The pending row becomes the Removed row; no second row is added.
+        expect(policies).toHaveLength(2);
         expect(policies[1]!.status).toBe("inactive");
         expect(policies[1]!.is_active).toBe(false);
+        expect(policies[1]!.policy_change_end_date).toBeNull();
         expect(policies.some((row) => row.is_active)).toBe(false);
         expect(topUps[0]!.end_date.getTime()).toBeLessThan(todayUtc.getTime());
         expect(invoices[0]!.policy_id).toBe(77);

@@ -175,7 +175,8 @@ function createMemoryDb(args: {
                 }: {
                     where: {
                         customer_id: number;
-                        OR: Array<
+                        status?: string;
+                        OR?: Array<
                             | { is_active: boolean }
                             | { status: string }
                         >;
@@ -185,8 +186,27 @@ function createMemoryDb(args: {
                         if (p.customer_id !== where.customer_id) {
                             return false;
                         }
+                        if (where.status != null) {
+                            return p.status === where.status;
+                        }
                         return p.is_active || p.status === "pending";
                     })
+            ),
+            update: jest.fn(
+                async ({
+                    where,
+                    data,
+                }: {
+                    where: { id: number };
+                    data: Partial<PolicyRow>;
+                }) => {
+                    const row = policies.find((p) => p.id === where.id);
+                    if (!row) {
+                        throw new Error("policy not found");
+                    }
+                    Object.assign(row, data);
+                    return row;
+                }
             ),
             updateMany: jest.fn(
                 async ({

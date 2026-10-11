@@ -11,6 +11,7 @@ export type CustomerPolicyVersionForAsOf = {
     id: number;
     customer_id: number;
     is_active: boolean;
+    status?: string | null;
     policy_change_start_date: Date;
     policy_change_end_date: Date | null;
     insurance_policy_id: number | null;
@@ -40,15 +41,94 @@ function isStrictlyLaterVersion(
 }
 
 /**
+ * Remove marker saved by dated unassign: no insurance policy, inactive, open
+ * end. Cancelled pending changes are voided (end = start) so they never match.
+ */
+export function isCustomerPolicyRemovedRow(
+    cp: Pick<
+        CustomerPolicyVersionForAsOf,
+        "insurance_policy_id" | "is_active" | "status" | "policy_change_end_date"
+    >
+): boolean {
+    return (
+        cp.insurance_policy_id == null &&
+        !cp.is_active &&
+        (cp.status == null || cp.status === "inactive") &&
+        cp.policy_change_end_date == null
+    );
+}
+
+function isVoidedVersion(cp: CustomerPolicyVersionForAsOf): boolean {
+    return (
+        cp.policy_change_end_date != null &&
+        toUtcDateOnly(cp.policy_change_end_date).getTime() <=
+            toUtcDateOnly(cp.policy_change_start_date).getTime()
+    );
+}
+
+/**
+ * First day a version stops covering because of a Remove saved after it
+ * (higher id); null when no later Remove exists. Versions saved after the
+ * Remove (re-assign) are not stopped by it.
+ */
+function removeStopDayMs(
+    cp: CustomerPolicyVersionForAsOf,
+    removedRows: readonly CustomerPolicyVersionForAsOf[]
+): number | null {
+    let stopMs: number | null = null;
+    for (const removed of removedRows) {
+        if (removed.id <= cp.id) {
+            continue;
+        }
+        const removedStartMs = toUtcDateOnly(
+            removed.policy_change_start_date
+        ).getTime();
+        if (stopMs == null || removedStartMs < stopMs) {
+            stopMs = removedStartMs;
+        }
+    }
+    return stopMs;
+}
+
+/**
+ * Version that was live when the Remove was saved: the latest-saved,
+ * non-voided version with a policy and a lower id. Its name labels the Remove
+ * and its base limit applies to run-off.
+ */
+export function findCustomerPolicyVersionEndedByRemove<
+    T extends CustomerPolicyVersionForAsOf,
+>(removedRow: CustomerPolicyVersionForAsOf, versions: readonly T[]): T | null {
+    let ended: T | null = null;
+    for (const row of versions) {
+        if (
+            row.insurance_policy_id == null ||
+            row.status === "pending" ||
+            row.id >= removedRow.id ||
+            isVoidedVersion(row)
+        ) {
+            continue;
+        }
+        if (ended == null || row.id > ended.id) {
+            ended = row;
+        }
+    }
+    return ended;
+}
+
+/**
  * Whether a CustomerPolicy version supplies terms/limits on as-of day D.
  *
  * - Version starts on/before D.
- * - Unassign/run-off and supersede: `policy_change_end_date` is the first day
- *   the version is no longer the live attachment (D &lt; end). New writers set
- *   end_date to the next version's start; legacy rows may still have null end
- *   and are closed by the next version's start (see successor check below).
+ * - Supersede: `policy_change_end_date` is the first day the version is no
+ *   longer the live attachment (D &lt; end). New writers set end_date to the
+ *   next version's start; legacy rows may still have null end and are closed
+ *   by the next version's start (see successor check below).
+ * - Remove: a Removed row (see {@link isCustomerPolicyRemovedRow}) starting on
+ *   day S stops every version saved before it from S on, including versions
+ *   that start on/after S (they never apply).
  * - When D is before every recorded start, the earliest version is extended
- *   backward (prehistory before copy-on-write dating).
+ *   backward (prehistory before copy-on-write dating) — unless the customer
+ *   has a Removed row.
  */
 export function isCustomerPolicyVersionEffectiveOnDate(
     cp: CustomerPolicyVersionForAsOf,
@@ -71,17 +151,24 @@ export function isCustomerPolicyVersionEffectiveOnDate(
     if (withPolicy.length === 0) {
         return false;
     }
+    const removedRows = allVersionsForCustomer.filter(isCustomerPolicyRemovedRow);
+    const notStoppedByRemove = (row: CustomerPolicyVersionForAsOf) => {
+        const stopMs = removeStopDayMs(row, removedRows);
+        return stopMs == null || dayMs < stopMs;
+    };
 
-    const earliest = withPolicy.reduce((best, row) =>
-        isStrictlyLaterVersion(best, row) ? row : best
-    );
-    const earliestStartMs = toUtcDateOnly(
-        earliest.policy_change_start_date
-    ).getTime();
+    if (removedRows.length === 0) {
+        const earliest = withPolicy.reduce((best, row) =>
+            isStrictlyLaterVersion(best, row) ? row : best
+        );
+        const earliestStartMs = toUtcDateOnly(
+            earliest.policy_change_start_date
+        ).getTime();
 
-    // Prehistory: no version has started yet → earliest row's terms apply.
-    if (dayMs < earliestStartMs) {
-        return cp.id === earliest.id;
+        // Prehistory: no version has started yet → earliest row's terms apply.
+        if (dayMs < earliestStartMs) {
+            return cp.id === earliest.id;
+        }
     }
 
     if (startMs > dayMs) {
@@ -90,8 +177,11 @@ export function isCustomerPolicyVersionEffectiveOnDate(
     if (endMs != null && dayMs >= endMs) {
         return false;
     }
+    if (!notStoppedByRemove(cp)) {
+        return false;
+    }
 
-    // Latest version that already started on/before D (and not past unassign).
+    // Latest version that already started on/before D (not ended or removed).
     const covering = withPolicy.filter((row) => {
         const rowStart = toUtcDateOnly(row.policy_change_start_date).getTime();
         if (rowStart > dayMs) {
@@ -103,7 +193,7 @@ export function isCustomerPolicyVersionEffectiveOnDate(
                 return false;
             }
         }
-        return true;
+        return notStoppedByRemove(row);
     });
     if (covering.length === 0) {
         return false;
@@ -123,7 +213,8 @@ export function isCustomerPolicyVersionEffectiveOnDate(
     if (
         !latest.is_active &&
         latest.policy_change_end_date == null &&
-        !hasLaterSuccessor
+        !hasLaterSuccessor &&
+        removeStopDayMs(latest, removedRows) == null
     ) {
         return false;
     }
@@ -136,17 +227,8 @@ export function isCustomerPolicyVersionEffectiveOnDate(
 export function selectCustomerPoliciesEffectiveOnDate<
     T extends CustomerPolicyVersionForAsOf,
 >(policies: readonly T[], asOfDate: Date): T[] {
-    const byCustomer = new Map<number, T[]>();
-    for (const cp of policies) {
-        if (cp.insurance_policy_id == null) {
-            continue;
-        }
-        const bucket = byCustomer.get(cp.customer_id) ?? [];
-        bucket.push(cp);
-        byCustomer.set(cp.customer_id, bucket);
-    }
     const selected: T[] = [];
-    for (const [, versions] of byCustomer) {
+    for (const [, versions] of groupVersionsByCustomer(policies)) {
         const hit = versions.find((cp) =>
             isCustomerPolicyVersionEffectiveOnDate(cp, asOfDate, versions)
         );
@@ -157,13 +239,30 @@ export function selectCustomerPoliciesEffectiveOnDate<
     return selected;
 }
 
+function groupVersionsByCustomer<T extends CustomerPolicyVersionForAsOf>(
+    policies: readonly T[]
+): Map<number, T[]> {
+    const byCustomer = new Map<number, T[]>();
+    for (const cp of policies) {
+        const bucket = byCustomer.get(cp.customer_id) ?? [];
+        bucket.push(cp);
+        byCustomer.set(cp.customer_id, bucket);
+    }
+    return byCustomer;
+}
+
 /**
- * CPT writers on day D: version effective on D, plus dated-unassign run-off
- * rows (inactive with `policy_change_end_date` and D ≥ end) for customers with
- * no effective version on D — superseded versions also carry an end date and
- * must not double-count AR next to their successor. One run-off row per
- * customer + insurance policy (latest ended version); zero-length (voided)
- * versions never write run-off.
+ * CPT writers on day D: version effective on D, plus run-off rows for
+ * customers with no effective version on D (superseded versions must not
+ * double-count AR next to their successor).
+ *
+ * - Removed row starting on/before D: the version live when the Remove was
+ *   saved, returned with `policy_change_end_date` = the remove day so the
+ *   writer treats D as a run-off day (base limit, no top-up).
+ * - Legacy removes (no Removed row): inactive with `policy_change_end_date`
+ *   and D ≥ end; zero-length (voided) versions never write run-off.
+ *
+ * One run-off row per customer + insurance policy.
  */
 export function selectCustomerPoliciesForTrendWriteOnDate<
     T extends CustomerPolicyVersionForAsOf,
@@ -171,13 +270,49 @@ export function selectCustomerPoliciesForTrendWriteOnDate<
     const dayMs = toUtcDateOnly(asOfDate).getTime();
     const effective = selectCustomerPoliciesEffectiveOnDate(policies, asOfDate);
     const customersWithEffective = new Set(effective.map((cp) => cp.customer_id));
+    const customersWithRemovedRow = new Set<number>();
+    const removeRunOffByScope = new Map<
+        string,
+        { version: T; removedRow: T }
+    >();
+    for (const [customerId, versions] of groupVersionsByCustomer(policies)) {
+        const removedRows = versions.filter(isCustomerPolicyRemovedRow);
+        if (removedRows.length === 0) {
+            continue;
+        }
+        customersWithRemovedRow.add(customerId);
+        if (customersWithEffective.has(customerId)) {
+            continue;
+        }
+        for (const removedRow of removedRows) {
+            if (
+                toUtcDateOnly(removedRow.policy_change_start_date).getTime() >
+                dayMs
+            ) {
+                continue;
+            }
+            const version = findCustomerPolicyVersionEndedByRemove(
+                removedRow,
+                versions
+            );
+            if (version == null) {
+                continue;
+            }
+            const key = `${customerId}:${version.insurance_policy_id}`;
+            const prior = removeRunOffByScope.get(key);
+            if (prior == null || removedRow.id > prior.removedRow.id) {
+                removeRunOffByScope.set(key, { version, removedRow });
+            }
+        }
+    }
     const runOffByScope = new Map<string, T>();
     for (const cp of policies) {
         if (
             cp.insurance_policy_id == null ||
             cp.is_active ||
             cp.policy_change_end_date == null ||
-            customersWithEffective.has(cp.customer_id)
+            customersWithEffective.has(cp.customer_id) ||
+            customersWithRemovedRow.has(cp.customer_id)
         ) {
             continue;
         }
@@ -197,7 +332,13 @@ export function selectCustomerPoliciesForTrendWriteOnDate<
             runOffByScope.set(key, cp);
         }
     }
-    return [...effective, ...runOffByScope.values()];
+    const removeRunOff = [...removeRunOffByScope.values()].map(
+        ({ version, removedRow }) => ({
+            ...version,
+            policy_change_end_date: removedRow.policy_change_start_date,
+        })
+    );
+    return [...effective, ...runOffByScope.values(), ...removeRunOff];
 }
 
 /**

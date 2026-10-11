@@ -634,7 +634,7 @@ export class CustomerPolicyService {
         }
         const pending = await this.db.customerPolicy.findFirst({
             where: { customer_id: args.customerId, status: "pending" },
-            select: { id: true },
+            select: { id: true, policy_change_start_date: true },
         });
         if (!pending) {
             throw new NotFoundException({
@@ -647,6 +647,8 @@ export class CustomerPolicyService {
             data: {
                 status: "inactive",
                 is_active: false,
+                // Voided (end = start): never effective, never a Removed row.
+                policy_change_end_date: pending.policy_change_start_date,
                 modified_by: args.userId,
             },
         });

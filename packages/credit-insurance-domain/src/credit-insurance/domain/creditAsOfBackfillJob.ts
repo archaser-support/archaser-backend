@@ -346,6 +346,10 @@ type BackfillWriters = {
             asOfTermsFlagsApplied?: boolean;
         }
     ) => Promise<{ scopesProcessed: number } | unknown>;
+    rollUpInsurancePolicyTrendFromCustomerPolicyTrend: (
+        input: import("./insurancePolicyTrendService").InsurancePolicyTrendRollupInput,
+        options?: { dbClient?: PrismaClientLike }
+    ) => Promise<unknown>;
 };
 
 type LoadAsOfLines = (
@@ -405,6 +409,10 @@ async function resolveWriters(
         takeCreditDashboardDailySnapshotsForAccount:
             writers?.takeCreditDashboardDailySnapshotsForAccount ??
             takeCreditDashboardDailySnapshotsForAccount,
+        rollUpInsurancePolicyTrendFromCustomerPolicyTrend:
+            writers?.rollUpInsurancePolicyTrendFromCustomerPolicyTrend ??
+            (await import("./insurancePolicyTrendService"))
+                .rollUpInsurancePolicyTrendFromCustomerPolicyTrend,
     };
 }
 
@@ -659,8 +667,9 @@ export async function runCreditAsOfBackfillJob(
 
         /**
          * Per-day writers skip the inactive-CP prune and shell overlay; apply
-         * both once here. Failures propagate so the run ends `failed` and
-         * Retry (checkpoint kept) re-runs this over the full window.
+         * both once here, then roll policy totals up from the final CPT rows.
+         * Failures propagate so the run ends `failed` and Retry (checkpoint
+         * kept) re-runs this over the full window.
          */
         async function finalizeReplayedRange(
             fromDate: Date,
@@ -681,6 +690,10 @@ export async function runCreditAsOfBackfillJob(
                 toDate,
                 dbClient: db,
             });
+            await writers.rollUpInsurancePolicyTrendFromCustomerPolicyTrend(
+                { accountId, fromDate, toDate },
+                { dbClient: db }
+            );
         }
 
         for (let i = 0; i < days.length; i++) {

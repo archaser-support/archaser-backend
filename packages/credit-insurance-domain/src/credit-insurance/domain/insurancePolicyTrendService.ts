@@ -1,21 +1,25 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 import { prisma } from "../domain-db";
 
-import { fetchOpenReceivableByCustomerMap } from "./creditInsuranceDashboardService";
-import { hasTopUpPolicies } from "./hasTopUpPolicies";
 import {
     findAccountSnapshotLeaseBlocker,
     warnSnapshotWriterSkippedForLease,
 } from "./accountBackgroundJobLease";
-import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
+import { customerPolicyTrendEffectiveRowOrderSql } from "./customerPolicyAsOfVersion";
 import { runInsurancePolicyStatusMaintenance } from "./insurancePolicyStatusCron";
 import {
     primaryEffectivelyActivePrismaWhere,
     startOfTodayUtc,
+    toUtcDateOnly,
 } from "./shared/insurancePolicyLifecycle";
 
-const COLLECTION_LIVE = ["Active", "Inactive"] as const;
+type RawCapableClient = {
+    $queryRaw: PrismaClient["$queryRaw"];
+    $executeRaw: PrismaClient["$executeRaw"];
+};
+
+const ROLLUP_UPDATE_BATCH_SIZE = 500;
 
 const HEADER_SCALAR_FIELDS = [
     "policy_number",
@@ -158,78 +162,330 @@ function clampDays(days: number | undefined, defaultDays: number, min: number, m
     return Math.max(min, Math.min(days ?? defaultDays, max));
 }
 
-async function computePolicyRollups(
-    accountId: number,
-    policyId: number,
-    maxTotalCover: Prisma.Decimal | null,
-    snapshotDate: Date,
-    accountHasTopUp: boolean
-): Promise<{
+type PolicyDayRollup = {
     activeCustomerCount: number;
     totalApprovedLimit: Prisma.Decimal | null;
     totalOpenAr: number;
-    policyUsagePct: number | null;
-}> {
-    const activeCustomerPolicies = await prisma.customerPolicy.findMany({
-        where: {
-            is_active: true,
-            insurance_policy_id: policyId,
-            Customer: {
-                account_id: accountId,
-                collection_status: { in: [...COLLECTION_LIVE] },
-            },
-        },
-        select: {
-            customer_id: true,
-            approved_limit: true,
-            approved_limit_currency: true,
-        },
-    });
+};
 
-    const openArByCustomer = await fetchOpenReceivableByCustomerMap(
-        accountId,
-        policyId
-    );
+const EMPTY_POLICY_DAY_ROLLUP: PolicyDayRollup = {
+    activeCustomerCount: 0,
+    totalApprovedLimit: null,
+    totalOpenAr: 0,
+};
 
-    let totalApprovedLimit = new Prisma.Decimal(0);
-    let hasAnyLimit = false;
-    let totalOpenAr = 0;
+function policyDayKey(policyId: number, snapshotDate: Date): string {
+    return `${policyId}:${normalizeDateString(snapshotDate)}`;
+}
 
-    for (const cp of activeCustomerPolicies) {
-        const customerAr = Math.max(0, openArByCustomer.get(cp.customer_id) ?? 0);
-        totalOpenAr += customerAr;
+/**
+ * Policy totals per (policy, day) summed from that day's
+ * {@link CustomerPolicyTrend} rows, run-off rows included. One row per
+ * customer + policy + day (effective version wins over run-off); customers
+ * outside Active / Inactive collection status are skipped. Credit-pool
+ * members carry the root's mirrored limit and the root row carries pool AR, so
+ * limit and open AR come from top-level customers only; the customer count
+ * includes every member.
+ */
+async function loadPolicyDayRollupsFromCustomerPolicyTrend(args: {
+    accountId: number;
+    policyIds: readonly number[];
+    fromDate: Date;
+    toDate: Date;
+    dbClient: RawCapableClient;
+}): Promise<Map<string, PolicyDayRollup>> {
+    const rollups = new Map<string, PolicyDayRollup>();
+    if (args.policyIds.length === 0) {
+        return rollups;
+    }
+    const rows = await args.dbClient.$queryRaw<
+        Array<{
+            insurance_policy_id: number;
+            snapshot_date: Date;
+            customer_count: number;
+            total_approved_limit: Prisma.Decimal | null;
+            total_open_ar: number | null;
+        }>
+    >`
+        SELECT
+            t.insurance_policy_id,
+            t.snapshot_date,
+            COUNT(DISTINCT t.customer_id)::int AS customer_count,
+            SUM(
+                CASE
+                    WHEN c.parent_customer_id IS NULL AND t.limit_value > 0
+                    THEN t.limit_value
+                    ELSE NULL
+                END
+            ) AS total_approved_limit,
+            COALESCE(SUM(
+                CASE
+                    WHEN c.parent_customer_id IS NULL
+                    THEN GREATEST(COALESCE(t.total_receivables, t.usage_amount, 0), 0)
+                    ELSE 0
+                END
+            ), 0)::float8 AS total_open_ar
+        FROM (
+            SELECT DISTINCT ON (t.customer_id, t.insurance_policy_id, t.snapshot_date)
+                t.customer_id,
+                t.insurance_policy_id,
+                t.snapshot_date,
+                t.total_receivables::float8 AS total_receivables,
+                t.usage_amount,
+                CASE
+                    WHEN t.effective_approved_limit > 0
+                    THEN t.effective_approved_limit
+                    ELSE t.approved_limit
+                END AS limit_value
+            FROM "CustomerPolicyTrend" t
+            LEFT JOIN "CustomerPolicy" cp ON cp.id = t.customer_policy_id
+            WHERE t.account_id = ${args.accountId}
+              AND t.insurance_policy_id IN (${Prisma.join([...args.policyIds])})
+              AND t.snapshot_date >= ${args.fromDate}::date
+              AND t.snapshot_date <= ${args.toDate}::date
+            ORDER BY
+                t.customer_id,
+                t.insurance_policy_id,
+                t.snapshot_date,
+                ${customerPolicyTrendEffectiveRowOrderSql}
+        ) t
+        INNER JOIN "Customer" c ON c.id = t.customer_id
+        WHERE c.account_id = ${args.accountId}
+          AND c.collection_status IN ('Active', 'Inactive')
+        GROUP BY t.insurance_policy_id, t.snapshot_date
+    `;
+    for (const row of rows) {
+        rollups.set(policyDayKey(row.insurance_policy_id, row.snapshot_date), {
+            activeCustomerCount: Number(row.customer_count ?? 0),
+            totalApprovedLimit:
+                row.total_approved_limit != null
+                    ? new Prisma.Decimal(row.total_approved_limit)
+                    : null,
+            totalOpenAr: Number(row.total_open_ar ?? 0),
+        });
+    }
+    return rollups;
+}
 
-        let limitValue = decimalToNumber(cp.approved_limit);
-        if (accountHasTopUp) {
-            const resolved = await resolveEffectiveApprovedLimit(cp.customer_id, {
-                baseApprovedLimit: cp.approved_limit,
-                baseApprovedLimitCurrency:
-                    cp.approved_limit_currency?.trim().toUpperCase() ?? null,
-                dbClient: prisma,
-                asOfDate: snapshotDate,
-            });
-            if (
-                resolved?.effectiveApprovedLimit != null &&
-                resolved.effectiveApprovedLimit > 0
-            ) {
-                limitValue = resolved.effectiveApprovedLimit;
-            }
-        }
-        if (limitValue != null && limitValue > 0) {
-            totalApprovedLimit = totalApprovedLimit.add(limitValue);
-            hasAnyLimit = true;
-        }
+/**
+ * Days in range where the account has any {@link CustomerPolicyTrend} row.
+ * A day without one has not been written yet (e.g. today before the trend
+ * cron), so policy totals for it are not known — not zero.
+ */
+async function loadAccountDaysWithCustomerPolicyTrend(args: {
+    accountId: number;
+    fromDate: Date;
+    toDate: Date;
+    dbClient: RawCapableClient;
+}): Promise<Set<string>> {
+    const rows = await args.dbClient.$queryRaw<Array<{ snapshot_date: Date }>>`
+        SELECT DISTINCT snapshot_date
+        FROM "CustomerPolicyTrend"
+        WHERE account_id = ${args.accountId}
+          AND snapshot_date >= ${args.fromDate}::date
+          AND snapshot_date <= ${args.toDate}::date
+    `;
+    return new Set(rows.map((row) => normalizeDateString(row.snapshot_date)));
+}
+
+async function resolveRollupPolicyIdsForCustomers(args: {
+    accountId: number;
+    customerIds: readonly number[];
+    fromDate: Date;
+    toDate: Date;
+    dbClient: RawCapableClient;
+}): Promise<number[]> {
+    const rows = await args.dbClient.$queryRaw<Array<{ policy_id: number }>>`
+        SELECT cp.insurance_policy_id AS policy_id
+        FROM "CustomerPolicy" cp
+        INNER JOIN "Customer" c ON c.id = cp.customer_id
+        WHERE c.account_id = ${args.accountId}
+          AND cp.customer_id IN (${Prisma.join([...args.customerIds])})
+          AND cp.insurance_policy_id IS NOT NULL
+        UNION
+        SELECT t.insurance_policy_id AS policy_id
+        FROM "CustomerPolicyTrend" t
+        WHERE t.account_id = ${args.accountId}
+          AND t.customer_id IN (${Prisma.join([...args.customerIds])})
+          AND t.insurance_policy_id IS NOT NULL
+          AND t.snapshot_date >= ${args.fromDate}::date
+          AND t.snapshot_date <= ${args.toDate}::date
+    `;
+    return rows.map((row) => Number(row.policy_id)).filter(Number.isFinite);
+}
+
+export type InsurancePolicyTrendRollupInput = {
+    accountId: number;
+    fromDate: Date;
+    /** Inclusive; defaults to `fromDate`. */
+    toDate?: Date;
+    /** Limits the roll-up to policies these customers have (or had) rows on. */
+    customerIds?: readonly number[];
+    policyId?: number;
+};
+
+/**
+ * Rewrite policy totals on existing {@link InsurancePolicyTrend} rows for the
+ * given days from that day's {@link CustomerPolicyTrend} rows. Header / config
+ * fields are left as snapshotted; usage % uses the row's own `max_total_cover`.
+ * Days without an Insurance Policy Trend row are not created here; days where
+ * the account has no Customer Policy Trend rows keep their totals.
+ */
+export async function rollUpInsurancePolicyTrendFromCustomerPolicyTrend(
+    input: InsurancePolicyTrendRollupInput,
+    options?: { dbClient?: RawCapableClient }
+): Promise<{ policyRowsUpdated: number }> {
+    const db = options?.dbClient ?? prisma;
+    const fromDate = toUtcDateOnly(input.fromDate);
+    const toDate = toUtcDateOnly(input.toDate ?? input.fromDate);
+    if (toDate.getTime() < fromDate.getTime()) {
+        return { policyRowsUpdated: 0 };
     }
 
-    const maxCover = decimalToNumber(maxTotalCover);
-    const policyUsagePct = computePolicyUsagePct(totalOpenAr, maxCover);
+    let policyScope: number[] | null = null;
+    if (input.policyId != null) {
+        policyScope = [input.policyId];
+    } else {
+        const customerIds = (input.customerIds ?? []).filter(Number.isFinite);
+        if (customerIds.length > 0) {
+            policyScope = await resolveRollupPolicyIdsForCustomers({
+                accountId: input.accountId,
+                customerIds,
+                fromDate,
+                toDate,
+                dbClient: db,
+            });
+        }
+    }
+    if (policyScope != null && policyScope.length === 0) {
+        return { policyRowsUpdated: 0 };
+    }
 
-    return {
-        activeCustomerCount: activeCustomerPolicies.length,
-        totalApprovedLimit: hasAnyLimit ? totalApprovedLimit : null,
-        totalOpenAr,
-        policyUsagePct,
-    };
+    const policyTrendRows = await db.$queryRaw<
+        Array<{
+            id: bigint;
+            insurance_policy_id: number;
+            snapshot_date: Date;
+            max_total_cover: Prisma.Decimal | null;
+        }>
+    >`
+        SELECT id, insurance_policy_id, snapshot_date, max_total_cover
+        FROM "InsurancePolicyTrend"
+        WHERE account_id = ${input.accountId}
+          AND snapshot_date >= ${fromDate}::date
+          AND snapshot_date <= ${toDate}::date
+          ${
+              policyScope != null
+                  ? Prisma.sql`AND insurance_policy_id IN (${Prisma.join(policyScope)})`
+                  : Prisma.empty
+          }
+    `;
+    if (policyTrendRows.length === 0) {
+        return { policyRowsUpdated: 0 };
+    }
+    const daysWithCustomerRows = await loadAccountDaysWithCustomerPolicyTrend({
+        accountId: input.accountId,
+        fromDate,
+        toDate,
+        dbClient: db,
+    });
+    const trendRows = policyTrendRows.filter((row) =>
+        daysWithCustomerRows.has(normalizeDateString(row.snapshot_date))
+    );
+    if (trendRows.length === 0) {
+        return { policyRowsUpdated: 0 };
+    }
+
+    const rollups = await loadPolicyDayRollupsFromCustomerPolicyTrend({
+        accountId: input.accountId,
+        policyIds: [...new Set(trendRows.map((row) => row.insurance_policy_id))],
+        fromDate,
+        toDate,
+        dbClient: db,
+    });
+
+    const valueRows = trendRows.map((row) => {
+        const rollup =
+            rollups.get(policyDayKey(row.insurance_policy_id, row.snapshot_date)) ??
+            EMPTY_POLICY_DAY_ROLLUP;
+        const policyUsagePct = computePolicyUsagePct(
+            rollup.totalOpenAr,
+            decimalToNumber(row.max_total_cover)
+        );
+        return Prisma.sql`(${row.id}::bigint, ${rollup.activeCustomerCount}::int, ${rollup.totalApprovedLimit}::numeric, ${rollup.totalOpenAr}::float8, ${policyUsagePct}::float8)`;
+    });
+
+    let policyRowsUpdated = 0;
+    for (let i = 0; i < valueRows.length; i += ROLLUP_UPDATE_BATCH_SIZE) {
+        const batch = valueRows.slice(i, i + ROLLUP_UPDATE_BATCH_SIZE);
+        policyRowsUpdated += await db.$executeRaw`
+            UPDATE "InsurancePolicyTrend" AS ipt
+            SET
+                active_customer_count = v.active_customer_count,
+                total_approved_limit = v.total_approved_limit,
+                total_open_ar = v.total_open_ar,
+                policy_usage_pct = v.policy_usage_pct,
+                modified_at = NOW()
+            FROM (VALUES ${Prisma.join(batch)}) AS v(
+                id,
+                active_customer_count,
+                total_approved_limit,
+                total_open_ar,
+                policy_usage_pct
+            )
+            WHERE ipt.id = v.id
+        `;
+    }
+    return { policyRowsUpdated };
+}
+
+/**
+ * Today's policy totals from today's Customer Policy Trend tip, for every
+ * credit-insurance account (Customer Policy Trend daily cron). Accounts in
+ * `gapFilledAccounts` are rolled up from their first catch-up day.
+ */
+export async function takeInsurancePolicyTrendRollups(options?: {
+    snapshotDate?: Date;
+    gapFilledAccounts?: ReadonlyArray<{
+        accountId: number;
+        fromDate: Date | string;
+    }>;
+}): Promise<{ accountsProcessed: number; policyRowsUpdated: number }> {
+    const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
+    const gapFillFromByAccountId = new Map(
+        (options?.gapFilledAccounts ?? []).map((entry) => [
+            entry.accountId,
+            toUtcDateOnly(entry.fromDate),
+        ])
+    );
+    const accounts = await prisma.account.findMany({
+        where: { has_credit_insurance: true },
+        select: { id: true },
+    });
+
+    let accountsProcessed = 0;
+    let policyRowsUpdated = 0;
+    for (const account of accounts) {
+        const leaseBlocker = await findAccountSnapshotLeaseBlocker(
+            account.id,
+            prisma
+        );
+        if (leaseBlocker) {
+            warnSnapshotWriterSkippedForLease(
+                "InsurancePolicyTrend",
+                leaseBlocker
+            );
+            continue;
+        }
+        const result = await rollUpInsurancePolicyTrendFromCustomerPolicyTrend({
+            accountId: account.id,
+            fromDate: gapFillFromByAccountId.get(account.id) ?? snapshotDate,
+            toDate: snapshotDate,
+        });
+        accountsProcessed += 1;
+        policyRowsUpdated += result.policyRowsUpdated;
+    }
+    return { accountsProcessed, policyRowsUpdated };
 }
 
 /**
@@ -258,8 +514,6 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
         };
     }
 
-    const accountHasTopUp = await hasTopUpPolicies(accountId);
-
     const policies = await prisma.insurancePolicy.findMany({
         where: {
             account_id: accountId,
@@ -272,18 +526,46 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
         },
     });
 
+    const rollupDay = toUtcDateOnly(snapshotDate);
+    const hasCustomerRowsForDay = (
+        await loadAccountDaysWithCustomerPolicyTrend({
+            accountId,
+            fromDate: rollupDay,
+            toDate: rollupDay,
+            dbClient: prisma,
+        })
+    ).has(normalizeDateString(rollupDay));
+    const rollupsByPolicyDay = hasCustomerRowsForDay
+        ? await loadPolicyDayRollupsFromCustomerPolicyTrend({
+              accountId,
+              policyIds: policies.map((policy) => policy.id),
+              fromDate: rollupDay,
+              toDate: rollupDay,
+              dbClient: prisma,
+          })
+        : new Map<string, PolicyDayRollup>();
+
     let policyRowsUpserted = 0;
     let countryRowsUpserted = 0;
     let namedRowsUpserted = 0;
 
     for (const policy of policies) {
-        const rollups = await computePolicyRollups(
-            accountId,
-            policy.id,
-            policy.max_total_cover,
-            snapshotDate,
-            accountHasTopUp
-        );
+        const rollup =
+            rollupsByPolicyDay.get(policyDayKey(policy.id, rollupDay)) ??
+            EMPTY_POLICY_DAY_ROLLUP;
+        const totalsValues = hasCustomerRowsForDay
+            ? Prisma.sql`${rollup.activeCustomerCount}, ${rollup.totalApprovedLimit}, ${rollup.totalOpenAr}, ${computePolicyUsagePct(
+                  rollup.totalOpenAr,
+                  decimalToNumber(policy.max_total_cover)
+              )}`
+            : Prisma.sql`DEFAULT, DEFAULT, DEFAULT, DEFAULT`;
+        const totalsUpdate = hasCustomerRowsForDay
+            ? Prisma.sql`
+                active_customer_count = EXCLUDED.active_customer_count,
+                total_approved_limit = EXCLUDED.total_approved_limit,
+                total_open_ar = EXCLUDED.total_open_ar,
+                policy_usage_pct = EXCLUDED.policy_usage_pct,`
+            : Prisma.empty;
 
         const countryCount = policy.InsurancePolicyCountry.length;
         const namedCount = policy.NamedPolicy.length;
@@ -346,10 +628,7 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                 ${policy.cost_percent},
                 ${policy.registration_fee_percent},
                 ${policy.status}::"record_status",
-                ${rollups.activeCustomerCount},
-                ${rollups.totalApprovedLimit},
-                ${rollups.totalOpenAr},
-                ${rollups.policyUsagePct},
+                ${totalsValues},
                 ${namedCount},
                 ${countryCount},
                 NOW()
@@ -378,10 +657,7 @@ export async function syncInsurancePolicyTrendSnapshotForAccount(
                 cost_percent = EXCLUDED.cost_percent,
                 registration_fee_percent = EXCLUDED.registration_fee_percent,
                 status = EXCLUDED.status,
-                active_customer_count = EXCLUDED.active_customer_count,
-                total_approved_limit = EXCLUDED.total_approved_limit,
-                total_open_ar = EXCLUDED.total_open_ar,
-                policy_usage_pct = EXCLUDED.policy_usage_pct,
+                ${totalsUpdate}
                 named_policy_row_count = EXCLUDED.named_policy_row_count,
                 country_row_count = EXCLUDED.country_row_count,
                 modified_at = NOW()
