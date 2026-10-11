@@ -899,11 +899,13 @@ export class ReportExecutionService {
                         { owner_id: body.selectedUserId },
                     ],
                 });
-            } else if (
-                primaryTable === "Customer" ||
-                primaryTable === "Invoice"
-            ) {
+            } else if (primaryTable === "Customer") {
                 parts.push({ owner_id: body.selectedUserId });
+            } else if (primaryTable === "Invoice") {
+                // Invoice has no owner_id — filter via related Customer.
+                parts.push({
+                    Customer: { owner_id: body.selectedUserId },
+                });
             }
         }
 

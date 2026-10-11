@@ -167,15 +167,21 @@ export class ReportsService {
                     ],
                 },
             });
-        } else {
-            // Credit insurance active: show Policy Insights variants instead
-            // of the basic unpaid/due/overdue/all invoice system reports.
+        } else if (context === "customer_unpaid_invoices") {
+            // Credit insurance active: on the customer Invoices tab only,
+            // show Policy Insights variants instead of the basic unpaid /
+            // due / overdue / all invoice system reports.
             (where.AND as unknown[]).push({
-                NOT: {
-                    unique_name: {
-                        in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
+                OR: [
+                    { unique_name: null },
+                    {
+                        NOT: {
+                            unique_name: {
+                                in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
+                            },
+                        },
                     },
-                },
+                ],
             });
         }
 
@@ -727,6 +733,7 @@ export class ReportsService {
                 filterCi && isCreditInsuranceOnlyReport(preferred);
             const blockedForCi =
                 !filterCi &&
+                context === "customer_unpaid_invoices" &&
                 isBasicCustomerUnpaidInvoiceReport(preferred.unique_name);
             if (!blockedForNonCi && !blockedForCi) {
                 return userDefault.Report;
@@ -745,12 +752,23 @@ export class ReportsService {
                     { unique_name: { contains: "credit_insurance" } },
                 ],
             };
-        } else {
-            where.NOT = {
-                unique_name: {
-                    in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
+        } else if (context === "customer_unpaid_invoices") {
+            where.AND = [
+                {
+                    OR: [
+                        { unique_name: null },
+                        {
+                            NOT: {
+                                unique_name: {
+                                    in: [
+                                        ...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES,
+                                    ],
+                                },
+                            },
+                        },
+                    ],
                 },
-            };
+            ];
         }
         return this.db.report.findFirst({
             where: where as never,

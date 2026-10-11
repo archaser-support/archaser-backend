@@ -55,11 +55,12 @@ export function nestOwnerScopeWhere(
     if (!ownerFilter || Object.keys(ownerFilter).length === 0) {
         return null;
     }
-    if (
-        primaryTable === "Customer" ||
-        primaryTable === "Invoice"
-    ) {
+    // Invoice has no owner_id — scope through Customer.
+    if (primaryTable === "Customer") {
         return ownerFilter;
+    }
+    if (primaryTable === "Invoice") {
+        return { Customer: ownerFilter };
     }
     if (primaryTable === "Contact") {
         return {
@@ -73,7 +74,8 @@ export function nestOwnerScopeWhere(
     if (
         primaryTable === "Dispute" ||
         primaryTable === "CustomerCollectionPeriod" ||
-        primaryTable === "CustomerPolicy"
+        primaryTable === "CustomerPolicy" ||
+        primaryTable === "Claim"
     ) {
         return { Customer: ownerFilter };
     }
@@ -94,8 +96,12 @@ export function nestBusinessUnitScopeWhere(
     if (!buFilter || Object.keys(buFilter).length === 0) {
         return null;
     }
-    if (primaryTable === "Customer" || primaryTable === "Invoice") {
+    // Invoice / Claim have no business_unit_id — scope through Customer.
+    if (primaryTable === "Customer") {
         return buFilter;
+    }
+    if (primaryTable === "Invoice" || primaryTable === "Claim") {
+        return { Customer: buFilter };
     }
     if (primaryTable === "Contact") {
         return {
