@@ -56,7 +56,7 @@ services:
       # Production Loki host port from grafana/start-production.sh (LOKI_HOST_PORT=3101)
       LOKI_HOST: http://host.docker.internal:3101
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4010:4010"
     extra_hosts:
@@ -96,7 +96,7 @@ services:
       # Production Loki host port from grafana/start-production.sh (LOKI_HOST_PORT=3101)
       LOKI_HOST: http://host.docker.internal:3101
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4003:4003"
     extra_hosts:
@@ -127,7 +127,7 @@ services:
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
       NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4004:3004"
     restart: unless-stopped
@@ -149,7 +149,7 @@ services:
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
       NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4005:3005"
     networks:
@@ -174,7 +174,7 @@ services:
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
       NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4006:3006"
     restart: unless-stopped
