@@ -185,8 +185,12 @@ deploy_build_heap_mb() {
     fi
 }
 
+# Set when stop_backend_for_build actually stopped the stack. EXIT trap uses this
+# so a failed build/migrate does not leave Nest down (Oct 2026 production outage).
+BACKEND_STOPPED_FOR_BUILD=0
+
 # Running Nest/worker containers often leave too little RAM for nest build on
-# small EC2 hosts. Stack is recreated after builds anyway.
+# small EC2 hosts. Stack is recreated after builds on the success path.
 stop_backend_for_build() {
     local mem_mb
     mem_mb="$(host_mem_mb)"
@@ -196,11 +200,36 @@ stop_backend_for_build() {
     log "Stopping backend containers before build to free RAM (${mem_mb}MB host)"
     backend_compose stop >/dev/null 2>&1 || \
         backend_compose down --remove-orphans >/dev/null 2>&1 || true
+    BACKEND_STOPPED_FOR_BUILD=1
     sync || true
     if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
         sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
     fi
     log "Host memory after stop: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+}
+
+# EXIT trap handler: bring the previous compose project back if we stopped it for
+# build and the deploy is exiting without a successful recreate (covers set -e
+# failures and explicit `exit 1`, e.g. shared Mongo preflight).
+restore_backend_if_stopped_for_build() {
+    if [[ "${BACKEND_STOPPED_FOR_BUILD:-0}" -ne 1 ]]; then
+        return 0
+    fi
+    BACKEND_STOPPED_FOR_BUILD=0
+    echo "WARNING: deploy failed after stopping backend for build."
+    echo "WARNING: restarting previous ${BACKEND_PROJECT:-backend} stack so the API is not left down..."
+    if backend_compose up -d --remove-orphans; then
+        echo "WARNING: previous backend stack is up again. Fix the deploy error and re-run."
+    else
+        echo "ERROR: could not restart backend stack after failed deploy."
+        echo "Start manually from the app dir:"
+        echo "  BACKEND_HOST_DIR=${BACKEND_DIR:-/home/ubuntu/api} docker compose -p ${BACKEND_PROJECT:-archaser-backend} --env-file .env -f docker-compose.backend.${ENVIRONMENT:-staging}.yml up -d"
+    fi
+}
+
+clear_backend_build_stop_trap() {
+    BACKEND_STOPPED_FOR_BUILD=0
+    trap - EXIT
 }
 
 DOCKER=(docker)
@@ -714,6 +743,10 @@ if [[ "$SKIP_BUILD" != "true" ]]; then
     log "Building backend workspaces"
     ensure_build_tooling
     stop_backend_for_build
+    # If we stopped Nest to free RAM, any later failure must bring it back.
+    if [[ "${BACKEND_STOPPED_FOR_BUILD:-0}" -eq 1 ]]; then
+        trap restore_backend_if_stopped_for_build EXIT
+    fi
     run_workspace_build @archaser/database
     run_workspace_build @archaser/auth
     run_workspace_build @archaser/sms-send
@@ -734,7 +767,8 @@ else
 fi
 
 # After this environment's env file is loaded and Prisma client generation.
-# Failure exits before recreate_backend_stack, so the previous containers stay up.
+# If stop_backend_for_build ran, the EXIT trap above restarts the stack on failure
+# (build, migrations, or stack recreate) so Nest is not left down.
 log "Applying SQL migrations for $ENVIRONMENT"
 node "$ROOT_DIR/scripts/deployment/apply-sql-migrations.js"
 
@@ -753,6 +787,8 @@ fi
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
 ensure_shared_mongo_running
 recreate_backend_stack
+# Intentional recreate succeeded — do not restart the pre-deploy containers on later errors.
+clear_backend_build_stop_trap
 
 if [[ "$NO_GRAFANA" != "true" ]]; then
     GRAFANA_START="$BACKEND_DIR/grafana/start-${ENVIRONMENT}.sh"
