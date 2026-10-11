@@ -82,7 +82,10 @@ WHERE r.is_system = true
   AND r.unique_name IN (
       'all_unpaid_invoices',
       'due_invoices',
-      'overdue_invoices'
+      'overdue_invoices',
+      'all_unpaid_invoices_credit_insurance_policy_insights',
+      'due_invoices_credit_insurance_policy_insights',
+      'overdue_invoices_credit_insurance_policy_insights'
   );
 
 COMMIT;

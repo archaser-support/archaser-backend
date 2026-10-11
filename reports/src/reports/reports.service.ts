@@ -45,6 +45,35 @@ const REPORT_AUDIT_USERS_INCLUDE = {
     },
 } as const;
 
+/** Basic customer invoice-tab system reports — hidden when credit insurance is on. */
+const CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES = [
+    "all_unpaid_invoices",
+    "due_invoices",
+    "overdue_invoices",
+    "all_invoices",
+] as const;
+
+function isCreditInsuranceOnlyReport(report: {
+    context?: string | null;
+    unique_name?: string | null;
+}): boolean {
+    return (
+        (report.context?.includes("credit") ?? false) ||
+        (report.unique_name?.includes("credit_insurance") ?? false)
+    );
+}
+
+function isBasicCustomerUnpaidInvoiceReport(
+    uniqueName?: string | null
+): boolean {
+    return (
+        uniqueName != null &&
+        (CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES as readonly string[]).includes(
+            uniqueName
+        )
+    );
+}
+
 @Injectable()
 export class ReportsService {
     constructor(
@@ -136,6 +165,16 @@ export class ReportsService {
                         { context: { contains: "credit" } },
                         { unique_name: { contains: "credit_insurance" } },
                     ],
+                },
+            });
+        } else {
+            // Credit insurance active: show Policy Insights variants instead
+            // of the basic unpaid/due/overdue/all invoice system reports.
+            (where.AND as unknown[]).push({
+                NOT: {
+                    unique_name: {
+                        in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
+                    },
                 },
             });
         }
@@ -680,7 +719,18 @@ export class ReportsService {
             },
         });
         if (userDefault?.Report && userDefault.Report.account_id === accountId) {
-            return userDefault.Report;
+            const preferred = userDefault.Report as {
+                context?: string | null;
+                unique_name?: string | null;
+            };
+            const blockedForNonCi =
+                filterCi && isCreditInsuranceOnlyReport(preferred);
+            const blockedForCi =
+                !filterCi &&
+                isBasicCustomerUnpaidInvoiceReport(preferred.unique_name);
+            if (!blockedForNonCi && !blockedForCi) {
+                return userDefault.Report;
+            }
         }
 
         const where: Record<string, unknown> = {
@@ -694,6 +744,12 @@ export class ReportsService {
                     { context: { contains: "credit" } },
                     { unique_name: { contains: "credit_insurance" } },
                 ],
+            };
+        } else {
+            where.NOT = {
+                unique_name: {
+                    in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
+                },
             };
         }
         return this.db.report.findFirst({
