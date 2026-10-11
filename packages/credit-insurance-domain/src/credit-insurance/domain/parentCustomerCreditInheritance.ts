@@ -460,11 +460,25 @@ async function deactivateLivePolicies(
     userId: string | null | undefined,
     dbClient: DbClient
 ): Promise<void> {
+    const pendingRows = await dbClient.customerPolicy.findMany({
+        where: { customer_id: customerId, status: "pending" },
+        select: { id: true, policy_change_start_date: true },
+    });
+    // Voided (end = start): a dropped pending mirror never applies and is
+    // never read as a Removed row.
+    for (const row of pendingRows) {
+        await dbClient.customerPolicy.update({
+            where: { id: row.id },
+            data: {
+                is_active: false,
+                status: "inactive",
+                policy_change_end_date: row.policy_change_start_date,
+                ...(userId ? { modified_by: userId } : {}),
+            },
+        });
+    }
     await dbClient.customerPolicy.updateMany({
-        where: {
-            customer_id: customerId,
-            OR: [{ is_active: true }, { status: "pending" }],
-        },
+        where: { customer_id: customerId, is_active: true },
         data: {
             is_active: false,
             status: "inactive",

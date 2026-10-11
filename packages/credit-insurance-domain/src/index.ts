@@ -84,7 +84,12 @@ export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/i
 export { fetchAtRiskCustomerIdsForAccount } from "./credit-insurance/domain/termBreachResolver";
 export { syncAllCustomerPolicyGapAmounts } from "./credit-insurance/domain/syncCustomerPolicyGapAmounts";
 export { takeCreditDashboardDailySnapshots } from "./credit-insurance/domain/creditDashboardSnapshotService";
-export { takeInsurancePolicyTrendSnapshots } from "./credit-insurance/domain/insurancePolicyTrendService";
+export {
+    rollUpInsurancePolicyTrendFromCustomerPolicyTrend,
+    takeInsurancePolicyTrendRollups,
+    takeInsurancePolicyTrendSnapshots,
+} from "./credit-insurance/domain/insurancePolicyTrendService";
+export type { InsurancePolicyTrendRollupInput } from "./credit-insurance/domain/insurancePolicyTrendService";
 export { takeCustomerPolicyTrendSnapshots } from "./credit-insurance/domain/customerPolicyTrendService";
 export {
     drainAsOfRewriteQueue,
@@ -173,6 +178,10 @@ export {
     type RewriteCustomerAsOfRangeInput,
     type RewriteCustomerAsOfRangeResult,
 } from "./credit-insurance/domain/asOfRewriteQueue";
+export {
+    loadAccountSnapshotLeaseBlockers,
+    type AccountSnapshotLeaseBlocker,
+} from "./credit-insurance/domain/accountBackgroundJobLease";
 export {
     applyDatedCustomerPolicyUnassign,
     clipCustomerTopUpsFromUnassignDay,
@@ -330,6 +339,8 @@ export {
     type CreditDashboardSnapshotScope,
 } from "./credit-insurance/domain/creditAsOfBackfillRunContext";
 export {
+    findCustomerPolicyVersionEndedByRemove,
+    isCustomerPolicyRemovedRow,
     isCustomerPolicyVersionEffectiveOnDate,
     selectCustomerPoliciesEffectiveOnDate,
     selectCustomerPoliciesForTrendWriteOnDate,

@@ -345,7 +345,53 @@ type DrainWriters = {
             runContext?: import("./creditAsOfBackfillRunContext").CreditAsOfBackfillRunContext;
         }
     ) => Promise<unknown>;
+    rollUpInsurancePolicyTrendFromCustomerPolicyTrend: (
+        input: import("./insurancePolicyTrendService").InsurancePolicyTrendRollupInput,
+        options?: { dbClient?: RawCapableClient }
+    ) => Promise<unknown>;
 };
+
+async function loadInsurancePolicyTrendRollup(): Promise<
+    DrainWriters["rollUpInsurancePolicyTrendFromCustomerPolicyTrend"]
+> {
+    return (await import("./insurancePolicyTrendService"))
+        .rollUpInsurancePolicyTrendFromCustomerPolicyTrend;
+}
+
+/**
+ * Interactive rewrite only: non-fatal, CTP rows are already written. Run after
+ * the pool shell overlay so shell rows carry pool AR.
+ */
+export async function rollUpRewrittenInsurancePolicyTrends(args: {
+    accountId: number;
+    customerIds?: number[];
+    fromDate: Date;
+    toDate: Date;
+    dbClient: RawCapableClient;
+}): Promise<void> {
+    try {
+        const rollUp = await loadInsurancePolicyTrendRollup();
+        await rollUp(
+            {
+                accountId: args.accountId,
+                customerIds: args.customerIds,
+                fromDate: args.fromDate,
+                toDate: args.toDate,
+            },
+            { dbClient: args.dbClient }
+        );
+    } catch (rollupError) {
+        console.error("[AsOfRewrite] insurance policy trend roll-up failed", {
+            accountId: args.accountId,
+            fromDate: args.fromDate.toISOString().slice(0, 10),
+            toDate: args.toDate.toISOString().slice(0, 10),
+            errorMessage:
+                rollupError instanceof Error
+                    ? rollupError.message
+                    : String(rollupError),
+        });
+    }
+}
 
 /** Interactive rewrite only: non-fatal, CTP rows are already written. */
 async function overlayRewrittenCreditPoolShells(args: {
@@ -400,7 +446,10 @@ export async function rewriteCustomerAsOfRange(
          * History before fromDate is never deleted by a rewrite.
          */
         preserveHistoryBeforeFromDate?: boolean;
-        /** Caller overlays the pool shells for the range itself. */
+        /**
+         * Caller overlays the pool shells for the range itself, then runs
+         * {@link rollUpRewrittenInsurancePolicyTrends}.
+         */
         skipCreditPoolShellOverlay?: boolean;
         syncCustomerPolicyTrendSnapshotForAccount?: DrainWriters["syncCustomerPolicyTrendSnapshotForAccount"];
     }
@@ -553,6 +602,13 @@ export async function rewriteCustomerAsOfRange(
             toDate,
             dbClient: db,
         });
+        await rollUpRewrittenInsurancePolicyTrends({
+            accountId: input.accountId,
+            customerIds,
+            fromDate,
+            toDate,
+            dbClient: db,
+        });
     }
 
     return { daysRewritten, skipped: false };
@@ -588,6 +644,9 @@ export async function drainAsOfRewriteQueue(options?: {
         (
             await import("./creditDashboardSnapshotService")
         ).takeCreditDashboardDailySnapshotsForAccount;
+    const rollUpPolicyTrend =
+        options?.writers?.rollUpInsurancePolicyTrendFromCustomerPolicyTrend ??
+        (await loadInsurancePolicyTrendRollup());
 
     const pending = await db.$queryRaw<
         Array<PendingRow & { account_id: number }>
@@ -720,6 +779,16 @@ export async function drainAsOfRewriteQueue(options?: {
                 toDate: item.to_date,
                 dbClient: db,
             });
+            await rollUpPolicyTrend(
+                {
+                    accountId: item.account_id,
+                    customerIds:
+                        customerIds.length > 0 ? customerIds : undefined,
+                    fromDate: item.from_date,
+                    toDate: item.to_date,
+                },
+                { dbClient: db }
+            );
             await db.$executeRaw`
                 UPDATE "CreditAsOfRewriteQueue"
                 SET status = 'done', last_error = NULL, updated_at = ${now}

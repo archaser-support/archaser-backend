@@ -25,7 +25,8 @@ export type ActivateDuePendingCustomerPoliciesOptions = {
  * today's tip and as-of rewrite drain so the tip sees the new active row.
  *
  * Pending unassign (null insurance_policy_id) uses the same dated-unassign apply
- * as immediate Remove, then leaves the pending row inactive — never an active
+ * as immediate Remove (which owns its as-of rewrite enqueue — do not enqueue
+ * again here), then leaves the pending row inactive — never an active
  * null-policy assignment. Ordinary pending policy rows still activate-to-active.
  */
 export async function activateDuePendingCustomerPolicies(
@@ -62,7 +63,7 @@ export async function activateDuePendingCustomerPolicies(
         const accountId = pending.Customer.account_id;
         try {
             if (pending.insurance_policy_id == null) {
-                await applyUnassign({
+                const unassign = await applyUnassign({
                     customerId: pending.customer_id,
                     accountId,
                     userId:
@@ -72,7 +73,9 @@ export async function activateDuePendingCustomerPolicies(
                     activatingPendingId: pending.id,
                 });
                 activated += 1;
-                rewriteEnqueued += 1;
+                if (unassign.rewriteEnqueued) {
+                    rewriteEnqueued += 1;
+                }
                 continue;
             }
 

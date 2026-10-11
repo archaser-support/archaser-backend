@@ -1,5 +1,5 @@
 import { type DbClient, prisma } from "../domain-db";
-import { rewriteCustomerAsOfRange } from "./asOfRewriteQueue";
+import { enqueueAsOfRewrite, rewriteCustomerAsOfRange } from "./asOfRewriteQueue";
 import {
     isLinkedCreditChild,
     remirrorCreditPoolAfterPolicyMutation,
@@ -71,7 +71,11 @@ export async function clipCustomerTopUpsFromUnassignDay(
     }
 }
 
-/** Clear TF1 from invoices issued on or after the unassign day and refresh terms stamps. */
+/**
+ * Clear TF1 from invoices no longer covered after a Remove and refresh terms
+ * stamps: issued on or after the unassign day, or before the customer's first
+ * TF1 version (no prehistory coverage once removed).
+ */
 export async function stripInvoicePolicyStampsFromUnassignDay(
     customerId: number,
     insurancePolicyId: number,
@@ -80,11 +84,29 @@ export async function stripInvoicePolicyStampsFromUnassignDay(
 ): Promise<number> {
     const db = options?.dbClient ?? prisma;
     const unassignDay = toUtcDateOnly(unassignDate);
+    const firstVersion = await db.customerPolicy.findFirst({
+        where: {
+            customer_id: customerId,
+            insurance_policy_id: insurancePolicyId,
+            status: { not: "pending" },
+        },
+        orderBy: [{ policy_change_start_date: "asc" }, { id: "asc" }],
+        select: { policy_change_start_date: true },
+    });
+    const firstVersionStart =
+        firstVersion != null
+            ? toUtcDateOnly(firstVersion.policy_change_start_date)
+            : null;
     const result = await db.invoice.updateMany({
         where: {
             customer_id: customerId,
             policy_id: insurancePolicyId,
-            invoice_date: { gte: unassignDay },
+            OR: [
+                { invoice_date: { gte: unassignDay } },
+                ...(firstVersionStart != null
+                    ? [{ invoice_date: { lt: firstVersionStart } }]
+                    : []),
+            ],
         },
         data: { policy_id: null },
     });
@@ -94,61 +116,30 @@ export async function stripInvoicePolicyStampsFromUnassignDay(
     return result.count;
 }
 
-async function endCustomerPolicyVersionsForUnassign(args: {
+/**
+ * Save the Remove: one Removed row (no policy, inactive, open end) starting on
+ * the unassign day. Older versions are not written, so their dates and
+ * modified at / by stay as they were; the as-of rules stop them at this row.
+ */
+async function createCustomerPolicyRemovedRow(args: {
     customerId: number;
-    insurancePolicyId: number;
     unassignDate: Date;
     userId: string;
     dbClient: DbClient;
-    freezeActiveRowId?: number | null;
-    freezeCustomerPolicyGapOnDeactivation?: typeof freezeCustomerPolicyGapOnDeactivation;
-}): Promise<void> {
-    if (args.freezeActiveRowId != null) {
-        await (args.freezeCustomerPolicyGapOnDeactivation ??
-            freezeCustomerPolicyGapOnDeactivation)(
-            args.customerId,
-            args.freezeActiveRowId,
-            args.dbClient
-        );
-    }
-    const unassignDay = toUtcDateOnly(args.unassignDate);
-    const rows = await args.dbClient.customerPolicy.findMany({
-        where: {
+}): Promise<number> {
+    const created = await args.dbClient.customerPolicy.create({
+        data: {
             customer_id: args.customerId,
-            insurance_policy_id: args.insurancePolicyId,
+            insurance_policy_id: null,
+            policy_change_start_date: toUtcDateOnly(args.unassignDate),
+            status: "inactive",
+            is_active: false,
+            created_by: args.userId,
+            modified_by: args.userId,
         },
-        select: {
-            id: true,
-            status: true,
-            policy_change_start_date: true,
-            policy_change_end_date: true,
-        },
+        select: { id: true },
     });
-    for (const row of rows) {
-        if (row.status === "pending") {
-            continue;
-        }
-        // Same rule as closeCustomerPolicyVersionsFromDate: end at the unassign
-        // day (or void versions starting on/after it); never extend an end.
-        const versionStart = toUtcDateOnly(row.policy_change_start_date);
-        const targetEnd =
-            versionStart.getTime() > unassignDay.getTime()
-                ? versionStart
-                : unassignDay;
-        const shortensEnd =
-            row.policy_change_end_date == null ||
-            toUtcDateOnly(row.policy_change_end_date).getTime() >
-                targetEnd.getTime();
-        await args.dbClient.customerPolicy.update({
-            where: { id: row.id },
-            data: {
-                ...(shortensEnd ? { policy_change_end_date: targetEnd } : {}),
-                is_active: false,
-                status: "inactive",
-                modified_by: args.userId,
-            },
-        });
-    }
+    return created.id;
 }
 
 async function applyRunOffSideEffects(args: {
@@ -195,12 +186,13 @@ export async function applyDatedCustomerPolicyUnassign(args: {
     unassignDate: Date | string | null;
     dbClient?: DbClient;
     rewriteCustomerAsOfRange?: typeof rewriteCustomerAsOfRange;
+    enqueueAsOfRewrite?: typeof enqueueAsOfRewrite;
     remirrorCreditPoolAfterPolicyMutation?: typeof remirrorCreditPoolAfterPolicyMutation;
     freezeCustomerPolicyGapOnDeactivation?: typeof freezeCustomerPolicyGapOnDeactivation;
     refreshTermsFlags?: boolean;
     /** When activating a due pending unassign, skip that row's pending conflict. */
     activatingPendingId?: number;
-}): Promise<{ customerPolicyId: number }> {
+}): Promise<{ customerPolicyId: number; rewriteEnqueued: boolean }> {
     const db = args.dbClient ?? prisma;
 
     if (await isLinkedCreditChild(args.customerId, db)) {
@@ -281,30 +273,22 @@ export async function applyDatedCustomerPolicyUnassign(args: {
             dbClient: db,
             userId: args.userId,
         });
-        return { customerPolicyId: created.id };
+        return { customerPolicyId: created.id, rewriteEnqueued: false };
     }
 
     const insurancePolicyId = activeRow.insurance_policy_id;
 
-    await endCustomerPolicyVersionsForUnassign({
-        customerId: args.customerId,
-        insurancePolicyId,
-        unassignDate: unassignDay,
-        userId: args.userId,
-        dbClient: db,
-        freezeActiveRowId: activeRow.id,
-        freezeCustomerPolicyGapOnDeactivation:
-            args.freezeCustomerPolicyGapOnDeactivation,
+    await (args.freezeCustomerPolicyGapOnDeactivation ??
+        freezeCustomerPolicyGapOnDeactivation)(args.customerId, activeRow.id, db);
+    await db.customerPolicy.update({
+        where: { id: activeRow.id },
+        data: {
+            is_active: false,
+            status: "inactive",
+            modified_by: args.userId,
+        },
     });
-    await applyRunOffSideEffects({
-        customerId: args.customerId,
-        insurancePolicyId,
-        unassignDate: unassignDay,
-        userId: args.userId,
-        dbClient: db,
-        refreshTermsFlags: args.refreshTermsFlags,
-    });
-
+    // A due pending unassign already is the Removed row (same shape).
     if (args.activatingPendingId != null) {
         await db.customerPolicy.update({
             where: { id: args.activatingPendingId },
@@ -314,7 +298,22 @@ export async function applyDatedCustomerPolicyUnassign(args: {
                 modified_by: args.userId,
             },
         });
+    } else {
+        await createCustomerPolicyRemovedRow({
+            customerId: args.customerId,
+            unassignDate: unassignDay,
+            userId: args.userId,
+            dbClient: db,
+        });
     }
+    await applyRunOffSideEffects({
+        customerId: args.customerId,
+        insurancePolicyId,
+        unassignDate: unassignDay,
+        userId: args.userId,
+        dbClient: db,
+        refreshTermsFlags: args.refreshTermsFlags,
+    });
 
     const remirror = await remirrorFn(args.customerId, args.accountId, {
         dbClient: db,
@@ -326,9 +325,8 @@ export async function applyDatedCustomerPolicyUnassign(args: {
         ...remirror.mirroredCustomerIds,
     ];
     for (const descendantId of remirror.mirroredCustomerIds) {
-        await endCustomerPolicyVersionsForUnassign({
+        await createCustomerPolicyRemovedRow({
             customerId: descendantId,
-            insurancePolicyId,
             unassignDate: unassignDay,
             userId: args.userId,
             dbClient: db,
@@ -349,6 +347,28 @@ export async function applyDatedCustomerPolicyUnassign(args: {
         fromDate: unassignDay,
         toDate: new Date(),
     };
+
+    // Run-off is already written; a failed enqueue must not fail the Remove
+    // or the pending activation (neither would retry it).
+    let rewriteEnqueued = false;
+    try {
+        await (args.enqueueAsOfRewrite ?? enqueueAsOfRewrite)(
+            rewriteInput,
+            db
+        );
+        rewriteEnqueued = true;
+    } catch (error) {
+        console.error(
+            "[datedCustomerPolicyUnassign] dashboard rewrite enqueue failed after unassign",
+            {
+                accountId: args.accountId,
+                customerId: args.customerId,
+                fromDate: unassignDay.toISOString().slice(0, 10),
+                errorMessage:
+                    error instanceof Error ? error.message : String(error),
+            }
+        );
+    }
     const rewriteOptions = {
         dbClient: db,
         preserveHistoryBeforeFromDate: true as const,
@@ -368,5 +388,5 @@ export async function applyDatedCustomerPolicyUnassign(args: {
         );
     }
 
-    return { customerPolicyId: activeRow.id };
+    return { customerPolicyId: activeRow.id, rewriteEnqueued };
 }

@@ -15,7 +15,10 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma, type DbClient } from "../domain-db";
-import { rewriteCustomerAsOfRange } from "./asOfRewriteQueue";
+import {
+    rewriteCustomerAsOfRange,
+    rollUpRewrittenInsurancePolicyTrends,
+} from "./asOfRewriteQueue";
 import { enumerateUtcDaysInclusive } from "./creditAsOfBackfillJob";
 import {
     elapsedMsSince,
@@ -720,6 +723,16 @@ export async function syncCreditPoolPolicyTrendsAfterParentChange(args: {
                 throw error;
             }
         }
+    }
+
+    if (rewrite.daysRewritten > 0) {
+        await rollUpRewrittenInsurancePolicyTrends({
+            accountId: args.accountId,
+            customerIds,
+            fromDate: syncFromDate,
+            toDate,
+            dbClient,
+        });
     }
 
     const rewriteCdp =

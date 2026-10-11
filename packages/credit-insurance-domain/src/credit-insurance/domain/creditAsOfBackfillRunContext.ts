@@ -1,4 +1,9 @@
-import { cost_calculation_method, Prisma, type customer_limit_type } from "@prisma/client";
+import {
+    cost_calculation_method,
+    Prisma,
+    type customer_limit_type,
+    type customer_policy_status,
+} from "@prisma/client";
 
 import { type DbClient, prisma as defaultPrisma } from "../domain-db";
 
@@ -44,12 +49,14 @@ export type TopUpRowForTrendReplay = TopUpRowForResolution & {
 /**
  * CustomerPolicy versions loaded once per Generate / drain replay run.
  * Includes the live active row, superseded inactive versions (terms history),
- * and inactive run-off rows (`policy_change_end_date` set).
+ * inactive run-off rows (`policy_change_end_date` set), and Removed rows
+ * (no insurance policy).
  */
 export type ActiveCustomerPolicyForTrendSync = {
     id: number;
     customer_id: number;
     is_active: boolean;
+    status: customer_policy_status;
     policy_change_start_date: Date;
     policy_change_end_date: Date | null;
     insurance_policy_id: number | null;
@@ -260,12 +267,24 @@ export async function loadActiveCustomerPoliciesForTrendSync(
     return db.customerPolicy.findMany({
         where: {
             OR: [
-                { is_active: true },
+                {
+                    is_active: true,
+                    ...(options?.policyId != null
+                        ? { insurance_policy_id: options.policyId }
+                        : {}),
+                },
                 {
                     // Superseded versions (terms history) + dated unassign run-off.
                     is_active: false,
                     status: "inactive",
-                    insurance_policy_id: { not: null },
+                    insurance_policy_id: options?.policyId ?? { not: null },
+                },
+                {
+                    // Removed rows stop earlier versions (isCustomerPolicyRemovedRow).
+                    is_active: false,
+                    status: "inactive",
+                    insurance_policy_id: null,
+                    policy_change_end_date: null,
                 },
             ],
             Customer: {
@@ -275,14 +294,12 @@ export async function loadActiveCustomerPoliciesForTrendSync(
                     ? { id: { in: options.customerIds } }
                     : {}),
             },
-            ...(options?.policyId != null
-                ? { insurance_policy_id: options.policyId }
-                : {}),
         },
         select: {
             id: true,
             customer_id: true,
             is_active: true,
+            status: true,
             policy_change_start_date: true,
             policy_change_end_date: true,
             insurance_policy_id: true,
