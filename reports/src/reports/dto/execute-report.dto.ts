@@ -78,6 +78,11 @@ export class ExecuteReportDto {
     @IsBoolean()
     includeInvoiceCreditInsuranceViolationFields?: boolean;
 
+    /** Return `totals` over the full filtered set; ignored when no field has an aggregation. */
+    @IsOptional()
+    @IsBoolean()
+    includeTotals?: boolean;
+
     @IsOptional()
     @Type(() => Number)
     @IsInt()
