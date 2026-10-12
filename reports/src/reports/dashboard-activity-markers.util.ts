@@ -87,7 +87,7 @@ export function resolveCreatedByForIdentityMode(input: {
     return { in: queryIds };
 }
 
-async function resolveAgentIds(input: {
+export async function resolveAgentIds(input: {
     db: DbLike;
     accountId: number;
     selectedUserId?: string | null;

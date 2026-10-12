@@ -38,6 +38,11 @@ import { prepareDashboardActivityMarkers } from "./dashboard-activity-markers.ut
 import { prepareDashboardCreditCustomerMarkers } from "./dashboard-credit-customer-markers.util";
 import { prepareDashboardCreditInvoiceMarkers } from "./dashboard-credit-invoice-markers.util";
 import {
+    prepareDashboardActiveDynamicsMarkers,
+    prepareDashboardDisputeMarkers,
+    prepareDashboardPromiseMarkers,
+} from "./dashboard-drill-markers.util";
+import {
     formatMoneyIso,
     isMoneyFieldName,
     isMoneyMetadataType,
@@ -258,6 +263,48 @@ export class ReportExecutionService {
             skipSelectedUserOnActivity = prepared.skipsSelectedUserScope;
         }
 
+        let drillExtras: PrismaWhere | undefined;
+        let skipBodyBusinessUnitId = false;
+        if (primaryTable === "CustomerCollectionPeriod") {
+            const prepared = await prepareDashboardPromiseMarkers(filters, {
+                db: this.db,
+                accountId,
+                selectedUserId: body.selectedUserId,
+            });
+            filters = prepared.filters;
+            drillExtras = prepared.primaryWhereExtras;
+            skipBodyBusinessUnitId = prepared.skipBodyBusinessUnitId;
+        } else if (primaryTable === "Customer") {
+            let businessUnitFilter: PrismaWhere | undefined;
+            if (body.businessUnitId != null && body.businessUnitId > 0) {
+                const ids = [
+                    body.businessUnitId,
+                    ...(await this.access.getBusinessUnitHierarchy(
+                        body.businessUnitId
+                    )),
+                ];
+                businessUnitFilter = {
+                    business_unit_id: { in: ids },
+                };
+            }
+            const prepared = await prepareDashboardActiveDynamicsMarkers(
+                filters,
+                { businessUnitFilter }
+            );
+            filters = prepared.filters;
+            drillExtras = prepared.primaryWhereExtras;
+            skipBodyBusinessUnitId = prepared.skipBodyBusinessUnitId;
+        } else if (primaryTable === "Dispute") {
+            const prepared = await prepareDashboardDisputeMarkers(filters, {
+                db: this.db,
+                accountId,
+                selectedUserId: body.selectedUserId,
+            });
+            filters = prepared.filters;
+            drillExtras = prepared.primaryWhereExtras;
+            skipBodyBusinessUnitId = prepared.skipBodyBusinessUnitId;
+        }
+
         let creditCustomerExtras: PrismaWhere | undefined;
         let creditInvoiceExtras: PrismaWhere | undefined;
         let creditDashboardPolicyId: number | undefined;
@@ -315,7 +362,10 @@ export class ReportExecutionService {
             accountId,
             primaryTable,
             body,
-            { skipSelectedUserId: skipSelectedUserOnActivity }
+            {
+                skipSelectedUserId: skipSelectedUserOnActivity,
+                skipBodyBusinessUnitId,
+            }
         );
         const normalizedFilters = this.normalizeFilters(filters, primaryTable);
         const formulaFilterGuard = findFormulaFilterGuardFailure({
@@ -367,6 +417,7 @@ export class ReportExecutionService {
             nestedWhere,
             searchWhere,
             activityExtras,
+            drillExtras,
             creditCustomerExtras,
             creditInvoiceExtras
         );
@@ -868,7 +919,10 @@ export class ReportExecutionService {
         accountId: number,
         primaryTable: string,
         body: ExecuteReportDto,
-        options: { skipSelectedUserId?: boolean } = {}
+        options: {
+            skipSelectedUserId?: boolean;
+            skipBodyBusinessUnitId?: boolean;
+        } = {}
     ): Promise<PrismaWhere> {
         const parts: PrismaWhere[] = [
             buildAccountScopeWhere(primaryTable, accountId),
@@ -907,7 +961,11 @@ export class ReportExecutionService {
             parts.push(nestedBu);
         }
 
-        if (body.businessUnitId != null && body.businessUnitId > 0) {
+        if (
+            body.businessUnitId != null &&
+            body.businessUnitId > 0 &&
+            !options.skipBodyBusinessUnitId
+        ) {
             const ids = [
                 body.businessUnitId,
                 ...(await this.access.getBusinessUnitHierarchy(
