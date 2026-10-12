@@ -416,16 +416,25 @@ export function applyFormulasToRows(
                 output[`___formatted_${outputKey}`] = null;
                 continue;
             }
+            const accountCurrency = options.accountCurrency || "USD";
             const formatted = formatFormulaValue(
                 evaluated.value,
                 formula,
                 output,
                 fields,
                 options.locale || "en-US",
-                options.accountCurrency || "USD"
+                accountCurrency
             );
             output[outputKey] = formatted.raw;
             output[`___formatted_${outputKey}`] = formatted.formatted;
+            if (formula.format === "currency" && formatted.raw !== null) {
+                output[`__currency_${outputKey}`] = resolveCurrency(
+                    output,
+                    formula.currencySource,
+                    fields,
+                    accountCurrency
+                );
+            }
         }
         return output;
     });

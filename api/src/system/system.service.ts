@@ -10,6 +10,7 @@ import { JwtPayload } from "../auth/auth.service";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import { InvoicesService } from "../invoices/invoices.service";
+import { CronQueueService } from "../queue/cron-queue.service";
 import {
     buildActiveCustomersChart,
     buildAgingRangeRows,
@@ -101,7 +102,8 @@ export class SystemService {
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService,
-        private readonly invoices: InvoicesService
+        private readonly invoices: InvoicesService,
+        private readonly cronQueue: CronQueueService
     ) {}
 
     private async scope(user: JwtPayload) {
@@ -3009,48 +3011,49 @@ export class SystemService {
         }
         const jobId =
             body.jobId != null ? Number(body.jobId) : undefined;
-        if (jobId != null && Number.isFinite(jobId)) {
-            const job = await this.db.cronJob.findUnique({
-                where: { id: jobId },
-                select: { id: true, name: true, active: true },
+        if (jobId == null || !Number.isFinite(jobId)) {
+            throw new BadRequestException({
+                error: "jobId is required to enqueue a cron run",
             });
-            if (!job) {
-                throw new NotFoundException({ error: "Cron job not found" });
-            }
-            const executionId = `ack-${job.id}-${Date.now()}`;
-            const timestamp = new Date().toISOString();
-            return {
-                success: true,
-                message: `Cron job ${job.name} trigger acknowledged`,
-                jobId: job.id,
-                timestamp,
-                data: { executionId },
-                result: {
-                    steps: [
-                        {
-                            timestamp,
-                            level: "INFO",
-                            stepNumber: 1,
-                            message: `Cron job ${job.name} trigger acknowledged`,
-                        },
-                    ],
-                },
-            };
         }
+        const job = await this.db.cronJob.findUnique({
+            where: { id: jobId },
+            select: { id: true, name: true, active: true },
+        });
+        if (!job) {
+            throw new NotFoundException({ error: "Cron job not found" });
+        }
+        const queued = await this.cronQueue.enqueueRunNow({
+            cronJobId: job.id,
+            triggeredBy: String(user.sub),
+            accountId: userInfo.accountId,
+        });
+        if (!queued.queued || !queued.jobId) {
+            throw new BadRequestException({
+                error:
+                    queued.reason ||
+                    "Failed to enqueue cron job on BullMQ (check Redis / BULLMQ_ENABLED)",
+            });
+        }
+        const executionId = queued.jobId;
         const timestamp = new Date().toISOString();
         return {
             success: true,
-            message: "Cron trigger acknowledged (all due)",
+            message: `Cron job ${job.name} queued on worker`,
+            jobId: job.id,
             timestamp,
-            body,
-            data: { executionId: `ack-all-${Date.now()}` },
+            data: {
+                executionId,
+                bullmqJobId: executionId,
+                cronJobId: job.id,
+            },
             result: {
                 steps: [
                     {
                         timestamp,
                         level: "INFO",
                         stepNumber: 1,
-                        message: "Cron trigger acknowledged (all due)",
+                        message: `Cron job ${job.name} queued (BullMQ job ${executionId})`,
                     },
                 ],
             },
@@ -3083,16 +3086,28 @@ export class SystemService {
                 job_id: true,
             },
         });
+        const bullmq = await this.cronQueue.getRunNowJobStatus(executionId);
+        // Prefer BullMQ state for run-now polls; fall back to log presence.
+        let status: "completed" | "failed" | "running" | "unknown" =
+            bullmq.status;
+        if (status === "unknown" && logs.length > 0) {
+            status = "completed";
+        }
+        const mappedLogs = logs.map((log) => ({
+            ...log,
+            created_at: log.timestamp,
+            createdAt: log.timestamp,
+        }));
         return serializeBigInt({
             executionId,
-            status: logs.length ? "completed" : "unknown",
+            status,
+            bullmqState: bullmq.bullmqState,
             items: logs,
+            // FE Cron Debugger reads data.status (and data.logs).
             data: {
-                logs: logs.map((log) => ({
-                    ...log,
-                    created_at: log.timestamp,
-                    createdAt: log.timestamp,
-                })),
+                status,
+                bullmqState: bullmq.bullmqState,
+                logs: mappedLogs,
             },
         });
     }

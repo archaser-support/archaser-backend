@@ -138,6 +138,55 @@ export class CronQueueService implements OnModuleDestroy {
         }
     }
 
+    /**
+     * Map a BullMQ job id to Cron Debugger poll statuses.
+     * completed/failed stop the UI poll; anything else keeps polling.
+     */
+    async getRunNowJobStatus(jobId: string): Promise<{
+        status: "completed" | "failed" | "running" | "unknown";
+        bullmqState?: string;
+        reason?: string;
+    }> {
+        const queue = this.ensureQueue();
+        if (!queue) {
+            return {
+                status: "unknown",
+                reason: "BULLMQ_ENABLED=false or Redis unavailable",
+            };
+        }
+        const ready = await this.ensureRedisReady();
+        if (!ready.ok) {
+            return {
+                status: "unknown",
+                reason: ready.reason ?? "Redis not ready",
+            };
+        }
+        try {
+            const job = await queue.getJob(jobId);
+            if (!job) {
+                // removeOnComplete may drop finished jobs quickly — treat missing
+                // as completed so the admin poll does not spin forever.
+                return { status: "completed", bullmqState: "missing" };
+            }
+            const state = await job.getState();
+            if (state === "completed") {
+                return { status: "completed", bullmqState: state };
+            }
+            if (state === "failed") {
+                return { status: "failed", bullmqState: state };
+            }
+            return { status: "running", bullmqState: state };
+        } catch (error) {
+            return {
+                status: "unknown",
+                reason:
+                    error instanceof Error
+                        ? error.message
+                        : "getJob state failed",
+            };
+        }
+    }
+
     async enqueueSyncSchedules(
         data: CronSyncSchedulesJobData
     ): Promise<{ queued: boolean; jobId?: string; reason?: string }> {

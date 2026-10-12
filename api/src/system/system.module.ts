@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { DatabaseModule } from "../database/database.module";
 import { InvoicesModule } from "../invoices/invoices.module";
+import { QueueModule } from "../queue/queue.module";
 import {
     SystemCacheInvalidationController,
     SystemController,
@@ -9,7 +10,7 @@ import {
 import { SystemService } from "./system.service";
 
 @Module({
-    imports: [AuthModule, DatabaseModule, InvoicesModule],
+    imports: [AuthModule, DatabaseModule, InvoicesModule, QueueModule],
     controllers: [
         SystemController,
         SystemCacheInvalidationController,

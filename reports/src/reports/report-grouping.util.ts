@@ -139,11 +139,20 @@ export function isCustomerCurrencyMoneyField(field: string): boolean {
     );
 }
 
-/**
- * Per-row currency for grouping and totals. Account-currency amount columns
- * (`Invoice.amount`, …) always use `accountCurrency`; customer-currency
- * columns read the row. Pass `field` so totals do not copy this logic.
- */
+/** Row key prefix for per-field display currency (set during formatRow). */
+export const REPORT_FIELD_CURRENCY_PREFIX = "__currency_";
+
+/** Marker on grouped rows when a money aggregation mixes currencies. */
+export const MIXED_CURRENCY_MARKER_PREFIX = "___mixed_currency_";
+
+export function mixedCurrencyMarkerKey(outputKey: string): string {
+    return `${MIXED_CURRENCY_MARKER_PREFIX}${outputKey}`;
+}
+
+export function fieldCurrencyKey(outputKey: string): string {
+    return `${REPORT_FIELD_CURRENCY_PREFIX}${outputKey}`;
+}
+
 export function resolveCurrencyFromRow(
     sampleRow: Record<string, unknown> | undefined,
     accountCurrency: string,
@@ -232,6 +241,54 @@ export function attachRowCurrencyFields(
     if (currency && out.currency == null) {
         out.currency = currency;
     }
+}
+
+/**
+ * Unique display currencies across group detail rows for a money field.
+ * Prefers `__currency_<fieldKey>` from formatRow; falls back to row currency fields.
+ */
+export function collectUniqueCurrenciesForField(
+    rows: Record<string, unknown>[],
+    outputKey: string,
+    legacyKey: string | null,
+    accountCurrency: string
+): string[] {
+    const currencies = new Set<string>();
+    for (const row of rows) {
+        const fromMeta =
+            row[fieldCurrencyKey(outputKey)] ??
+            (legacyKey ? row[fieldCurrencyKey(legacyKey)] : undefined);
+        if (typeof fromMeta === "string" && fromMeta.trim()) {
+            currencies.add(fromMeta.trim().toUpperCase());
+            continue;
+        }
+        currencies.add(resolveCurrencyFromRow(row, accountCurrency));
+    }
+    return Array.from(currencies);
+}
+
+/**
+ * Shared money-aggregation rule (also for planned total row): one currency →
+ * keep the total; mixed → empty value + marker (grid shows "—", export blank).
+ */
+export function resolveMoneyAggregationCurrency(
+    rows: Record<string, unknown>[],
+    outputKey: string,
+    legacyKey: string | null,
+    accountCurrency: string
+): { currency: string } | { mixed: true } {
+    const unique = collectUniqueCurrenciesForField(
+        rows,
+        outputKey,
+        legacyKey,
+        accountCurrency
+    );
+    if (unique.length > 1) {
+        return { mixed: true };
+    }
+    return {
+        currency: unique[0] || accountCurrency || "USD",
+    };
 }
 
 function formatCurrencyValue(
@@ -342,15 +399,29 @@ export function applyGroupingAndAggregation(
                 String(field.aggregation).toUpperCase() !== "COUNT" &&
                 shouldFormatFieldAsCurrency(field.table, field.field)
             ) {
-                const numVal = coerceToNumber(groupedRow[outputKey]);
-                if (numVal !== null) {
-                    const currency = resolveCurrencyFromRow(
-                        sampleRow,
-                        accountCurrency,
-                        field.field
-                    );
-                    groupedRow[`___formatted_${outputKey}`] =
-                        formatCurrencyValue(numVal, currency, locale);
+                const moneyCurrency = resolveMoneyAggregationCurrency(
+                    groupRows,
+                    outputKey,
+                    legacyKey,
+                    accountCurrency
+                );
+                if ("mixed" in moneyCurrency) {
+                    // Do not add different currencies together; blank grid + export.
+                    groupedRow[outputKey] = null;
+                    groupedRow[`___formatted_${outputKey}`] = null;
+                    groupedRow[mixedCurrencyMarkerKey(outputKey)] = true;
+                } else {
+                    const numVal = coerceToNumber(groupedRow[outputKey]);
+                    if (numVal !== null) {
+                        groupedRow[`___formatted_${outputKey}`] =
+                            formatCurrencyValue(
+                                numVal,
+                                moneyCurrency.currency,
+                                locale
+                            );
+                        groupedRow[fieldCurrencyKey(outputKey)] =
+                            moneyCurrency.currency;
+                    }
                 }
             } else if (String(field.aggregation).toUpperCase() === "COUNT") {
                 const countVal = coerceToNumber(groupedRow[outputKey]);
@@ -375,6 +446,32 @@ export function applyGroupingAndAggregation(
                 values,
                 String(formula.aggregation)
             );
+
+            if (formula.format === "currency" && aggregated !== null) {
+                const moneyCurrency = resolveMoneyAggregationCurrency(
+                    groupRows,
+                    outputKey,
+                    null,
+                    accountCurrency
+                );
+                if ("mixed" in moneyCurrency) {
+                    groupedRow[outputKey] = null;
+                    groupedRow[`___formatted_${outputKey}`] = null;
+                    groupedRow[mixedCurrencyMarkerKey(outputKey)] = true;
+                    continue;
+                }
+                groupedRow[outputKey] = aggregated;
+                groupedRow[`___formatted_${outputKey}`] =
+                    formatCurrencyValue(
+                        aggregated,
+                        moneyCurrency.currency,
+                        locale
+                    );
+                groupedRow[fieldCurrencyKey(outputKey)] =
+                    moneyCurrency.currency;
+                continue;
+            }
+
             groupedRow[outputKey] = aggregated;
             groupedRow[`___formatted_${outputKey}`] =
                 aggregated === null
@@ -586,22 +683,58 @@ export function buildReportTotalsCells(
     return cells;
 }
 
-export function buildCountAggregationTotals(
+/**
+ * Full-dataset totals for aggregated columns (before pagination).
+ * Used by the viewer column headers so SUM/AVG/MIN/MAX/COUNT reflect every
+ * matching group row, not only the page currently loaded in the grid.
+ */
+export function buildAggregationTotals(
     rows: Record<string, unknown>[],
     fields: GroupingField[]
 ): Record<string, number> | undefined {
-    const countTotals: Record<string, number> = {};
+    const totals: Record<string, number> = {};
     for (const field of fields) {
-        if (String(field.aggregation || "").toUpperCase() !== "COUNT") {
+        const aggregation = String(field.aggregation || "").toUpperCase();
+        if (
+            aggregation !== "SUM" &&
+            aggregation !== "AVG" &&
+            aggregation !== "COUNT" &&
+            aggregation !== "MIN" &&
+            aggregation !== "MAX"
+        ) {
             continue;
         }
         const outputKey = getFieldOutputKey(field);
-        countTotals[outputKey] = rows.reduce((sum, row) => {
-            const n = coerceToNumber(row[outputKey]);
-            return sum + (n ?? 0);
-        }, 0);
+        const legacyKey = getLegacyFieldOutputKey(field);
+        const values = rows
+            .map((row) => coerceToNumber(row[outputKey]))
+            .filter((value): value is number => value !== null);
+        if (values.length === 0) {
+            continue;
+        }
+        // COUNT/SUM: sum of per-group values. AVG/MIN/MAX: over group values
+        // (same rollup the viewer used to compute from loaded rows only).
+        const total =
+            aggregation === "COUNT" || aggregation === "SUM"
+                ? values.reduce((sum, value) => sum + value, 0)
+                : calculateAggregation(values, aggregation);
+        if (total !== null) {
+            totals[outputKey] = total;
+            // Case-normalized suffix + legacy/alias keys so the viewer header
+            // lookup cannot miss on casing or older columnOrder values.
+            const normalizedKey = outputKey.replace(
+                /__(sum|avg|count|min|max)$/i,
+                (_m, agg: string) => `__${String(agg).toUpperCase()}`
+            );
+            if (normalizedKey !== outputKey) {
+                totals[normalizedKey] = total;
+            }
+            if (legacyKey && legacyKey !== outputKey) {
+                totals[legacyKey] = total;
+            }
+        }
     }
-    return Object.keys(countTotals).length > 0 ? countTotals : undefined;
+    return Object.keys(totals).length > 0 ? totals : undefined;
 }
 
 export function compareSortValues(
