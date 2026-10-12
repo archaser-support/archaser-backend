@@ -310,22 +310,45 @@ export function applyGroupingAndAggregation(
     return groupedRows;
 }
 
-export function buildCountAggregationTotals(
+/**
+ * Full-dataset totals for aggregated columns (before pagination).
+ * Used by the viewer column headers so SUM/AVG/MIN/MAX/COUNT reflect every
+ * matching group row, not only the page currently loaded in the grid.
+ */
+export function buildAggregationTotals(
     rows: Record<string, unknown>[],
     fields: GroupingField[]
 ): Record<string, number> | undefined {
-    const countTotals: Record<string, number> = {};
+    const totals: Record<string, number> = {};
     for (const field of fields) {
-        if (String(field.aggregation || "").toUpperCase() !== "COUNT") {
+        const aggregation = String(field.aggregation || "").toUpperCase();
+        if (
+            aggregation !== "SUM" &&
+            aggregation !== "AVG" &&
+            aggregation !== "COUNT" &&
+            aggregation !== "MIN" &&
+            aggregation !== "MAX"
+        ) {
             continue;
         }
         const outputKey = getFieldOutputKey(field);
-        countTotals[outputKey] = rows.reduce((sum, row) => {
-            const n = coerceToNumber(row[outputKey]);
-            return sum + (n ?? 0);
-        }, 0);
+        const values = rows
+            .map((row) => coerceToNumber(row[outputKey]))
+            .filter((value): value is number => value !== null);
+        if (values.length === 0) {
+            continue;
+        }
+        // COUNT/SUM: sum of per-group values. AVG/MIN/MAX: over group values
+        // (same rollup the viewer used to compute from loaded rows only).
+        const total =
+            aggregation === "COUNT" || aggregation === "SUM"
+                ? values.reduce((sum, value) => sum + value, 0)
+                : calculateAggregation(values, aggregation);
+        if (total !== null) {
+            totals[outputKey] = total;
+        }
     }
-    return Object.keys(countTotals).length > 0 ? countTotals : undefined;
+    return Object.keys(totals).length > 0 ? totals : undefined;
 }
 
 export function compareSortValues(

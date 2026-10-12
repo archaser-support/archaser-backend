@@ -108,7 +108,7 @@ import {
 } from "./report-datetime.util";
 import {
     applyGroupingAndAggregation,
-    buildCountAggregationTotals,
+    buildAggregationTotals,
     compareSortValues,
     coerceToNumber,
     detectOneToManyRelationTable,
@@ -683,10 +683,7 @@ export class ReportExecutionService {
                 locale,
                 accountCurrency,
             });
-            aggregationTotals = buildCountAggregationTotals(
-                resultRows,
-                allFields
-            );
+            aggregationTotals = buildAggregationTotals(resultRows, allFields);
             if (effectiveSortField) {
                 const isAsc =
                     String(effectiveSortDirection).toLowerCase() !== "desc";
