@@ -435,6 +435,7 @@ export function buildAggregationTotals(
             continue;
         }
         const outputKey = getFieldOutputKey(field);
+        const legacyKey = getLegacyFieldOutputKey(field);
         const values = rows
             .map((row) => coerceToNumber(row[outputKey]))
             .filter((value): value is number => value !== null);
@@ -449,6 +450,18 @@ export function buildAggregationTotals(
                 : calculateAggregation(values, aggregation);
         if (total !== null) {
             totals[outputKey] = total;
+            // Case-normalized suffix + legacy/alias keys so the viewer header
+            // lookup cannot miss on casing or older columnOrder values.
+            const normalizedKey = outputKey.replace(
+                /__(sum|avg|count|min|max)$/i,
+                (_m, agg: string) => `__${String(agg).toUpperCase()}`
+            );
+            if (normalizedKey !== outputKey) {
+                totals[normalizedKey] = total;
+            }
+            if (legacyKey && legacyKey !== outputKey) {
+                totals[legacyKey] = total;
+            }
         }
     }
     return Object.keys(totals).length > 0 ? totals : undefined;
