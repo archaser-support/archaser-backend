@@ -128,6 +128,20 @@ function shouldFormatFieldAsCurrency(table: string, field: string): boolean {
     ) && !(table === "Customer" && lower.includes("cost"));
 }
 
+/** Row key prefix for per-field display currency (set during formatRow). */
+export const REPORT_FIELD_CURRENCY_PREFIX = "__currency_";
+
+/** Marker on grouped rows when a money aggregation mixes currencies. */
+export const MIXED_CURRENCY_MARKER_PREFIX = "___mixed_currency_";
+
+export function mixedCurrencyMarkerKey(outputKey: string): string {
+    return `${MIXED_CURRENCY_MARKER_PREFIX}${outputKey}`;
+}
+
+export function fieldCurrencyKey(outputKey: string): string {
+    return `${REPORT_FIELD_CURRENCY_PREFIX}${outputKey}`;
+}
+
 function resolveCurrencyFromRow(
     sampleRow: Record<string, unknown> | undefined,
     accountCurrency: string
@@ -148,6 +162,54 @@ function resolveCurrencyFromRow(
         }
     }
     return accountCurrency || "USD";
+}
+
+/**
+ * Unique display currencies across group detail rows for a money field.
+ * Prefers `__currency_<fieldKey>` from formatRow; falls back to row currency fields.
+ */
+export function collectUniqueCurrenciesForField(
+    rows: Record<string, unknown>[],
+    outputKey: string,
+    legacyKey: string | null,
+    accountCurrency: string
+): string[] {
+    const currencies = new Set<string>();
+    for (const row of rows) {
+        const fromMeta =
+            row[fieldCurrencyKey(outputKey)] ??
+            (legacyKey ? row[fieldCurrencyKey(legacyKey)] : undefined);
+        if (typeof fromMeta === "string" && fromMeta.trim()) {
+            currencies.add(fromMeta.trim().toUpperCase());
+            continue;
+        }
+        currencies.add(resolveCurrencyFromRow(row, accountCurrency));
+    }
+    return Array.from(currencies);
+}
+
+/**
+ * Shared money-aggregation rule (also for planned total row): one currency →
+ * keep the total; mixed → empty value + marker (grid shows "—", export blank).
+ */
+export function resolveMoneyAggregationCurrency(
+    rows: Record<string, unknown>[],
+    outputKey: string,
+    legacyKey: string | null,
+    accountCurrency: string
+): { currency: string } | { mixed: true } {
+    const unique = collectUniqueCurrenciesForField(
+        rows,
+        outputKey,
+        legacyKey,
+        accountCurrency
+    );
+    if (unique.length > 1) {
+        return { mixed: true };
+    }
+    return {
+        currency: unique[0] || accountCurrency || "USD",
+    };
 }
 
 function formatCurrencyValue(
@@ -258,14 +320,29 @@ export function applyGroupingAndAggregation(
                 String(field.aggregation).toUpperCase() !== "COUNT" &&
                 shouldFormatFieldAsCurrency(field.table, field.field)
             ) {
-                const numVal = coerceToNumber(groupedRow[outputKey]);
-                if (numVal !== null) {
-                    const currency = resolveCurrencyFromRow(
-                        sampleRow,
-                        accountCurrency
-                    );
-                    groupedRow[`___formatted_${outputKey}`] =
-                        formatCurrencyValue(numVal, currency, locale);
+                const moneyCurrency = resolveMoneyAggregationCurrency(
+                    groupRows,
+                    outputKey,
+                    legacyKey,
+                    accountCurrency
+                );
+                if ("mixed" in moneyCurrency) {
+                    // Do not add different currencies together; blank grid + export.
+                    groupedRow[outputKey] = null;
+                    groupedRow[`___formatted_${outputKey}`] = null;
+                    groupedRow[mixedCurrencyMarkerKey(outputKey)] = true;
+                } else {
+                    const numVal = coerceToNumber(groupedRow[outputKey]);
+                    if (numVal !== null) {
+                        groupedRow[`___formatted_${outputKey}`] =
+                            formatCurrencyValue(
+                                numVal,
+                                moneyCurrency.currency,
+                                locale
+                            );
+                        groupedRow[fieldCurrencyKey(outputKey)] =
+                            moneyCurrency.currency;
+                    }
                 }
             } else if (String(field.aggregation).toUpperCase() === "COUNT") {
                 const countVal = coerceToNumber(groupedRow[outputKey]);
@@ -290,6 +367,32 @@ export function applyGroupingAndAggregation(
                 values,
                 String(formula.aggregation)
             );
+
+            if (formula.format === "currency" && aggregated !== null) {
+                const moneyCurrency = resolveMoneyAggregationCurrency(
+                    groupRows,
+                    outputKey,
+                    null,
+                    accountCurrency
+                );
+                if ("mixed" in moneyCurrency) {
+                    groupedRow[outputKey] = null;
+                    groupedRow[`___formatted_${outputKey}`] = null;
+                    groupedRow[mixedCurrencyMarkerKey(outputKey)] = true;
+                    continue;
+                }
+                groupedRow[outputKey] = aggregated;
+                groupedRow[`___formatted_${outputKey}`] =
+                    formatCurrencyValue(
+                        aggregated,
+                        moneyCurrency.currency,
+                        locale
+                    );
+                groupedRow[fieldCurrencyKey(outputKey)] =
+                    moneyCurrency.currency;
+                continue;
+            }
+
             groupedRow[outputKey] = aggregated;
             groupedRow[`___formatted_${outputKey}`] =
                 aggregated === null

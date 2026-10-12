@@ -1982,14 +1982,26 @@ export class ReportExecutionService {
             }
             out[key] = value ?? null;
             const metadataType = resolveReportFieldType(f.table, f.field);
+            const displayCurrency = this.resolveRowDisplayCurrency(
+                row,
+                out,
+                accountCurrency
+            );
             out[`___formatted_${key}`] = this.formatValue(
                 value,
                 f.field,
                 locale,
                 timezone,
                 metadataType,
-                this.resolveRowDisplayCurrency(row, out, accountCurrency)
+                displayCurrency
             );
+            // Per-row currency for grouped money aggregations (mixed-currency check).
+            if (
+                isMoneyMetadataType(metadataType) ||
+                isMoneyFieldName(f.field)
+            ) {
+                out[`__currency_${key}`] = displayCurrency;
+            }
             // dispute_number aliases the primary key. Override display to
             // "DIS-000726" so formatValue's thousands separator does not turn
             // id 1726 into "1,726". Raw value stays numeric for sort/search.
