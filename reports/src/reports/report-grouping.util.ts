@@ -128,19 +128,52 @@ function shouldFormatFieldAsCurrency(table: string, field: string): boolean {
     ) && !(table === "Customer" && lower.includes("cost"));
 }
 
-function resolveCurrencyFromRow(
+/** Customer-currency money (Invoice.customer_amount, …) — not account-currency amounts. */
+export function isCustomerCurrencyMoneyField(field: string): boolean {
+    const lower = field.toLowerCase();
+    return (
+        lower.startsWith("customer_") &&
+        (lower.includes("amount") ||
+            lower.includes("debt") ||
+            lower.includes("paid"))
+    );
+}
+
+/**
+ * Per-row currency for grouping and totals. Account-currency amount columns
+ * (`Invoice.amount`, …) always use `accountCurrency`; customer-currency
+ * columns read the row. Pass `field` so totals do not copy this logic.
+ */
+export function resolveCurrencyFromRow(
     sampleRow: Record<string, unknown> | undefined,
-    accountCurrency: string
+    accountCurrency: string,
+    field?: string
 ): string {
+    if (field && !isCustomerCurrencyMoneyField(field)) {
+        return accountCurrency || "USD";
+    }
     if (!sampleRow) {
         return accountCurrency || "USD";
     }
+    const raw =
+        sampleRow.raw && typeof sampleRow.raw === "object"
+            ? (sampleRow.raw as Record<string, unknown>)
+            : undefined;
+    const invoice =
+        sampleRow.Invoice && typeof sampleRow.Invoice === "object"
+            ? (sampleRow.Invoice as Record<string, unknown>)
+            : undefined;
     const candidates = [
         sampleRow.customer_currency,
         sampleRow.currency,
         sampleRow["Customer.customer_currency"],
         sampleRow["Invoice.customer_currency"],
         sampleRow["Invoice.currency"],
+        raw?.customer_currency,
+        raw?.currency,
+        raw?.["Invoice.customer_currency"],
+        invoice?.customer_currency,
+        invoice?.currency,
     ];
     for (const value of candidates) {
         if (typeof value === "string" && value.trim()) {
@@ -148,6 +181,57 @@ function resolveCurrencyFromRow(
         }
     }
     return accountCurrency || "USD";
+}
+
+/** Copy row currency companions onto formatted output so totals can see them. */
+export function attachRowCurrencyFields(
+    out: Record<string, unknown>,
+    sourceRow: Record<string, unknown> | undefined,
+    primaryTable?: string
+): void {
+    if (!sourceRow) {
+        return;
+    }
+    const invoice =
+        sourceRow.Invoice && typeof sourceRow.Invoice === "object"
+            ? (sourceRow.Invoice as Record<string, unknown>)
+            : undefined;
+    const pick = (...values: unknown[]): string | undefined => {
+        for (const value of values) {
+            if (typeof value === "string" && value.trim()) {
+                return value.trim().toUpperCase();
+            }
+        }
+        return undefined;
+    };
+    const customerCurrency = pick(
+        sourceRow.customer_currency,
+        sourceRow["Invoice.customer_currency"],
+        sourceRow["InvoicePayment.customer_currency"],
+        invoice?.customer_currency
+    );
+    const currency = pick(
+        sourceRow.currency,
+        sourceRow["Invoice.currency"],
+        invoice?.currency
+    );
+    if (customerCurrency) {
+        if (out.customer_currency == null) {
+            out.customer_currency = customerCurrency;
+        }
+        if (out["Invoice.customer_currency"] == null) {
+            out["Invoice.customer_currency"] = customerCurrency;
+        }
+        if (
+            primaryTable === "InvoicePayment" &&
+            out["InvoicePayment.customer_currency"] == null
+        ) {
+            out["InvoicePayment.customer_currency"] = customerCurrency;
+        }
+    }
+    if (currency && out.currency == null) {
+        out.currency = currency;
+    }
 }
 
 function formatCurrencyValue(
@@ -262,7 +346,8 @@ export function applyGroupingAndAggregation(
                 if (numVal !== null) {
                     const currency = resolveCurrencyFromRow(
                         sampleRow,
-                        accountCurrency
+                        accountCurrency,
+                        field.field
                     );
                     groupedRow[`___formatted_${outputKey}`] =
                         formatCurrencyValue(numVal, currency, locale);
@@ -308,6 +393,197 @@ export function applyGroupingAndAggregation(
     }
 
     return groupedRows;
+}
+
+export type ReportTotalsCell = {
+    value: number | null;
+    currency?: string;
+    mixedCurrency?: boolean;
+    formatted?: string;
+};
+
+export type ReportTotals = {
+    cells: Record<string, ReportTotalsCell>;
+    /** Column that carries the "Total" label; null when every column is aggregated. */
+    labelKey: string | null;
+};
+
+export type TotalRowLabelConfig = GroupingReportConfig & {
+    columnOrder?: string[];
+};
+
+function isAggregatedFormula(
+    formula: Pick<ReportFormula, "aggregation">
+): boolean {
+    return !!formula.aggregation;
+}
+
+export function reportHasTotalsAggregation(
+    config: GroupingReportConfig
+): boolean {
+    const hasFieldAggregation = (config.fields || []).some((field) =>
+        isAggregatedField(field)
+    );
+    if (hasFieldAggregation) {
+        return true;
+    }
+    return (config.formulas || []).some((formula) =>
+        isAggregatedFormula(formula)
+    );
+}
+
+/**
+ * First visible column without an aggregation in display order
+ * (`columnOrder`, falling back to fields then formulas).
+ */
+export function resolveTotalRowLabelKey(
+    config: TotalRowLabelConfig
+): string | null {
+    const fields = config.fields || [];
+    const visibleFormulas = (config.formulas || []).filter(
+        (formula) => !formula.hidden
+    );
+    const defaultOrder = [
+        ...fields.map((field) => getFieldOutputKey(field)),
+        ...visibleFormulas.map((formula) => getFormulaOutputKey(formula.id)),
+    ];
+    const valid = new Set(defaultOrder);
+    const ordered = Array.from(
+        new Set([
+            ...(config.columnOrder || []).filter((key) => valid.has(key)),
+            ...defaultOrder,
+        ])
+    );
+    const aggregatedKeys = new Set([
+        ...fields
+            .filter((field) => isAggregatedField(field))
+            .map((field) => getFieldOutputKey(field)),
+        ...visibleFormulas
+            .filter((formula) => !!formula.aggregation)
+            .map((formula) => getFormulaOutputKey(formula.id)),
+    ]);
+    return ordered.find((key) => !aggregatedKeys.has(key)) ?? null;
+}
+
+function formatTotalNumber(value: number, locale: string): string {
+    try {
+        return new Intl.NumberFormat(locale).format(value);
+    } catch {
+        return String(value);
+    }
+}
+
+/**
+ * Totals per aggregated field over detail rows (before grouping), so AVG is
+ * over source rows and money columns keep their row currencies.
+ */
+export function buildReportTotalsCells(
+    detailRows: Record<string, unknown>[],
+    config: GroupingReportConfig,
+    options?: {
+        locale?: string;
+        accountCurrency?: string;
+    }
+): Record<string, ReportTotalsCell> {
+    const locale = options?.locale || "en-US";
+    const accountCurrency = options?.accountCurrency || "USD";
+    const cells: Record<string, ReportTotalsCell> = {};
+
+    for (const field of config.fields || []) {
+        if (!isAggregatedField(field)) {
+            continue;
+        }
+        const aggregation = String(field.aggregation).toUpperCase();
+        const outputKey = getFieldOutputKey(field);
+        const legacyKey = field.alias ? null : getLegacyFieldOutputKey(field);
+        const isMoney =
+            aggregation !== "COUNT" &&
+            shouldFormatFieldAsCurrency(field.table, field.field);
+
+        const values: number[] = [];
+        const currencies = new Set<string>();
+        for (const row of detailRows) {
+            const value = extractAggregationSourceValue(
+                row,
+                outputKey,
+                legacyKey
+            );
+            if (value === null) {
+                continue;
+            }
+            values.push(value);
+            if (isMoney) {
+                currencies.add(
+                    resolveCurrencyFromRow(row, accountCurrency, field.field)
+                );
+            }
+        }
+
+        if (isMoney && currencies.size > 1) {
+            cells[outputKey] = { value: null, mixedCurrency: true };
+            continue;
+        }
+
+        const value = calculateAggregation(values, aggregation);
+        if (value === null) {
+            cells[outputKey] = { value: null };
+            continue;
+        }
+        if (isMoney) {
+            const currency =
+                Array.from(currencies)[0] || accountCurrency;
+            cells[outputKey] = {
+                value,
+                currency,
+                formatted: formatCurrencyValue(value, currency, locale),
+            };
+            continue;
+        }
+        cells[outputKey] = {
+            value,
+            formatted: formatTotalNumber(value, locale),
+        };
+    }
+
+    const fields = config.fields || [];
+    for (const formula of config.formulas || []) {
+        if (!isAggregatedFormula(formula)) {
+            continue;
+        }
+        const aggregation = String(formula.aggregation);
+        const outputKey = getFormulaOutputKey(formula.id);
+        const values: number[] = [];
+        let sampleRow: Record<string, unknown> | undefined;
+        for (const row of detailRows) {
+            const value = coerceToNumber(row[outputKey]);
+            if (value === null) {
+                continue;
+            }
+            values.push(value);
+            if (!sampleRow) {
+                sampleRow = row;
+            }
+        }
+
+        const value = calculateAggregation(values, aggregation);
+        if (value === null) {
+            cells[outputKey] = { value: null };
+            continue;
+        }
+        const formatted = formatAggregatedFormulaValue(
+            value,
+            formula,
+            sampleRow ?? {},
+            fields,
+            locale,
+            accountCurrency
+        );
+        cells[outputKey] = formatted
+            ? { value, formatted }
+            : { value };
+    }
+
+    return cells;
 }
 
 export function buildCountAggregationTotals(

@@ -48,6 +48,7 @@ import {
     mergeLatestCustomerPolicyTrendSelect,
 } from "./report-customer-trend-fields.util";
 import {
+    CUSTOMER_POLICY_BACKED_REPORT_FIELDS,
     extractCustomerPolicyReportField,
     isCustomerPolicyBackedReportField,
     isCustomerPolicyFeeRateReportField,
@@ -109,12 +110,25 @@ import {
 import {
     applyGroupingAndAggregation,
     buildCountAggregationTotals,
+    attachRowCurrencyFields,
+    buildReportTotalsCells,
     compareSortValues,
     coerceToNumber,
     detectOneToManyRelationTable,
     getLegacyFieldOutputKey,
+    reportHasTotalsAggregation,
     reportNeedsGroupedExecution,
+    resolveTotalRowLabelKey,
+    type ReportTotals,
 } from "./report-grouping.util";
+
+/** Customer columns joined from another primary table that live on the active CustomerPolicy. */
+function isRelatedCustomerPolicyField(field: string): boolean {
+    return (
+        isCustomerPolicyFeeRateReportField(field) ||
+        CUSTOMER_POLICY_BACKED_REPORT_FIELDS.has(field)
+    );
+}
 
 type ReportConfig = {
     tables?: string[];
@@ -130,6 +144,9 @@ type ReportConfig = {
     sorting?: Array<{ field: string; direction?: string }>;
     grouping?: string[];
     formulas?: ReportFormula[];
+    /** UI only: interleaved field output keys and `formula:{id}`. */
+    columnOrder?: string[];
+    showTotalRow?: boolean;
 };
 
 type PrismaWhere = Record<string, unknown>;
@@ -137,6 +154,7 @@ type ExecuteReportResult = {
     data: Record<string, unknown>[];
     totalRecords: number;
     aggregationTotals?: Record<string, number>;
+    totals?: ReportTotals;
     formulaWarnings?: FormulaWarningSummary[];
 };
 
@@ -669,6 +687,7 @@ export class ReportExecutionService {
 
         let resultRows = formulaResult.rows;
         let aggregationTotals: Record<string, number> | undefined;
+        let totals: ReportTotals | undefined;
 
         // Formula filters keep matching detail rows; grouping runs afterwards.
         if (hasFormulaFilters) {
@@ -676,6 +695,20 @@ export class ReportExecutionService {
                 resultRows,
                 formulaFilters
             );
+        }
+
+        // Aggregated reports always take the grouped full-fetch path, so the
+        // detail rows here are the whole filtered set (not the SQL page).
+        if (body.includeTotals === true && reportHasTotalsAggregation(config)) {
+            totals = {
+                cells: buildReportTotalsCells(resultRows, config, {
+                    locale,
+                    accountCurrency,
+                }),
+                labelKey: resolveTotalRowLabelKey(
+                    (report.report_config || {}) as ReportConfig
+                ),
+            };
         }
 
         if (needsGroupedExecution) {
@@ -748,6 +781,7 @@ export class ReportExecutionService {
             data: resultRows,
             totalRecords,
             ...(aggregationTotals ? { aggregationTotals } : {}),
+            ...(totals ? { totals } : {}),
             ...(formulaResult.warnings.length
                 ? { formulaWarnings: formulaResult.warnings }
                 : {}),
@@ -988,6 +1022,12 @@ export class ReportExecutionService {
         fields: Array<{ table: string; field: string }>
     ): Record<string, unknown> {
         const select: Record<string, unknown> = { id: true };
+        if (
+            primaryTable === "Invoice" ||
+            primaryTable === "InvoicePayment"
+        ) {
+            select.customer_currency = true;
+        }
         const relationMap = RELATION_FROM_PRIMARY[primaryTable] || {};
 
         // To-many joins (Customer→Invoice, Contact, …) load one sample row
@@ -1167,7 +1207,7 @@ export class ReportExecutionService {
             }
             if (
                 f.table === "Customer" &&
-                isCustomerPolicyFeeRateReportField(f.field)
+                isRelatedCustomerPolicyField(f.field)
             ) {
                 mergeActiveCustomerPolicySelect(ensureRelSelect(rel), [
                     f.field,
@@ -2071,6 +2111,7 @@ export class ReportExecutionService {
                 }
             }
         }
+        attachRowCurrencyFields(out, row, primaryTable);
         return out;
     }
 
@@ -2216,7 +2257,7 @@ export class ReportExecutionService {
         }
         if (
             f.table === "Customer" &&
-            isCustomerPolicyFeeRateReportField(f.field)
+            isRelatedCustomerPolicyField(f.field)
         ) {
             return nested
                 ? extractCustomerPolicyReportField(

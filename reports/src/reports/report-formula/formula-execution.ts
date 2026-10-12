@@ -17,6 +17,7 @@ import {
 import {
     FormulaWarningSummary,
     getFormulaOutputKey,
+    MAX_FORMULA_DECIMALS,
     ReportFormula,
 } from "./types";
 
@@ -71,6 +72,17 @@ function resolveFieldType(
     );
     const fieldName = reference.slice(dot + 1);
     return table?.fields.find((entry) => entry.name === fieldName)?.type;
+}
+
+/** Saved configs are not schema-validated; ignore out-of-range decimals. */
+function resolveFormulaDecimals(formula: ReportFormula): number | undefined {
+    const { decimals } = formula;
+    return typeof decimals === "number" &&
+        Number.isInteger(decimals) &&
+        decimals >= 0 &&
+        decimals <= MAX_FORMULA_DECIMALS
+        ? decimals
+        : undefined;
 }
 
 function formatYesNo(value: number, locale: string): string {
@@ -218,6 +230,11 @@ function formatFormulaValue(
     if (raw === null) {
         return { raw: null, formatted: null };
     }
+    const decimals = resolveFormulaDecimals(formula);
+    const numberDigits = {
+        minimumFractionDigits: decimals ?? 0,
+        maximumFractionDigits: decimals ?? 10,
+    };
     try {
         if (formula.format === "currency") {
             return {
@@ -230,7 +247,8 @@ function formatFormulaValue(
                         fields,
                         accountCurrency
                     ),
-                    locale
+                    locale,
+                    decimals
                 ),
             };
         }
@@ -239,8 +257,8 @@ function formatFormulaValue(
                 raw,
                 formatted: new Intl.NumberFormat(locale, {
                     style: "percent",
-                    minimumFractionDigits: 0,
-                    maximumFractionDigits: 4,
+                    minimumFractionDigits: decimals ?? 0,
+                    maximumFractionDigits: decimals ?? 4,
                 }).format(raw),
             };
         }
@@ -249,9 +267,10 @@ function formatFormulaValue(
             if (formula.aggregation) {
                 return {
                     raw,
-                    formatted: new Intl.NumberFormat(locale, {
-                        maximumFractionDigits: 10,
-                    }).format(raw),
+                    formatted: new Intl.NumberFormat(
+                        locale,
+                        numberDigits
+                    ).format(raw),
                 };
             }
             return {
@@ -261,9 +280,7 @@ function formatFormulaValue(
         }
         return {
             raw,
-            formatted: new Intl.NumberFormat(locale, {
-                maximumFractionDigits: 10,
-            }).format(raw),
+            formatted: new Intl.NumberFormat(locale, numberDigits).format(raw),
         };
     } catch {
         return { raw, formatted: String(raw) };
