@@ -25,11 +25,18 @@ import {
     creditAsOfBackfillBullJobId,
     listRunningCreditAsOfBackfillAccountIds,
     runCreditAsOfBackfillJob,
+    accountVatBasisRefreshBullJobId,
+    listRunningAccountVatBasisRefreshAccountIds,
+    registerVatBasisRefreshBalances,
+    runAccountVatBasisRefreshJob,
 } from "@archaser/credit-insurance-domain";
 import {
     createBillingConnectorMetricsSinkFromProm,
     finalizeAwaitingPostIngestDrainExecutions,
     registerArPostIngestOrchestrator,
+    registerCustomerBalancesFinal,
+    assertCustomerRollupHostLoadable,
+    loadRecalculateCustomerAmountsModule,
     setDefaultBillingConnectorMetricsSink,
     touchAwaitingPostIngestDrainProgress,
 } from "@archaser/billing-connector";
@@ -45,16 +52,30 @@ import {
     type CronJobResult,
 } from "@archaser/cron-jobs";
 import { registerBillingConnectorSyncCounters } from "./billing-connector-sync-counters";
-import { requeueCreditAsOfBackfillBullJob } from "./backfill-bull-job.util";
+import {
+    requeueAccountVatBasisRefreshBullJob,
+    requeueCreditAsOfBackfillBullJob,
+} from "./backfill-bull-job.util";
+import {
+    registerBullmqQueueMetrics,
+    type BullmqQueueMetricHandles,
+} from "./bullmq-queue-metrics";
 
 const QUEUE_NAME = process.env.BULLMQ_QUEUE || "archaser-cron";
 const BACKFILL_QUEUE_NAME =
     process.env.BULLMQ_CREDIT_ASOF_BACKFILL_QUEUE ||
     "archaser-credit-asof-backfill";
+const VAT_BASIS_REFRESH_QUEUE_NAME =
+    process.env.BULLMQ_ACCOUNT_VAT_BASIS_REFRESH_QUEUE ||
+    "archaser-account-vat-basis-refresh";
 
 /** Generate runs for hours; default BullMQ lock (30s) causes false stalls on restart. */
 const BACKFILL_LOCK_DURATION_MS = Number(
     process.env.BULLMQ_CREDIT_ASOF_BACKFILL_LOCK_MS || 600_000
+);
+
+const VAT_BASIS_REFRESH_LOCK_DURATION_MS = Number(
+    process.env.BULLMQ_ACCOUNT_VAT_BASIS_REFRESH_LOCK_MS || 600_000
 );
 
 /** Same names as API business metrics so Grafana `{instance="Staging"}` scrapes worker runs. */
@@ -84,9 +105,13 @@ class WorkerRuntimeService implements OnModuleDestroy {
     private connection: IORedis | null = null;
     private worker: Worker | null = null;
     private backfillWorker: Worker | null = null;
+    private vatBasisRefreshWorker: Worker | null = null;
     private queue: Queue | null = null;
     private backfillQueue: Queue | null = null;
+    private vatBasisRefreshQueue: Queue | null = null;
     private prisma: PrismaClient | null = null;
+    private bullmqQueueMetrics: BullmqQueueMetricHandles | null = null;
+    private bullmqMetricsTimer: ReturnType<typeof setInterval> | null = null;
     readonly register = new Registry();
 
     constructor(private readonly config: ConfigService) {}
@@ -118,6 +143,25 @@ class WorkerRuntimeService implements OnModuleDestroy {
         registerArPostIngestOrchestrator((options) =>
             runArPostIngestForCustomers(options)
         );
+        // Customer due/overdue rollups: refuse sync work if api/dist/customers
+        // (or CUSTOMERS_DOMAIN_ROOT) cannot load. Register the compiled module
+        // so virtual closes and cash payments share the same entry.
+        assertCustomerRollupHostLoadable();
+        const rollupMod = loadRecalculateCustomerAmountsModule();
+        registerCustomerBalancesFinal(async (customerIds, prisma, options) => {
+            await rollupMod.recalculateCustomerAmounts(
+                customerIds,
+                prisma,
+                options
+            );
+        });
+        registerVatBasisRefreshBalances(async (customerIds, prisma, options) => {
+            await rollupMod.recalculateCustomerAmounts(
+                customerIds,
+                prisma,
+                options
+            );
+        });
         collectDefaultMetrics({
             register: this.register,
             prefix: "archaser_worker_",
@@ -132,6 +176,20 @@ class WorkerRuntimeService implements OnModuleDestroy {
         this.backfillQueue = new Queue(BACKFILL_QUEUE_NAME, {
             connection: this.connection,
         });
+        this.vatBasisRefreshQueue = new Queue(VAT_BASIS_REFRESH_QUEUE_NAME, {
+            connection: this.connection,
+        });
+
+        this.bullmqQueueMetrics = registerBullmqQueueMetrics(this.register, {
+            cron: this.queue,
+            credit_asof_backfill: this.backfillQueue,
+            account_vat_basis_refresh: this.vatBasisRefreshQueue,
+        });
+        await this.bullmqQueueMetrics.refresh();
+        this.bullmqMetricsTimer = setInterval(() => {
+            void this.bullmqQueueMetrics?.refresh();
+        }, 15_000);
+        this.bullmqMetricsTimer.unref?.();
 
         try {
             this.prisma = createPrismaClient({
@@ -167,8 +225,22 @@ class WorkerRuntimeService implements OnModuleDestroy {
             }
         );
 
+        this.vatBasisRefreshWorker = new Worker(
+            VAT_BASIS_REFRESH_QUEUE_NAME,
+            async (job) => this.handleAccountVatBasisRefreshJob(job),
+            {
+                connection: this.connection,
+                concurrency: 1,
+                lockDuration: VAT_BASIS_REFRESH_LOCK_DURATION_MS,
+                maxStalledCount: 3,
+            }
+        );
+
         this.logger.log(
             `CreditAsOfBackfill worker listening on queue ${BACKFILL_QUEUE_NAME}`
+        );
+        this.logger.log(
+            `AccountVatBasisRefresh worker listening on queue ${VAT_BASIS_REFRESH_QUEUE_NAME}`
         );
 
         this.backfillWorker.on("active", (job) => {
@@ -192,12 +264,19 @@ class WorkerRuntimeService implements OnModuleDestroy {
             );
         });
 
+        this.vatBasisRefreshWorker.on("failed", (job, err) => {
+            this.logger.error(
+                `AccountVatBasisRefresh job ${job?.id} failed: ${err.message}`
+            );
+        });
+
         this.worker.on("failed", (job, err) => {
             this.logger.error(`Job ${job?.id} failed: ${err.message}`);
         });
 
         await this.syncRepeatables("startup");
         await this.reclaimRunningCreditAsOfBackfillJobs();
+        await this.reclaimRunningAccountVatBasisRefreshJobs();
     }
 
     private async handleCreditAsOfBackfillJob(job: Job): Promise<unknown> {
@@ -219,9 +298,34 @@ class WorkerRuntimeService implements OnModuleDestroy {
         return result;
     }
 
+    private async handleAccountVatBasisRefreshJob(job: Job): Promise<unknown> {
+        if (!this.prisma) {
+            throw new Error("database unavailable");
+        }
+        bindCreditInsurancePrisma(this.prisma);
+        const data = job.data as { accountId: number };
+        const accountId = Number(data.accountId);
+        this.logger.log(
+            `AccountVatBasisRefresh starting for account ${accountId}`
+        );
+        const result = await runAccountVatBasisRefreshJob(accountId, {
+            dbClient: this.prisma,
+        });
+        this.logger.log(
+            `AccountVatBasisRefresh finished for account ${accountId}: status=${result.status} done=${result.customersDone}/${result.customersTotal}`
+        );
+        return result;
+    }
+
     async onModuleDestroy(): Promise<void> {
+        if (this.bullmqMetricsTimer) {
+            clearInterval(this.bullmqMetricsTimer);
+            this.bullmqMetricsTimer = null;
+        }
+        await this.vatBasisRefreshWorker?.close();
         await this.backfillWorker?.close();
         await this.worker?.close();
+        await this.vatBasisRefreshQueue?.close();
         await this.backfillQueue?.close();
         await this.queue?.close();
         await this.connection?.quit();
@@ -248,10 +352,11 @@ class WorkerRuntimeService implements OnModuleDestroy {
                 await requeueCreditAsOfBackfillBullJob(
                     this.backfillQueue,
                     jobId,
-                    accountId
+                    accountId,
+                    { replaceActive: true }
                 );
                 this.logger.log(
-                    `Reclaimed CreditAsOfBackfill accountId=${accountId} jobId=${jobId} queue=${BACKFILL_QUEUE_NAME}`
+                    `Reclaimed stale CreditAsOfBackfill accountId=${accountId} jobId=${jobId} queue=${BACKFILL_QUEUE_NAME}`
                 );
             }
             if (accountIds.length > 0) {
@@ -262,6 +367,41 @@ class WorkerRuntimeService implements OnModuleDestroy {
         } catch (error) {
             this.logger.warn(
                 `CreditAsOfBackfill reclaim skipped: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+        }
+    }
+
+    private async reclaimRunningAccountVatBasisRefreshJobs(): Promise<void> {
+        if (!this.prisma || !this.vatBasisRefreshQueue) {
+            return;
+        }
+        try {
+            const accountIds = await listRunningAccountVatBasisRefreshAccountIds(
+                {
+                    dbClient: this.prisma,
+                }
+            );
+            for (const accountId of accountIds) {
+                const jobId = accountVatBasisRefreshBullJobId(accountId);
+                await requeueAccountVatBasisRefreshBullJob(
+                    this.vatBasisRefreshQueue,
+                    jobId,
+                    accountId
+                );
+                this.logger.log(
+                    `Reclaimed AccountVatBasisRefresh accountId=${accountId} jobId=${jobId} queue=${VAT_BASIS_REFRESH_QUEUE_NAME}`
+                );
+            }
+            if (accountIds.length > 0) {
+                this.logger.log(
+                    `Reclaimed ${accountIds.length} running AccountVatBasisRefresh job(s)`
+                );
+            }
+        } catch (error) {
+            this.logger.warn(
+                `AccountVatBasisRefresh reclaim skipped: ${
                     error instanceof Error ? error.message : String(error)
                 }`
             );
@@ -280,10 +420,11 @@ class WorkerRuntimeService implements OnModuleDestroy {
         }
 
         if (job.name === "ar-post-ingest-drain") {
-            if (!this.prisma) {
+            const prisma = this.prisma;
+            if (!prisma) {
                 throw new Error("database unavailable");
             }
-            bindCreditInsurancePrisma(this.prisma);
+            bindCreditInsurancePrisma(prisma);
             const data = job.data as {
                 accountId?: number;
                 maxItems?: number;
@@ -299,11 +440,13 @@ class WorkerRuntimeService implements OnModuleDestroy {
                         accountId,
                         countPendingForAccount:
                             countPendingArPostIngestCustomers,
+                        prisma,
                     });
                 },
             });
             await finalizeAwaitingPostIngestDrainExecutions({
                 countPendingForAccount: countPendingArPostIngestCustomers,
+                prisma,
             });
             if (data.accountId != null) {
                 const remaining = await countPendingArPostIngestCustomers(

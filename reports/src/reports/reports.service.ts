@@ -45,6 +45,45 @@ const REPORT_AUDIT_USERS_INCLUDE = {
     },
 } as const;
 
+/** Basic customer invoice-tab system reports — hidden when Policy Insights exist. */
+const CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES = [
+    "all_unpaid_invoices",
+    "due_invoices",
+    "overdue_invoices",
+    "all_invoices",
+] as const;
+
+/** Seeded CI replacements for the basic four (unique_name contains credit_insurance). */
+const CUSTOMER_UNPAID_POLICY_INSIGHTS_UNIQUE_NAMES = [
+    "all_unpaid_invoices_credit_insurance_policy_insights",
+    "due_invoices_credit_insurance_policy_insights",
+    "overdue_invoices_credit_insurance_policy_insights",
+    "all_invoices_credit_insurance_policy_insights",
+] as const;
+
+const CUSTOMER_UNPAID_INVOICES_CONTEXT = "customer_unpaid_invoices";
+
+function isCreditInsuranceOnlyReport(report: {
+    context?: string | null;
+    unique_name?: string | null;
+}): boolean {
+    return (
+        (report.context?.includes("credit") ?? false) ||
+        (report.unique_name?.includes("credit_insurance") ?? false)
+    );
+}
+
+function isBasicCustomerUnpaidInvoiceReport(
+    uniqueName?: string | null
+): boolean {
+    return (
+        uniqueName != null &&
+        (CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES as readonly string[]).includes(
+            uniqueName
+        )
+    );
+}
+
 @Injectable()
 export class ReportsService {
     constructor(
@@ -70,6 +109,10 @@ export class ReportsService {
         const filterCi =
             !(accountRow as { has_credit_insurance?: boolean } | null)
                 ?.has_credit_insurance;
+        const preferPolicyInsights =
+            !filterCi &&
+            context === CUSTOMER_UNPAID_INVOICES_CONTEXT &&
+            (await this.accountHasPolicyInsightsInvoiceReports(accountId));
 
         if (isDefaultRequest && context) {
             const defaultView = await this.resolveDefaultView(
@@ -77,7 +120,8 @@ export class ReportsService {
                 userId,
                 context,
                 role,
-                filterCi
+                filterCi,
+                preferPolicyInsights
             );
             if (!defaultView) {
                 return {
@@ -136,6 +180,15 @@ export class ReportsService {
                         { context: { contains: "credit" } },
                         { unique_name: { contains: "credit_insurance" } },
                     ],
+                },
+            });
+        } else if (preferPolicyInsights) {
+            // Hide basic unpaid/due/overdue/all only when Policy Insights seeds exist.
+            (where.AND as unknown[]).push({
+                NOT: {
+                    unique_name: {
+                        in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
+                    },
                 },
             });
         }
@@ -376,9 +429,31 @@ export class ReportsService {
             );
         }
 
+        const accountRow = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { has_credit_insurance: true } as never,
+        });
+        const hasCreditInsurance = Boolean(
+            (accountRow as { has_credit_insurance?: boolean } | null)
+                ?.has_credit_insurance
+        );
+
+        if (hasCreditInsurance) {
+            return {
+                tables: REPORT_METADATA.tables,
+                relationships: REPORT_RELATIONSHIPS,
+            };
+        }
+
         return {
-            tables: REPORT_METADATA.tables,
-            relationships: REPORT_RELATIONSHIPS,
+            tables: REPORT_METADATA.tables.filter(
+                (table) => table.name !== "CustomerPolicy"
+            ),
+            relationships: REPORT_RELATIONSHIPS.filter(
+                (rel) =>
+                    rel.from !== "CustomerPolicy" &&
+                    rel.to !== "CustomerPolicy"
+            ),
         };
     }
 
@@ -399,13 +474,18 @@ export class ReportsService {
         const filterCi =
             !(accountRow as { has_credit_insurance?: boolean } | null)
                 ?.has_credit_insurance;
+        const preferPolicyInsights =
+            !filterCi &&
+            context === CUSTOMER_UNPAID_INVOICES_CONTEXT &&
+            (await this.accountHasPolicyInsightsInvoiceReports(accountId));
 
         const view = await this.resolveDefaultView(
             accountId,
             userId,
             context,
             role,
-            filterCi
+            filterCi,
+            preferPolicyInsights
         );
         return serializeBigInt({
             report: view ? this.formatReportDates(view) : null,
@@ -642,12 +722,28 @@ export class ReportsService {
         };
     }
 
+    private async accountHasPolicyInsightsInvoiceReports(
+        accountId: number
+    ): Promise<boolean> {
+        const count = await this.db.report.count({
+            where: {
+                account_id: accountId,
+                context: CUSTOMER_UNPAID_INVOICES_CONTEXT,
+                unique_name: {
+                    in: [...CUSTOMER_UNPAID_POLICY_INSIGHTS_UNIQUE_NAMES],
+                },
+            },
+        });
+        return count > 0;
+    }
+
     private async resolveDefaultView(
         accountId: number,
         userId: string,
         context: string,
         _role: string,
-        filterCi: boolean
+        filterCi: boolean,
+        preferPolicyInsights = false
     ) {
         const userDefault = await this.db.userDefaultReport.findFirst({
             where: { user_id: userId, context },
@@ -658,7 +754,18 @@ export class ReportsService {
             },
         });
         if (userDefault?.Report && userDefault.Report.account_id === accountId) {
-            return userDefault.Report;
+            const preferred = userDefault.Report as {
+                context?: string | null;
+                unique_name?: string | null;
+            };
+            const blockedForNonCi =
+                filterCi && isCreditInsuranceOnlyReport(preferred);
+            const blockedForCi =
+                preferPolicyInsights &&
+                isBasicCustomerUnpaidInvoiceReport(preferred.unique_name);
+            if (!blockedForNonCi && !blockedForCi) {
+                return userDefault.Report;
+            }
         }
 
         const where: Record<string, unknown> = {
@@ -673,6 +780,16 @@ export class ReportsService {
                     { unique_name: { contains: "credit_insurance" } },
                 ],
             };
+        } else if (preferPolicyInsights) {
+            where.AND = [
+                {
+                    NOT: {
+                        unique_name: {
+                            in: [...CUSTOMER_UNPAID_BASIC_UNIQUE_NAMES],
+                        },
+                    },
+                },
+            ];
         }
         return this.db.report.findFirst({
             where: where as never,
@@ -809,14 +926,10 @@ export class ReportsService {
         const config = reportConfig as {
             filters?: Array<{ field?: string | null }>;
             formulas?: Array<{ id: string }>;
-            grouping?: string[];
-            fields?: Array<{ aggregation?: string | null }>;
         };
         const failure = findFormulaFilterGuardFailure({
             filters: config.filters,
             formulas: config.formulas,
-            grouping: config.grouping,
-            fields: config.fields,
         });
         if (failure) {
             throw new BadRequestException({

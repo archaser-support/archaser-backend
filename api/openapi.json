@@ -955,6 +955,168 @@
         }
       }
     },
+    "/api/entities/claims": {
+      "get": {
+        "operationId": "ClaimsController_list",
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List claims for the effective account",
+        "tags": [
+          "entities"
+        ]
+      },
+      "post": {
+        "operationId": "ClaimsController_create",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a claim (Primary policy ownership)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/claims/eligibility/{invoiceId}": {
+      "get": {
+        "operationId": "ClaimsController_eligibility",
+        "parameters": [
+          {
+            "name": "invoiceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Evaluate Issue Claim eligibility for an invoice",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/claims/policy-excess-summary": {
+      "get": {
+        "operationId": "ClaimsController_policyExcessSummary",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remaining Aggregate/SDL excess (and optional claims) for Primary policy anniversary years",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/claims/remaining-excess": {
+      "get": {
+        "operationId": "ClaimsController_remainingExcess",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remaining Aggregate/SDL excess for a Primary policy year after applied claims",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/claims/{id}": {
+      "get": {
+        "operationId": "ClaimsController_getById",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get claim by id",
+        "tags": [
+          "entities"
+        ]
+      },
+      "put": {
+        "operationId": "ClaimsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update claim (status, amounts, references)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/customers": {
       "get": {
         "tags": [
@@ -1261,6 +1423,64 @@
           }
         ],
         "summary": "Customer policies list (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/customers/{id}/policies/cancel-pending": {
+      "post": {
+        "operationId": "CustomersController_cancelPendingPolicy",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cancel pending future customer policy change (Nest-native)",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/customers/{id}/policies/unassign": {
+      "post": {
+        "operationId": "CustomersController_unassignPolicy",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove customer policy from a UTC unassign date (Nest-native)",
         "tags": [
           "entities"
         ]
@@ -8580,6 +8800,64 @@
         ]
       }
     },
+    "/api/entities/insurance-policies/{id}/save-preview": {
+      "post": {
+        "operationId": "InsurancePoliciesActionsController_savePreview",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Preview an insurance policy save: changed customer-push fields and affected customer counts",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
+    "/api/entities/insurance-policies/{id}/cancel-pending": {
+      "post": {
+        "operationId": "InsurancePoliciesActionsController_cancelPending",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing Bearer or session cookie"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cancel the scheduled (future-dated) insurance policy revision",
+        "tags": [
+          "entities"
+        ]
+      }
+    },
     "/api/entities/insurance-policies/{id}/customer-prefill": {
       "get": {
         "operationId": "InsurancePoliciesActionsController_customerPrefill",
@@ -8749,6 +9027,7 @@
           "entities"
         ],
         "summary": "Entity by id \u2014 insurance-policies",
+        "description": "Optional body `effective_date` (YYYY-MM-DD, UTC). Omitted or today applies live. A future date stores the form as the single pending revision (`pending_effective_date` + `pending_payload`) without changing live columns or customers.",
         "security": [
           {
             "bearer": []
@@ -8758,11 +9037,17 @@
           "200": {
             "description": "OK (legacy Pages API shape)"
           },
+          "400": {
+            "description": "Invalid or past effective_date (EFFECTIVE_DATE_INVALID / EFFECTIVE_DATE_IN_PAST), or future date without a customer-push field change (FUTURE_EFFECTIVE_DATE_REQUIRES_PUSH_CHANGE)"
+          },
           "401": {
             "description": "Unauthorized"
           },
           "404": {
             "description": "Not found / not strangler\u2019d"
+          },
+          "409": {
+            "description": "A pending revision already exists (INSURANCE_POLICY_PENDING_REVISION_EXISTS)"
           }
         }
       },

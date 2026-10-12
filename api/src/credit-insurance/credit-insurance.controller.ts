@@ -22,6 +22,7 @@ const CREDIT_INSURANCE_KEYS = [
     "mark-reported",
     "mark-reported-bulk",
     "asof-backfill-status",
+    "parent-pool-history-status",
     "asof-backfill-start",
     "asof-backfill-pause",
     "asof-backfill-retry",

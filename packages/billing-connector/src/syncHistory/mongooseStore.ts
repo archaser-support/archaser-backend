@@ -1,5 +1,10 @@
+import { ensureUniqueRunningSyncMutexOnce } from "./ensureUniqueRunningMutex";
 import { ConnectorSyncExecutionModel } from "./model";
 import { ensureMongoConnection } from "./mongooseConnection";
+import {
+    isAccountRunningDuplicateKeyError,
+    SyncAlreadyRunningError,
+} from "./syncAlreadyRunningError";
 import {
     defaultSinceDate,
     durationSecondsFrom,
@@ -66,40 +71,67 @@ function progressIdleBefore(
     return new Date(completedAt.getTime() - idleHours * 60 * 60 * 1000);
 }
 
+async function readySyncHistoryMongo(): Promise<void> {
+    await ensureMongoConnection();
+    // One-shot: cleanup twin RUNNING rows (if any) then ensure unique index.
+    await ensureUniqueRunningSyncMutexOnce();
+}
+
 export const mongooseSyncHistoryStore: SyncHistoryStore = {
     async createRunning(
         input: CreateRunningExecutionInput
     ): Promise<SyncHistoryExecution> {
-        await ensureMongoConnection();
-        const startedAt = input.startedAt ?? new Date();
-        const created = await ConnectorSyncExecutionModel.create({
-            execution_id: input.executionId,
-            connector_id: input.connectorId,
+        await readySyncHistoryMongo();
+        // Best-effort fast path before insert (index is the hard mutex).
+        const alreadyRunning = await ConnectorSyncExecutionModel.findOne({
             account_id: input.accountId,
-            provider: input.provider,
-            trigger: input.trigger,
-            sync_mode: input.syncMode,
             status: "RUNNING",
-            started_at: startedAt,
-            last_progress_at: startedAt,
-            completed_at: null,
-            duration_seconds: null,
-            entity_stats: {},
-            error_message: null,
-            error_type: null,
-            awaiting_post_ingest_drain: false,
-            pending_terminal_status: null,
-            pending_error_message: null,
-            pending_error_type: null,
-        });
-        return toExecution(created);
+        })
+            .select({ execution_id: 1 })
+            .lean();
+        if (alreadyRunning) {
+            throw new SyncAlreadyRunningError(
+                input.accountId,
+                alreadyRunning.execution_id
+            );
+        }
+
+        const startedAt = input.startedAt ?? new Date();
+        try {
+            const created = await ConnectorSyncExecutionModel.create({
+                execution_id: input.executionId,
+                connector_id: input.connectorId,
+                account_id: input.accountId,
+                provider: input.provider,
+                trigger: input.trigger,
+                sync_mode: input.syncMode,
+                status: "RUNNING",
+                started_at: startedAt,
+                last_progress_at: startedAt,
+                completed_at: null,
+                duration_seconds: null,
+                entity_stats: {},
+                error_message: null,
+                error_type: null,
+                awaiting_post_ingest_drain: false,
+                pending_terminal_status: null,
+                pending_error_message: null,
+                pending_error_type: null,
+            });
+            return toExecution(created);
+        } catch (error) {
+            if (isAccountRunningDuplicateKeyError(error)) {
+                throw new SyncAlreadyRunningError(input.accountId);
+            }
+            throw error;
+        }
     },
 
     async completeIfRunning(
         executionId: string,
         input: CompleteExecutionInput
     ): Promise<SyncHistoryExecution | null> {
-        await ensureMongoConnection();
+        await readySyncHistoryMongo();
         const completedAt = input.completedAt ?? new Date();
         const existing = await ConnectorSyncExecutionModel.findOne({
             execution_id: executionId,
@@ -143,7 +175,7 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
         executionId: string,
         input?: MarkExecutionCancelledInput
     ): Promise<SyncHistoryExecution | null> {
-        await ensureMongoConnection();
+        await readySyncHistoryMongo();
         const completedAt = input?.completedAt ?? new Date();
         const existing = await ConnectorSyncExecutionModel.findOne({
             execution_id: executionId,
@@ -181,7 +213,7 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
         executionId: string,
         input?: TouchProgressInput
     ): Promise<SyncHistoryExecution | null> {
-        await ensureMongoConnection();
+        await readySyncHistoryMongo();
         const progressAt = input?.progressAt ?? new Date();
         const update: Record<string, unknown> = {
             last_progress_at: progressAt,
@@ -201,7 +233,7 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
         executionId: string,
         input: DeferCompletionUntilPostIngestDrainInput
     ): Promise<SyncHistoryExecution | null> {
-        await ensureMongoConnection();
+        await readySyncHistoryMongo();
         const progressAt = input.progressAt ?? new Date();
         const update: Record<string, unknown> = {
             awaiting_post_ingest_drain: true,
@@ -224,7 +256,7 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
     async listAwaitingPostIngestDrainExecutions(
         accountId?: number
     ): Promise<SyncHistoryExecution[]> {
-        await ensureMongoConnection();
+        await readySyncHistoryMongo();
         const filter: Record<string, unknown> = {
             status: "RUNNING",
             awaiting_post_ingest_drain: true,
@@ -242,7 +274,7 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
         accountId: number,
         options?: ListExecutionsOptions
     ): Promise<SyncHistoryExecution[]> {
-        await ensureMongoConnection();
+        await readySyncHistoryMongo();
         const since = options?.since ?? defaultSinceDate();
         const limit = options?.limit ?? 500;
         const docs = await ConnectorSyncExecutionModel.find({
@@ -258,7 +290,7 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
     async findLastSuccessfulForConnector(
         connectorId: number
     ): Promise<SyncHistoryExecution | null> {
-        await ensureMongoConnection();
+        await readySyncHistoryMongo();
         const doc = await ConnectorSyncExecutionModel.findOne({
             connector_id: connectorId,
             status: "SUCCESS",
@@ -270,7 +302,7 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
     },
 
     async listRunningAccountIds(): Promise<number[]> {
-        await ensureMongoConnection();
+        await readySyncHistoryMongo();
         const accountIds = await ConnectorSyncExecutionModel.distinct(
             "account_id",
             { status: "RUNNING" }
@@ -283,7 +315,7 @@ export const mongooseSyncHistoryStore: SyncHistoryStore = {
     async sweepStaleRunning(
         options?: SweepStaleRunningOptions
     ): Promise<number> {
-        await ensureMongoConnection();
+        await readySyncHistoryMongo();
         const hours = options?.olderThanHours ?? STALE_RUNNING_HOURS;
         const completedAt = options?.completedAt ?? new Date();
         const idleBefore = progressIdleBefore(completedAt, hours);

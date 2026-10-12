@@ -9,10 +9,13 @@ import type { invoice_status } from "@prisma/client";
 import { prisma } from "../domain-db";
 import { resolveAccountDisplayLanguage } from "./reportExecutionVirtualFields-stub";
 import { getCustomerPolicyRow } from "./reportCustomerPolicyFields-stub";
-import { computeCustomerRiskExposure } from "./invoiceInsuranceFields";
+import {
+    computeCustomerRiskExposure,
+    type CustomerAtRiskInvoiceInput,
+} from "./invoiceInsuranceFields";
 import {
     isFullOpenArAtRiskCustomer,
-    uncoveredExposureFieldsFromPolicyLink,
+    atRiskExposureFieldsFromPolicyLink,
 } from "./shared/policyExclusion";
 
 import {
@@ -33,6 +36,12 @@ import {
     fetchBreachDilutionStreakPeriodCustomers,
 } from "./breachDilutionStreakPeriod";
 import type { CustomerBreachDilutionStreakRow } from "./shared/ctpBreachDilutionStreakMetrics";
+import { OPEN_AR_VAT_BASIS_LINE_SQL } from "./openArVatBasis";
+import {
+    attributeAmountsToCreditPoolRoots,
+    attributeListsToCreditPoolRoots,
+    creditPoolRootAttributionForCustomers,
+} from "./creditPoolInvoiceAttribution";
 
 const CLOSED_INVOICE_STATUS: invoice_status[] = [
     InvoiceStatus.Paid,
@@ -236,28 +245,17 @@ async function fetchTermsBreachOutstandingByCustomer(
     policyId: number | undefined,
     excludeCapacityGapInvoices: boolean
 ): Promise<Map<number, number>> {
+    const outstanding = Prisma.raw(OPEN_AR_VAT_BASIS_LINE_SQL);
     const line = excludeCapacityGapInvoices
-        ? Prisma.sql`GREATEST(
-            0,
-            (
-              CASE
-                WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-                ELSE COALESCE(i.customer_outstanding_debt, 0)
-              END
-            ) - COALESCE(i.capacity_gap_amount, 0)
-          )`
-        : Prisma.sql`
-            CASE
-              WHEN COALESCE(i.outstanding_debt, 0) != 0 THEN i.outstanding_debt
-              ELSE COALESCE(i.customer_outstanding_debt, 0)
-            END
-          `;
+        ? Prisma.sql`GREATEST(0, (${outstanding}) - COALESCE(i.capacity_gap_amount, 0))`
+        : outstanding;
     const rows =
         policyId != null
             ? await prisma.$queryRaw<TermsBreachByCustomerRow[]>`
         SELECT i.customer_id,
           COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         INNER JOIN "Customer" c ON c.id = i.customer_id
         WHERE i.account_id = ${accountId}
           AND c.account_id = ${accountId}
@@ -278,6 +276,7 @@ async function fetchTermsBreachOutstandingByCustomer(
         SELECT i.customer_id,
           COALESCE(SUM(${line}), 0)::float AS t
         FROM "Invoice" i
+        INNER JOIN "Account" a ON a.id = i.account_id
         INNER JOIN "Customer" c ON c.id = i.customer_id
         WHERE i.account_id = ${accountId}
           AND c.account_id = ${accountId}
@@ -354,8 +353,7 @@ export function formatLimitWarningSummary(
     >,
     accountLanguage?: string | null
 ): string {
-    const language = resolveAccountDisplayLanguage(accountLanguage) as
-        keyof typeof LIMIT_WARNING_LABELS;
+    const language = resolveAccountDisplayLanguage(accountLanguage);
     const labels =
         LIMIT_WARNING_LABELS[language] ?? LIMIT_WARNING_LABELS.en;
     const parts: string[] = [];
@@ -397,6 +395,13 @@ export async function enrichCreditDashboardCustomerRows(
     const customerIds = rows
         .map((r) => r.id as number)
         .filter((id) => Number.isFinite(id));
+    const { memberIds, rootByMemberId, allowedRootIds } =
+        await creditPoolRootAttributionForCustomers(
+            options.accountId,
+            customerIds
+        );
+    const invoiceScopeCustomerIds =
+        memberIds.length > 0 ? memberIds : customerIds;
 
     const needsOpenAr =
         fields.has("open_receivable_amount") ||
@@ -437,10 +442,10 @@ export async function enrichCreditDashboardCustomerRows(
         needsPeriodBreachDilution || needsPeriodBreachEpisodes;
 
     const [
-        openArByCustomer,
-        openInvoiceByCustomer,
-        termsOutstandingByCustomer,
-        atRiskInvoicesByCustomer,
+        openArRaw,
+        openInvoiceRaw,
+        termsRaw,
+        atRiskRaw,
         asOfByCustomer,
         periodSlopeVolByCustomer,
         periodOvershootByCustomer,
@@ -459,7 +464,7 @@ export async function enrichCreditDashboardCustomerRows(
         needsOpenInvoices
             ? fetchOpenInvoiceCountByCustomer(
                   options.accountId,
-                  customerIds,
+                  invoiceScopeCustomerIds,
                   options.policyId
               )
             : Promise.resolve(new Map<number, number>()),
@@ -473,9 +478,11 @@ export async function enrichCreditDashboardCustomerRows(
         needsPolicyRisk
             ? fetchAtRiskInvoiceInputsByCustomerMap(options.accountId, {
                   policyId: options.policyId,
-                  customerIds,
+                  customerIds: invoiceScopeCustomerIds,
               })
-            : Promise.resolve(new Map()),
+            : Promise.resolve(
+                  new Map<number, CustomerAtRiskInvoiceInput[]>()
+              ),
         needsAsOfUtilization && (options.fromDate || options.asOfDate)
             ? fetchAsOfUtilizationByCustomerIds({
                   accountId: options.accountId,
@@ -683,6 +690,27 @@ export async function enrichCreditDashboardCustomerRows(
             : Promise.resolve(new Map<number, CustomerBreachDilutionStreakRow>()),
     ]);
 
+    const openArByCustomer = attributeAmountsToCreditPoolRoots(
+        openArRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+    const openInvoiceByCustomer = attributeAmountsToCreditPoolRoots(
+        openInvoiceRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+    const termsOutstandingByCustomer = attributeAmountsToCreditPoolRoots(
+        termsRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+    const atRiskInvoicesByCustomer = attributeListsToCreditPoolRoots(
+        atRiskRaw,
+        rootByMemberId,
+        { allowedRootIds }
+    );
+
     return rows.map((row) => {
         const customerId = row.id as number;
         const enriched = { ...row };
@@ -702,8 +730,8 @@ export async function enrichCreditDashboardCustomerRows(
         if (needsPolicyRisk) {
             const ar = openArByCustomer.get(customerId) ?? 0;
             const policy = getCustomerPolicyRow(row);
-            const uncovered = isFullOpenArAtRiskCustomer(
-                uncoveredExposureFieldsFromPolicyLink({
+            const atRiskCohort = isFullOpenArAtRiskCustomer(
+                atRiskExposureFieldsFromPolicyLink({
                     insurancePolicyId:
                         policy?.insurance_policy_id as number | null | undefined,
                     exclusionReason: policy?.policy_exclusion_reason ?? null,
@@ -717,7 +745,7 @@ export async function enrichCreditDashboardCustomerRows(
                 )
             );
             const invoiceAllocated = computeCustomerRiskExposure({
-                uncovered: false,
+                atRiskCohort: false,
                 totalAr: ar,
                 invoices: atRiskInvoicesByCustomer.get(customerId) ?? [],
                 capacityGapAmount: gapCard,
@@ -726,7 +754,7 @@ export async function enrichCreditDashboardCustomerRows(
                 enriched.policy_risk_allocated = invoiceAllocated;
             }
             if (fields.has("at_risk_exposure")) {
-                enriched.at_risk_exposure = uncovered ? ar : invoiceAllocated;
+                enriched.at_risk_exposure = atRiskCohort ? ar : invoiceAllocated;
             }
         }
         if (needsWarningSummary && options.limitWarningByCustomerId) {

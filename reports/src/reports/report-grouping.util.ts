@@ -1,5 +1,7 @@
 import { getFieldOutputKey } from "./report.constants";
-import { ReportFormula } from "./report-formula/types";
+import { getFormulaOutputKey, ReportFormula } from "./report-formula/types";
+import { formatAggregatedFormulaValue } from "./report-formula/formula-execution";
+import { formatMoneyIso } from "./format-money.util";
 
 export type AggregationType = "SUM" | "AVG" | "COUNT" | "MIN" | "MAX";
 
@@ -153,21 +155,7 @@ function formatCurrencyValue(
     currency: string,
     locale: string
 ): string {
-    const language = locale.startsWith("he") ? "he" : "en";
-    let formattedAmount: string;
-    try {
-        formattedAmount = new Intl.NumberFormat(locale, {
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 2,
-        }).format(amount);
-    } catch {
-        formattedAmount = String(amount);
-    }
-    const nbsp = "\u00A0";
-    if (language === "he") {
-        return `\u200E${formattedAmount}${nbsp}${currency}`;
-    }
-    return `${currency}${nbsp}${formattedAmount}`;
+    return formatMoneyIso(amount, currency, locale);
 }
 
 /**
@@ -185,6 +173,9 @@ export function applyGroupingAndAggregation(
     const fields = config.fields || [];
     const groupingKeys = config.grouping || [];
     const aggregatedFields = fields.filter((field) => isAggregatedField(field));
+    const aggregatedFormulas = (config.formulas || []).filter(
+        (formula) => !!formula.aggregation
+    );
     const hasAggregatedFields = aggregatedFields.length > 0;
     const hasGrouping = groupingKeys.length > 0;
 
@@ -290,28 +281,74 @@ export function applyGroupingAndAggregation(
             }
         }
 
+        for (const formula of aggregatedFormulas) {
+            const outputKey = getFormulaOutputKey(formula.id);
+            const values = groupRows
+                .map((row) => coerceToNumber(row[outputKey]))
+                .filter((value): value is number => value !== null);
+            const aggregated = calculateAggregation(
+                values,
+                String(formula.aggregation)
+            );
+            groupedRow[outputKey] = aggregated;
+            groupedRow[`___formatted_${outputKey}`] =
+                aggregated === null
+                    ? null
+                    : formatAggregatedFormulaValue(
+                          aggregated,
+                          formula,
+                          sampleRow ?? {},
+                          fields,
+                          locale,
+                          accountCurrency
+                      );
+        }
+
         groupedRows.push(groupedRow);
     }
 
     return groupedRows;
 }
 
-export function buildCountAggregationTotals(
+/**
+ * Full-dataset totals for aggregated columns (before pagination).
+ * Used by the viewer column headers so SUM/AVG/MIN/MAX/COUNT reflect every
+ * matching group row, not only the page currently loaded in the grid.
+ */
+export function buildAggregationTotals(
     rows: Record<string, unknown>[],
     fields: GroupingField[]
 ): Record<string, number> | undefined {
-    const countTotals: Record<string, number> = {};
+    const totals: Record<string, number> = {};
     for (const field of fields) {
-        if (String(field.aggregation || "").toUpperCase() !== "COUNT") {
+        const aggregation = String(field.aggregation || "").toUpperCase();
+        if (
+            aggregation !== "SUM" &&
+            aggregation !== "AVG" &&
+            aggregation !== "COUNT" &&
+            aggregation !== "MIN" &&
+            aggregation !== "MAX"
+        ) {
             continue;
         }
         const outputKey = getFieldOutputKey(field);
-        countTotals[outputKey] = rows.reduce((sum, row) => {
-            const n = coerceToNumber(row[outputKey]);
-            return sum + (n ?? 0);
-        }, 0);
+        const values = rows
+            .map((row) => coerceToNumber(row[outputKey]))
+            .filter((value): value is number => value !== null);
+        if (values.length === 0) {
+            continue;
+        }
+        // COUNT/SUM: sum of per-group values. AVG/MIN/MAX: over group values
+        // (same rollup the viewer used to compute from loaded rows only).
+        const total =
+            aggregation === "COUNT" || aggregation === "SUM"
+                ? values.reduce((sum, value) => sum + value, 0)
+                : calculateAggregation(values, aggregation);
+        if (total !== null) {
+            totals[outputKey] = total;
+        }
     }
-    return Object.keys(countTotals).length > 0 ? countTotals : undefined;
+    return Object.keys(totals).length > 0 ? totals : undefined;
 }
 
 export function compareSortValues(
@@ -363,7 +400,8 @@ export function detectOneToManyRelationTable(
                 (field.table === "Invoice" ||
                     field.table === "InvoicePayment" ||
                     field.table === "Contact" ||
-                    field.table === "Activity")) ||
+                    field.table === "Activity" ||
+                    field.table === "CustomerPolicy")) ||
             (primaryTable === "Invoice" && field.table === "InvoicePayment")
         ) {
             return { table: field.table, relationName };

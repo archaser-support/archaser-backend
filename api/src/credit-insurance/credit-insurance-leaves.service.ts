@@ -14,8 +14,11 @@ import {
 } from "./credit-dashboard-access.service";
 import {
     bindCreditInsurancePrisma,
+    CreditAsOfBackfillConflictError,
     getCapacityGapReport,
+    getCreditAsOfBackfillJobStatus,
     getCreditDashboardSummaryHistory,
+    getCreditPoolParentHistoryJobStatus,
     getCustomerPolicyTrendForCustomer,
     getCustomerPolicyUsageTrend,
     getInsurancePolicyConfigChanges,
@@ -25,6 +28,7 @@ import {
     getNamedPolicyTrend,
     getNoPolicyExposureReport,
     getOverdueBlockReport,
+    getPendingAsOfRewriteWindow,
     getPolicyRiskExposureReport,
     getReportedInvoicesReport,
     getReportingCountdownOpenReport,
@@ -34,16 +38,12 @@ import {
     getZeroLimitWarningReport,
     hasTopUpPolicies,
     isTermsBreachReasonFilter,
-    type CreditReportListOptions,
-} from "@archaser/credit-insurance-domain";
-import { getCreditPortfolioHealth } from "./domain/creditPortfolioHealthService";
-import {
-    CreditAsOfBackfillConflictError,
-    getCreditAsOfBackfillJobStatus,
     pauseCreditAsOfBackfillJob,
     retryCreditAsOfBackfillJob,
     startCreditAsOfBackfillJob,
-} from "./domain/creditAsOfBackfillJob";
+    type CreditReportListOptions,
+} from "@archaser/credit-insurance-domain";
+import { getCreditPortfolioHealth } from "./domain/creditPortfolioHealthService";
 
 const REPORT_TYPES = [
     "overdue",
@@ -486,14 +486,40 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
         return serializeBigInt(status);
     }
 
+    async parentPoolHistoryStatus(
+        user: JwtPayload,
+        query: Record<string, unknown>
+    ) {
+        const ctx = await this.access.authorize(user, query);
+        const status = await getCreditPoolParentHistoryJobStatus(ctx.accountId);
+        return serializeBigInt(status);
+    }
+
     async asOfBackfillStart(
         user: JwtPayload,
         query: Record<string, unknown>,
         body: Record<string, unknown>
     ) {
         const ctx = await this.access.authorize(user, query);
-        const from = this.parseRequiredYmd(body.from ?? body.fromDate, "from");
-        const to = this.parseRequiredYmd(body.to ?? body.toDate, "to");
+        const mode = this.parseOptionalString(body.mode);
+        const isRecent = mode === "recent";
+
+        let from: Date;
+        let to: Date;
+        if (isRecent) {
+            const pending = await getPendingAsOfRewriteWindow(ctx.accountId);
+            if (!pending) {
+                throw new BadRequestException({
+                    error: "No pending rewrite window for generate recent",
+                });
+            }
+            from = pending.fromDate;
+            to = pending.toDate;
+        } else {
+            from = this.parseRequiredYmd(body.from ?? body.fromDate, "from");
+            to = this.parseRequiredYmd(body.to ?? body.toDate, "to");
+        }
+
         try {
             const status = await startCreditAsOfBackfillJob(
                 ctx.accountId,
@@ -501,9 +527,6 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
                 to,
                 {
                     requestedBy: user.sub ?? user.email ?? null,
-                    skipReportingBreach: this.parseSkipReportingBreach(
-                        body.skipReportingBreach
-                    ),
                 }
             );
             return serializeBigInt(status);
@@ -549,13 +572,5 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
         }
         const [y, m, d] = s.split("-").map(Number);
         return new Date(Date.UTC(y!, m! - 1, d!));
-    }
-
-    /** Omitted / invalid → true (Generate default: ignore reporting-late). */
-    private parseSkipReportingBreach(raw: unknown): boolean {
-        if (raw === false || raw === "false" || raw === 0 || raw === "0") {
-            return false;
-        }
-        return true;
     }
 }

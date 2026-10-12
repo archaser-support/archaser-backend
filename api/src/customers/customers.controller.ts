@@ -48,6 +48,16 @@ export class CustomersController {
         return this.customers.listOrStats(user, query);
     }
 
+    @Post()
+    @ApiOperation({ summary: "Create customer (Nest-native)" })
+    @ApiUnauthorizedResponse({ description: "Missing Bearer or session cookie" })
+    async create(
+        @CurrentUser() user: JwtPayload,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.customers.create(user, body);
+    }
+
     @Get(":id")
     @ApiOperation({ summary: "Customer detail (Nest-native)" })
     async byId(
@@ -65,6 +75,29 @@ export class CustomersController {
         @Body() body: Record<string, unknown>
     ) {
         return this.customers.update(user, id, body);
+    }
+
+    @Post(":id/policies/unassign")
+    @ApiOperation({
+        summary: "Remove customer policy from a UTC unassign date (Nest-native)",
+    })
+    async unassignPolicy(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number,
+        @Body() body: Record<string, unknown>
+    ) {
+        return this.customers.unassignPolicy(user, id, body);
+    }
+
+    @Post(":id/policies/cancel-pending")
+    @ApiOperation({
+        summary: "Cancel pending future customer policy change (Nest-native)",
+    })
+    async cancelPendingPolicy(
+        @CurrentUser() user: JwtPayload,
+        @Param("id", ParseIntPipe) id: number
+    ) {
+        return this.customers.cancelPendingPolicyChange(user, id);
     }
 
     @Get(":id/activity")

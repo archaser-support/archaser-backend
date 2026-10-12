@@ -69,9 +69,11 @@ model Account {
   sso_providers                          String?                         @db.VarChar(100)
   has_collection                         Boolean                         @default(true)
   has_credit_insurance                   Boolean                         @default(false)
-  /// When false, File Import is hidden from nav, Import page, and role matrix (UI-only).
-  has_file_import                        Boolean                         @default(true)
+  /// Staging-only Demo account: unlocks customer outreach and import_* catalog when true.
+  is_demo                                Boolean                         @default(false)
   enable_customer_checkpoints            Boolean                         @default(false)
+  /// When true (default), open AR uses with-VAT outstanding. When false, scale by without/with VAT.
+  amounts_include_vat                    Boolean                         @default(true)
   /// AR coverage percentage threshold to include a customer in limit warnings (e.g. 95).
   credit_limit_warning_threshold_pct     Int?                            @db.SmallInt
   /// Number of days before credit-score validity expiry to include customer in warnings.
@@ -114,6 +116,7 @@ model Account {
   RolePermission                         RolePermission[]                @relation("RolePermission_account_idToAccount")
   Customer                               Customer[]
   InsurancePolicy                        InsurancePolicy[]
+  Claim                                  Claim[]
   Report                                 Report[]
   BillingConnector                       BillingConnector?
   CustomerCheckpoint                     CustomerCheckpoint[]
@@ -838,6 +841,7 @@ model Customer {
   CustomerPolicyTrend             CustomerPolicyTrend[]
   CustomerTopUp                   CustomerTopUp[]
   CustomerCheckpoint              CustomerCheckpoint?
+  Claim                           Claim[]
 
   @@unique([account_id, customer_number], map: "customer_number_unique")
   @@index([company_id], map: "idx_company_company_id")
@@ -901,6 +905,12 @@ model CustomerPolicy {
   outdated_dcl                          Boolean               @default(false)
   cost_percent                          Decimal?              @db.Decimal(10, 3)
   registration_fee_percent              Decimal?              @db.Decimal(10, 3)
+  /// UTC calendar day this version becomes effective (rewrite floor for as-of snapshots).
+  policy_change_start_date                    DateTime              @db.Date
+  /// First UTC day with no new invoices on this version (null = open-ended).
+  policy_change_end_date                      DateTime?             @db.Date
+  /// active = live row; pending = future scheduled (slice 02); inactive = historical/cancelled.
+  status                                customer_policy_status @default(inactive)
   is_active                             Boolean               @default(false)
   capacity_gap_amount                   Float?
   capacity_gap_amount_date              DateTime?             @db.Date
@@ -925,6 +935,7 @@ model CustomerPolicy {
   @@index([customer_id], map: "idx_customer_policy_customer_id")
   @@index([insurance_policy_id], map: "idx_customer_policy_insurance_policy_id")
   @@index([customer_id, is_active], map: "idx_customer_policy_customer_active")
+  @@index([customer_id, status], map: "idx_customer_policy_customer_status")
 }
 
 /// Daily snapshot of active customer policy limits and open-AR usage (credit dashboard trends).
@@ -981,7 +992,7 @@ model CustomerPolicyTrend {
   top_up_usage_pct                     Float?
   effective_usage_pct                  Float?
   created_at                           DateTime                 @default(now()) @db.Timestamptz(6)
-  modified_at                          DateTime                 @updatedAt @db.Timestamptz(6)
+  modified_at                          DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
   Customer                             Customer                 @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customer_policy_trend_customer_id_fkey")
   InsurancePolicy                      InsurancePolicy?         @relation(fields: [insurance_policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "customer_policy_trend_insurance_policy_id_fkey")
   CustomerPolicy                       CustomerPolicy?          @relation(fields: [customer_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customer_policy_trend_customer_policy_id_fkey")
@@ -1030,25 +1041,30 @@ model ArPostIngestRetryQueue {
   @@index([status, account_id], map: "idx_ar_post_ingest_retry_status_account")
 }
 
-/// Admin-driven full-history as-of backfill job (one per target account).
-/// Drives a day-by-day recompute of CustomerPolicyTrend + CreditDashboardDailySnapshot
-/// with pause/resume via `status` and per-day `checkpoint_date`. Overnight drain
-/// skips accounts while status is `running` or `paused`.
-model CreditAsOfBackfillJob {
-  id                    BigInt    @id @default(autoincrement())
-  account_id            Int       @unique
-  status                String    @default("idle") @db.VarChar(16)
-  from_date             DateTime? @db.Date
-  to_date               DateTime? @db.Date
-  checkpoint_date       DateTime? @db.Date
-  days_total            Int       @default(0)
-  days_done             Int       @default(0)
-  last_error            String?
-  requested_by          String?   @db.VarChar(128)
-  skip_reporting_breach Boolean   @default(true)
-  started_at            DateTime? @db.Timestamptz(6)
-  created_at            DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime  @default(now()) @db.Timestamptz(6)
+/// Shared admin-driven account background job progress (one row per account + kind).
+/// Kinds: `credit_asof_backfill` (day walk + checkpoint), `vat_basis_refresh` (customer AR).
+/// `units_*` is days for as-of backfill and customers for VAT refresh. Mid-job VAT flip
+/// supersedes via `run_token`. Overnight drain skips accounts while as-of status is
+/// `running` or `paused`.
+model AccountBackgroundJob {
+  id              BigInt    @id @default(autoincrement())
+  account_id      Int
+  job_kind        String    @db.VarChar(64)
+  status          String    @default("idle") @db.VarChar(16)
+  units_total     Int       @default(0)
+  units_done      Int       @default(0)
+  from_date       DateTime? @db.Date
+  to_date         DateTime? @db.Date
+  checkpoint_date DateTime? @db.Date
+  run_token       String?   @db.VarChar(64)
+  last_error      String?
+  requested_by    String?   @db.VarChar(128)
+  started_at      DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([account_id, job_kind], map: "AccountBackgroundJob_account_kind_uniq")
+  @@index([status, job_kind], map: "AccountBackgroundJob_status_kind_idx")
 }
 
 /// Daily snapshot of insurance policy master data and rollups (policy config trends).
@@ -1085,7 +1101,7 @@ model InsurancePolicyTrend {
   named_policy_row_count       Int                      @default(0)
   country_row_count            Int                      @default(0)
   created_at                   DateTime                 @default(now()) @db.Timestamptz(6)
-  modified_at                  DateTime                 @updatedAt @db.Timestamptz(6)
+  modified_at                  DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
   InsurancePolicy              InsurancePolicy          @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_trend_insurance_policy_id_fkey")
 
   @@unique([insurance_policy_id, snapshot_date], map: "ux_insurance_policy_trend_policy_day")
@@ -1106,7 +1122,7 @@ model InsurancePolicyCountryTrend {
   reporting_days              Int?
   country_max_limit           Decimal?               @db.Decimal(20, 4)
   created_at                  DateTime               @default(now()) @db.Timestamptz(6)
-  modified_at                 DateTime               @updatedAt @db.Timestamptz(6)
+  modified_at                 DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
   InsurancePolicyCountry      InsurancePolicyCountry @relation(fields: [insurance_policy_country_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_country_trend_country_row_fkey")
   InsurancePolicy             InsurancePolicy        @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_country_trend_policy_id_fkey")
 
@@ -1129,7 +1145,7 @@ model NamedPolicyTrend {
   customer_max_limit    Decimal?        @db.Decimal(20, 4)
   limit_expiration_date DateTime?       @db.Date
   created_at            DateTime        @default(now()) @db.Timestamptz(6)
-  modified_at           DateTime        @updatedAt @db.Timestamptz(6)
+  modified_at           DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
   NamedPolicy           NamedPolicy     @relation(fields: [named_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "named_policy_trend_named_policy_id_fkey")
   InsurancePolicy       InsurancePolicy @relation(fields: [insurance_policy_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "named_policy_trend_insurance_policy_id_fkey")
 
@@ -1173,8 +1189,26 @@ model InsurancePolicy {
   registration_fee_percent               Decimal?                      @db.Decimal(10, 3)
   /// Optional annual fee charged per named customer (account currency). Null = no fee / $0.
   annual_credit_assessment_fee           Decimal?                      @db.Decimal(20, 4)
+  /// Primary-only commercial terms (policy currency for money fields). Null = not set.
+  insured_percentage                     Decimal?                      @db.Decimal(10, 3)
+  non_qualifying_loss_threshold          Decimal?                      @db.Decimal(20, 4)
+  minimum_premium                        Decimal?                      @db.Decimal(20, 4)
+  minimum_premium_period_years           Int?
+  /// Aggregate excess; 0 means none (distinct from null = not set).
+  aggregate_excess                       Decimal?                      @db.Decimal(20, 4)
+  sdl_excess                             Decimal?                      @db.Decimal(20, 4)
+  ncb_zero_claims_bonus_percent          Decimal?                      @db.Decimal(10, 3)
+  ncb_claims_ratio_threshold_percent     Decimal?                      @db.Decimal(10, 3)
+  ncb_up_to_threshold_bonus_percent      Decimal?                      @db.Decimal(10, 3)
+  product_type                           insurance_policy_product_type?
   status                                 record_status                 @default(Draft)
   auto_activate_on_term_start            Boolean                       @default(false)
+  /// Single future-dated revision: UTC day it goes live. Null = no pending revision.
+  pending_effective_date                 DateTime?                     @db.Date
+  /// Full policy form snapshot (same body as policy PUT) applied on pending_effective_date.
+  pending_payload                        Json?
+  pending_created_at                     DateTime?                     @db.Timestamptz(6)
+  pending_created_by                     String?                       @db.VarChar
   created_by                             String?                       @db.VarChar
   modified_by                            String?                       @db.VarChar
   Account                                Account                       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "insurance_policy_account_id_fkey")
@@ -1189,6 +1223,7 @@ model InsurancePolicy {
   NamedPolicyTrend                       NamedPolicyTrend[]
   Invoice                                Invoice[]
   CustomerTopUp                          CustomerTopUp[]
+  Claim                                  Claim[]
   ParentInsurancePolicy                  InsurancePolicy?              @relation("InsurancePolicyToInsurancePolicy", fields: [parent_insurance_policy_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   ChildInsurancePolicies                 InsurancePolicy[]             @relation("InsurancePolicyToInsurancePolicy")
 
@@ -1463,7 +1498,7 @@ model CreditDashboardDailySnapshot {
   customers_with_active_top_up_count     Int?
   top_up_expiring_customer_count         Int?
   created_at                             DateTime      @default(now()) @db.Timestamptz(6)
-  modified_at                            DateTime      @updatedAt @db.Timestamptz(6)
+  modified_at                            DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
   BusinessUnit                           BusinessUnit? @relation(fields: [business_unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([account_id, snapshot_date(sort: Desc)], map: "idx_credit_dashboard_daily_snapshot_account_day")
@@ -1661,12 +1696,19 @@ model Invoice {
   invoice_number                    String?
   /// Account-specific billing code from import (custom_code1).
   custom_code1                      String?                   @db.VarChar(10)
+  /// With-VAT amount in account currency (existing).
   amount                            Float?
+  /// Without-VAT amount in account currency (optional; omit → unscaled under exclude mode).
+  amount_without_vat                Float?
+  /// VAT amount in account currency (optional).
+  vat_amount                        Float?
   due_date                          DateTime?                 @db.Date
   oldest_overdue_invoice_date       DateTime?                 @db.Date
   total_paid                        Float?                    @default(0)
   status                            invoice_status
   last_payment_date                 DateTime?                 @db.Date
+  /// Calendar day the invoice became Paid (usually max linked payment_date).
+  close_date                        DateTime?                 @db.Date
   zero_limit_alert                  Boolean                   @default(false)
   invoice_date                      DateTime                  @db.Date
   outstanding_debt                  Float?
@@ -1675,7 +1717,12 @@ model Invoice {
   customer_number                   Int?
   account_id                        Int
   customer_total_paid               Float?
+  /// With-VAT amount in customer currency (existing).
   customer_amount                   Float?
+  /// Without-VAT amount in customer currency (optional; unpaid list triad).
+  customer_amount_without_vat       Float?
+  /// VAT amount in customer currency (optional; unpaid list triad).
+  customer_vat_amount               Float?
   customer_outstanding_debt         Float?
   customer_currency                 String?                   @db.VarChar
   credit_for_invoice_id             Int?
@@ -1705,6 +1752,14 @@ model Invoice {
   ctv_payment_term                  Boolean                   @default(false)
   /// Snapshot at create/import: Customer was in overdue (MEP) breach.
   ctv_customer_overdue_mep          Boolean                   @default(false)
+  /// Invoice number of the oldest overdue that set customer MEP on this invoice's issue date.
+  ctv_customer_overdue_mep_cause_invoice_number String?       @db.VarChar(100)
+  /// Cause invoice due date (snapshot with the MEP flag).
+  ctv_customer_overdue_mep_cause_due_date       DateTime?     @db.Date
+  /// Cause invoice open amount in customer currency on this invoice's issue date.
+  ctv_customer_overdue_mep_cause_outstanding    Float?
+  /// Days this invoice's issue date is past the customer MEP deadline (month-end cutoff + extra days).
+  ctv_customer_overdue_mep_days_past            Int?
   /// Snapshot at create/import: Customer.excluded_from_policy.
   ctv_customer_excluded_from_policy Boolean                   @default(false)
   /// Snapshot at create/import: credit score / DCL info expired vs invoice issue date (policy validity months).
@@ -1713,6 +1768,8 @@ model Invoice {
   ctv_invoice_after_policy_end      Boolean                   @default(false)
   /// Open Due/Overdue balance allocated above approved limit (FIFO by invoice_date); excluded from terms-breach sum when computing at-risk exposure.
   in_capacity_gap                   Boolean                   @default(false)
+  /// User flag: skip this invoice for MEP overdue_block only (live and as-of). Aging, AR, and capacity gap still include it. Survives ERP upsert.
+  mep_ignored                       Boolean                   @default(false)
   /// Invoice-level limit basis snapshot captured when invoice first becomes open.
   limit_assessed_amount             Decimal?                  @db.Decimal(20, 4)
   /// Timestamp when invoice-level limit basis was captured.
@@ -1736,6 +1793,7 @@ model Invoice {
   InsurancePolicy                   InsurancePolicy?          @relation(fields: [policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "invoice_insurance_policy_id_fkey")
   InvoicePayment                    InvoicePayment[]
   Activity                          Activity[]
+  Claim                             Claim?
 
   @@index([policy_id], map: "idx_invoice_policy_id")
   @@index([created_by], map: "idx_invoice_created_by")
@@ -1747,6 +1805,7 @@ model Invoice {
   @@index([status, target_reporting_date], map: "idx_invoice_status_target_reporting_date")
   @@index([account_id, customer_id, policy_id, status], map: "idx_invoice_gap_rollup")
   @@index([account_id, invoice_date], map: "idx_invoice_account_invoice_date")
+  @@index([account_id, close_date], map: "idx_invoice_account_close_date")
 }
 
 model InvoicePayment {
@@ -1754,12 +1813,12 @@ model InvoicePayment {
   invoice_id                            Int?
   customer_currency                     String    @db.VarChar(50)
   payment_date                          DateTime  @db.Date
-  amount                                Float     @db.Real
+  amount                                Decimal   @db.Decimal(20, 4)
   payment_method                        String    @db.VarChar(100)
   reference                             String    @db.VarChar(100)
   customer_id                           Int
   account_id                            Int
-  customer_amount                       Float     @db.Real
+  customer_amount                       Decimal   @db.Decimal(20, 4)
   invoice_number                        String?   @db.VarChar(100)
   created_at                            DateTime? @default(now()) @db.Timestamptz(6)
   modified_at                           DateTime? @default(now()) @db.Timestamptz(6)
@@ -2161,11 +2220,57 @@ model User {
   ReportShare_ReportShare_created_byToUser                                        ReportShare[]                    @relation("ReportShare_created_byToUser")
   ReportExecution_ReportExecution_executed_byToUser                               ReportExecution[]                @relation("ReportExecution_executed_byToUser")
   UserDefaultReport                                                               UserDefaultReport[]              @relation("UserDefaultReport_user_idToUser")
+  Claim_Claim_created_byToUser                                                    Claim[]                          @relation("Claim_created_byToUser")
+  Claim_Claim_modified_byToUser                                                   Claim[]                          @relation("Claim_modified_byToUser")
 
   @@index([created_by], map: "idx_user_created_by")
   @@index([modified_by], map: "idx_user_modified_by")
   @@index([business_unit_id], map: "idx_user_business_unit_id")
   @@index([account_id], map: "idx_user_account_id")
+}
+
+
+/// Credit-insurance claim against a Primary policy (optional unique invoice link).
+model Claim {
+  id                           Int             @id @default(autoincrement())
+  created_at                   DateTime        @default(now()) @db.Timestamptz(6)
+  modified_at                  DateTime        @updatedAt @db.Timestamptz(6)
+  account_id                   Int
+  insurance_policy_id          Int
+  invoice_id                   Int?
+  customer_id                  Int
+  status                       claim_status    @default(Draft)
+  /// Recognized loss (policy currency). Defaults to open × insured %; editable before Approve/Paid.
+  recognized_loss              Decimal         @db.Decimal(20, 4)
+  /// Loss/invoice-equivalent date for policy-year assignment when no invoice is linked.
+  loss_date                    DateTime?       @db.Date
+  /// 1-based Primary anniversary year index containing the claim date.
+  policy_year                  Int
+  submission_date              DateTime?       @db.Date
+  insurer_submission_reference String?         @db.VarChar(255)
+  /// SDL amount applied on first entry to Approved/Paid (for exact reverse).
+  applied_sdl_excess           Decimal?        @db.Decimal(20, 4)
+  /// Aggregate amount applied on first entry to Approved/Paid (for exact reverse).
+  applied_aggregate_excess     Decimal?        @db.Decimal(20, 4)
+  /// True while excess deduction is active for this claim.
+  excess_applied               Boolean         @default(false)
+  notes                        String?         @db.Text
+  created_by                   String?         @db.VarChar
+  modified_by                  String?         @db.VarChar
+  Account                      Account         @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "claim_account_id_fkey")
+  InsurancePolicy              InsurancePolicy @relation(fields: [insurance_policy_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "claim_insurance_policy_id_fkey")
+  Invoice                      Invoice?        @relation(fields: [invoice_id], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "claim_invoice_id_fkey")
+  Customer                     Customer        @relation(fields: [customer_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "claim_customer_id_fkey")
+  User_Claim_created_byToUser  User?           @relation("Claim_created_byToUser", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ClaimCreatedBy_fkey")
+  User_Claim_modified_byToUser User?           @relation("Claim_modified_byToUser", fields: [modified_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ClaimModifiedBy_fkey")
+
+  @@unique([invoice_id], map: "unique_claim_invoice_id")
+  @@index([account_id], map: "idx_claim_account_id")
+  @@index([insurance_policy_id, policy_year], map: "idx_claim_policy_year")
+  @@index([account_id, status], map: "idx_claim_account_status")
+  @@index([customer_id], map: "idx_claim_customer_id")
+  @@index([created_by], map: "idx_claim_created_by")
+  @@index([modified_by], map: "idx_claim_modified_by")
 }
 
 model UserPreferences {
@@ -2457,6 +2562,16 @@ enum dispute_status {
   Cancelled
 }
 
+enum claim_status {
+  Draft
+  Submitted
+  Under_Inquiry @map("Under Inquiry")
+  Approved
+  Paid
+  Rejected
+  Canceled
+}
+
 enum email_status {
   Valid
   Bounced
@@ -2587,9 +2702,22 @@ enum customer_limit_type {
   Named
 }
 
+/// CustomerPolicy version lifecycle (keep is_active in sync: active⇒true; pending/inactive⇒false).
+enum customer_policy_status {
+  active
+  pending
+  inactive
+}
+
 enum insurance_policy_kind {
   Primary
   TopUp
+}
+
+/// Primary-only: whether account products under the policy are tailor-made or commodity.
+enum insurance_policy_product_type {
+  TailorMade
+  Commodity
 }
 
 enum cost_calculation_method {
@@ -2623,17 +2751,10 @@ enum ConnectorSyncMode {
   INCREMENTAL
 }
 
-enum BillingConnectorStatus {
-  Active
-  Disabled
-  Error
-}
-
 model BillingConnector {
   id                                Int                     @id @default(autoincrement())
   account_id                        Int                     @unique
   provider                          BillingProvider         @default(PRIORITY)
-  status                            BillingConnectorStatus  @default(Disabled)
   base_url                          String?                 @db.VarChar(500)
   auth_type                         ConnectorAuthType       @default(API_KEY)
   credentials_encrypted             String?                 @db.Text
@@ -2653,10 +2774,10 @@ model BillingConnector {
   time_zone                         String                  @default("Asia/Jerusalem") @db.VarChar(50)
   /// Optional UTC calendar day; invoices issued before it are out of scope for MEP breach. Null = no gate.
   mep_breach_start_date             DateTime?               @db.Date
+  /// Required on Billing cutover save. Invoices issued before this UTC day never get reporting_breach. Null = fail closed (Generate/overnight skip).
+  reporting_breach_start_date       DateTime?               @db.Date
   /// When start date is set: also pull unpaid pre-date invoices + related payments.
   include_older_open_invoices       Boolean                 @default(true)
-  /// When true, backfill invoice writes do not stamp reporting_breach (incremental/cron unchanged).
-  skip_reporting_breach_on_backfill Boolean                 @default(false)
   /// Leftover band for Paid (customer outstanding). Units = customer currency leftover.
   invoice_paid_tolerance            Float                   @default(0.2)
   /// Per-entity Priority EntitySet name overrides (JSON object).
@@ -2685,7 +2806,6 @@ model BillingConnector {
   ConnectorSyncState                ConnectorSyncState[]
 
   @@index([account_id], map: "idx_billing_connector_account_id")
-  @@index([status], map: "idx_billing_connector_status")
 }
 
 model ConnectorFieldMapping {

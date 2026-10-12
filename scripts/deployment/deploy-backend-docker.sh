@@ -27,6 +27,21 @@ Options:
 Examples:
   bash scripts/deployment/deploy-backend-docker.sh --env staging
   bash scripts/deployment/deploy-backend-docker.sh --env production --no-grafana
+
+Production deploys best-effort mute MongoDB/PostgreSQL Disconnected alerts for 15m
+(see silence-db-disconnect-alerts.sh). Failure to silence does not abort deploy.
+
+Manual compose on the shared EC2 (always pass the deploy project name):
+  docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml …
+  docker compose -p archaser-backend-production -f docker-compose.backend.production.yml …
+
+Staging and production share ONE compose Mongo (staging owns the service/volume).
+  Staging:  MONGODB_URI=mongodb://mongo:27017/archaser_staging
+  Production: MONGODB_URI=mongodb://mongo:27017/archaser
+Compose overrides those URIs on api/worker/connectors. Production joins network
+archaser-mongo-shared (created when staging mongo is up). Monitoring is started
+via grafana/start-staging.sh or start-production.sh (renders Mongo datasource,
+sets host ports 3200/3201).
 EOF
 }
 
@@ -50,34 +65,171 @@ host_swap_mb() {
     awk '/SwapTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0
 }
 
-# EC2 builds can OOM during npm install even on ~4GB RAM when swap is 0.
-# Ensure at least 2GB swap for deploy stability.
+# EC2 builds can OOM during npm install / nest build when swap is small.
+# Prefer more swap on hosts under 8GB RAM, but never abort deploy if the disk
+# is full — fall back to whatever swap is already active.
 ensure_deploy_swap() {
     if [[ ! -r /proc/meminfo ]]; then
         return 0
     fi
-    local mem_mb swap_mb
+    local mem_mb swap_mb want_mb swapfile free_mb
     mem_mb="$(host_mem_mb)"
     swap_mb="$(host_swap_mb)"
-    log "Host memory: ${mem_mb}MB RAM, ${swap_mb}MB swap"
+    want_mb=2048
+    if (( mem_mb > 0 && mem_mb < 8192 )); then
+        want_mb=4096
+    fi
+    log "Host memory: ${mem_mb}MB RAM, ${swap_mb}MB swap (want >= ${want_mb}MB swap)"
+    if (( swap_mb >= want_mb )); then
+        return 0
+    fi
+
+    # Re-enable known deploy swap files; remove incomplete ENOSPC leftovers.
+    for swapfile in /swapfile.archaser-deploy-4g /swapfile.archaser-deploy; do
+        if [[ ! -f "$swapfile" ]]; then
+            continue
+        fi
+        if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true 2>/dev/null; then
+            continue
+        fi
+        if sudo swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$swapfile"; then
+            continue
+        fi
+        if sudo swapon "$swapfile" 2>/dev/null; then
+            continue
+        fi
+        log "Removing unusable swap file $swapfile (frees disk from a prior failed create)"
+        sudo rm -f "$swapfile" 2>/dev/null || true
+    done
+    swap_mb="$(host_swap_mb)"
     if (( swap_mb >= 1024 )); then
+        log "Using existing swap: ${swap_mb}MB (wanted ${want_mb}MB)"
         return 0
     fi
-    local swapfile="/swapfile.archaser-deploy"
+
     if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true 2>/dev/null; then
-        echo "Warning: ${mem_mb}MB RAM and ${swap_mb}MB swap — npm ci may be OOM-killed."
-        echo "Add swap, then re-run:"
-        echo "  sudo fallocate -l 2G $swapfile && sudo chmod 600 $swapfile && sudo mkswap $swapfile && sudo swapon $swapfile"
+        echo "Warning: ${mem_mb}MB RAM and ${swap_mb}MB swap — nest build may be OOM-killed (exit 137)."
         return 0
     fi
-    if [[ ! -f "$swapfile" ]]; then
-        log "Creating 2G deploy swap at $swapfile"
-        sudo fallocate -l 2G "$swapfile" || sudo dd if=/dev/zero of="$swapfile" bs=1M count=2048 status=none
-        sudo chmod 600 "$swapfile"
-        sudo mkswap "$swapfile" >/dev/null
+
+    free_mb="$(df -Pm / 2>/dev/null | awk 'NR==2 {print $4}')"
+    free_mb="${free_mb:-0}"
+    # Need the swap file plus ~256MB headroom; otherwise skip create.
+    if (( free_mb < want_mb + 256 )); then
+        # Try a smaller 2G file if 4G does not fit.
+        if (( want_mb > 2048 && free_mb >= 2048 + 256 )); then
+            want_mb=2048
+            log "Only ${free_mb}MB free on / — creating 2048MB swap instead of 4096MB"
+        else
+            echo "Warning: not enough disk for ${want_mb}MB swap (${free_mb}MB free on /). Continuing with ${swap_mb}MB swap."
+            echo "Free disk on the EC2 host (docker system prune, old logs) then re-run deploy if nest build OOMs."
+            return 0
+        fi
+    fi
+
+    swapfile="/swapfile.archaser-deploy"
+    if (( want_mb >= 4096 )); then
+        swapfile="/swapfile.archaser-deploy-4g"
+    fi
+    if [[ -f "$swapfile" ]]; then
+        sudo swapon "$swapfile" 2>/dev/null || true
+        log "Host memory after swap: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+        return 0
+    fi
+
+    log "Creating ${want_mb}MB deploy swap at $swapfile (${free_mb}MB free on /)"
+    if ! sudo fallocate -l "${want_mb}M" "$swapfile" 2>/dev/null; then
+        if ! sudo dd if=/dev/zero of="$swapfile" bs=1M count="$want_mb" status=none 2>/dev/null; then
+            sudo rm -f "$swapfile" 2>/dev/null || true
+            echo "Warning: could not create ${want_mb}MB swap (disk full?). Continuing with $(host_swap_mb)MB swap."
+            return 0
+        fi
+    fi
+    if ! sudo chmod 600 "$swapfile" 2>/dev/null || ! sudo mkswap "$swapfile" >/dev/null 2>&1; then
+        sudo rm -f "$swapfile" 2>/dev/null || true
+        echo "Warning: swapfile setup failed. Continuing with $(host_swap_mb)MB swap."
+        return 0
     fi
     sudo swapon "$swapfile" 2>/dev/null || true
     log "Host memory after swap: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+}
+
+# Cap V8 so nest/tsc cannot grow until the OS OOM-kills Node (exit 137).
+# Nest (@archaser/api) needs a larger heap than package tsc — use swap headroom.
+deploy_build_heap_mb() {
+    local mem_mb workspace="${1:-}"
+    mem_mb="$(host_mem_mb)"
+    if [[ "$workspace" == "@archaser/api" ]]; then
+        # nest build OOMs around ~780MB; prefer 1536–2048 when swap exists.
+        local swap_mb
+        swap_mb="$(host_swap_mb)"
+        if (( swap_mb >= 2048 )); then
+            echo 2048
+        elif (( swap_mb >= 1024 )); then
+            echo 1536
+        elif (( mem_mb > 0 && mem_mb < 4096 )); then
+            echo 1024
+        else
+            echo 2048
+        fi
+        return 0
+    fi
+    if (( mem_mb > 0 && mem_mb < 2048 )); then
+        echo 512
+    elif (( mem_mb > 0 && mem_mb < 4096 )); then
+        echo 768
+    elif (( mem_mb > 0 && mem_mb < 8192 )); then
+        echo 1536
+    else
+        echo 3072
+    fi
+}
+
+# Set when stop_backend_for_build actually stopped the stack. EXIT trap uses this
+# so a failed build/migrate does not leave Nest down (Oct 2026 production outage).
+BACKEND_STOPPED_FOR_BUILD=0
+
+# Running Nest/worker containers often leave too little RAM for nest build on
+# small EC2 hosts. Stack is recreated after builds on the success path.
+stop_backend_for_build() {
+    local mem_mb
+    mem_mb="$(host_mem_mb)"
+    if (( mem_mb <= 0 || mem_mb >= 8192 )); then
+        return 0
+    fi
+    log "Stopping backend containers before build to free RAM (${mem_mb}MB host)"
+    backend_compose stop >/dev/null 2>&1 || \
+        backend_compose down --remove-orphans >/dev/null 2>&1 || true
+    BACKEND_STOPPED_FOR_BUILD=1
+    sync || true
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+    fi
+    log "Host memory after stop: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+}
+
+# EXIT trap handler: bring the previous compose project back if we stopped it for
+# build and the deploy is exiting without a successful recreate (covers set -e
+# failures and explicit `exit 1`, e.g. shared Mongo preflight).
+restore_backend_if_stopped_for_build() {
+    if [[ "${BACKEND_STOPPED_FOR_BUILD:-0}" -ne 1 ]]; then
+        return 0
+    fi
+    BACKEND_STOPPED_FOR_BUILD=0
+    echo "WARNING: deploy failed after stopping backend for build."
+    echo "WARNING: restarting previous ${BACKEND_PROJECT:-backend} stack so the API is not left down..."
+    if backend_compose up -d --remove-orphans; then
+        echo "WARNING: previous backend stack is up again. Fix the deploy error and re-run."
+    else
+        echo "ERROR: could not restart backend stack after failed deploy."
+        echo "Start manually from the app dir:"
+        echo "  BACKEND_HOST_DIR=${BACKEND_DIR:-/home/ubuntu/api} docker compose -p ${BACKEND_PROJECT:-archaser-backend} --env-file .env -f docker-compose.backend.${ENVIRONMENT:-staging}.yml up -d"
+    fi
+}
+
+clear_backend_build_stop_trap() {
+    BACKEND_STOPPED_FOR_BUILD=0
+    trap - EXIT
 }
 
 DOCKER=(docker)
@@ -137,6 +289,54 @@ backend_compose() {
         "$@"
 }
 
+# Database name is the URI path (…/dbname?…). appName= is not the database.
+mongo_database_from_uri() {
+    local uri="$1"
+    uri="${uri%%#*}"
+    uri="${uri%%\?*}"
+    uri="${uri%/}"
+    local db="${uri##*/}"
+    if [[ -z "$db" || "$db" == *"@"* || "$db" == *"mongodb"* ]]; then
+        echo ""
+        return 0
+    fi
+    echo "$db"
+}
+
+# Fail deploy before recreate when env Mongo DB does not match the environment.
+assert_mongo_database_for_environment() {
+    local env_file="$1"
+    local environment="$2"
+    local line uri db expected
+
+    line="$(grep -E '^[[:space:]]*(export[[:space:]]+)?MONGODB_URI=' "$env_file" | tail -n1 || true)"
+    if [[ -z "$line" ]]; then
+        echo "Error: MONGODB_URI is missing from $env_file"
+        exit 1
+    fi
+    uri="$(printf '%s\n' "$line" | sed -E 's/^[[:space:]]*(export[[:space:]]+)?MONGODB_URI=//')"
+    uri="${uri%\"}"
+    uri="${uri#\"}"
+    uri="${uri%\'}"
+    uri="${uri#\'}"
+    uri="$(printf '%s' "$uri" | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')"
+
+    db="$(mongo_database_from_uri "$uri")"
+    if [[ "$environment" == "staging" ]]; then
+        expected="archaser_staging"
+    else
+        expected="archaser"
+    fi
+
+    if [[ "$db" != "$expected" ]]; then
+        echo "Error: $environment MONGODB_URI database path must be /$expected (got '/${db:-<empty>}')."
+        echo "Update $env_file so the URI ends with /$expected?... then re-run deploy."
+        echo "Do not use appName= as the database name — only the path after the host matters."
+        exit 1
+    fi
+    log "MONGODB_URI database for $environment: $db"
+}
+
 # Older manual runs used the checkout directory name (e.g. project "api") as --project-name.
 # Those containers keep ports 3010/4010 until removed; compose up on archaser-backend-* then no-ops or fails.
 stop_legacy_backend_projects() {
@@ -176,6 +376,52 @@ ensure_backend_compose_network() {
     "${DOCKER[@]}" network rm "$net" >/dev/null 2>&1 || true
 }
 
+# Production joins archaser-mongo-shared; the mongo service lives in the staging compose project.
+ensure_shared_mongo_running() {
+    local uri_line uri staging_compose staging_env
+    uri_line="$(grep -E '^[[:space:]]*(export[[:space:]]+)?MONGODB_URI=' "$ENV_TARGET" | tail -n1 || true)"
+    if [[ -z "$uri_line" ]]; then
+        return 0
+    fi
+    uri="$(printf '%s\n' "$uri_line" | sed -E 's/^[[:space:]]*(export[[:space:]]+)?MONGODB_URI=//')"
+    uri="${uri%\"}"
+    uri="${uri#\"}"
+    uri="${uri%\'}"
+    uri="${uri#\'}"
+    uri="$(printf '%s' "$uri" | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')"
+    if [[ "$uri" != mongodb://mongo:* ]]; then
+        log "MONGODB_URI host is not compose mongo — skipping shared Mongo preflight"
+        return 0
+    fi
+
+    staging_compose="$BACKEND_DIR/docker-compose.backend.staging.yml"
+    staging_env="$BACKEND_DIR/.env.staging"
+    if [[ ! -f "$staging_env" && "$ENVIRONMENT" == "staging" ]]; then
+        staging_env="$ENV_TARGET"
+    fi
+    if [[ ! -f "$staging_compose" || ! -f "$staging_env" ]]; then
+        echo "Warning: cannot preflight shared Mongo (missing staging compose or .env.staging)"
+        return 0
+    fi
+
+    log "Ensuring shared Docker Mongo is running (archaser-mongo-shared)"
+    if ! BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
+        --project-name archaser-backend-staging \
+        --env-file "$staging_env" \
+        -f "$staging_compose" \
+        up -d mongo --wait; then
+        log "compose --wait unavailable or timed out — starting mongo without wait"
+        if ! BACKEND_HOST_DIR="$BACKEND_DIR" docker_compose \
+            --project-name archaser-backend-staging \
+            --env-file "$staging_env" \
+            -f "$staging_compose" \
+            up -d mongo; then
+            echo "Error: shared Mongo failed to start. Crons refuse partial account freeze when Mongo is down."
+            exit 1
+        fi
+    fi
+}
+
 recreate_backend_stack() {
     stop_legacy_backend_projects
     log "Recreating backend stack (down → up; bind-mounted dist/ and env apply only in new containers)"
@@ -185,10 +431,6 @@ recreate_backend_stack() {
         log "compose --wait unavailable or timed out — bringing stack up without wait"
         backend_compose up -d --force-recreate --remove-orphans
     fi
-}
-
-monitoring_stack_exists() {
-    "${DOCKER[@]}" ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'archaser-loki'
 }
 
 # EC2 checkout must match remote before build. Without this, `npm run build` compiles stale sources.
@@ -258,10 +500,78 @@ ensure_build_tooling() {
     fi
 }
 
+# Never `npx prisma` — unpinned npx installs Prisma 7, which rejects `url = env("DATABASE_URL")`.
+# Never `npm i prisma` during generate — Prisma 6.19 auto-install OOMs (SIGKILL) on 4GB EC2.
+# With PRISMA_GENERATE_SKIP_AUTOINSTALL=1, a missing or nested-only @prisma/client fails
+# as "Could not resolve @prisma/client" — assert root install (and heal) before generate.
+generate_prisma_client() {
+    export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
+    local prisma_js="$ROOT_DIR/node_modules/prisma/build/index.js"
+    local client_pkg="$ROOT_DIR/node_modules/@prisma/client/package.json"
+    if [[ ! -f "$prisma_js" ]]; then
+        echo "Error: prisma CLI missing after npm ci: $prisma_js"
+        echo "npm ci --include=dev must install the prisma devDependency."
+        exit 1
+    fi
+    if [[ ! -f "$client_pkg" ]]; then
+        log "@prisma/client missing after npm ci — installing @prisma/client@6.4.1 at workspace root"
+        # Client package only (small). Do not install the prisma CLI here — that OOMs on 4GB hosts.
+        npm install --no-save --no-audit --no-fund --ignore-scripts @prisma/client@6.4.1
+        if [[ ! -f "$client_pkg" ]]; then
+            echo "Error: @prisma/client still missing after install: $client_pkg"
+            echo "Check disk space and that package-lock includes @prisma/client."
+            exit 1
+        fi
+    fi
+    # Nested node_modules/prisma without a sibling @prisma/client makes Prisma resolve
+    # from the nested folder and fail even when root @prisma/client is installed.
+    local nest
+    for nest in \
+        packages/*/node_modules \
+        api/node_modules \
+        worker/node_modules \
+        connectors/node_modules \
+        sms/node_modules \
+        reports/node_modules
+    do
+        if [[ -d "$ROOT_DIR/$nest/prisma" && ! -f "$ROOT_DIR/$nest/@prisma/client/package.json" ]]; then
+            log "Removing $nest/prisma (no sibling @prisma/client — breaks prisma generate)"
+            rm -rf "$ROOT_DIR/$nest/prisma"
+        fi
+    done
+    PRISMA_GENERATE_SKIP_AUTOINSTALL=1 \
+    PRISMA_SKIP_POSTINSTALL_GENERATE=1 \
+    NODE_OPTIONS="--max-old-space-size=384" \
+        node "$prisma_js" generate --schema="$PRISMA_SCHEMA"
+}
+
 run_workspace_build() {
     local workspace="$1"
+    local heap_mb code
+    heap_mb="$(deploy_build_heap_mb "$workspace")"
     export PATH="$ROOT_DIR/node_modules/.bin:$PATH"
-    npm run build -w "$workspace"
+    log "Building $workspace (Node heap ${heap_mb}MB)"
+    if [[ "$workspace" == "@archaser/api" ]]; then
+        sync || true
+        if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+        fi
+        log "Host memory before nest build: $(host_mem_mb)MB RAM, $(host_swap_mb)MB swap"
+    fi
+    # Capture exit code before `if !` — otherwise $? inside the failure branch is 0.
+    set +e
+    NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
+        npm run build -w "$workspace"
+    code=$?
+    set -e
+    if [[ "$code" -ne 0 ]]; then
+        echo "Error: build failed for $workspace (exit ${code})."
+        if [[ "$code" -eq 137 || "$code" -eq 134 ]]; then
+            echo "Exit ${code} = Node OOM during build. Free RAM/swap or raise nest heap, then re-run deploy."
+            echo "Do not start the stack with a failed @archaser/api build — CORS/API errors usually follow."
+        fi
+        return "$code"
+    fi
 }
 
 npm_ci_low_memory() {
@@ -274,16 +584,20 @@ npm_ci_low_memory() {
         heap_mb=1024
     fi
     log "npm ci (heap ${heap_mb}MB, maxsockets 1, prefer-offline, ignore-scripts)"
+    log "Host memory before npm ci: ${mem_mb}MB RAM, $(host_swap_mb)MB swap — this step can take 10–25 min with little output"
     # Ignore scripts so prisma/husky do not spawn extra Node during peak install.
     # Prisma generate still runs later in this script.
+    # --loglevel info gives periodic package lines so CI does not look hung.
     if NODE_OPTIONS="--max-old-space-size=${heap_mb}" \
-        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts; then
+        npm ci --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts --loglevel info; then
+        log "npm ci completed"
         return 0
     fi
 
     log "npm ci failed (likely memory pressure) — retrying npm install with conservative settings"
     NODE_OPTIONS="--max-old-space-size=384" \
-        npm install --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts
+        npm install --include=dev --no-audit --no-fund --prefer-offline --maxsockets 1 --ignore-scripts --loglevel info
+    log "npm install retry finished"
 }
 
 ENVIRONMENT=""
@@ -375,17 +689,13 @@ fi
 ENV_SOURCE="$BACKEND_DIR/.env.$ENVIRONMENT"
 ENV_TARGET="$BACKEND_DIR/.env"
 COMPOSE_BACKEND="$BACKEND_DIR/docker-compose.backend.$ENVIRONMENT.yml"
-COMPOSE_MONITORING="$BACKEND_DIR/grafana/docker-compose.logging.yml"
 
 if [[ "$ENVIRONMENT" == "staging" ]]; then
     BACKEND_PROJECT="archaser-backend-staging"
-    MONITORING_PROJECT="archaser-monitoring-staging"
 elif [[ "$ENVIRONMENT" == "production" ]]; then
     BACKEND_PROJECT="archaser-backend-production"
-    MONITORING_PROJECT="archaser-monitoring-production"
 else
     BACKEND_PROJECT="archaser-backend"
-    MONITORING_PROJECT="archaser-monitoring"
 fi
 
 require_cmd docker
@@ -410,6 +720,7 @@ sync_git_checkout
 log "Preparing env files"
 cp "$ENV_SOURCE" "$ENV_TARGET"
 cp "$ENV_SOURCE" "$ROOT_DIR/.env"
+assert_mongo_database_for_environment "$ENV_TARGET" "$ENVIRONMENT"
 
 if [[ "$SKIP_INSTALL" != "true" ]]; then
     log "Installing dependencies (npm ci)"
@@ -422,7 +733,7 @@ fi
 if [[ "$SKIP_PRISMA" != "true" ]]; then
     log "Generating Prisma client"
     mkdir -p node_modules/.prisma/client
-    npx prisma generate --schema="$PRISMA_SCHEMA"
+    generate_prisma_client
     node "$SYNC_SCRIPT"
 else
     log "Skipping prisma generate (--skip-prisma)"
@@ -431,6 +742,11 @@ fi
 if [[ "$SKIP_BUILD" != "true" ]]; then
     log "Building backend workspaces"
     ensure_build_tooling
+    stop_backend_for_build
+    # If we stopped Nest to free RAM, any later failure must bring it back.
+    if [[ "${BACKEND_STOPPED_FOR_BUILD:-0}" -eq 1 ]]; then
+        trap restore_backend_if_stopped_for_build EXIT
+    fi
     run_workspace_build @archaser/database
     run_workspace_build @archaser/auth
     run_workspace_build @archaser/sms-send
@@ -443,47 +759,52 @@ if [[ "$SKIP_BUILD" != "true" ]]; then
     run_workspace_build @archaser/connectors
     run_workspace_build @archaser/reports
     run_workspace_build @archaser/api
+    # Deploy contract: worker / connectors / cron load customer due/overdue
+    # rollups from api/dist/customers (or CUSTOMERS_DOMAIN_ROOT). Building api
+    # last ensures that artifact exists before the stack starts.
 else
     log "Skipping backend builds (--skip-build)"
 fi
 
+# After this environment's env file is loaded and Prisma client generation.
+# If stop_backend_for_build ran, the EXIT trap above restarts the stack on failure
+# (build, migrations, or stack recreate) so Nest is not left down.
+log "Applying SQL migrations for $ENVIRONMENT"
+node "$ROOT_DIR/scripts/deployment/apply-sql-migrations.js"
+
+if [[ "$ENVIRONMENT" == "production" ]]; then
+    SILENCE_SCRIPT="$BACKEND_DIR/scripts/deployment/silence-db-disconnect-alerts.sh"
+    if [[ -f "$SILENCE_SCRIPT" ]]; then
+        log "Silencing production MongoDB/PostgreSQL Disconnected alerts for deploy window"
+        if ! MONITORING_ENV=production bash "$SILENCE_SCRIPT"; then
+            echo "WARNING: could not create Grafana silence; deploy continues (DB disconnect emails may fire during restart)."
+        fi
+    else
+        echo "WARNING: silence-db-disconnect-alerts.sh missing; skipping alert mute"
+    fi
+fi
+
 log "Starting backend stack (Nest + Redis + worker/sms/connectors/reports)"
+ensure_shared_mongo_running
 recreate_backend_stack
+# Intentional recreate succeeded — do not restart the pre-deploy containers on later errors.
+clear_backend_build_stop_trap
 
 if [[ "$NO_GRAFANA" != "true" ]]; then
-    if [[ ! -f "$COMPOSE_MONITORING" ]]; then
-        log "Monitoring compose not found; skipping"
+    GRAFANA_START="$BACKEND_DIR/grafana/start-${ENVIRONMENT}.sh"
+    if [[ ! -f "$GRAFANA_START" ]]; then
+        log "Monitoring start script not found ($GRAFANA_START); skipping"
     else
-        # Always `up -d` so compose/config changes (Loki schema, datasources, root URL) apply.
-        # Name conflicts happen when an earlier `docker compose` used a different --project-name.
+        # Prefer start-*.sh over raw compose: it renders mongodb.generated.yaml
+        # (missing file → Docker bind-mounts a directory → Grafana crash-loop → 502)
+        # and sets GRAFANA_HOST_PORT 3200 (staging) / 3201 (production).
         log "Starting/updating monitoring stack (Grafana + Loki + Prometheus + Promtail)"
         for c in archaser-loki archaser-grafana archaser-grafana-db archaser-prometheus archaser-promtail; do
             "${DOCKER[@]}" rm -f "$c" >/dev/null 2>&1 || true
         done
-        MONITORING_ENV_VARS=(
-            MONITORING_ENV="$ENVIRONMENT"
-            BACKEND_DOCKER_NETWORK="${BACKEND_PROJECT}_default"
-        )
-        if [[ "$ENVIRONMENT" == "staging" ]]; then
-            MONITORING_ENV_VARS+=(
-                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.staging.archaser.com/}"
-                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.staging.archaser.com}"
-            )
-        elif [[ "$ENVIRONMENT" == "production" ]]; then
-            MONITORING_ENV_VARS+=(
-                GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-https://grafana.portal.archaser.com/}"
-                GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.portal.archaser.com}"
-            )
-        fi
-        if ! env "${MONITORING_ENV_VARS[@]}" docker_compose \
-            --project-name "$MONITORING_PROJECT" \
-            --env-file "$ENV_TARGET" \
-            -f "$COMPOSE_MONITORING" \
-            up -d --remove-orphans; then
+        if ! bash "$GRAFANA_START"; then
             echo "Warning: monitoring stack failed to start; Nest stack is already up."
-            if monitoring_stack_exists; then
-                log "Partial monitoring containers still present — check: docker logs archaser-loki"
-            fi
+            echo "Check: docker logs archaser-grafana-${ENVIRONMENT} --tail 50"
         fi
     fi
 else
@@ -500,7 +821,8 @@ fi
 
 log "Deployment complete"
 if [[ "$ENVIRONMENT" == "staging" ]]; then
-    log "Staging reverse proxy: bash scripts/deployment/setup-staging-nginx.sh [--with-monitoring]"
+    log "Shared EC2 nginx: bash scripts/deployment/setup-single-ec2-nginx.sh"
+    log "Staging-only nginx: bash scripts/deployment/setup-staging-nginx.sh [--with-monitoring]"
     log "Grafana URL: https://grafana.staging.archaser.com (containers on 127.0.0.1:3200)"
     log "Do not run deploy-staging.sh (Next UI) on this box"
 fi

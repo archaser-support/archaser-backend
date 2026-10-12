@@ -56,6 +56,12 @@ export type PortfolioRangeCostMonthlyPoint = {
     totalCost: number;
 };
 
+export type PortfolioRangeCostLimitMonthAggregate = {
+    month: string;
+    insuranceCost: number;
+    registrationFeeCost: number;
+};
+
 export type PortfolioRangeCostResult = {
     periodCost: number;
     monthly: PortfolioRangeCostMonthlyPoint[];
@@ -172,6 +178,9 @@ function dayKey(customerId: number, snapshotDate: string): string {
  * Period + monthly portfolio range cost from Limit day-slices, Actual Sales
  * invoices, registration markup on insurance premiums, and amortized top-up
  * day slices (approved customers only).
+ *
+ * Pass `limitMonthAggregates` when Limit day costs were summed in SQL so
+ * `dayRows` are only needed for Actual Sales invoice lookups (much smaller).
  */
 export function computePortfolioRangeCost(input: {
     dayRows: PortfolioRangeCostDayRow[];
@@ -179,13 +188,42 @@ export function computePortfolioRangeCost(input: {
     topUpSlices: PortfolioRangeCostTopUpSlice[];
     /** When set, only invoices with matching `policyId` contribute. */
     policyId?: number;
+    /**
+     * Pre-aggregated Limit (+ registration on Limit) costs by YYYY-MM.
+     * When provided, Limit slices are not recomputed from `dayRows`.
+     */
+    limitMonthAggregates?: PortfolioRangeCostLimitMonthAggregate[];
 }): PortfolioRangeCostResult {
     const monthBuckets = new Map<string, MonthCostComponents>();
     let periodCost = 0;
+    const skipLimitFromDayRows = input.limitMonthAggregates != null;
+
+    if (input.limitMonthAggregates != null) {
+        for (const row of input.limitMonthAggregates) {
+            const insurance = Number.isFinite(row.insuranceCost)
+                ? row.insuranceCost
+                : 0;
+            const registration = Number.isFinite(row.registrationFeeCost)
+                ? row.registrationFeeCost
+                : 0;
+            if (insurance === 0 && registration === 0) {
+                continue;
+            }
+            periodCost += insurance + registration;
+            const bucket = monthBuckets.get(row.month) ?? emptyMonthComponents();
+            bucket.insuranceCost += insurance;
+            bucket.registrationFeeCost += registration;
+            monthBuckets.set(row.month, bucket);
+        }
+    }
 
     const dayByCustomerDate = new Map<string, PortfolioRangeCostDayRow>();
     for (const row of input.dayRows) {
         dayByCustomerDate.set(dayKey(row.customerId, row.snapshotDate), row);
+
+        if (skipLimitFromDayRows) {
+            continue;
+        }
 
         const approved = isApprovedOnDay({
             hasLinkedPolicy: row.insurancePolicyId != null,

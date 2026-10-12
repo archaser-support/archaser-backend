@@ -2,16 +2,21 @@ import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
-import { creditAsOfBackfillBullJobId } from "@archaser/credit-insurance-domain";
+import { creditAsOfBackfillBullJobId, accountVatBasisRefreshBullJobId } from "@archaser/credit-insurance-domain";
 import {
     CRON_QUEUE_NAME,
     CREDIT_ASOF_BACKFILL_QUEUE_NAME,
+    ACCOUNT_VAT_BASIS_REFRESH_QUEUE_NAME,
     CronRunNowJobData,
     CronSyncSchedulesJobData,
     ArPostIngestDrainJobData,
     CreditAsOfBackfillJobData,
+    AccountVatBasisRefreshJobData,
 } from "./cron-queue.types";
-import { requeueCreditAsOfBackfillBullJob } from "./backfill-bull-job.util";
+import {
+    requeueAccountVatBasisRefreshBullJob,
+    requeueCreditAsOfBackfillBullJob,
+} from "./backfill-bull-job.util";
 
 @Injectable()
 export class CronQueueService implements OnModuleDestroy {
@@ -19,6 +24,7 @@ export class CronQueueService implements OnModuleDestroy {
     private connection: IORedis | null = null;
     private queue: Queue | null = null;
     private backfillQueue: Queue | null = null;
+    private vatBasisRefreshQueue: Queue | null = null;
 
     constructor(private readonly config: ConfigService) {}
 
@@ -45,10 +51,13 @@ export class CronQueueService implements OnModuleDestroy {
         this.connection.on("error", (err) => {
             this.logger.warn(`Cron queue Redis: ${err.message}`);
         });
-        this.queue = new Queue(CRON_QUEUE_NAME, {
+        // Match worker: production compose sets BULLMQ_QUEUE=archaser-cron-prod.
+        const cronQueueName =
+            this.config.get<string>("BULLMQ_QUEUE") || CRON_QUEUE_NAME;
+        this.queue = new Queue(cronQueueName, {
             connection: this.connection,
         });
-        this.logger.log(`Cron queue ready (${CRON_QUEUE_NAME} @ ${redisUrl})`);
+        this.logger.log(`Cron queue ready (${cronQueueName} @ ${redisUrl})`);
         return this.queue;
     }
 
@@ -70,6 +79,29 @@ export class CronQueueService implements OnModuleDestroy {
             `Credit as-of backfill queue ready (${CREDIT_ASOF_BACKFILL_QUEUE_NAME})`
         );
         return this.backfillQueue;
+    }
+
+    private ensureVatBasisRefreshQueue(): Queue | null {
+        if (!this.enabled()) {
+            return null;
+        }
+        const cronQueue = this.ensureQueue();
+        if (!cronQueue || !this.connection) {
+            return null;
+        }
+        if (this.vatBasisRefreshQueue) {
+            return this.vatBasisRefreshQueue;
+        }
+        this.vatBasisRefreshQueue = new Queue(
+            ACCOUNT_VAT_BASIS_REFRESH_QUEUE_NAME,
+            {
+                connection: this.connection,
+            }
+        );
+        this.logger.log(
+            `Account VAT basis refresh queue ready (${ACCOUNT_VAT_BASIS_REFRESH_QUEUE_NAME})`
+        );
+        return this.vatBasisRefreshQueue;
     }
 
     async enqueueRunNow(data: CronRunNowJobData): Promise<{
@@ -102,6 +134,55 @@ export class CronQueueService implements OnModuleDestroy {
             return {
                 queued: false,
                 reason: error instanceof Error ? error.message : "enqueue failed",
+            };
+        }
+    }
+
+    /**
+     * Map a BullMQ job id to Cron Debugger poll statuses.
+     * completed/failed stop the UI poll; anything else keeps polling.
+     */
+    async getRunNowJobStatus(jobId: string): Promise<{
+        status: "completed" | "failed" | "running" | "unknown";
+        bullmqState?: string;
+        reason?: string;
+    }> {
+        const queue = this.ensureQueue();
+        if (!queue) {
+            return {
+                status: "unknown",
+                reason: "BULLMQ_ENABLED=false or Redis unavailable",
+            };
+        }
+        const ready = await this.ensureRedisReady();
+        if (!ready.ok) {
+            return {
+                status: "unknown",
+                reason: ready.reason ?? "Redis not ready",
+            };
+        }
+        try {
+            const job = await queue.getJob(jobId);
+            if (!job) {
+                // removeOnComplete may drop finished jobs quickly — treat missing
+                // as completed so the admin poll does not spin forever.
+                return { status: "completed", bullmqState: "missing" };
+            }
+            const state = await job.getState();
+            if (state === "completed") {
+                return { status: "completed", bullmqState: state };
+            }
+            if (state === "failed") {
+                return { status: "failed", bullmqState: state };
+            }
+            return { status: "running", bullmqState: state };
+        } catch (error) {
+            return {
+                status: "unknown",
+                reason:
+                    error instanceof Error
+                        ? error.message
+                        : "getJob state failed",
             };
         }
     }
@@ -236,7 +317,8 @@ export class CronQueueService implements OnModuleDestroy {
     }
 
     async enqueueCreditAsOfBackfill(
-        data: CreditAsOfBackfillJobData
+        data: CreditAsOfBackfillJobData,
+        options?: { replaceActive?: boolean }
     ): Promise<{ queued: boolean; jobId?: string; reason?: string }> {
         const queue = this.ensureBackfillQueue();
         if (!queue) {
@@ -260,7 +342,8 @@ export class CronQueueService implements OnModuleDestroy {
             const job = await requeueCreditAsOfBackfillBullJob(
                 queue,
                 jobId,
-                data.accountId
+                data.accountId,
+                { replaceActive: options?.replaceActive === true }
             );
             this.logger.log(
                 `enqueueCreditAsOfBackfill ok accountId=${data.accountId} jobId=${job.id} queue=${CREDIT_ASOF_BACKFILL_QUEUE_NAME}`
@@ -279,7 +362,138 @@ export class CronQueueService implements OnModuleDestroy {
         }
     }
 
+    async enqueueAccountVatBasisRefresh(
+        data: AccountVatBasisRefreshJobData
+    ): Promise<{ queued: boolean; jobId?: string; reason?: string }> {
+        const queue = this.ensureVatBasisRefreshQueue();
+        if (!queue) {
+            return {
+                queued: false,
+                reason: "BULLMQ_ENABLED=false or Redis unavailable",
+            };
+        }
+        const ready = await this.ensureRedisReady();
+        if (!ready.ok) {
+            this.logger.error(
+                `enqueueAccountVatBasisRefresh failed: ${ready.reason ?? "Redis not ready"}`
+            );
+            return {
+                queued: false,
+                reason: ready.reason ?? "Redis not ready",
+            };
+        }
+        try {
+            const jobId = accountVatBasisRefreshBullJobId(data.accountId);
+            const job = await requeueAccountVatBasisRefreshBullJob(
+                queue,
+                jobId,
+                data.accountId
+            );
+            this.logger.log(
+                `enqueueAccountVatBasisRefresh ok accountId=${data.accountId} jobId=${job.id} queue=${ACCOUNT_VAT_BASIS_REFRESH_QUEUE_NAME}`
+            );
+            return { queued: true, jobId: String(job.id) };
+        } catch (error) {
+            this.logger.error(
+                `enqueueAccountVatBasisRefresh failed: ${
+                    error instanceof Error ? error.message : String(error)
+                }`
+            );
+            return {
+                queued: false,
+                reason: error instanceof Error ? error.message : "enqueue failed",
+            };
+        }
+    }
+
+    /**
+     * Snapshot waiting/active/failed plus sample waiting jobs for Grafana alert emails.
+     */
+    async getQueueBacklogSnapshot(
+        logicalQueue:
+            | "cron"
+            | "credit_asof_backfill"
+            | "account_vat_basis_refresh",
+        sampleLimit = 10
+    ): Promise<{
+        logicalQueue: string;
+        redisQueueName: string | null;
+        waiting: number;
+        active: number;
+        failed: number;
+        waitingJobs: Array<{ id: string; name: string }>;
+        error?: string;
+    }> {
+        const queue =
+            logicalQueue === "cron"
+                ? this.ensureQueue()
+                : logicalQueue === "credit_asof_backfill"
+                  ? this.ensureBackfillQueue()
+                  : this.ensureVatBasisRefreshQueue();
+        if (!queue) {
+            return {
+                logicalQueue,
+                redisQueueName: null,
+                waiting: 0,
+                active: 0,
+                failed: 0,
+                waitingJobs: [],
+                error: "BULLMQ_ENABLED=false or Redis unavailable",
+            };
+        }
+        const ready = await this.ensureRedisReady();
+        if (!ready.ok) {
+            return {
+                logicalQueue,
+                redisQueueName: queue.name,
+                waiting: 0,
+                active: 0,
+                failed: 0,
+                waitingJobs: [],
+                error: ready.reason ?? "Redis not ready",
+            };
+        }
+        try {
+            const counts = await queue.getJobCounts(
+                "waiting",
+                "active",
+                "failed"
+            );
+            const jobs = await queue.getJobs(
+                ["waiting"],
+                0,
+                Math.max(0, sampleLimit - 1),
+                true
+            );
+            return {
+                logicalQueue,
+                redisQueueName: queue.name,
+                waiting: counts.waiting ?? 0,
+                active: counts.active ?? 0,
+                failed: counts.failed ?? 0,
+                waitingJobs: jobs.map((job) => ({
+                    id: String(job.id ?? ""),
+                    name: job.name || "unknown",
+                })),
+            };
+        } catch (error) {
+            return {
+                logicalQueue,
+                redisQueueName: queue.name,
+                waiting: 0,
+                active: 0,
+                failed: 0,
+                waitingJobs: [],
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "getJobCounts failed",
+            };
+        }
+    }
+
     async onModuleDestroy() {
+        await this.vatBasisRefreshQueue?.close();
         await this.backfillQueue?.close();
         await this.queue?.close();
         await this.connection?.quit();

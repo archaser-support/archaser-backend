@@ -7,6 +7,7 @@ import { isCustomerPolicyExcluded } from "./policyExclusion";
 import { normalizeCalendarDayForInsuranceCompare } from "./shared/calendarDayCompare";
 import { isInvoiceInReportingBreachScope } from "./shared/reportingBreachScope";
 import { isInvoiceInMepBreachScope } from "./shared/mepBreachScope";
+import { applyOpenArVatBasis } from "./openArVatBasis";
 
 /**
  * Parse import/API date values as a local calendar day (avoids UTC off-by-one on YYYY-MM-DD).
@@ -217,13 +218,18 @@ export function computeTargetMepDate(
  * `ctv_payment_term` is true when `credit_days > max_payment_term` (i.e. max_payment_term − credit_days < 0).
  * When payment-term month-end cutoff applies (on/after cutoff), compares against
  * `max_payment_term + diff` instead. If `max_payment_term` or credit days cannot be derived, returns false.
+ * Negative-amount invoices (credit notes) never breach payment terms.
  */
 export function computePaymentTermBreach(
     invoiceDate: Date | null | undefined,
     dueDate: Date | null | undefined,
     maxPaymentTerm: number | null | undefined,
-    monthEnd?: MonthEndCutoffOptions
+    monthEnd?: MonthEndCutoffOptions,
+    amount?: number | null
 ): boolean {
+    if (isNegativeInvoiceAmount(amount)) {
+        return false;
+    }
     const creditDays = computePaymentTermDays(invoiceDate, dueDate);
     if (
         creditDays === null ||
@@ -264,7 +270,8 @@ export function isTargetReportingDateBeforeToday(
 
 /**
  * Credit notes are stored as invoices with amount &lt; 0.
- * Used to skip MEP / reporting target dates and reporting-breach promotion.
+ * Used to skip MEP / reporting target dates, reporting-breach promotion,
+ * and terms-breach (payment-term CTV and created-in-violation snapshots).
  */
 export function isNegativeInvoiceAmount(
     amount: number | null | undefined
@@ -279,16 +286,22 @@ export function isEligibleForCustomerMepOverdue(
     return !isNegativeInvoiceAmount(amount);
 }
 
+/** Skip only overdue_block candidates — not aging, AR, or capacity-gap allocation. */
+export function isIgnoredForMepOverdueBlock(
+    mepIgnored: boolean | null | undefined
+): boolean {
+    return mepIgnored === true;
+}
+
 /**
  * Whether reporting_breach should be true for an open Due/Overdue invoice
  * (evaluation only; persistence in sync helper).
  * Negative-amount invoices (credit notes) never promote reporting breach.
  *
- * Invoices issued before the account's reporting-breach start date are out of
- * scope, mirroring the MEP gate: their reporting filings predate the backfill
- * window, so a missing actual_reporting_date is an import gap and not a breach.
- * Callers that know both dates pass `scope`; omitting it keeps the ungated
- * behavior.
+ * Invoices whose target reporting date is before the account's reporting-breach
+ * start date are out of scope. When `scope` is passed, a missing start date
+ * fails closed (never promote). Omitting `scope` keeps ungated evaluation for
+ * callers that do not yet resolve the account gate.
  */
 export function shouldSetReportingBreach(
     status: invoice_status,
@@ -297,7 +310,6 @@ export function shouldSetReportingBreach(
     today: Date = new Date(),
     amount?: number | null,
     scope?: {
-        invoiceDate?: Date | string | null;
         reportingBreachStartDate?: Date | string | null;
     }
 ): boolean {
@@ -305,9 +317,10 @@ export function shouldSetReportingBreach(
         return false;
     }
     if (
+        scope != null &&
         !isInvoiceInReportingBreachScope(
-            scope?.invoiceDate ?? null,
-            scope?.reportingBreachStartDate ?? null
+            targetReportingDate ?? null,
+            scope.reportingBreachStartDate ?? null
         )
     ) {
         return false;
@@ -384,7 +397,7 @@ export function computeCreatedTermsViolationCustomerOverdueMep(
  * if Customer MEP were that same deadline (oldest is never after oldest+MEP). The implemented rule is
  * **today > Customer MEP (deadline)**.
  */
-export function computeCustomerOverdueBlock(args: {
+export type CustomerOverdueBlockArgs = {
     oldestInvoiceOverdueDate: Date | null | undefined;
     maxAllowedMepDays: number | null | undefined;
     today?: Date;
@@ -392,15 +405,23 @@ export function computeCustomerOverdueBlock(args: {
     oldestInvoiceIssueDate?: Date | null;
     mepCutoffDay?: number | null;
     mepSubstituteExtraDays?: number | null;
-}): boolean {
+};
+
+/**
+ * Days `today` is past the customer MEP deadline (see
+ * {@link computeCustomerOverdueBlock}); `null` when no deadline applies.
+ * Positive ⇔ overdue_block.
+ */
+export function computeCustomerDaysPastMep(
+    args: CustomerOverdueBlockArgs
+): number | null {
     const { oldestInvoiceOverdueDate, maxAllowedMepDays } = args;
-    const today = args.today ?? new Date();
     if (
         !oldestInvoiceOverdueDate ||
         maxAllowedMepDays === null ||
         maxAllowedMepDays === undefined
     ) {
-        return false;
+        return null;
     }
     const customerMepDeadline = computeTargetMepDate(
         oldestInvoiceOverdueDate,
@@ -412,9 +433,19 @@ export function computeCustomerOverdueBlock(args: {
         }
     );
     if (!customerMepDeadline) {
-        return false;
+        return null;
     }
-    return differenceInCalendarDays(today, customerMepDeadline) > 0;
+    return differenceInCalendarDays(
+        args.today ?? new Date(),
+        customerMepDeadline
+    );
+}
+
+export function computeCustomerOverdueBlock(
+    args: CustomerOverdueBlockArgs
+): boolean {
+    const daysPastMep = computeCustomerDaysPastMep(args);
+    return daysPastMep != null && daysPastMep > 0;
 }
 
 export function computeCreatedTermsViolationCustomerExcludedFromPolicy(
@@ -481,6 +512,14 @@ export function computeCreatedTermsViolationSnapshot(args: {
         dcl_customer_since_months?: number | null;
     } | null;
 }): CreatedTermsViolationSnapshot {
+    if (isNegativeInvoiceAmount(args.invoice_amount)) {
+        return {
+            ctv_customer_overdue_mep: false,
+            ctv_customer_excluded_from_policy: false,
+            ctv_outdated_dcl: false,
+            ctv_invoice_after_policy_end: false,
+        };
+    }
     const ctv_customer_overdue_mep = isEligibleForCustomerMepOverdue(
         args.invoice_amount
     ) &&
@@ -580,7 +619,8 @@ export function computeInsuranceTargetDates(args: {
  *   or due_date + max_allowed_mep + substitute_extra_days when invoice month-end cutoff applies
  * - When `amount` &lt; 0, both target dates are null and reporting_breach is false
  * - `ctv_payment_term` = credit days (due − issue) > `customer.max_payment_term`
- *   (or > max_payment_term + diff when payment-term month-end cutoff applies)
+ *   (or > max_payment_term + diff when payment-term month-end cutoff applies);
+ *   always false when `amount` &lt; 0
  */
 export function computeInvoiceInsuranceRowData(args: {
     status: invoice_status;
@@ -603,7 +643,7 @@ export function computeInvoiceInsuranceRowData(args: {
     /** When true, use explicit payment_term from input instead of calendar diff */
     explicitPaymentTerm?: number | null;
     today?: Date;
-    /** Account reporting-breach start date; pre-window invoices never breach. */
+    /** Account reporting-breach start date; pre-window deadlines never breach. */
     reporting_breach_start_date?: Date | null;
 }): InsuranceComputedForRow {
     const today = args.today ?? new Date();
@@ -627,7 +667,6 @@ export function computeInvoiceInsuranceRowData(args: {
         today,
         args.amount,
         {
-            invoiceDate: args.invoice_date ?? null,
             reportingBreachStartDate: args.reporting_breach_start_date ?? null,
         }
     );
@@ -641,7 +680,8 @@ export function computeInvoiceInsuranceRowData(args: {
             cutoffDayOfMonth: args.customer.payment_term_cutoff_day,
             substituteDayOfMonth:
                 args.customer.payment_term_substitute_day,
-        }
+        },
+        args.amount
     );
 
     return {
@@ -705,6 +745,60 @@ export type CustomerAtRiskInvoiceInput = {
     hasTermsBreach: boolean;
 };
 
+export type OpenAmountForCreditNoteNetting = {
+    /** Signed open amount; &lt; 0 is an open credit note. */
+    open: number;
+    dueDate?: Date | null;
+    invoiceDate?: Date | null;
+    id?: number;
+};
+
+function nettingSortTime(value: Date | null | undefined): number {
+    return value != null && !Number.isNaN(value.getTime())
+        ? value.getTime()
+        : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Net open credit notes against open positive invoices of the same customer
+ * (capacity-gap waterfall scope): total open credit is applied oldest invoice
+ * first (due date, then invoice date, then id; nulls last). Returns the net
+ * open per row in input order — credit notes and fully offset invoices are 0.
+ * Σ result = max(0, Σ open), so the waterfall gap matches net open AR − limit.
+ */
+export function netOpenCreditNotesOldestFirst(
+    rows: readonly OpenAmountForCreditNoteNetting[]
+): number[] {
+    const net = rows.map((row) => Math.max(0, Number(row.open) || 0));
+    let credit = rows.reduce(
+        (sum, row) => sum + Math.max(0, -(Number(row.open) || 0)),
+        0
+    );
+    if (credit <= 0) {
+        return net;
+    }
+    const order = rows
+        .map((row, index) => ({ row, index }))
+        .filter(({ index }) => net[index]! > 0)
+        .sort(
+            (a, b) =>
+                nettingSortTime(a.row.dueDate) -
+                    nettingSortTime(b.row.dueDate) ||
+                nettingSortTime(a.row.invoiceDate) -
+                    nettingSortTime(b.row.invoiceDate) ||
+                (a.row.id ?? a.index) - (b.row.id ?? b.index)
+        );
+    for (const { index } of order) {
+        if (credit <= 0) {
+            break;
+        }
+        const applied = Math.min(net[index]!, credit);
+        net[index] = net[index]! - applied;
+        credit -= applied;
+    }
+    return net;
+}
+
 /**
  * Per open Due/Overdue invoice: `atRisk_i = max(capacity_gap_i, terms_breach_i)`.
  * `terms_breach_i` = full outstanding when breached, else 0.
@@ -720,15 +814,17 @@ export function computeInvoiceAtRiskAmount(
 }
 
 /**
- * Customer at-risk from open invoices:
- * - uncovered / full-AR cohort → full open AR
+ * Customer at-risk from open invoices, capped at net open AR ({@link totalAr},
+ * credit notes included) — same cap as the credit-pool shell overlay:
+ * - at-risk / full-AR cohort → full open AR
  * - when {@link capacityGapAmount} is set (Cap Gap card):  
  *   `capacityGapAmount + Σ terms_breach_i − Σ min(gap_i, terms_breach_i)`  
  *   so At Risk cannot exceed Cap Gap + Terms (same cards).
- * - else Σ max(capacity_gap_i, terms_breach_i) (invoice-only path)
+ * - else Σ max(capacity_gap_i, terms_breach_i) (invoice-only path).
+ * Live and as-of gap_i both come from {@link allocateNetCapacityGapWaterfall}.
  */
 export function computeCustomerRiskExposure(args: {
-    uncovered?: boolean;
+    atRiskCohort?: boolean;
     totalAr: number;
     invoices: CustomerAtRiskInvoiceInput[];
     /**
@@ -738,7 +834,7 @@ export function computeCustomerRiskExposure(args: {
     capacityGapAmount?: number;
 }): number {
     const ar = Math.max(0, args.totalAr);
-    if (args.uncovered === true) {
+    if (args.atRiskCohort === true) {
         return ar;
     }
     if (ar <= 0) {
@@ -757,14 +853,14 @@ export function computeCustomerRiskExposure(args: {
             terms += breach;
             overlap += Math.min(gap, breach);
         }
-        return Math.max(0, gapCard + terms - overlap);
+        return Math.min(ar, Math.max(0, gapCard + terms - overlap));
     }
 
     let sum = 0;
     for (const invoice of args.invoices) {
         sum += computeInvoiceAtRiskAmount(invoice);
     }
-    return sum;
+    return Math.min(ar, sum);
 }
 
 /**
@@ -1012,6 +1108,136 @@ export function allocateLiveCapacityGapWaterfall(args: {
     });
 }
 
+/** Effective limit + currency for one customer+policy waterfall scope (pool root for credit pools). */
+export type NetCapacityGapWaterfallScope = {
+    effectiveLimit: number;
+    limitCurrency: string | null;
+    /** At-risk / outdated DCL — force invoice gaps to 0. */
+    zeroGaps?: boolean;
+};
+
+/** One open invoice in a waterfall scope; amounts are signed (credit notes &lt; 0). */
+export type NetCapacityGapWaterfallRow = {
+    id: number;
+    openAccount: number;
+    openCustomer: number;
+    customerCurrency: string | null;
+    invoiceDate: Date | null;
+    dueDate: Date | null;
+};
+
+export type NetCapacityGapAllocation = {
+    gapLimit: number;
+    gapAccount: number;
+};
+
+function openInLimitCurrency(
+    row: NetCapacityGapWaterfallRow,
+    limitCurrency: string | null,
+    accountCurrency: string | null
+): number {
+    const limitCcy = limitCurrency?.trim().toUpperCase() ?? null;
+    const acct = accountCurrency?.trim().toUpperCase() ?? null;
+    if (limitCcy && acct && limitCcy === acct) {
+        return row.openAccount;
+    }
+    const cust = row.customerCurrency?.trim().toUpperCase() ?? null;
+    if (limitCcy && cust && limitCcy === cust) {
+        return row.openCustomer !== 0 ? row.openCustomer : row.openAccount;
+    }
+    return row.openAccount;
+}
+
+function gapLimitToAccountCurrency(
+    gapLimit: number,
+    outstandingLimit: number,
+    openAccount: number,
+    limitCurrency: string | null,
+    accountCurrency: string | null
+): number {
+    const limitCcy = limitCurrency?.trim().toUpperCase() ?? null;
+    const acct = accountCurrency?.trim().toUpperCase() ?? null;
+    if (gapLimit <= 0) {
+        return 0;
+    }
+    if (!limitCcy || !acct || limitCcy === acct) {
+        return gapLimit;
+    }
+    if (outstandingLimit > 0 && openAccount > 0) {
+        return gapLimit * (openAccount / outstandingLimit);
+    }
+    return gapLimit;
+}
+
+/**
+ * Capacity-gap waterfall for one scope on net open: credit notes are netted
+ * first ({@link netOpenCreditNotesOldestFirst}), then the effective limit fills
+ * oldest `invoice_date` first, so Σ gap = max(0, net open − limit). Shared by
+ * the as-of snapshot overlay and live at-risk overlap; never persisted.
+ */
+export function allocateNetCapacityGapWaterfall(
+    rows: readonly NetCapacityGapWaterfallRow[],
+    scope: NetCapacityGapWaterfallScope,
+    accountCurrency: string | null
+): Map<number, NetCapacityGapAllocation> {
+    const out = new Map<number, NetCapacityGapAllocation>();
+    if (scope.zeroGaps === true) {
+        for (const row of rows) {
+            out.set(row.id, { gapLimit: 0, gapAccount: 0 });
+        }
+        return out;
+    }
+
+    const outstandingLimit = rows.map((row) =>
+        openInLimitCurrency(row, scope.limitCurrency, accountCurrency)
+    );
+    const netLimit = netOpenCreditNotesOldestFirst(
+        rows.map((row, index) => ({
+            open: outstandingLimit[index]!,
+            dueDate: row.dueDate,
+            invoiceDate: row.invoiceDate,
+            id: row.id,
+        }))
+    );
+    const sorted = rows
+        .map((row, index) => ({ row, index }))
+        .filter(({ index }) => outstandingLimit[index]! > 0)
+        .sort((a, b) =>
+            compareInvoicesForLiveCapacityGapWaterfall(
+                { invoice_date: a.row.invoiceDate, id: a.row.id },
+                { invoice_date: b.row.invoiceDate, id: b.row.id }
+            )
+        );
+    const allocations = allocateLiveCapacityGapWaterfall({
+        effectiveLimit: scope.effectiveLimit,
+        openInvoices: sorted.map(({ row, index }) => ({
+            id: row.id,
+            outstandingInLimitCurrency: netLimit[index]!,
+        })),
+    });
+    const allocationById = new Map(
+        allocations.map((row) => [row.id, row] as const)
+    );
+
+    rows.forEach((row, index) => {
+        const gapLimit = allocationById.get(row.id)?.capacityGapAmountLimit ?? 0;
+        out.set(row.id, {
+            gapLimit,
+            gapAccount: Math.max(
+                0,
+                gapLimitToAccountCurrency(
+                    gapLimit,
+                    outstandingLimit[index]!,
+                    row.openAccount,
+                    scope.limitCurrency,
+                    accountCurrency
+                )
+            ),
+        });
+    });
+    return out;
+}
+
 /**
  * Snapshot basis stamped when an invoice becomes open: consumes approved headroom
  * first, then top-up pool (waterfall). When {@link newInvoiceOutstanding} is set,
@@ -1064,6 +1290,7 @@ export type InvoiceForCapacityGapSum = {
     outstanding_debt: number | null;
     customer_outstanding_debt: number | null;
     amount: number | null;
+    amount_without_vat?: number | null;
     limit_assessed_amount: number | null;
     capacity_gap_amount?: number | null;
     capacity_gap_amount_limit?: number | null;
@@ -1071,7 +1298,8 @@ export type InvoiceForCapacityGapSum = {
 
 /** Sum per-invoice gap; prefers stored fields, falls back to runtime compute. */
 export function sumInvoiceCapacityGapContributions(
-    invoices: InvoiceForCapacityGapSum[]
+    invoices: InvoiceForCapacityGapSum[],
+    amountsIncludeVat = true
 ): { total: number | null; hasMissingSnapshots: boolean } {
     if (invoices.length === 0) {
         return { total: 0, hasMissingSnapshots: false };
@@ -1093,10 +1321,18 @@ export function sumInvoiceCapacityGapContributions(
         if (hasStoredGaps && inv.capacity_gap_amount_limit != null) {
             return sum + Math.max(0, Number(inv.capacity_gap_amount_limit));
         }
+        if (hasStoredGaps && inv.capacity_gap_amount != null) {
+            return sum + Math.max(0, Number(inv.capacity_gap_amount));
+        }
+        const scaledOutstanding = applyOpenArVatBasis(
+            amountsIncludeVat,
+            invoiceOutstandingLeft(inv),
+            inv
+        );
         return (
             sum +
             computeInvoiceCapacityGapContribution({
-                outstandingLeft: invoiceOutstandingLeft(inv),
+                outstandingLeft: scaledOutstanding,
                 limitAssessedAmount: Number(inv.limit_assessed_amount ?? 0),
             })
         );

@@ -1,6 +1,17 @@
 # Production Nest stack on the API EC2 (api.production.archaser.com).
 # Redis is docker-internal. Nest ports bind 127.0.0.1 for host nginx.
 # Public TLS is nginx on the host — see nginx/archaser-production-api.conf.
+#
+# Always use project name archaser-backend-production (same as deploy-backend-docker.sh):
+#   docker compose -p archaser-backend-production -f docker-compose.backend.production.yml …
+#
+# Mongo is the same Docker Mongo as staging (archaser-mongo-shared network).
+# Staging owns the mongo service/volume; this stack joins that network and uses
+# database path /archaser (staging uses /archaser_staging).
+# Compose overrides MONGODB_URI on api / worker / connectors.
+# Ensure staging mongo is up first:
+#   docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml up -d mongo
+# MONGODB_URI in .env.production must use database path /archaser (not /archaser_staging).
 services:
   redis:
     image: redis:7-alpine
@@ -32,6 +43,7 @@ services:
       NEST_AUTH_SUCCESS_REDIRECT: "https://portal.archaser.com/login"
       NEST_CORS_ORIGINS: "https://portal.archaser.com,https://www.portal.archaser.com,https://api.portal.archaser.com,https://api.production.archaser.com,https://production.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com"
       REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/archaser
       BULLMQ_ENABLED: "true"
       BULLMQ_QUEUE: archaser-cron-prod
       SMS_SERVICE_URL: http://sms:3004
@@ -41,13 +53,17 @@ services:
       # Leave headroom for metrics updater + backfill + UI (RDS budget: sum of all Nest pools).
       CONNECTION_LIMIT_API: "25"
       ENABLE_LOKI_LOGGING: "true"
-      LOKI_HOST: http://host.docker.internal:3100
+      # Production Loki host port from grafana/start-production.sh (LOKI_HOST_PORT=3101)
+      LOKI_HOST: http://host.docker.internal:3101
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4010:4010"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - archaser-mongo-shared
     depends_on:
       redis:
         condition: service_healthy
@@ -65,8 +81,11 @@ services:
     environment:
       NODE_ENV: production
       APP_ENV: production
+      SERVICE_NAME: archaser-worker-production
       WORKER_PORT: 4003
+      NEST_PUBLIC_URL: "https://api.portal.archaser.com"
       REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/archaser
       BULLMQ_QUEUE: archaser-cron-prod
       CONNECTION_LIMIT_WORKER: 5
       SMS_SERVICE_URL: http://sms:3004
@@ -74,13 +93,17 @@ services:
       REPORTS_SERVICE_URL: http://reports:3006
       ENABLE_CONNECTORS_SYNC_WORKERS: "false"
       ENABLE_LOKI_LOGGING: "true"
-      LOKI_HOST: http://host.docker.internal:3100
+      # Production Loki host port from grafana/start-production.sh (LOKI_HOST_PORT=3101)
+      LOKI_HOST: http://host.docker.internal:3101
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4003:4003"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - archaser-mongo-shared
     depends_on:
       redis:
         condition: service_healthy
@@ -100,10 +123,11 @@ services:
       APP_ENV: production
       SMS_PORT: 3004
       CONNECTION_LIMIT_SMS: 5
+      NEST_PUBLIC_URL: "https://api.portal.archaser.com"
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
       NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4004:3004"
     restart: unless-stopped
@@ -121,12 +145,16 @@ services:
       CONNECTORS_PORT: 3005
       ENABLE_CONNECTORS_SYNC_WORKERS: "true"
       REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/archaser
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
       NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4005:3005"
+    networks:
+      - default
+      - archaser-mongo-shared
     depends_on:
       redis:
         condition: service_healthy
@@ -146,10 +174,16 @@ services:
       NEXT_PUBLIC_BASE_URL: "https://production.archaser.com"
       NEST_CORS_ORIGINS: "https://production.archaser.com,https://www.production.archaser.com,https://api.production.archaser.com,https://portal.archaser.com,https://www.portal.archaser.com,https://archaser.com,https://www.archaser.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,https://master.d2nb6pdzevzjzz.amplifyapp.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com"
     volumes:
-      - ${BACKEND_HOST_DIR:-/home/ubuntu/production}:/workspace
+      - ${BACKEND_HOST_DIR:-/home/ubuntu/api}:/workspace
     ports:
       - "127.0.0.1:4006:3006"
     restart: unless-stopped
 
 volumes:
   archaser-redis-production-data:
+
+networks:
+  # Same Docker Mongo as staging (DB /archaser). Created by staging compose.
+  archaser-mongo-shared:
+    name: archaser-mongo-shared
+    external: true

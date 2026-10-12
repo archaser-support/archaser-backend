@@ -3,6 +3,8 @@ import { registerArPostIngestOrchestrator } from "@archaser/billing-connector";
 import {
     bindCreditInsurancePrisma,
     registerCreditAsOfBackfillDispatch,
+    registerAccountVatBasisRefreshDispatch,
+    registerVatBasisRefreshBalances,
 } from "@archaser/credit-insurance-domain";
 import { runArPostIngestForCustomers } from "@archaser/cron-jobs";
 import { AuthModule } from "../auth/auth.module";
@@ -11,6 +13,8 @@ import { DatabaseService } from "../database/database.service";
 import { QueueModule } from "../queue/queue.module";
 import { CronQueueService } from "../queue/cron-queue.service";
 import { AsOfBackfillController } from "./as-of-backfill.controller";
+import { ClaimsController } from "./claims.controller";
+import { ClaimsService } from "./claims.service";
 import { createInsuranceEntityController } from "./create-insurance-entity.controller";
 import { CreditDashboardAccessService } from "./credit-dashboard-access.service";
 import { CreditInsuranceDomainController } from "./credit-insurance.controller";
@@ -21,6 +25,7 @@ import {
     InsuranceEntitiesService,
 } from "./insurance-entities.service";
 import { InsurancePoliciesActionsController } from "./insurance-policies-actions.controller";
+import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
 
 const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
     createInsuranceEntityController(t)
@@ -31,6 +36,7 @@ const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
     controllers: [
         CreditInsuranceDomainController,
         AsOfBackfillController,
+        ClaimsController,
         InsurancePoliciesActionsController,
         ...insuranceEntityControllers,
     ],
@@ -38,6 +44,7 @@ const insuranceEntityControllers = INSURANCE_ENTITY_TYPES.map((t) =>
         CreditInsuranceService,
         CreditInsuranceLeavesService,
         CreditDashboardAccessService,
+        ClaimsService,
         InsuranceEntitiesService,
     ],
     exports: [CreditInsuranceService, InsuranceEntitiesService],
@@ -60,8 +67,19 @@ export class CreditInsuranceModule implements OnModuleInit {
         registerArPostIngestOrchestrator((options) =>
             runArPostIngestForCustomers(options)
         );
-        registerCreditAsOfBackfillDispatch((accountId: number) =>
-            this.cronQueue.enqueueCreditAsOfBackfill({ accountId })
+        registerCreditAsOfBackfillDispatch((accountId, options) =>
+            this.cronQueue.enqueueCreditAsOfBackfill({ accountId }, options)
         );
+        registerAccountVatBasisRefreshDispatch((accountId: number) =>
+            this.cronQueue.enqueueAccountVatBasisRefresh({ accountId })
+        );
+        const balances = async (
+            customerIds: number[],
+            prisma: Parameters<typeof recalculateCustomerAmounts>[1],
+            options?: Parameters<typeof recalculateCustomerAmounts>[2]
+        ) => {
+            await recalculateCustomerAmounts(customerIds, prisma, options);
+        };
+        registerVatBasisRefreshBalances(balances);
     }
 }

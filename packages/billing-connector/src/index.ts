@@ -16,6 +16,7 @@ export {
     SAMPLE_NOOP_EXTENSION_KEY,
     listRegisteredExtensionKeys,
     getRegisteredExtension,
+    getMatchingAccountExtensionKey,
     isRegisteredExtensionKey,
     resolveExtensionAttachmentInput,
     resolveAccountBillingExtension,
@@ -84,6 +85,13 @@ export {
     type CronToPresetResult,
 } from "./services/billingConnectorSchedule";
 
+export {
+    AUTH_CIRCUIT_BREAKER_THRESHOLD,
+    recordBillingConnectorAuthFailure,
+    clearBillingConnectorAuthFailures,
+    type AuthCircuitBreakerResult,
+} from "./services/billingConnectorAuthCircuitBreaker";
+
 // ==============================
 // Field utils & Priority contract
 // ==============================
@@ -144,6 +152,34 @@ export {
     type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
 } from "./sync/runInProcessSync";
+
+export {
+    buildPendingCustomerHistoryDrainOptions,
+    runSyncWithPendingCustomerHistoryPolicy,
+    scheduleContinuePendingCustomerHistoryDrainForAccount,
+    type RunSyncWithPendingCustomerHistoryPolicyOptions,
+    type ScheduleContinuePendingCustomerHistoryDrainForAccountParams,
+} from "./sync/runSyncWithPendingCustomerHistoryPolicy";
+
+export {
+    drainBlockingPendingCustomerHistory,
+    scheduleContinuePendingCustomerHistoryDrain,
+    type DrainPendingCustomerHistoryOptions,
+    type DrainPendingCustomerHistoryResult,
+} from "./sync/pendingCustomerHistoryDrain";
+
+export {
+    assertCustomerRollupHostLoadable,
+    isCustomerBalancesFinalRegistered,
+    loadRecalculateCustomerAmountsModule,
+    recalculateCustomerAmountsViaHost,
+    registerCustomerBalancesFinal,
+    resetCustomerBalancesFinalForTests,
+    resolveCustomersDomainRoot,
+    type CustomerBalancesFinalFn,
+    type RecalculateCustomerAmountsHostOptions,
+    type RecalculateCustomerAmountsModule,
+} from "./customers/recalculateCustomerAmountsHost";
 
 export {
     CLEAR_BEFORE_IMPORT_BATCH_SIZE,
@@ -245,6 +281,7 @@ export {
     INSURANCE_TARGETS_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
     BALANCES_ENTITY_STATS_KEY,
+    CTP_ENTITY_STATS_KEY,
     clearRunningSync,
     completePreviewJob,
     getPreviewJob,
@@ -304,6 +341,48 @@ export {
 } from "./sync/customerScopedTailProgress";
 
 export {
+    clearCustomerScopedHistoryProgress,
+    createMemoryCustomerScopedHistoryProgressStore,
+    ensureCustomerScopedHistoryProgressOwner,
+    getCustomerScopedHistoryProgress,
+    getIncompleteCustomerScopedHistoryProgress,
+    isCustomerScopedHistoryComplete,
+    resetCustomerScopedHistoryProgressStoreForTests,
+    upsertCustomerScopedEntityCheckpoint,
+    useMemoryCustomerScopedHistoryProgressStoreForTests,
+    type CustomerScopedEntityCheckpoint,
+    type CustomerScopedHistoryProgress,
+    type CustomerScopedHistoryProgressStore,
+    type UpsertCustomerScopedEntityCheckpointInput,
+} from "./sync/customerScopedHistoryProgress";
+
+export {
+    clearPendingCustomerHistoryOnSuccess,
+    createMemoryPendingCustomerHistoryQueueStore,
+    enqueuePendingCustomerHistory,
+    enqueuePendingCustomerHistoryForCreates,
+    getPendingCustomerHistoryStatusSummary,
+    listBlockingPendingCustomerHistory,
+    listPendingCustomerHistoryRows,
+    markPendingCustomerHistoryInProgress,
+    PENDING_CUSTOMER_HISTORY_MAX_ATTEMPTS,
+    recordPendingCustomerHistoryFailure,
+    resetPendingCustomerHistoryQueueStoreForTests,
+    revertPendingCustomerHistoryToPending,
+    upsertPendingCustomerHistoryEntityCheckpoint,
+    useMemoryPendingCustomerHistoryQueueStoreForTests,
+    type EnqueuePendingCustomerHistoryForCreatesInput,
+    type EnqueuePendingCustomerHistoryForCreatesResult,
+    type EnqueuePendingCustomerHistoryInput,
+    type EnqueuePendingCustomerHistoryResult,
+    type PendingCustomerHistoryQueueStore,
+    type PendingCustomerHistoryRow,
+    type PendingCustomerHistoryStatus,
+    type PendingCustomerHistoryStatusSummary,
+    type RecordPendingCustomerHistoryFailureResult,
+} from "./sync/pendingCustomerHistoryQueue";
+
+export {
     runArPostIngestViaHost,
     DEFERRED_CI_POST_INGEST_STEPS,
     invokeConnectorArPostIngest,
@@ -318,6 +397,16 @@ export {
     type DeferredArPostIngestStep,
     type PostIngestDrainScheduleResult,
 } from "./credit/arPostIngestHost";
+
+export {
+    POST_SYNC_CTP_CATCH_UP_MAX_DAYS,
+    maybeRunPostSyncCtpCatchUp,
+    resolveCtpCatchUpDates,
+    shouldRunPostSyncCtpCatchUp,
+    type CtpCatchUpStepState,
+    type MaybeRunPostSyncCtpCatchUpParams,
+    type SyncCustomerPolicyTrendSnapshotFn,
+} from "./credit/postSyncCtpCatchUp";
 
 export {
     syncDueBillingConnectors,
@@ -363,6 +452,17 @@ export {
     HISTORY_WINDOW_DAYS,
     STALE_RUNNING_HOURS,
     defaultSinceDate,
+    isSyncAlreadyRunningError,
+    SyncAlreadyRunningError,
+    cleanupTwinRunningSyncExecutions,
+    ensureAccountRunningUniqueIndex,
+    ensureUniqueRunningSyncMutex,
+    ensureUniqueRunningSyncMutexOnce,
+    resetUniqueRunningSyncMutexEnsuredForTests,
+    TWIN_RUNNING_CLEANUP_ERROR_MESSAGE,
+    TWIN_RUNNING_CLEANUP_ERROR_TYPE,
+    type CleanupTwinRunningResult,
+    type EnsureUniqueRunningMutexResult,
     type CompleteExecutionInput,
     type CreateRunningExecutionInput,
     type DeferCompletionUntilPostIngestDrainInput,
@@ -414,7 +514,6 @@ export {
 export {
     importMappedEntityBatch,
     extractMaxUpdatedAt,
-    shouldSkipReportingBreachOnConnectorWrite,
     type EntityImportBatchOptions,
     type EntityImportBatchResult,
     type EntityImportRowResult,
@@ -432,6 +531,7 @@ export {
     bulkLinkDeferredPayments,
     linkDeferredPaymentAndRecalc,
     linkDeferredPaymentsAndRecalcBatch,
+    paymentsEffectiveAsOf,
     recalculateInvoicesFromLinkedPayments,
     resolveInvoicePaidRecalcOptions,
     type BulkDeferredPaymentLink,
@@ -451,6 +551,11 @@ export {
 } from "./payment/virtualPaymentTrim";
 
 export {
+    sameMoneyAmount,
+    toMoneyNumber,
+} from "./payment/moneyNumber";
+
+export {
     INVOICE_PAID_TOLERANCE,
     INVOICE_PAID_TOLERANCE_MAX,
     INVOICE_PAID_TOLERANCE_MIN,
@@ -458,3 +563,16 @@ export {
     normalizeInvoicePaidTolerance,
     resolveInvoicePaidTolerance,
 } from "./invoice/invoicePaidTolerance";
+
+export {
+    isInvoiceFullyCoveredByFuturePayments,
+    type FutureCoverInvoice,
+    type FutureCoverPayment,
+} from "./invoice/invoiceFuturePaymentCover";
+
+export {
+    calendarDateFromTimestamp,
+    maxPaymentDate,
+    resolveInvoicePaymentCloseDates,
+    type InvoicePaymentCloseDates,
+} from "./invoice/invoicePaymentCloseDates";

@@ -5,6 +5,9 @@ import {
     Logger,
     NotFoundException,
 } from "@nestjs/common";
+import { isStagingDeploy } from "@archaser/cron-jobs";
+import { enqueueAccountVatBasisRefresh } from "@archaser/credit-insurance-domain";
+import { appendIntIdStringContainsOr } from "@archaser/database";
 import * as bcrypt from "bcryptjs";
 import { randomBytes, randomUUID } from "crypto";
 import { AccessScopeService } from "../auth/access-scope.service";
@@ -13,6 +16,10 @@ import {
     parseEnabledEntitiesForSyncDate,
     pickAccountLastSyncDate,
 } from "../billing-connector/account-last-sync-date";
+import {
+    findLastSuccessfulExecutionForConnector,
+    watermarkFromSuccessfulExecution,
+} from "@archaser/billing-connector";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
 import { SystemEmailService } from "../email/system-email.service";
@@ -346,9 +353,8 @@ export class AccountAdminEntitiesService {
                     },
                 },
             ];
-            if (/^\d+$/.test(searchTerm)) {
-                or.push({ id: parseInt(searchTerm, 10) });
-            }
+            // Int id has no Prisma `contains` — treat decimal form as string.
+            await appendIntIdStringContainsOr(or, this.db, "Account", searchTerm);
             where.OR = or;
         }
 
@@ -1313,8 +1319,9 @@ export class AccountAdminEntitiesService {
     }
 
     /**
-     * Derived from connector sync state — the header's freshness pill reads this
-     * for every user, so it must not require billing-connector permissions.
+     * Account header freshness pill. Prefer Mongo last SUCCESS (same as billing
+     * connector config) so Reset backfill — which clears Prisma entity watermarks —
+     * does not flash "Never synced" when a completed ERP sync still exists in history.
      */
     private async resolveAccountLastSyncDate(
         accountId: number
@@ -1322,6 +1329,7 @@ export class AccountAdminEntitiesService {
         const connector = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
             select: {
+                id: true,
                 enabled_entities: true,
                 ConnectorSyncState: {
                     select: {
@@ -1334,10 +1342,23 @@ export class AccountAdminEntitiesService {
         if (!connector) {
             return null;
         }
-        return pickAccountLastSyncDate(
+        const fromPrisma = pickAccountLastSyncDate(
             parseEnabledEntitiesForSyncDate(connector.enabled_entities),
             connector.ConnectorSyncState
         );
+        try {
+            const fromMongo = watermarkFromSuccessfulExecution(
+                await findLastSuccessfulExecutionForConnector(connector.id)
+            );
+            return fromMongo ?? fromPrisma;
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `[account ${accountId}] Mongo last SUCCESS for last_sync_date skipped: ${message}`
+            );
+            return fromPrisma;
+        }
     }
 
     async update(
@@ -1388,9 +1409,45 @@ export class AccountAdminEntitiesService {
         delete data.created_at;
         delete data.created_by;
 
+        let stripImportGrants = false;
+        let vatBasisChanged = false;
+        if (entityType === "accounts") {
+            const userInfo = await this.accessScope.resolveUserInfo(user);
+            const canWriteDemo =
+                isStagingDeploy() &&
+                this.accessScope.isAdminAccount(userInfo.accountId);
+            if (!canWriteDemo || typeof body.is_demo !== "boolean") {
+                delete data.is_demo;
+            } else {
+                data.is_demo = body.is_demo;
+                // Strip whenever Demo is saved OFF (true→false or set false).
+                stripImportGrants = body.is_demo === false;
+            }
+            // has_file_import dropped; Demo gates import catalog on staging.
+            delete data.has_file_import;
+
+            if (typeof body.amounts_include_vat === "boolean") {
+                data.amounts_include_vat = body.amounts_include_vat;
+                const previousInclude =
+                    existing.amounts_include_vat !== false;
+                vatBasisChanged =
+                    body.amounts_include_vat !== previousInclude;
+            } else {
+                delete data.amounts_include_vat;
+            }
+        }
+
         const delegate = this.delegate(entityType);
         const updated = await delegate.update({ where: { id }, data });
         const serialized = serializeBigInt(updated) as Record<string, unknown>;
+
+        if (entityType === "accounts" && stripImportGrants) {
+            await this.stripImportRoleGrants(Number(id));
+        }
+
+        if (entityType === "accounts" && vatBasisChanged) {
+            await enqueueAccountVatBasisRefresh(Number(id));
+        }
 
         if (entityType === "users") {
             const userInfo = await this.accessScope.resolveUserInfo(user);
@@ -1407,6 +1464,19 @@ export class AccountAdminEntitiesService {
         }
 
         return serialized;
+    }
+
+    /**
+     * When Demo is turned OFF on staging, remove import_* grants for every
+     * role on the account immediately (they are not restored on Demo ON).
+     */
+    private async stripImportRoleGrants(accountId: number): Promise<void> {
+        await this.db.rolePermission.deleteMany({
+            where: {
+                account_id: accountId,
+                permission_key: { startsWith: "import_" },
+            },
+        });
     }
 
     /**

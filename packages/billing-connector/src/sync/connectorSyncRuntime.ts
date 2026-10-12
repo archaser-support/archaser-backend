@@ -24,6 +24,8 @@ export const PROCESS_OVERDUE_ENTITY_STATS_KEY = "_process_overdue";
 export const INSURANCE_TARGETS_ENTITY_STATS_KEY = "_insurance_targets";
 export const PENDING_CLOSES_ENTITY_STATS_KEY = "_pending_closes";
 export const BALANCES_ENTITY_STATS_KEY = "_balances";
+/** Post-SUCCESS: queue Portfolio Health Generate (pending rewrite window); soft-fail only. */
+export const CTP_ENTITY_STATS_KEY = "_ctp";
 
 export const TAIL_STEP_KEYS = [
     PENDING_CLOSES_ENTITY_STATS_KEY,
@@ -32,6 +34,7 @@ export const TAIL_STEP_KEYS = [
     AR_REPLAY_ENTITY_STATS_KEY,
     LIVE_REFRESH_ENTITY_STATS_KEY,
     BALANCES_ENTITY_STATS_KEY,
+    CTP_ENTITY_STATS_KEY,
 ] as const;
 
 export type TailStepKey = (typeof TAIL_STEP_KEYS)[number];
@@ -102,8 +105,8 @@ export interface ConnectorSyncRunSummary {
     cutover_options?: {
         backfill_start_date: string | null;
         mep_breach_start_date?: string | null;
+        reporting_breach_start_date?: string | null;
         include_older_open_invoices: boolean;
-        skip_reporting_breach_on_backfill: boolean;
     } | null;
     cutover_summary?: string | null;
 }
@@ -288,6 +291,8 @@ export function entityStatsFromCounts(
         const processed = step.processed ?? 0;
         const total = step.total ?? processed;
         const skipped = step.skipped ?? 0;
+        // `_balances` failed must surface via failed/status — resolveSyncExecutionStatus
+        // maps that to FAILED (never soft-complete SUCCESS).
         entityStats[key] = {
             pulled: total,
             // Settled only — do not treat missing invoice numbers as success.

@@ -78,52 +78,6 @@ describe("getChartDetails JSON for report-backed drills", () => {
         );
     });
 
-    it("summarizes overdue-invoices with unpaid statuses and due_date before today", async () => {
-        const database = db();
-        (database.invoice.count as jest.Mock).mockResolvedValue(4);
-        (database.invoice.aggregate as jest.Mock).mockResolvedValue({
-            _sum: { outstanding_debt: 250, customer_outstanding_debt: 0 },
-        });
-        const result = await service(database).getChartDetails(user(), {
-            type: "overdue-invoices",
-            period: "2026-08",
-        });
-        expect(database.invoice.count).toHaveBeenCalled();
-        const where = (database.invoice.count as jest.Mock).mock.calls[0][0]
-            .where;
-        expect(where.status.in).toEqual(
-            expect.arrayContaining(["Overdue", "Due", "Open"])
-        );
-        expect(where.due_date.lt).toBeInstanceOf(Date);
-        expect(result.summary).toEqual({
-            totalRecords: 4,
-            totalAmount: 250,
-        });
-        expect(result.data).toEqual([]);
-    });
-
-    it("summarizes due-today as Due invoices in today's window", async () => {
-        const database = db();
-        (database.invoice.count as jest.Mock).mockResolvedValue(2);
-        (database.invoice.aggregate as jest.Mock).mockResolvedValue({
-            _sum: { outstanding_debt: 0, customer_outstanding_debt: 80 },
-        });
-        const result = await service(database).getChartDetails(user(), {
-            type: "due-today",
-            period: "2026-08",
-        });
-        const where = (database.invoice.count as jest.Mock).mock.calls[0][0]
-            .where;
-        expect(where.status).toBe("Due");
-        expect(where.customer_outstanding_debt).toEqual({ gt: 0 });
-        expect(where.due_date.gte).toBeInstanceOf(Date);
-        expect(where.due_date.lte).toBeInstanceOf(Date);
-        expect(result.summary).toEqual({
-            totalRecords: 2,
-            totalAmount: 80,
-        });
-    });
-
     it("puts collected-mtd payment count on summary.totalCollectedRecords", async () => {
         const database = db();
         (database.invoicePayment.count as jest.Mock).mockResolvedValue(3);

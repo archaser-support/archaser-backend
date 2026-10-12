@@ -19,6 +19,7 @@ SELECT
             {"table": "Customer", "field": "period_negative_cost_entry_count"},
             {"table": "Customer", "field": "period_negative_cost_sum"},
             {"table": "Customer", "field": "period_worst_negative_cost_amount"},
+            {"table": "Customer", "field": "approved_limit_currency"},
             {"table": "Customer", "field": "period_worst_negative_cost_date"}
         ],
         "filters": [],

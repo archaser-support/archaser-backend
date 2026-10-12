@@ -75,7 +75,7 @@ SELECT pg_temp.safe_delete_account_rows('NamedPolicyTrend');
 SELECT pg_temp.safe_delete_account_rows('InsurancePolicyCountryTrend');
 SELECT pg_temp.safe_delete_account_rows('InsurancePolicyTrend');
 SELECT pg_temp.safe_delete_account_rows('CreditAsOfRewriteQueue');
-SELECT pg_temp.safe_delete_account_rows('CreditAsOfBackfillJob');
+SELECT pg_temp.safe_delete_account_rows('AccountBackgroundJob');
 
 SELECT pg_temp.safe_delete_account_rows('ActivityAttachment');
 

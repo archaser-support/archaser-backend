@@ -4,14 +4,23 @@ import {
     bulkUpdateInvoiceBooleanByValue,
     bulkUpdateInvoiceCtvSnapshots,
     bulkUpdateInvoiceTargetDates,
+    type InvoiceCtvSnapshotWrite,
 } from "./bulkInvoiceUpdates";
-import { resolveCreatedOverdueMepByInvoiceId } from "./createdOverdueMepAtInvoiceDate";
+import {
+    buildCreatedOverdueMepCauseColumns,
+    isSameCreatedOverdueMepCauseColumns,
+    loadInvoiceNumbersById,
+    resolveCreatedOverdueMepDetailsByInvoiceId,
+    type CreatedOverdueMepResolution,
+} from "./createdOverdueMepAtInvoiceDate";
 import { loadEffectiveInsuranceForCustomers } from "./loadEffectiveInsuranceForCustomers";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import {
     resolveReportingBreachStartDate,
     resolveReportingBreachStartDatesForAccounts,
+    clearReportingBreachStartDateCache,
 } from "./resolveReportingBreachStartDate";
+import { isInvoiceInReportingBreachScope } from "./shared/reportingBreachScope";
 import {
     computeCreatedTermsViolationSnapshot,
     computeInsuranceTargetDates,
@@ -49,7 +58,6 @@ export async function syncInvoiceReportingBreach(
         select: {
             id: true,
             account_id: true,
-            invoice_date: true,
             status: true,
             amount: true,
             target_reporting_date: true,
@@ -84,7 +92,6 @@ export async function syncInvoiceReportingBreach(
         today,
         inv.amount,
         {
-            invoiceDate: inv.invoice_date,
             reportingBreachStartDate: await resolveReportingBreachStartDate(
                 inv.account_id,
                 db
@@ -127,13 +134,17 @@ export async function clearReportingBreachWhenReportedForInvoiceIds(
 /**
  * Cron / batch: set reporting_breach to true using {@link shouldSetReportingBreach}
  * (Due/Overdue, target reporting date &lt; today, no actual_reporting_date). Only promotes false → true.
+ * Accounts with no reporting_breach_start_date are skipped (fail closed) and listed in the result.
  */
 export async function sweepReportingBreachForOverdueInvoiceIds(
     invoiceIds: number[],
     db: DbClient = prisma
-): Promise<number> {
+): Promise<{
+    promoted: number;
+    skippedMissingStartDateAccountIds: number[];
+}> {
     if (invoiceIds.length === 0) {
-        return 0;
+        return { promoted: 0, skippedMissingStartDateAccountIds: [] };
     }
     const today = new Date();
 
@@ -149,7 +160,6 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
         select: {
             id: true,
             account_id: true,
-            invoice_date: true,
             status: true,
             amount: true,
             target_reporting_date: true,
@@ -163,9 +173,20 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             db
         );
 
+    const skippedMissingStartDateAccountIds = new Set<number>();
     const toSetTrue: Array<{ id: number; value: boolean }> = [];
     for (const inv of invoices) {
         if (!inv.target_reporting_date) {
+            continue;
+        }
+        const startDate =
+            inv.account_id != null
+                ? startDateByAccountId.get(inv.account_id) ?? null
+                : null;
+        if (startDate == null) {
+            if (inv.account_id != null) {
+                skippedMissingStartDateAccountIds.add(inv.account_id);
+            }
             continue;
         }
         const should = shouldSetReportingBreach(
@@ -175,11 +196,7 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
             today,
             inv.amount,
             {
-                invoiceDate: inv.invoice_date,
-                reportingBreachStartDate:
-                    inv.account_id != null
-                        ? startDateByAccountId.get(inv.account_id) ?? null
-                        : null,
+                reportingBreachStartDate: startDate,
             }
         );
         if (should) {
@@ -187,7 +204,103 @@ export async function sweepReportingBreachForOverdueInvoiceIds(
         }
     }
     await bulkUpdateInvoiceBooleanByValue(db, "reporting_breach", toSetTrue);
-    return toSetTrue.length;
+    return {
+        promoted: toSetTrue.length,
+        skippedMissingStartDateAccountIds: [
+            ...skippedMissingStartDateAccountIds,
+        ].sort((a, b) => a - b),
+    };
+}
+
+/**
+ * Full account recompute of Invoice.reporting_breach after the start date changes.
+ * Sets and clears flags: out-of-scope / reported → false; Due/Overdue that should
+ * breach → true; Paid/Cancelled that remain in scope keep an existing true flag.
+ */
+export async function recomputeReportingBreachForAccount(
+    accountId: number,
+    db: DbClient = prisma
+): Promise<{ updated: number }> {
+    clearReportingBreachStartDateCache(accountId);
+    const startDate = await resolveReportingBreachStartDate(accountId, db);
+    const today = new Date();
+    const chunkSize = 2000;
+    let lastId = 0;
+    let updated = 0;
+
+    for (;;) {
+        const invoices = await db.invoice.findMany({
+            where: {
+                account_id: accountId,
+                id: { gt: lastId },
+                OR: [
+                    { reporting_breach: true },
+                    {
+                        status: { in: ["Due", "Overdue"] },
+                        actual_reporting_date: null,
+                        target_reporting_date: { not: null },
+                    },
+                ],
+            },
+            select: {
+                id: true,
+                status: true,
+                amount: true,
+                target_reporting_date: true,
+                actual_reporting_date: true,
+                reporting_breach: true,
+            },
+            orderBy: { id: "asc" },
+            take: chunkSize,
+        });
+
+        if (invoices.length === 0) {
+            break;
+        }
+
+        lastId = invoices[invoices.length - 1]!.id;
+
+        const writes: Array<{ id: number; value: boolean }> = [];
+        for (const inv of invoices) {
+            const inScope = isInvoiceInReportingBreachScope(
+                inv.target_reporting_date,
+                startDate
+            );
+            let desired: boolean;
+            if (!inScope || inv.actual_reporting_date) {
+                desired = false;
+            } else if (inv.status === "Due" || inv.status === "Overdue") {
+                desired = shouldSetReportingBreach(
+                    inv.status,
+                    inv.target_reporting_date,
+                    inv.actual_reporting_date,
+                    today,
+                    inv.amount,
+                    {
+                        reportingBreachStartDate: startDate,
+                    }
+                );
+            } else {
+                // Paid/Cancelled (etc.): keep historical true only while still in scope.
+                desired = inv.reporting_breach === true;
+            }
+
+            if (desired !== inv.reporting_breach) {
+                writes.push({ id: inv.id, value: desired });
+            }
+        }
+
+        if (writes.length > 0) {
+            await bulkUpdateInvoiceBooleanByValue(db, "reporting_breach", writes);
+            updated += writes.length;
+        }
+
+        if (invoices.length < chunkSize) {
+            break;
+        }
+    }
+
+    return { updated };
 }
 
 /**
@@ -326,6 +439,7 @@ export async function refreshPaymentTermBreachForInvoiceIds(
             id: true,
             invoice_date: true,
             due_date: true,
+            amount: true,
             ctv_payment_term: true,
             customer_id: true,
         },
@@ -359,7 +473,8 @@ export async function refreshPaymentTermBreachForInvoiceIds(
                     customerCtx?.payment_term_cutoff_day ?? null,
                 substituteDayOfMonth:
                     customerCtx?.payment_term_substitute_day ?? null,
-            }
+            },
+            inv.amount
         );
         if (next !== inv.ctv_payment_term) {
             pending.push({ id: inv.id, value: next });
@@ -389,7 +504,7 @@ async function resolveCreatedOverdueMepForRows(
     rows: CtvSnapshotRow[],
     db: DbClient,
     mepBreachStartDateByAccountId: Map<number, Date | null>
-): Promise<Map<number, boolean>> {
+): Promise<Map<number, CreatedOverdueMepResolution>> {
     const byCustomer = new Map<string, CtvSnapshotRow[]>();
     for (const row of rows) {
         if (row.account_id == null || row.customer_id == null) {
@@ -401,11 +516,11 @@ async function resolveCreatedOverdueMepForRows(
         byCustomer.set(key, bucket);
     }
 
-    const resolved = new Map<number, boolean>();
+    const resolved = new Map<number, CreatedOverdueMepResolution>();
     for (const bucket of byCustomer.values()) {
         const first = bucket[0]!;
         const policy = first.Customer?.CustomerPolicy?.[0];
-        const flags = await resolveCreatedOverdueMepByInvoiceId({
+        const flags = await resolveCreatedOverdueMepDetailsByInvoiceId({
             accountId: first.account_id!,
             customerId: first.customer_id!,
             invoices: bucket.map((row) => ({
@@ -452,6 +567,10 @@ export async function refreshCtvSnapshotsForInvoiceIds(
             customer_id: true,
             policy_id: true,
             ctv_customer_overdue_mep: true,
+            ctv_customer_overdue_mep_cause_invoice_number: true,
+            ctv_customer_overdue_mep_cause_due_date: true,
+            ctv_customer_overdue_mep_cause_outstanding: true,
+            ctv_customer_overdue_mep_days_past: true,
             ctv_customer_excluded_from_policy: true,
             ctv_outdated_dcl: true,
             ctv_invoice_after_policy_end: true,
@@ -496,6 +615,12 @@ export async function refreshCtvSnapshotsForInvoiceIds(
         db,
         mepBreachStartDateByAccountId
     );
+    const causeNumbers = await loadInvoiceNumbersById(
+        Array.from(overdueMepByInvoiceId.values())
+            .map((row) => row.causeInvoiceId)
+            .filter((id): id is number => id != null),
+        db
+    );
 
     const policyIds = Array.from(
         new Set(
@@ -519,14 +644,7 @@ export async function refreshCtvSnapshotsForInvoiceIds(
               });
     const policyById = new Map(policies.map((p) => [p.id, p]));
 
-    const pending: Array<{
-        id: number;
-        policyIdToSet: number | null;
-        ctv_customer_overdue_mep: boolean;
-        ctv_customer_excluded_from_policy: boolean;
-        ctv_outdated_dcl: boolean;
-        ctv_invoice_after_policy_end: boolean;
-    }> = [];
+    const pending: InvoiceCtvSnapshotWrite[] = [];
 
     for (const inv of rows) {
         if (!inv.Customer) {
@@ -542,7 +660,7 @@ export async function refreshCtvSnapshotsForInvoiceIds(
             // Prefer as-of map (false when absent) — never fall back to live
             // Customer.overdue_block (false positives on historical invoices).
             customer_overdue_mep_at_invoice_date:
-                overdueMepByInvoiceId.get(inv.id) ?? false,
+                overdueMepByInvoiceId.get(inv.id)?.flagged ?? false,
             mep_breach_start_date:
                 inv.account_id != null
                     ? mepBreachStartDateByAccountId.get(inv.account_id) ?? null
@@ -572,9 +690,16 @@ export async function refreshCtvSnapshotsForInvoiceIds(
         // policy-scoped read path stops skipping the invoice.
         const policyIdPatch = inv.policy_id == null && cid != null;
 
+        const causeColumns = buildCreatedOverdueMepCauseColumns(
+            snap.ctv_customer_overdue_mep,
+            overdueMepByInvoiceId.get(inv.id),
+            causeNumbers
+        );
+
         const unchanged =
             !policyIdPatch &&
             snap.ctv_customer_overdue_mep === inv.ctv_customer_overdue_mep &&
+            isSameCreatedOverdueMepCauseColumns(causeColumns, inv) &&
             snap.ctv_customer_excluded_from_policy ===
                 inv.ctv_customer_excluded_from_policy &&
             snap.ctv_outdated_dcl === inv.ctv_outdated_dcl &&
@@ -589,6 +714,7 @@ export async function refreshCtvSnapshotsForInvoiceIds(
             id: inv.id,
             policyIdToSet: policyIdPatch ? cid : null,
             ctv_customer_overdue_mep: snap.ctv_customer_overdue_mep,
+            ...causeColumns,
             ctv_customer_excluded_from_policy:
                 snap.ctv_customer_excluded_from_policy,
             ctv_outdated_dcl: snap.ctv_outdated_dcl,

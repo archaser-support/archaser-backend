@@ -12,6 +12,7 @@ const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
     Activity: "Activity",
     Dispute: "CustomerDispute",
     CustomerCollectionPeriod: "CustomerCollectionPeriod",
+    CustomerPolicy: "CustomerPolicy",
     CustomerBanks: "CustomerBanks",
     AccountBankAccounts: "AccountBankAccounts",
     Person: "Person",
@@ -21,6 +22,7 @@ const REPORT_TABLE_TO_PRISMA_MODEL: Record<string, string> = {
     Country: "Country",
     State: "State",
     InsurancePolicy: "InsurancePolicy",
+    Claim: "Claim",
 };
 
 const scalarFieldCache = new Map<string, Set<string>>();
@@ -67,12 +69,16 @@ export function calculateDaysLeft(
 }
 
 export function extractTermsBreachReasonCodes(row: {
+    amount?: number | null;
     reporting_breach?: boolean | null;
     ctv_payment_term?: boolean | null;
     ctv_customer_overdue_mep?: boolean | null;
     ctv_outdated_dcl?: boolean | null;
     ctv_invoice_after_policy_end?: boolean | null;
 }): string {
+    if (row.amount != null && Number(row.amount) < 0) {
+        return "";
+    }
     const codes: string[] = [];
     if (row.reporting_breach) codes.push("reporting_breach");
     if (row.ctv_payment_term) codes.push("ctv_payment_term");
@@ -388,6 +394,7 @@ export function applyComputedFieldSelect(
             return true;
         }
         if (field === "terms_breach_reason") {
+            select.amount = true;
             select.reporting_breach = true;
             select.ctv_payment_term = true;
             select.ctv_customer_overdue_mep = true;

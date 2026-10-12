@@ -4,6 +4,7 @@ import {
     totalMandatoryFieldSkipsFromEntityStats,
     type EntityImportStatsAccum,
 } from "../import/aggregateEntityImportStats";
+import { BALANCES_ENTITY_STATS_KEY } from "../sync/connectorSyncRuntime";
 import type {
     BillingConnectorSyncStatus,
     SyncResultForStatus,
@@ -30,11 +31,43 @@ function resolveMandatoryFieldSkips(result: SyncResultForStatus): number {
     return totalMandatoryFieldSkipsFromEntityStats(entityStats);
 }
 
+/**
+ * `_balances` failed ⇒ never SUCCESS. Soft-failing rollups as SUCCESS is
+ * forbidden (stale overdue after Paid / virtual close).
+ */
+function isBalancesStepFailed(result: SyncResultForStatus): boolean {
+    const slice = result.entity_stats?.[BALANCES_ENTITY_STATS_KEY];
+    if (!slice) {
+        return false;
+    }
+    if (slice.status === "failed") {
+        return true;
+    }
+    return (slice.failed ?? 0) > 0;
+}
+
+function balancesStepErrorMessage(
+    result: SyncResultForStatus
+): string | undefined {
+    const slice = result.entity_stats?.[BALANCES_ENTITY_STATS_KEY];
+    const sample = slice?.sample_errors?.[0];
+    if (typeof sample === "string" && sample.length > 0) {
+        return sample;
+    }
+    return undefined;
+}
+
 export function resolveSyncExecutionStatus(
     result: SyncResultForStatus
 ): BillingConnectorSyncStatus {
     if (result.cancelled) {
         return "TIMEOUT";
+    }
+
+    // Prefer FAILED when balances were required and failed — do not map to
+    // SUCCESS (or soft-ignore) even if entity imports looked healthy.
+    if (isBalancesStepFailed(result)) {
+        return "FAILED";
     }
 
     const imported = totalImported(result);
@@ -78,8 +111,9 @@ export function resolveSyncErrorType(
     ) {
         return "import_validation";
     }
-    if (result.error) {
-        return classifyConnectorError(result.error).error_type;
+    const errorMessage = result.error ?? balancesStepErrorMessage(result);
+    if (errorMessage) {
+        return classifyConnectorError(errorMessage).error_type;
     }
     return "unknown";
 }

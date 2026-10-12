@@ -12,8 +12,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  typecheck:
+    name: Type check
+    uses: ./.github/workflows/typecheck.yml
+
   deploy:
     name: Deploy Backend Docker Containers to EC2
+    needs: typecheck
     runs-on: ubuntu-latest
 
     steps:
@@ -34,7 +39,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 30m
+          command_timeout: 60m
           script: |
             set -e
             echo "==> Deploying backend (${{ steps.env-name.outputs.ENV }}) on EC2 in ${{ steps.env-name.outputs.APP_DIR }}..."

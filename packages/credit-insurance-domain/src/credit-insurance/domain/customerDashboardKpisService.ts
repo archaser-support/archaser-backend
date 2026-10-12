@@ -11,8 +11,14 @@ import {
     fetchOpenReceivableForCustomerByCurrency,
     getCustomerTermsBreachOutstandingSum,
     getCustomerTermsBreachOutstandingSumByCurrency,
+    loadCustomerScopeAtRiskRows,
     resolveOpenArOnPolicyInLimitCurrency,
 } from "./creditInsuranceDashboardService";
+import {
+    fetchOpenReceivableByCustomerMapInAccountCurrency,
+    fetchOpenReceivableForCustomers,
+    fetchOpenReceivableForCustomersByCurrency,
+} from "./openReceivableByCustomerCurrency";
 import {
     resolveCustomerCreditInsuranceSecondaryCurrency,
     resolveCustomerTotalArSecondaryFromInvoiceBuckets,
@@ -41,7 +47,6 @@ import {
     computeCustomerRiskExposure,
     computeCustomerTotalAr,
 } from "./invoiceInsuranceFields";
-import { fetchOpenReceivableByCustomerMapInAccountCurrency } from "./openReceivableByCustomerCurrency";
 import {
     storedCapacityGapAmount,
     resolveStoredCapacityGapSecondary,
@@ -50,8 +55,9 @@ import { resolveEffectiveApprovedLimit } from "./resolveEffectiveApprovedLimit";
 import { ensureCustomerCapacityGapStored } from "./syncCreditInsuranceGapPipeline";
 import {
     resolveFullOpenArAtRiskFromPolicyRows,
-    resolveUncoveredExposureFromPolicyRows,
+    resolveAtRiskExposureFromPolicyRows,
 } from "./termBreachResolver";
+import { listDescendantCustomerIds, resolveCreditPoolMemberIds } from "./parentCustomerCreditInheritance";
 
 export type CustomerDashboardKpiCards = {
     healthIndex: number;
@@ -62,7 +68,7 @@ export type CustomerDashboardKpiCards = {
     /** Distinct open Due/Overdue invoices with any terms-breach flag (same membership as outstanding). */
     termsBreachInvoiceCount: number;
     capacityGapAmount: number;
-    /** Uninsured exposure: full open AR when excluded from policy, else stored uninsured (0 when outdated DCL). */
+    /** Uninsured amount: full open AR when excluded from policy, else stored uninsured (0 when outdated DCL). */
     uninsuredAmount: number;
     /** True when the scoped customer policy is excluded from policy. */
     isExcludedFromPolicy: boolean;
@@ -256,7 +262,8 @@ export type CustomerTermsBreachCountByReasonResult = {
 export async function getCustomerTermsBreachCountByReason(
     accountId: number,
     customerId: number,
-    policyId?: number
+    policyId?: number,
+    options?: { customerIds?: readonly number[] }
 ): Promise<CustomerTermsBreachCountByReasonResult> {
     type AggRow = {
         c: number;
@@ -267,6 +274,26 @@ export async function getCustomerTermsBreachCountByReason(
         cnt_after_policy_end: number;
     };
 
+    const scopeIds =
+        options?.customerIds != null && options.customerIds.length > 0
+            ? [...new Set(options.customerIds.filter(Number.isFinite))]
+            : [customerId];
+    if (scopeIds.length === 0) {
+        return {
+            distribution: applyTermsBreachOtherBucket(
+                {
+                    reportingBreach: 0,
+                    paymentTerm: 0,
+                    customerOverdueMep: 0,
+                    outdatedDcl: 0,
+                    invoiceAfterPolicyEnd: 0,
+                },
+                0
+            ),
+            invoiceCount: 0,
+        };
+    }
+
     const rows = await prisma.$queryRaw<AggRow[]>`
         SELECT COUNT(*)::int AS c,
           COUNT(*) FILTER (WHERE i.reporting_breach = true)::int AS cnt_reporting,
@@ -276,7 +303,7 @@ export async function getCustomerTermsBreachCountByReason(
           COUNT(*) FILTER (WHERE i.ctv_invoice_after_policy_end = true)::int AS cnt_after_policy_end
         FROM "Invoice" i
         WHERE i.account_id = ${accountId}
-          AND i.customer_id = ${customerId}
+          AND i.customer_id IN (${Prisma.join(scopeIds)})
           AND i.status IN ('Due', 'Overdue')
           AND i.amount >= 0
           AND (
@@ -522,7 +549,15 @@ export function aggregatePolicyUsageFromRows(rows: PolicyUsageRowInput[]): {
 export async function getCustomerDashboardKpis(
     accountId: number,
     customerId: number,
-    options?: { policyId?: number; days?: number }
+    options?: {
+        policyId?: number;
+        days?: number;
+        /**
+         * Override local pool membership (e.g. local subtree ∩ BU from the API).
+         * When omitted, uses self + all descendants.
+         */
+        customerIds?: readonly number[];
+    }
 ): Promise<CustomerDashboardKpisResponse> {
     const policyId = options?.policyId;
 
@@ -584,6 +619,40 @@ export async function getCustomerDashboardKpis(
         },
     });
 
+    // Shell parents: expand live KPI invoice scope to local pool members.
+    // Linked children: expand to the full credit pool (root + descendants).
+    // API may pass customerIds already filtered to local subtree ∩ BU (PRD D11).
+    let poolCustomerIds: number[] | undefined;
+    if (options?.customerIds != null && options.customerIds.length > 0) {
+        const unique = [
+            ...new Set(
+                options.customerIds.filter(
+                    (id) => Number.isFinite(id) && id > 0
+                )
+            ),
+        ];
+        if (!unique.includes(customerId)) {
+            unique.push(customerId);
+        }
+        poolCustomerIds = unique.length > 1 ? unique : undefined;
+    } else {
+        const localDescendants = await listDescendantCustomerIds(
+            customerId,
+            accountId
+        );
+        if (localDescendants.length > 0) {
+            poolCustomerIds = [customerId, ...localDescendants];
+        } else {
+            const pool = await resolveCreditPoolMemberIds(
+                customerId,
+                accountId
+            );
+            poolCustomerIds =
+                pool.memberIds.length > 1 ? [...pool.memberIds] : undefined;
+        }
+    }
+    const openArScopeIds = poolCustomerIds ?? [customerId];
+
     // Open AR must be FX-converted to the account currency so the KPI cards
     // (at-risk, uninsured, health index) match the header "Total AR" card,
     // which uses fetchOpenReceivableByCustomerMapInAccountCurrency. The raw
@@ -597,15 +666,26 @@ export async function getCustomerDashboardKpis(
                 accountId,
                 accountCurrency,
                 {
-                    customerIds: [customerId],
+                    customerIds: openArScopeIds,
                     ...(pid != null ? { policyId: pid } : {}),
                 }
             );
-            return liveMap.get(customerId) ?? 0;
+            let sum = 0;
+            for (const id of openArScopeIds) {
+                sum += liveMap.get(id) ?? 0;
+            }
+            return sum;
         }
-        return fetchOpenReceivableForCustomer(
+        if (openArScopeIds.length === 1) {
+            return fetchOpenReceivableForCustomer(
+                accountId,
+                openArScopeIds[0],
+                pid ?? null
+            );
+        }
+        return fetchOpenReceivableForCustomers(
             accountId,
-            customerId,
+            openArScopeIds,
             pid ?? null
         );
     };
@@ -636,7 +716,7 @@ export async function getCustomerDashboardKpis(
         policyId
     );
 
-    const uncovered = resolveUncoveredExposureFromPolicyRows(
+    const atRiskCohort = resolveAtRiskExposureFromPolicyRows(
         policyRows,
         policyId
     );
@@ -648,7 +728,12 @@ export async function getCustomerDashboardKpis(
     const flagBasedTermsBreach = await getCustomerTermsBreachOutstandingSum(
         accountId,
         customerId,
-        policyId != null ? { policyId } : undefined
+        {
+            ...(policyId != null ? { policyId } : {}),
+            ...(poolCustomerIds != null
+                ? { customerIds: poolCustomerIds }
+                : {}),
+        }
     );
 
     const termsBreachOutstanding = fullArAtRisk
@@ -662,21 +747,27 @@ export async function getCustomerDashboardKpis(
             : policyRows.find((row) => row.is_active) ?? policyRows[0];
     const isExcludedFromPolicy = scopedPolicyRow?.excluded_from_policy === true;
 
+    const atRiskScopeRows = fullArAtRisk
+        ? []
+        : await loadCustomerScopeAtRiskRows(accountId, customerId, {
+              ...(policyId != null ? { policyId } : {}),
+              ...(poolCustomerIds != null
+                  ? { customerIds: poolCustomerIds }
+                  : {}),
+          });
     const atRiskInvoices = fullArAtRisk
         ? []
-        : await fetchCustomerAtRiskInvoiceInputs(
-              accountId,
-              customerId,
-              policyId != null ? { policyId } : undefined
-          );
+        : await fetchCustomerAtRiskInvoiceInputs(accountId, customerId, {
+              scopeRows: atRiskScopeRows,
+          });
     const atRiskExposure = computeCustomerRiskExposure({
-        uncovered: fullArAtRisk,
+        atRiskCohort: fullArAtRisk,
         totalAr,
         invoices: atRiskInvoices,
         capacityGapAmount: fullArAtRisk ? undefined : capacityGapAmount,
     });
 
-    const uninsuredAmount = uncovered
+    const uninsuredAmount = atRiskCohort
         ? totalAr
         : scopedPolicyRow == null ||
           scopedPolicyRow.outdated_dcl === true ||
@@ -722,7 +813,10 @@ export async function getCustomerDashboardKpis(
             customerId,
             pid,
             limitCurrency,
-            accountCurrency
+            accountCurrency,
+            poolCustomerIds != null
+                ? { customerIds: poolCustomerIds }
+                : undefined
         );
 
         const resolved = await resolveEffectiveApprovedLimit(customerId, {
@@ -759,7 +853,14 @@ export async function getCustomerDashboardKpis(
         },
         invoiceCount: 0,
     };
-    const trailingDays = options?.days ?? 90;
+    const trailingDays = 90;
+    const riskTrendDays = Math.max(
+        7,
+        Math.min(options?.days ?? 365, 365)
+    );
+    // Trailing period cards (90d) + risk chart (12 months) read this customer's CTP. For shells,
+    // connect/daily overlay writes **local-subtree** pool AR / gap / at-risk /
+    // terms-breach onto the shell row (PRD D11; nested shells kept).
     const [
         riskExposureByPolicy,
         termsBreachCounts,
@@ -772,14 +873,17 @@ export async function getCustomerDashboardKpis(
     ] = await Promise.all([
             getCustomerRiskExposureAmountTrendByPolicy(accountId, customerId, {
                 policyId,
-                days: trailingDays,
+                days: riskTrendDays,
             }),
             fullArAtRisk
                 ? Promise.resolve(emptyTermsBreachCounts)
                 : getCustomerTermsBreachCountByReason(
                       accountId,
                       customerId,
-                      policyId
+                      policyId,
+                      poolCustomerIds != null
+                          ? { customerIds: poolCustomerIds }
+                          : undefined
                   ),
             fetchCustomerTrailingOverLimitGapMetrics({
                 accountId,
@@ -804,6 +908,9 @@ export async function getCustomerDashboardKpis(
                 customerId,
                 policyId,
                 days: trailingDays,
+                ...(poolCustomerIds != null
+                    ? { customerIds: poolCustomerIds }
+                    : {}),
             }),
             fetchCustomerTrailingLimitBreachForecast({
                 accountId,
@@ -840,22 +947,33 @@ export async function getCustomerDashboardKpis(
 
     if (secondaryCurrency && accountCurrency) {
         let openArSecondary = 0;
-        if (policyId != null) {
-            openArSecondary = await fetchOpenReceivableForCustomerByCurrency(
+        const resolveSecondaryOpenAr = async (pid?: number | null) => {
+            if (poolCustomerIds != null) {
+                return fetchOpenReceivableForCustomersByCurrency(
+                    accountId,
+                    poolCustomerIds,
+                    secondaryCurrency,
+                    pid ?? null
+                );
+            }
+            return fetchOpenReceivableForCustomerByCurrency(
                 accountId,
                 customerId,
                 secondaryCurrency,
-                policyId
+                pid ?? null
             );
+        };
+        if (policyId != null) {
+            openArSecondary = await resolveSecondaryOpenAr(policyId);
             totalArSecondary =
                 openArSecondary > 0
                     ? openArSecondary
-                    : customer
-                        ? resolveCustomerTotalArSecondaryFromInvoiceBuckets(
+                    : customer && poolCustomerIds == null
+                      ? resolveCustomerTotalArSecondaryFromInvoiceBuckets(
                             customer as any,
                             secondaryCurrency
                         )
-                        : null;
+                      : null;
         } else {
             // Dedupe by insurance_policy_id: copy-on-write versioning creates
             // multiple CustomerPolicy history rows sharing one insurance_policy_id,
@@ -868,15 +986,9 @@ export async function getCustomerDashboardKpis(
                     continue;
                 }
                 seenSecondaryPolicyIds.add(pid);
-                const arSec = await fetchOpenReceivableForCustomerByCurrency(
-                    accountId,
-                    customerId,
-                    secondaryCurrency,
-                    pid
-                );
-                openArSecondary += arSec;
+                openArSecondary += await resolveSecondaryOpenAr(pid);
             }
-            if (openArSecondary <= 0 && customer) {
+            if (openArSecondary <= 0 && customer && poolCustomerIds == null) {
                 totalArSecondary = resolveCustomerTotalArSecondaryFromInvoiceBuckets(
                     customer as any,
                     secondaryCurrency
@@ -930,7 +1042,12 @@ export async function getCustomerDashboardKpis(
                   accountId,
                   customerId,
                   secondaryCurrency,
-                  { policyId: policyId ?? undefined }
+                  {
+                      policyId: policyId ?? undefined,
+                      ...(poolCustomerIds != null
+                          ? { customerIds: poolCustomerIds }
+                          : {}),
+                  }
               );
 
         const atRiskInvoicesSecondary = fullArAtRisk
@@ -939,10 +1056,10 @@ export async function getCustomerDashboardKpis(
                   accountId,
                   customerId,
                   secondaryCurrency,
-                  { policyId: policyId ?? undefined }
+                  { scopeRows: atRiskScopeRows }
               );
         atRiskExposureSecondary = computeCustomerRiskExposure({
-            uncovered: fullArAtRisk,
+            atRiskCohort: fullArAtRisk,
             totalAr: openArSecondary,
             invoices: atRiskInvoicesSecondary,
             capacityGapAmount: fullArAtRisk
@@ -950,7 +1067,7 @@ export async function getCustomerDashboardKpis(
                 : (capacityGapAmountSecondary ?? 0),
         });
 
-        uninsuredAmountSecondary = uncovered ? openArSecondary : null;
+        uninsuredAmountSecondary = atRiskCohort ? openArSecondary : null;
     }
 
     return {

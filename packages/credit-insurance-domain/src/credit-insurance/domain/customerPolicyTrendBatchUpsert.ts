@@ -161,7 +161,8 @@ function rowToValuesSql(row: CustomerPolicyTrendUpsertRow): Prisma.Sql {
         ${termsBreachByReasonSnapshotToJson(row.termsBreachByReason)}::jsonb,
         ${row.policyUsagePct},
         ${row.topUpUsagePct},
-        ${row.effectiveUsagePct}
+        ${row.effectiveUsagePct},
+        NOW()
     )`;
 }
 
@@ -175,9 +176,12 @@ export async function pruneInactiveCustomerPolicyTrendRows(args: {
     snapshotDate: Date;
     policyId?: number;
     customerIds?: number[];
+    /** Inactive CPT rows upserted this run (run-off) must not be deleted. */
+    keepCustomerPolicyIds?: number[];
     dbClient?: DbClient;
 }): Promise<number> {
     const db = args.dbClient ?? defaultPrisma;
+    const keepIds = args.keepCustomerPolicyIds ?? [];
     return db.$executeRaw`
         DELETE FROM "CustomerPolicyTrend" t
         USING "CustomerPolicy" cp
@@ -192,6 +196,10 @@ export async function pruneInactiveCustomerPolicyTrendRows(args: {
           AND (
             ${args.customerIds == null}::boolean
             OR t.customer_id = ANY(${args.customerIds ?? []}::int[])
+          )
+          AND (
+            ${keepIds.length === 0}::boolean
+            OR t.customer_policy_id <> ALL(${keepIds}::int[])
           )
     `;
 }
@@ -264,7 +272,8 @@ export async function batchUpsertCustomerPolicyTrendRows(
                 terms_breach_by_reason,
                 policy_usage_pct,
                 top_up_usage_pct,
-                effective_usage_pct
+                effective_usage_pct,
+                modified_at
             ) VALUES ${Prisma.join(values)}
             ON CONFLICT (customer_id, customer_policy_id, snapshot_date)
             ${ON_CONFLICT_UPDATE}

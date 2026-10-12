@@ -18,6 +18,15 @@ import { PrismaClient } from "@prisma/client";
 export { PrismaClient };
 export type { Prisma } from "@prisma/client";
 
+export {
+    appendIntIdStringContainsOr,
+    findIntIdsContainingAsText,
+    intIdInWhere,
+    isDigitIdSearchTerm,
+    type IntIdSearchTable,
+    type PrismaQueryRawClient,
+} from "./intIdStringSearch";
+
 export type DatabaseModuleName =
     | "api"
     | "worker"

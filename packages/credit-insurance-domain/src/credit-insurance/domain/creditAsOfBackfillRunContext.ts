@@ -1,9 +1,15 @@
-import { cost_calculation_method, Prisma, type customer_limit_type } from "@prisma/client";
+import {
+    cost_calculation_method,
+    Prisma,
+    type customer_limit_type,
+    type customer_policy_status,
+} from "@prisma/client";
 
 import { type DbClient, prisma as defaultPrisma } from "../domain-db";
 
 import { resolveInvoicePaidTolerance } from "./resolveInvoicePaidTolerance";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
+import { resolveReportingBreachStartDate } from "./resolveReportingBreachStartDate";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
 import {
     isActiveTopUp,
@@ -17,6 +23,7 @@ import {
     asOfTermsScopeKey,
     type AsOfPolicyTermsForBreach,
 } from "./asOfOpenAr";
+import { buildAsOfTermsMapForDate } from "./customerPolicyAsOfVersion";
 
 const COLLECTION_LIVE = ["Active", "Inactive"] as const;
 
@@ -39,10 +46,19 @@ export type TopUpRowForTrendReplay = TopUpRowForResolution & {
     premium_currency: string | null;
 };
 
-/** Active {@link CustomerPolicy} rows loaded once per Generate / drain replay run. */
+/**
+ * CustomerPolicy versions loaded once per Generate / drain replay run.
+ * Includes the live active row, superseded inactive versions (terms history),
+ * inactive run-off rows (`policy_change_end_date` set), and Removed rows
+ * (no insurance policy).
+ */
 export type ActiveCustomerPolicyForTrendSync = {
     id: number;
     customer_id: number;
+    is_active: boolean;
+    status: customer_policy_status;
+    policy_change_start_date: Date;
+    policy_change_end_date: Date | null;
     insurance_policy_id: number | null;
     customer_number_policy: string | null;
     approved_limit: Prisma.Decimal | null;
@@ -79,7 +95,10 @@ export type ActiveCustomerPolicyForTrendSync = {
     } | null;
 };
 
-/** Terms map used by CPT + dashboard as-of overlay (Generate start and resume). */
+/**
+ * Map terms from an already day-filtered policy list.
+ * For Generate / history replay prefer {@link buildAsOfTermsMapForDate}.
+ */
 export function buildAsOfTermsMapFromActiveCustomerPolicies(
     policies: ActiveCustomerPolicyForTrendSync[]
 ): Map<string, AsOfPolicyTermsForBreach> {
@@ -108,6 +127,9 @@ export function buildAsOfTermsMapFromActiveCustomerPolicies(
     }
     return termsByCustomerAndPolicy;
 }
+
+/** Re-export day-scoped terms map (Generate / dashboard / CPT overlay). */
+export { buildAsOfTermsMapForDate };
 
 type CachedInsurancePolicy = {
     id: number;
@@ -190,6 +212,7 @@ export type CreditAsOfBackfillRunContext = {
     invoicePaidTolerance: number | null;
     hasTopUpPolicies: boolean;
     mepBreachStartDate: Date | null;
+    reportingBreachStartDate: Date | null;
     activeCustomerPolicies: ActiveCustomerPolicyForTrendSync[];
     insurancePolicies: CachedInsurancePolicy[];
     businessUnitIds: number[];
@@ -202,6 +225,8 @@ export type CreditAsOfBackfillRunContext = {
      * Avoids re-reading CustomerPolicyTrend between sequential replay days.
      */
     priorDayTrendCostByKey?: Map<string, TrendCostPredecessorRow>;
+    /** Day-invariant dashboard summary inputs, filled lazily per scope. */
+    dashboardSummaryInputCache?: Map<string, Promise<unknown>>;
 };
 
 function isPolicyEffectivelyActiveOnDate(
@@ -241,7 +266,27 @@ export async function loadActiveCustomerPoliciesForTrendSync(
     const db = options?.dbClient ?? defaultPrisma;
     return db.customerPolicy.findMany({
         where: {
-            is_active: true,
+            OR: [
+                {
+                    is_active: true,
+                    ...(options?.policyId != null
+                        ? { insurance_policy_id: options.policyId }
+                        : {}),
+                },
+                {
+                    // Superseded versions (terms history) + dated unassign run-off.
+                    is_active: false,
+                    status: "inactive",
+                    insurance_policy_id: options?.policyId ?? { not: null },
+                },
+                {
+                    // Removed rows stop earlier versions (isCustomerPolicyRemovedRow).
+                    is_active: false,
+                    status: "inactive",
+                    insurance_policy_id: null,
+                    policy_change_end_date: null,
+                },
+            ],
             Customer: {
                 account_id: accountId,
                 collection_status: { in: [...COLLECTION_LIVE] },
@@ -249,13 +294,14 @@ export async function loadActiveCustomerPoliciesForTrendSync(
                     ? { id: { in: options.customerIds } }
                     : {}),
             },
-            ...(options?.policyId != null
-                ? { insurance_policy_id: options.policyId }
-                : {}),
         },
         select: {
             id: true,
             customer_id: true,
+            is_active: true,
+            status: true,
+            policy_change_start_date: true,
+            policy_change_end_date: true,
             insurance_policy_id: true,
             customer_number_policy: true,
             approved_limit: true,
@@ -455,10 +501,11 @@ export function deriveDashboardSnapshotScopes(
     return scopes;
 }
 
-/** Lightweight context for injected loaders/writers (tests); only MEP date is resolved. */
+/** Lightweight context for injected loaders/writers (tests); gate dates are resolved. */
 export function createMinimalCreditAsOfBackfillRunContext(
     accountId: number,
-    mepBreachStartDate: Date | null
+    mepBreachStartDate: Date | null,
+    reportingBreachStartDate: Date | null = null
 ): CreditAsOfBackfillRunContext {
     return {
         accountId,
@@ -466,6 +513,7 @@ export function createMinimalCreditAsOfBackfillRunContext(
         invoicePaidTolerance: null,
         hasTopUpPolicies: false,
         mepBreachStartDate,
+        reportingBreachStartDate,
         activeCustomerPolicies: [],
         insurancePolicies: [],
         businessUnitIds: [],
@@ -480,6 +528,7 @@ export async function buildCreditAsOfBackfillRunContext(
         customerIds?: number[];
         policyId?: number;
         mepBreachStartDate?: Date | null;
+        reportingBreachStartDate?: Date | null;
         invoicePaidTolerance?: number;
         replayFromDate?: Date;
         replayToDate?: Date;
@@ -493,6 +542,7 @@ export async function buildCreditAsOfBackfillRunContext(
         businessUnitIds,
         accountHasTopUp,
         mepBreachStartDate,
+        reportingBreachStartDate,
         invoicePaidTolerance,
     ] = await Promise.all([
         db.account.findUnique({
@@ -516,6 +566,9 @@ export async function buildCreditAsOfBackfillRunContext(
         options?.mepBreachStartDate !== undefined
             ? Promise.resolve(options.mepBreachStartDate)
             : resolveMepBreachStartDate(accountId, db),
+        options?.reportingBreachStartDate !== undefined
+            ? Promise.resolve(options.reportingBreachStartDate)
+            : resolveReportingBreachStartDate(accountId, db),
         options?.invoicePaidTolerance !== undefined
             ? Promise.resolve(options.invoicePaidTolerance)
             : resolveInvoicePaidTolerance(accountId, db),
@@ -549,6 +602,7 @@ export async function buildCreditAsOfBackfillRunContext(
         invoicePaidTolerance,
         hasTopUpPolicies: accountHasTopUp,
         mepBreachStartDate,
+        reportingBreachStartDate,
         activeCustomerPolicies,
         insurancePolicies,
         businessUnitIds,

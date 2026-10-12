@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma, type DbClient } from "../domain-db";
+import { resolveTopUpOwnerCustomerId } from "./parentCustomerCreditInheritance";
 
 export type TopUpRowForResolution = {
     id: number;
@@ -118,6 +119,9 @@ type ResolveTopUpOptions = {
     /** When set, only top-ups linked to this primary policy count (D10). */
     parentPrimaryPolicyId?: number;
     dbClient?: DbClient;
+    membershipCache?: import("./parentCustomerCreditInheritance").CreditPoolMembershipCache;
+    /** When set, skip per-customer top-up queries (missing owner → no top-ups). */
+    preloadedTopUpsByOwnerId?: Map<number, TopUpRowForResolution[]>;
 };
 
 const TOP_UP_SELECT = {
@@ -136,6 +140,67 @@ const TOP_UP_SELECT = {
         },
     },
 } as const;
+
+/**
+ * Active top-ups keyed by owner `customer_id` (optionally only `customerIds`).
+ * Top-up rows and their policies load as two parallel flat queries: a nested
+ * `InsurancePolicy` select would run as a second sequential round trip.
+ */
+export async function loadActiveTopUpsByCustomerIdForAccount(
+    accountId: number,
+    asOfDate: Date,
+    dbClient: DbClient = prisma,
+    options?: { customerIds?: readonly number[] }
+): Promise<Map<number, TopUpRowForResolution[]>> {
+    const byOwner = new Map<number, TopUpRowForResolution[]>();
+    if (options?.customerIds != null && options.customerIds.length === 0) {
+        return byOwner;
+    }
+    const asOfUtcDay = startOfUtcDay(asOfDate);
+    const activeTopUpWhere = {
+        cancelled_at: null,
+        start_date: { lte: asOfUtcDay },
+        end_date: { gte: asOfUtcDay },
+        Customer: { account_id: accountId },
+        ...(options?.customerIds != null
+            ? { customer_id: { in: [...options.customerIds] } }
+            : {}),
+    } satisfies Prisma.CustomerTopUpWhereInput;
+    const { InsurancePolicy: policySelect, ...topUpScalarSelect } =
+        TOP_UP_SELECT;
+    const [rows, policies] = await Promise.all([
+        dbClient.customerTopUp.findMany({
+            where: {
+                ...activeTopUpWhere,
+                InsurancePolicy: { policy_kind: "TopUp" },
+            },
+            select: {
+                customer_id: true,
+                insurance_policy_id: true,
+                ...topUpScalarSelect,
+            },
+        }),
+        dbClient.insurancePolicy.findMany({
+            where: {
+                policy_kind: "TopUp",
+                CustomerTopUp: { some: activeTopUpWhere },
+            },
+            select: policySelect.select,
+        }),
+    ]);
+    const policyById = new Map(policies.map((policy) => [policy.id, policy]));
+    for (const { insurance_policy_id, ...row } of rows) {
+        const policy = policyById.get(insurance_policy_id);
+        // Top-up written between the two reads: its policy may be missing.
+        if (policy == null) {
+            continue;
+        }
+        const list = byOwner.get(row.customer_id) ?? [];
+        list.push({ ...row, InsurancePolicy: policy } as TopUpRowForResolution);
+        byOwner.set(row.customer_id, list);
+    }
+    return byOwner;
+}
 
 async function resolveTopUpsFromRows(
     rows: TopUpRowForResolution[],
@@ -322,18 +387,32 @@ export async function resolveEffectiveApprovedLimit(
         return emptyEffectiveLimitResult({ baseLimit, baseCurrency });
     }
 
-    const activeTopUps = await dbClient.customerTopUp.findMany({
-        where: {
-            customer_id: customerId,
-            cancelled_at: null,
-            start_date: { lte: asOfUtcDay },
-            end_date: { gte: asOfUtcDay },
-            InsurancePolicy: {
-                policy_kind: "TopUp",
+    // Linked children ignore their own top-ups; shared effective limit uses the
+    // credit-pool root's active top-ups only.
+    const topUpOwnerCustomerId = await resolveTopUpOwnerCustomerId(
+        customerId,
+        dbClient,
+        options?.membershipCache
+    );
+
+    let activeTopUps: TopUpRowForResolution[];
+    if (options?.preloadedTopUpsByOwnerId) {
+        activeTopUps =
+            options.preloadedTopUpsByOwnerId.get(topUpOwnerCustomerId) ?? [];
+    } else {
+        activeTopUps = (await dbClient.customerTopUp.findMany({
+            where: {
+                customer_id: topUpOwnerCustomerId,
+                cancelled_at: null,
+                start_date: { lte: asOfUtcDay },
+                end_date: { gte: asOfUtcDay },
+                InsurancePolicy: {
+                    policy_kind: "TopUp",
+                },
             },
-        },
-        select: TOP_UP_SELECT,
-    });
+            select: TOP_UP_SELECT,
+        })) as TopUpRowForResolution[];
+    }
 
     return resolveEffectiveApprovedLimitFromTopUpRows(
         activeTopUps as TopUpRowForResolution[],
@@ -377,9 +456,14 @@ export async function resolveTopUpTotalsForAsOfDates(
         if (day > maxDay) maxDay = day;
     }
 
+    const topUpOwnerCustomerId = await resolveTopUpOwnerCustomerId(
+        customerId,
+        dbClient
+    );
+
     const candidateTopUps = await dbClient.customerTopUp.findMany({
         where: {
-            customer_id: customerId,
+            customer_id: topUpOwnerCustomerId,
             cancelled_at: null,
             start_date: { lte: maxDay },
             end_date: { gte: minDay },

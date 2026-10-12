@@ -1,4 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
+import { appendIntIdStringContainsOr } from "@archaser/database";
+import { purgeCreditSnapshotsAfterInvoiceOrPaymentClear } from "@archaser/credit-insurance-domain";
 
 /** Entities that can be listed in Start backfill `clear_before_import`. */
 export const CLEAR_BEFORE_IMPORT_ENTITIES = [
@@ -229,10 +231,13 @@ export async function searchAccountCustomers(params: {
             },
         ];
         if (/^\d+$/.test(q)) {
-            const id = Number.parseInt(q, 10);
-            if (Number.isFinite(id) && id > 0) {
-                orClause.unshift({ id });
-            }
+            await appendIntIdStringContainsOr(
+                orClause,
+                params.prisma,
+                "Customer",
+                q,
+                { accountId: params.accountId }
+            );
         }
         andClause.push({ OR: orClause });
     }
@@ -890,6 +895,21 @@ export async function clearBeforeImport(
         // runEntity sets deleted.Payment = Payment-step count only — restore cascade.
         deleted.Payment = paymentBaseline + (deleted.Payment ?? 0);
         emit("Payment");
+    }
+
+    // Invoice/Payment clear leaves customers/policies in place — wipe AR/risk
+    // snapshot history for the scope so charts cannot keep pre-clear amounts.
+    // Run after Invoice/Payment succeed so a mid-purge cancel does not empty
+    // charts while invoices still remain.
+    if (targets.includes("Invoice") || targets.includes("Payment")) {
+        if (options.shouldCancel?.()) {
+            return { deleted, cancelled: true };
+        }
+        await purgeCreditSnapshotsAfterInvoiceOrPaymentClear({
+            accountId: options.accountId,
+            customerId: options.customerId,
+            dbClient: options.prisma,
+        });
     }
 
     if (targets.includes("Customer")) {

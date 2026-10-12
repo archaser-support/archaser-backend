@@ -14,14 +14,14 @@ import {
     resolveAsOfOpenArOnPolicyInLimitCurrencyFromLines,
     sumAsOfOpenAmountFromLines,
     sumAsOfTermsBreachFromLines,
+    isUtcCalendarToday,
     type AsOfCapacityGapWaterfallScope,
     type AsOfOpenInvoiceLine,
-    type AsOfPolicyTermsForBreach,
 } from "./asOfOpenAr";
 import { buildCustomerPolicyTrendSnapshotPayload } from "./customerPolicyTrendSnapshotPayload";
 import {
     hasActiveLinkedPolicy,
-    isUncoveredExposureCustomer,
+    isAtRiskExposureCustomer,
 } from "./policyExclusion";
 import {
     aggregateTermsBreachByReasonFromInvoices,
@@ -35,6 +35,11 @@ import {
     type TopUpRowForTrendReplay,
     type TrendCostPredecessorRow,
 } from "./creditAsOfBackfillRunContext";
+import {
+    buildAsOfTermsMapForDate,
+    customerPolicyTrendEffectiveRowOrderSql,
+    selectCustomerPoliciesForTrendWriteOnDate,
+} from "./customerPolicyAsOfVersion";
 import {
     batchUpsertCustomerPolicyTrendRows,
     pruneInactiveCustomerPolicyTrendRows,
@@ -51,10 +56,16 @@ import {
     resolveGapFillDates,
 } from "./customerPolicyDailyCostDelta";
 import { hasTopUpPolicies } from "./hasTopUpPolicies";
+import {
+    findAccountSnapshotLeaseBlocker,
+    warnSnapshotWriterSkippedForLease,
+} from "./accountBackgroundJobLease";
+import { customerIdsWithChildren } from "./creditPoolShellGuards";
 import { resolveEffectiveApprovedLimitFromTopUpRows } from "./resolveEffectiveApprovedLimit";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import { computeTopUpUsageMetrics } from "./invoiceCapacityGapAmounts";
 import { mapWithConcurrency, readEnvInt } from "./runWithConcurrency";
+import { toUtcDateOnly } from "./shared/insurancePolicyLifecycle";
 
 const CPT_COMPUTE_CONCURRENCY = readEnvInt(
     "CREDIT_ASOF_CPT_COMPUTE_CONCURRENCY",
@@ -599,7 +610,7 @@ type ComputeCptTrendRowArgs = {
     accountId: number;
     accountCurrency: string | null;
     accountHasTopUp: boolean;
-    ledgerLines: AsOfOpenInvoiceLine[];
+    ledgerLinesByCustomer: Map<number, AsOfOpenInvoiceLine[]>;
     openArByCustomer: Map<number, number>;
     topUpsByCustomerId: Map<number, TopUpRowForTrendReplay[]>;
     priorDayRowsByKey: Map<string, PredecessorTrendCostContext>;
@@ -623,13 +634,14 @@ async function computeCustomerPolicyTrendUpsertRow(
         cp.approved_limit_currency?.trim().toUpperCase() ||
         accountCurrency ||
         "USD";
+    const customerLines = args.ledgerLinesByCustomer.get(cp.customer_id) ?? [];
 
     let usageAmount = 0;
     if (cp.insurance_policy_id != null) {
         usageAmount = Math.max(
             0,
             resolveAsOfOpenArOnPolicyInLimitCurrencyFromLines(
-                args.ledgerLines,
+                customerLines,
                 cp.customer_id,
                 cp.insurance_policy_id,
                 limitCurrency,
@@ -645,7 +657,7 @@ async function computeCustomerPolicyTrendUpsertRow(
     }
 
     const policyScope = cp.insurance_policy_id ?? undefined;
-    const uncovered = isUncoveredExposureCustomer({
+    const atRiskCohort = isAtRiskExposureCustomer({
         hasLinkedPolicy: hasActiveLinkedPolicy(cp.insurance_policy_id),
         exclusionReason: cp.policy_exclusion_reason,
     });
@@ -657,7 +669,11 @@ async function computeCustomerPolicyTrendUpsertRow(
         cp.approved_limit != null
             ? new Prisma.Decimal(cp.approved_limit)
             : null;
-    if (accountHasTopUp && !uncovered) {
+    const runOffDay =
+        cp.policy_change_end_date != null &&
+        toUtcDateOnly(snapshotDate).getTime() >=
+            toUtcDateOnly(cp.policy_change_end_date).getTime();
+    if (accountHasTopUp && !atRiskCohort && !runOffDay) {
         const resolved = await resolveEffectiveApprovedLimitFromTopUpRows(
             args.topUpsByCustomerId.get(cp.customer_id) ?? [],
             {
@@ -682,28 +698,28 @@ async function computeCustomerPolicyTrendUpsertRow(
 
     const totalReceivables =
         policyScope != null
-            ? sumAsOfOpenAmountFromLines(args.ledgerLines, snapshotDate, {
+            ? sumAsOfOpenAmountFromLines(customerLines, snapshotDate, {
                   customerId: cp.customer_id,
                   policyId: policyScope,
               })
             : Math.max(0, args.openArByCustomer.get(cp.customer_id) ?? 0);
     const flagBasedTermsBreach = sumAsOfTermsBreachFromLines(
-        args.ledgerLines,
+        customerLines,
         snapshotDate,
         {
             customerId: cp.customer_id,
             ...(policyScope != null ? { policyId: policyScope } : {}),
         }
     );
-    const termsBreachInvoices = uncovered
+    const termsBreachInvoices = atRiskCohort
         ? []
         : asOfTermsBreachInvoicesFromLines(
-              args.ledgerLines,
+              customerLines,
               snapshotDate,
               cp.customer_id,
               cp.insurance_policy_id
           );
-    const termsBreachByReason = uncovered
+    const termsBreachByReason = atRiskCohort
         ? { snapshot: {}, invoiceCount: 0 }
         : {
               snapshot: aggregateTermsBreachByReasonFromInvoices(
@@ -712,13 +728,13 @@ async function computeCustomerPolicyTrendUpsertRow(
               ),
               invoiceCount: termsBreachInvoices.length,
           };
-    const termsBreachOutstanding = uncovered
+    const termsBreachOutstanding = atRiskCohort
         ? totalReceivables
         : flagBasedTermsBreach;
-    const atRiskInvoices = uncovered
+    const atRiskInvoices = atRiskCohort
         ? []
         : buildAsOfAtRiskInvoiceInputsFromLines(
-              args.ledgerLines,
+              customerLines,
               snapshotDate,
               {
                   customerId: cp.customer_id,
@@ -735,7 +751,7 @@ async function computeCustomerPolicyTrendUpsertRow(
             Boolean(cp.outdated_dcl)
         ),
         termsBreachOutstanding,
-        uncovered,
+        atRiskCohort,
         atRiskInvoices,
         arInLimitCurrency: usageAmount,
         approvedLimit,
@@ -750,12 +766,14 @@ async function computeCustomerPolicyTrendUpsertRow(
         activeTopUpCount = null;
     }
 
-    const scopedTopUps = (args.topUpsByCustomerId.get(cp.customer_id) ?? []).filter(
-        (row) =>
-            cp.insurance_policy_id == null ||
-            row.InsurancePolicy.parent_insurance_policy_id ===
-                cp.insurance_policy_id
-    );
+    const scopedTopUps = runOffDay
+        ? []
+        : (args.topUpsByCustomerId.get(cp.customer_id) ?? []).filter(
+            (row) =>
+                cp.insurance_policy_id == null ||
+                row.InsurancePolicy.parent_insurance_policy_id ===
+                    cp.insurance_policy_id
+        );
     const todayLevels = computeCustomerDailyCostSnapshot({
         policyInput: {
             costCalculationMethod:
@@ -1202,14 +1220,16 @@ export function computeCustomerUsageBarSegments(args: {
 
     if (!hasTopUp) {
         const policyUsagePct = computeUsagePct(ar, limit > 0 ? limit : null);
-        const barPolicyPct = Math.max(0, policyUsagePct ?? 0);
+        const usage = Math.max(0, policyUsagePct ?? 0);
+        const barPolicyPct = Math.min(100, usage);
+        const barOverPct = Math.max(0, usage - 100);
         return {
             policyUsagePct,
             topUpUsagePct: null,
             effectiveUsagePct: policyUsagePct,
             barPolicyPct,
             barTopUpPct: 0,
-            barOverPct: 0,
+            barOverPct,
             usagePct: policyUsagePct,
         };
     }
@@ -1315,6 +1335,10 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
     options?: {
         policyId?: number;
         snapshotDate?: Date;
+        /**
+         * Scope must include the pools' shells (see `withCreditPoolShellIds`)
+         * so shell CTP rows exist for the pool overlay to update.
+         */
         customerIds?: number[];
         /** When set (e.g. shared backfill load), skip a second ledger query. */
         asOfLines?: AsOfOpenInvoiceLine[];
@@ -1332,6 +1356,21 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
          * Generate day-loop overlay on start and resume).
          */
         asOfTermsFlagsApplied?: boolean;
+        /**
+         * Caller re-applies the shell pool overlay for the whole replayed range
+         * (Generate job), so skip the per-day pass.
+         */
+        skipCreditPoolShellOverlay?: boolean;
+        /**
+         * Rethrow a shell overlay failure (Generate / drain must fail the run).
+         * Interactive saves keep it logged and non-fatal.
+         */
+        throwOnCreditPoolShellOverlayError?: boolean;
+        /**
+         * Caller deletes inactive-CustomerPolicy CPT rows once for the whole
+         * replayed range (Generate job), so skip the per-day prune.
+         */
+        skipInactivePrune?: boolean;
     }
 ): Promise<number> {
     const snapshotDate = options?.snapshotDate ?? startOfTodayUtc();
@@ -1364,12 +1403,17 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         )?.currency?.trim() ||
             null);
 
-    const activePolicies =
+    const loadedPolicies =
         runContext?.activeCustomerPolicies ??
         (await loadActiveCustomerPoliciesForTrendSync(accountId, {
             policyId: options?.policyId,
             customerIds: options?.customerIds,
         }));
+    /** Live attachment / run-off on day D — not "today's active for all history". */
+    const activePolicies = selectCustomerPoliciesForTrendWriteOnDate(
+        loadedPolicies,
+        snapshotDate
+    );
 
     const customerIds = Array.from(new Set(activePolicies.map((cp) => cp.customer_id)));
     const accountHasTopUp =
@@ -1439,40 +1483,30 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
         }
     }
 
-    const termsByCustomerAndPolicy = new Map<string, AsOfPolicyTermsForBreach>();
-    for (const cp of activePolicies) {
-        const terms: AsOfPolicyTermsForBreach = {
-            maxPaymentTerm: cp.max_payment_term,
-            maxAllowedMep: cp.max_allowed_mep,
-            reportingDays: cp.reporting_days,
-            mepCutoffDay: cp.mep_cutoff_day,
-            mepSubstituteExtraDays: cp.mep_substitute_extra_days,
-            reportingCutoffDay: cp.reporting_cutoff_day,
-            reportingSubstituteExtraDays: cp.reporting_substitute_extra_days,
-            paymentTermCutoffDay: cp.payment_term_cutoff_day,
-            paymentTermSubstituteDay:
-                cp.payment_term_substitute_day,
-            policyEndDate: cp.InsurancePolicy?.end_date ?? null,
-        };
-        termsByCustomerAndPolicy.set(
-            asOfTermsScopeKey(cp.customer_id, cp.insurance_policy_id),
-            terms
-        );
-        const fallbackKey = asOfTermsScopeKey(cp.customer_id, null);
-        if (!termsByCustomerAndPolicy.has(fallbackKey)) {
-            termsByCustomerAndPolicy.set(fallbackKey, terms);
-        }
-    }
+    const termsByCustomerAndPolicy = buildAsOfTermsMapForDate(
+        loadedPolicies,
+        snapshotDate
+    );
     if (options?.asOfTermsFlagsApplied !== true) {
-        ledgerLines = overlayAsOfTermsFlagsOnLines(
-            ledgerLines,
-            snapshotDate,
-            termsByCustomerAndPolicy,
-            {
-                ignoreReportingBreach: options?.ignoreReportingBreach === true,
-                mepBreachStartDate,
-            }
-        );
+        /**
+         * Today: keep live Invoice CTV (no as-of MEP overlay) so CPT tip matches
+         * live Credit Dashboard at-risk.
+         */
+        if (!isUtcCalendarToday(snapshotDate)) {
+            ledgerLines = overlayAsOfTermsFlagsOnLines(
+                ledgerLines,
+                snapshotDate,
+                termsByCustomerAndPolicy,
+                {
+                    ignoreReportingBreach:
+                        options?.ignoreReportingBreach === true,
+                    mepBreachStartDate,
+                    reportingBreachStartDate:
+                        runContext?.reportingBreachStartDate ?? null,
+                }
+            );
+        }
+        // Today: leave live CTV + reporting-breach on ledger lines.
     } else if (options?.ignoreReportingBreach === true) {
         ledgerLines = ledgerLines.map((line) =>
             line.reportingBreach
@@ -1490,7 +1524,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             cp.customer_id,
             cp.insurance_policy_id
         );
-        const uncovered = isUncoveredExposureCustomer({
+        const atRiskCohort = isAtRiskExposureCustomer({
             hasLinkedPolicy: hasActiveLinkedPolicy(cp.insurance_policy_id),
             exclusionReason: cp.policy_exclusion_reason,
         });
@@ -1499,7 +1533,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             cp.approved_limit != null
                 ? new Prisma.Decimal(cp.approved_limit)
                 : null;
-        if (accountHasTopUp && !uncovered) {
+        if (accountHasTopUp && !atRiskCohort) {
             const resolved = await resolveEffectiveApprovedLimitFromTopUpRows(
                 topUpsByCustomerId.get(cp.customer_id) ?? [],
                 {
@@ -1525,7 +1559,7 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
                 cp.approved_limit_currency?.trim().toUpperCase() ||
                 accountCurrency ||
                 "USD",
-            zeroGaps: uncovered || Boolean(cp.outdated_dcl),
+            zeroGaps: atRiskCohort || Boolean(cp.outdated_dcl),
         });
     }
 
@@ -1544,12 +1578,22 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
     const replayTopUpsByCustomerId = runContext?.topUpsByCustomerId;
     const useInMemoryPredecessorOnly = useInMemoryPredecessor;
 
+    const ledgerLinesByCustomer = new Map<number, AsOfOpenInvoiceLine[]>();
+    for (const line of ledgerLines) {
+        const bucket = ledgerLinesByCustomer.get(line.customerId);
+        if (bucket) {
+            bucket.push(line);
+        } else {
+            ledgerLinesByCustomer.set(line.customerId, [line]);
+        }
+    }
+
     const sharedComputeArgs = {
         snapshotDate,
         accountId,
         accountCurrency,
         accountHasTopUp,
-        ledgerLines,
+        ledgerLinesByCustomer,
         openArByCustomer,
         topUpsByCustomerId,
         priorDayRowsByKey,
@@ -1569,7 +1613,27 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
             })
     );
 
-    const upsertRows = computedRows.map((computed) => computed.row);
+    /**
+     * Shell parents have no own invoices, so inactive-version compute is often
+     * zero AR. Still upsert a stub row — pool overlay UPDATEs existing shell
+     * CPT only and cannot invent missing historical days.
+     */
+    const shellCustomerIds = await customerIdsWithChildren(customerIds, prisma);
+
+    const upsertRows: CustomerPolicyTrendUpsertRow[] = [];
+    for (let i = 0; i < computedRows.length; i += 1) {
+        const computed = computedRows[i]!;
+        const cp = activePolicies[i]!;
+        if (
+            !cp.is_active &&
+            !shellCustomerIds.has(cp.customer_id) &&
+            computed.row.usageAmount <= 0 &&
+            computed.row.totalReceivables <= 0
+        ) {
+            continue;
+        }
+        upsertRows.push(computed.row);
+    }
     if (nextPriorDayCache) {
         for (const computed of computedRows) {
             if (computed.priorDayEntry) {
@@ -1586,12 +1650,58 @@ export async function syncCustomerPolicyTrendSnapshotForAccount(
     }
 
     const upserted = await batchUpsertCustomerPolicyTrendRows(upsertRows);
-    await pruneInactiveCustomerPolicyTrendRows({
-        accountId,
-        snapshotDate,
-        policyId: options?.policyId,
-        customerIds: options?.customerIds,
-    });
+    if (!options?.skipInactivePrune) {
+        await pruneInactiveCustomerPolicyTrendRows({
+            accountId,
+            snapshotDate,
+            policyId: options?.policyId,
+            customerIds: options?.customerIds,
+            keepCustomerPolicyIds: upsertRows.map((row) => row.customerPolicyId),
+        });
+    }
+
+    // Shell parents: persist pool AR / gap / at-risk onto root CTP for this day.
+    if (!options?.skipCreditPoolShellOverlay) {
+        try {
+            const {
+                overlayPoolCapacityGapAndAtRiskOnTrends,
+                resolveCreditPoolShellIdsForCustomers,
+            } = await import("./syncCreditPoolPolicyTrendsAfterParentChange");
+            // Scoped writes (e.g. one child) change every shell of their pools;
+            // account-wide writes already include each shell with a policy.
+            const shellIds =
+                options?.customerIds?.length && options.customerIds.length > 0
+                    ? await resolveCreditPoolShellIdsForCustomers({
+                          accountId,
+                          customerIds: options.customerIds,
+                          dbClient: prisma,
+                      })
+                    : upsertRows
+                          .map((row) => row.customerId)
+                          .filter((id) => shellCustomerIds.has(id));
+            if (shellIds.length > 0) {
+                await overlayPoolCapacityGapAndAtRiskOnTrends({
+                    accountId,
+                    rootCustomerIds: shellIds,
+                    fromDate: snapshotDate,
+                    toDate: snapshotDate,
+                    dbClient: prisma,
+                });
+            }
+        } catch (overlayError) {
+            console.error("[CustomerPolicyTrend] shell pool overlay failed", {
+                accountId,
+                snapshotDate: snapshotDate.toISOString().slice(0, 10),
+                errorMessage:
+                    overlayError instanceof Error
+                        ? overlayError.message
+                        : String(overlayError),
+            });
+            if (options?.throwOnCreditPoolShellOverlayError) {
+                throw overlayError;
+            }
+        }
+    }
 
     return upserted;
 }
@@ -1607,6 +1717,11 @@ export type CustomerPolicyTrendSnapshotRunResult = {
         gapDays: number;
         gapFillDaysApplied: number;
     }>;
+    /** First catch-up day (`YYYY-MM-DD`) per account that had missed days written. */
+    gapFilledAccounts: Array<{
+        accountId: number;
+        fromDate: string;
+    }>;
 };
 
 export async function takeCustomerPolicyTrendSnapshots(): Promise<CustomerPolicyTrendSnapshotRunResult> {
@@ -1619,8 +1734,22 @@ export async function takeCustomerPolicyTrendSnapshots(): Promise<CustomerPolicy
     let rowsUpserted = 0;
     const gapFillWarnings: CustomerPolicyTrendSnapshotRunResult["gapFillWarnings"] =
         [];
+    const gapFilledAccounts: CustomerPolicyTrendSnapshotRunResult["gapFilledAccounts"] =
+        [];
 
     for (const account of accounts) {
+        const leaseBlocker = await findAccountSnapshotLeaseBlocker(
+            account.id,
+            prisma
+        );
+        if (leaseBlocker) {
+            warnSnapshotWriterSkippedForLease(
+                "CustomerPolicyTrend",
+                leaseBlocker
+            );
+            continue;
+        }
+
         const lastSnapshotDate = await getAccountLatestSnapshotDate(account.id);
         const { datesToSync, gapDays, gapExceedsCap } = resolveGapFillDates({
             lastSnapshotDate,
@@ -1635,11 +1764,35 @@ export async function takeCustomerPolicyTrendSnapshots(): Promise<CustomerPolicy
             });
         }
 
-        for (const gapDate of datesToSync) {
-            rowsUpserted += await syncCustomerPolicyTrendSnapshotForAccount(
+        if (datesToSync.length > 0) {
+            const {
+                loadAsOfOpenInvoiceLedgerRange,
+                deriveAsOfOpenInvoiceCandidatesFromLedger,
+            } = await import("./asOfOpenArLedgerPreload");
+            const { takeCreditDashboardDailySnapshotsForAccount } =
+                await import("./creditDashboardSnapshotService");
+            const ledger = await loadAsOfOpenInvoiceLedgerRange(
                 account.id,
-                { snapshotDate: gapDate }
+                datesToSync[datesToSync.length - 1]!
             );
+            for (const gapDate of datesToSync) {
+                const asOfLines = deriveAsOfOpenInvoiceCandidatesFromLedger(
+                    ledger,
+                    gapDate
+                );
+                rowsUpserted += await syncCustomerPolicyTrendSnapshotForAccount(
+                    account.id,
+                    { snapshotDate: gapDate, asOfLines }
+                );
+                await takeCreditDashboardDailySnapshotsForAccount(account.id, {
+                    snapshotDate: gapDate,
+                    asOfLines,
+                });
+            }
+            gapFilledAccounts.push({
+                accountId: account.id,
+                fromDate: datesToSync[0]!.toISOString().slice(0, 10),
+            });
         }
 
         rowsUpserted += await syncCustomerPolicyTrendSnapshotForAccount(
@@ -1652,6 +1805,7 @@ export async function takeCustomerPolicyTrendSnapshots(): Promise<CustomerPolicy
         accountsProcessed: accounts.length,
         rowsUpserted,
         gapFillWarnings,
+        gapFilledAccounts,
     };
 }
 
@@ -1722,19 +1876,19 @@ export async function getCustomerPolicyUsageTrend(
 
     const dateStr = normalizeDateString(snapshotDate);
 
-    const scopedCustomerIds =
-        options?.businessUnitFilter &&
-        Object.keys(options.businessUnitFilter).length > 0
-            ? (
-                  await prisma.customer.findMany({
-                      where: {
-                          account_id: accountId,
-                          AND: [options.businessUnitFilter],
-                      },
-                      select: { id: true },
-                  })
-              ).map((row) => row.id)
-            : null;
+    const scopedCustomerIds = (
+        await prisma.customer.findMany({
+            where: {
+                account_id: accountId,
+                parent_customer_id: null,
+                ...(options?.businessUnitFilter &&
+                Object.keys(options.businessUnitFilter).length > 0
+                    ? { AND: [options.businessUnitFilter] }
+                    : {}),
+            },
+            select: { id: true },
+        })
+    ).map((row) => row.id);
 
     if (scopedCustomerIds?.length === 0) {
         return {
@@ -1826,7 +1980,7 @@ export async function getCustomerPolicyTrendForCustomer(
     const fromDateUtc = addUtcCalendarDays(toDateUtc, -(safeDays - 1));
 
     const rows = await prisma.$queryRaw<CustomerPolicyTrendRowForPoint[]>`
-        SELECT
+        SELECT DISTINCT ON (t.snapshot_date)
             t.snapshot_date,
             t.usage_amount,
             t.approved_limit,
@@ -1842,6 +1996,7 @@ export async function getCustomerPolicyTrendForCustomer(
             t.cost_percent,
             t.registration_fee_percent
         FROM "CustomerPolicyTrend" t
+        LEFT JOIN "CustomerPolicy" cp ON cp.id = t.customer_policy_id
         WHERE t.account_id = ${accountId}
           AND t.customer_id = ${customerId}
           AND t.snapshot_date >= ${fromDateUtc}::date
@@ -1850,7 +2005,7 @@ export async function getCustomerPolicyTrendForCustomer(
             ${options?.policyId ?? null}::int IS NULL
             OR t.insurance_policy_id = ${options?.policyId ?? null}
           )
-        ORDER BY t.snapshot_date ASC
+        ORDER BY t.snapshot_date ASC, ${customerPolicyTrendEffectiveRowOrderSql}
     `;
 
     if (rows.length === 0) {
@@ -1930,9 +2085,11 @@ export async function getCustomerPolicyPortfolioTrend(
                 )
             )::bigint AS over_limit_count
         FROM "CustomerPolicyTrend" t
+        INNER JOIN "Customer" c ON c.id = t.customer_id
         WHERE t.account_id = ${accountId}
           AND t.snapshot_date >= ${fromDateUtc}::date
           AND t.snapshot_date <= ${toDateUtc}::date
+          AND c.parent_customer_id IS NULL
           AND (
             ${options?.policyId ?? null}::int IS NULL
             OR t.insurance_policy_id = ${options?.policyId ?? null}
@@ -1986,7 +2143,7 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
         days?: number;
     }
 ): Promise<RiskExposurePolicySeries[]> {
-    const safeDays = Math.max(7, Math.min(options?.days ?? 90, 365));
+    const safeDays = Math.max(7, Math.min(options?.days ?? 365, 365));
     const toDateUtc = startOfTodayUtc();
     const fromDateUtc = addUtcCalendarDays(toDateUtc, -(safeDays - 1));
 
@@ -2001,7 +2158,7 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
     };
 
     const rows = await prisma.$queryRaw<TrendRow[]>`
-        SELECT
+        SELECT DISTINCT ON (t.snapshot_date)
             t.snapshot_date,
             t.insurance_policy_id,
             t.at_risk_exposure,
@@ -2010,6 +2167,7 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
             t.terms_breach_amount,
             ip.policy_number
         FROM "CustomerPolicyTrend" t
+        LEFT JOIN "CustomerPolicy" cp ON cp.id = t.customer_policy_id
         LEFT JOIN "InsurancePolicy" ip ON ip.id = t.insurance_policy_id
         WHERE t.account_id = ${accountId}
           AND t.customer_id = ${customerId}
@@ -2020,7 +2178,7 @@ export async function getCustomerRiskExposureAmountTrendByPolicy(
             ${options?.policyId ?? null}::int IS NULL
             OR t.insurance_policy_id = ${options?.policyId ?? null}
           )
-        ORDER BY t.snapshot_date ASC, t.insurance_policy_id ASC
+        ORDER BY t.snapshot_date ASC, ${customerPolicyTrendEffectiveRowOrderSql}
     `;
 
     const dateKeys: string[] = [];

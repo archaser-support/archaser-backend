@@ -35,6 +35,10 @@ export type RunInlineArPostIngestTailStepsParams = {
     separateOverdueStep: boolean;
     onProcessOverdueCustomers?: ProcessOverdueCustomersFn;
     runMaturity?: boolean;
+    /** Chronological AR replay. Default true. */
+    runReplay?: boolean;
+    /** Inline Process Overdue when not already a separate tail step. Default true. */
+    runProcessOverdue?: boolean;
     importType: "Invoice" | "Payment";
 };
 
@@ -215,6 +219,7 @@ export async function runInlineArPostIngestTailSteps(
     }
 
     if (
+        params.runProcessOverdue !== false &&
         !params.separateOverdueStep &&
         params.onProcessOverdueCustomers &&
         customerIds.length > 0
@@ -260,39 +265,41 @@ export async function runInlineArPostIngestTailSteps(
         });
     }
 
-    await runChunkedHostStep({
-        customerIds,
-        tailKey: AR_REPLAY_ENTITY_STATS_KEY,
-        detailStep: "replay",
-        logLabel: "AR replay",
-        setTailStep: params.setTailStep,
-        log: params.log,
-        runChunk: async (chunk, helpers) => {
-            await params.onArPostIngest!({
-                ...hostBase,
-                customerIds: chunk,
-                runReplay: true,
-                runLiveRefresh: false,
-                runProcessOverdue: false,
-                runMaturity: false,
-                enqueueAsOfRewrite: false,
-                onProgress: (progress) => {
-                    helpers.reportInnerProgress({
-                        customersCompletedInChunk: progress.completed,
-                        detail: mapHostProgressToCustomerScopedInner({
-                            step: "replay",
-                            hostStep: progress.step,
-                            customerId: progress.customerId,
-                            detail: progress.detail,
-                            customersDoneBeforeChunk:
-                                helpers.customersDoneBeforeChunk,
-                            customerTotal: helpers.customerTotal,
-                        }),
-                    });
-                },
-            });
-        },
-    });
+    if (params.runReplay !== false) {
+        await runChunkedHostStep({
+            customerIds,
+            tailKey: AR_REPLAY_ENTITY_STATS_KEY,
+            detailStep: "replay",
+            logLabel: "AR replay",
+            setTailStep: params.setTailStep,
+            log: params.log,
+            runChunk: async (chunk, helpers) => {
+                await params.onArPostIngest!({
+                    ...hostBase,
+                    customerIds: chunk,
+                    runReplay: true,
+                    runLiveRefresh: false,
+                    runProcessOverdue: false,
+                    runMaturity: false,
+                    enqueueAsOfRewrite: false,
+                    onProgress: (progress) => {
+                        helpers.reportInnerProgress({
+                            customersCompletedInChunk: progress.completed,
+                            detail: mapHostProgressToCustomerScopedInner({
+                                step: "replay",
+                                hostStep: progress.step,
+                                customerId: progress.customerId,
+                                detail: progress.detail,
+                                customersDoneBeforeChunk:
+                                    helpers.customersDoneBeforeChunk,
+                                customerTotal: helpers.customerTotal,
+                            }),
+                        });
+                    },
+                });
+            },
+        });
+    }
 
     await runChunkedHostStep({
         customerIds,

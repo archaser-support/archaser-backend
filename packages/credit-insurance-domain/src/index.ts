@@ -26,12 +26,23 @@ export {
 } from "./credit-insurance/domain/creditDashboardReportEnrichment";
 export { getLimitWarningReport } from "./credit-insurance/domain/creditInsuranceDashboardService";
 export {
+    isTermsBreachReasonField,
+    isTermsBreachReasonFilter,
     reportedInvoicesMembershipWhere,
     reportingCountdownMembershipWhere,
     resolveReportingCountdownWindowDays,
+    TERMS_BREACH_OR,
+    TERMS_BREACH_REASON_FIELDS,
     termsBreachMembershipWhere,
+    type TermsBreachReasonField,
+    type TermsBreachReasonFilter,
 } from "./credit-insurance/domain/creditDashboardInvoiceMembership";
 export { customersScopedForCreditDashboard } from "./credit-insurance/domain/customerPolicyQueryHelpers";
+export {
+    excludeLinkedChildCustomersFilter,
+    portfolioRootCustomerIdsWhere,
+    withExcludeLinkedChildCustomers,
+} from "./credit-insurance/domain/customerPolicyQueryHelpers";
 export {
     resolveCreditCustomerMembershipIds,
     zeroLimitWarningMembershipWhere,
@@ -50,26 +61,35 @@ export {
 } from "./credit-insurance/domain/utilizationBinReport";
 export {
     CUSTOMER_POLICY_BACKED_REPORT_FIELDS,
+    CUSTOMER_POLICY_FEE_RATE_REPORT_FIELDS,
     extractCustomerPolicyReportField,
     getCustomerPolicyRow,
     isCustomerPolicyBackedReportField,
+    isCustomerPolicyFeeRateReportField,
     mergeActiveCustomerPolicySelect,
 } from "./reports/report-customer-policy-fields.util";
 
 // --- Worker / connector entry points (currently loaded dynamically; slice 04 switches them to these) ---
 export { syncCustomerInsuranceFields } from "./credit-insurance/domain/syncCustomerInsuranceFields";
+export { computeOwnCustomerOverdueBlock } from "./credit-insurance/domain/computeOwnCustomerOverdueBlock";
 export {
     refreshCtvSnapshotsForInvoiceIds,
     refreshInsuranceTargetDatesForInvoiceIds,
     refreshTermsBreachFlagsForCustomer,
     refreshTermsBreachFlagsForCustomers,
+    recomputeReportingBreachForAccount,
     sweepReportingBreachForOverdueInvoiceIds,
 } from "./credit-insurance/domain/syncInvoiceReportingBreach";
 export { runInsurancePolicyStatusMaintenance } from "./credit-insurance/domain/insurancePolicyStatusCron";
-export { fetchUncoveredCustomerIdsForAccount } from "./credit-insurance/domain/termBreachResolver";
+export { fetchAtRiskCustomerIdsForAccount } from "./credit-insurance/domain/termBreachResolver";
 export { syncAllCustomerPolicyGapAmounts } from "./credit-insurance/domain/syncCustomerPolicyGapAmounts";
 export { takeCreditDashboardDailySnapshots } from "./credit-insurance/domain/creditDashboardSnapshotService";
-export { takeInsurancePolicyTrendSnapshots } from "./credit-insurance/domain/insurancePolicyTrendService";
+export {
+    rollUpInsurancePolicyTrendFromCustomerPolicyTrend,
+    takeInsurancePolicyTrendRollups,
+    takeInsurancePolicyTrendSnapshots,
+} from "./credit-insurance/domain/insurancePolicyTrendService";
+export type { InsurancePolicyTrendRollupInput } from "./credit-insurance/domain/insurancePolicyTrendService";
 export { takeCustomerPolicyTrendSnapshots } from "./credit-insurance/domain/customerPolicyTrendService";
 export {
     drainAsOfRewriteQueue,
@@ -88,6 +108,8 @@ export {
     invoiceOutstandingInLimitCurrency,
     parseImportDateToLocalCalendarDate,
     shouldSetReportingBreach,
+    isNegativeInvoiceAmount,
+    computeCustomerRiskExposure,
 } from "./credit-insurance/domain/invoiceInsuranceFields";
 export {
     stampInvoiceInsuranceFieldsAsOf,
@@ -95,9 +117,23 @@ export {
     type InvoiceInsuranceAsOfStamp,
 } from "./credit-insurance/domain/stampInvoiceInsuranceFieldsAsOf";
 export {
+    buildCreatedOverdueMepCauseColumns,
+    isSameCreatedOverdueMepCauseColumns,
+    loadInvoiceNumbersById,
     resolveCreatedOverdueMepByInvoiceId,
+    resolveCreatedOverdueMepDetailsByInvoiceId,
     resolveCreatedOverdueMepForInvoice,
+    toCauseDueDateYmd,
+    type CreatedOverdueMepCauseColumns,
+    type CreatedOverdueMepResolution,
 } from "./credit-insurance/domain/createdOverdueMepAtInvoiceDate";
+
+// --- Calendar-day compare (shared by MEP/reporting gates and claims anniversary) ---
+export {
+    isInvoiceOnOrAfterStartDate,
+    normalizeCalendarDayForInsuranceCompare,
+    toComparableCalendarDay,
+} from "./credit-insurance/domain/shared/calendarDayCompare";
 
 // --- MEP breach start date gate (shared by cause side, flag side and replay) ---
 export {
@@ -133,9 +169,103 @@ export {
 // reach the shared domain through these.
 export {
     enqueueAsOfRewrite,
+    getPendingAsOfRewriteWindow,
     isAdminBackfillBlockingDrain,
     resolveRewriteDrainStart,
+    rewriteCustomerAsOfRange,
+    AdminBackfillBlockingRewriteError,
+    type PendingAsOfRewriteWindow,
+    type RewriteCustomerAsOfRangeInput,
+    type RewriteCustomerAsOfRangeResult,
 } from "./credit-insurance/domain/asOfRewriteQueue";
+export {
+    loadAccountSnapshotLeaseBlockers,
+    type AccountSnapshotLeaseBlocker,
+} from "./credit-insurance/domain/accountBackgroundJobLease";
+export {
+    applyDatedCustomerPolicyUnassign,
+    clipCustomerTopUpsFromUnassignDay,
+    stripInvoicePolicyStampsFromUnassignDay,
+    DatedCustomerPolicyUnassignError,
+} from "./credit-insurance/domain/datedCustomerPolicyUnassign";
+export {
+    activateDuePendingCustomerPolicies,
+    type ActivateDuePendingCustomerPoliciesResult,
+} from "./credit-insurance/domain/activateDuePendingCustomerPolicies";
+export {
+    activateDueInsurancePolicyRevisions,
+    activateInsurancePolicyRevisionInTransaction,
+    type ActivateDueInsurancePolicyRevisionsOptions,
+    type ActivateDueInsurancePolicyRevisionsResult,
+    type ActivatedInsurancePolicyRevision,
+} from "./credit-insurance/domain/activateDueInsurancePolicyRevisions";
+export {
+    applyInsurancePolicyUpdateWithCustomerPush,
+    buildCustomerPolicyVersionFromPolicyPush,
+    CLEARED_INSURANCE_POLICY_PENDING_REVISION,
+    coercePolicyDateFields,
+    enqueueInsurancePolicyUpdateAsOfRewrite,
+    INSURANCE_POLICY_PUSH_TRANSACTION_TIMEOUT_MS,
+    InsurancePolicyUpdateDataError,
+    loadPolicyPushCandidates,
+    omitNullTopUpTermDates,
+    prepareInsurancePolicyUpdateData,
+    toInsuranceEntityUpdateData,
+    type ApplyInsurancePolicyUpdateResult,
+} from "./credit-insurance/domain/insurancePolicyUpdate";
+export {
+    closeCustomerPolicyVersionsFromDate,
+    customerPolicySupersedeUpdateData,
+} from "./credit-insurance/domain/customerPolicySupersede";
+export {
+    planPolicyPushToCustomers,
+    type PolicyPushCustomerPlan,
+    type PolicyPushCustomerRow,
+} from "./credit-insurance/domain/policyPushCustomerPlan";
+export {
+    CUSTOMER_POLICY_VERSIONING_ALLOWLIST,
+    hasMeaningfulCustomerPolicyFieldChange,
+    pickCustomerPolicyVersioningSnapshot,
+    POLICY_PUSH_CUSTOMER_FIELDS,
+    POLICY_PUSH_ALWAYS_ALIGN_FIELDS,
+    hasPolicyPushFieldChange,
+    listChangedPolicyPushFields,
+    pickPolicyPushSnapshot,
+    type CustomerPolicyVersioningField,
+    type CustomerPolicyVersioningSnapshot,
+    type PolicyPushCustomerField,
+    type PolicyPushSnapshot,
+} from "./credit-insurance/domain/hasMeaningfulCustomerPolicyFieldChange";
+export {
+    applyInsurancePolicyCommercialTerms,
+    COMMERCIAL_TERM_FIELD_NAMES,
+    INSURANCE_POLICY_PRODUCT_TYPES,
+    type CommercialTermFieldName,
+    type InsurancePolicyProductType,
+    type PolicyKindForCommercialTerms,
+} from "./credit-insurance/domain/policyCommercialTerms";
+export {
+    parseRegistrationFeePercent,
+    REGISTRATION_FEE_PERCENT_MAX,
+    REGISTRATION_FEE_PERCENT_MIN,
+    validateRegistrationFeePercentFormField,
+    type PolicyKindForRegistrationFee,
+    type RegistrationFeePercentValidationErrorCode,
+} from "./credit-insurance/domain/registrationFeePercent";
+export {
+    computeAnnualCreditAssessmentCost,
+    computeAssessmentYearMultiplier,
+    parseAnnualCreditAssessmentFee,
+    sumAnnualCreditAssessmentCost,
+    sumIdleNamedAnnualCreditAssessment,
+    validateAnnualCreditAssessmentFeeFormField,
+    type AnnualCreditAssessmentFeeValidationErrorCode,
+    type PolicyKindForAnnualCreditAssessmentFee,
+} from "./credit-insurance/domain/annualCreditAssessmentFee";
+export {
+    ACCOUNT_BACKGROUND_JOB_KIND,
+    type AccountBackgroundJobKind,
+} from "./credit-insurance/domain/accountBackgroundJob";
 export {
     __resetCreditAsOfBackfillRunnersForTests,
     countInclusiveUtcDays,
@@ -151,7 +281,23 @@ export {
     startCreditAsOfBackfillJob,
     type CreditAsOfBackfillJobView,
     type CreditAsOfBackfillStatus,
+    type PendingRewriteWindowView,
 } from "./credit-insurance/domain/creditAsOfBackfillJob";
+export {
+    __resetCreditPoolParentHistoryRunnersForTests,
+    CreditPoolParentHistoryConflictError,
+    getCreditPoolParentHistoryJobStatus,
+    runCreditPoolParentHistoryJob,
+    startCreditPoolParentHistoryJob,
+} from "./credit-insurance/domain/creditPoolParentHistoryJob";
+export {
+    PARENT_CHANGE_SYNC_STEPS,
+    beginCreditPoolParentChangeSyncProgress,
+    completeCreditPoolParentChangeSyncProgress,
+    failCreditPoolParentChangeSyncProgress,
+    setCreditPoolParentChangeSyncStep,
+    type ParentChangeSyncStep,
+} from "./credit-insurance/domain/creditPoolParentChangeProgress";
 export {
     asOfCustomerOverdueBlockAt,
     asOfTermsScopeKey,
@@ -183,6 +329,7 @@ export {
 } from "./credit-insurance/domain/asOfOpenArLedgerPreload";
 export {
     buildAsOfTermsMapFromActiveCustomerPolicies,
+    buildAsOfTermsMapForDate,
     buildCreditAsOfBackfillRunContext,
     createMinimalCreditAsOfBackfillRunContext,
     deriveDashboardSnapshotScopes,
@@ -191,6 +338,13 @@ export {
     type CreditAsOfBackfillRunContext,
     type CreditDashboardSnapshotScope,
 } from "./credit-insurance/domain/creditAsOfBackfillRunContext";
+export {
+    findCustomerPolicyVersionEndedByRemove,
+    isCustomerPolicyRemovedRow,
+    isCustomerPolicyVersionEffectiveOnDate,
+    selectCustomerPoliciesEffectiveOnDate,
+    selectCustomerPoliciesForTrendWriteOnDate,
+} from "./credit-insurance/domain/customerPolicyAsOfVersion";
 export {
     batchUpsertCustomerPolicyTrendRows,
     CUSTOMER_POLICY_TREND_BATCH_UPSERT_CHUNK_SIZE,
@@ -202,6 +356,14 @@ export {
     takeCreditDashboardDailySnapshotsForAccount,
 } from "./credit-insurance/domain/creditDashboardSnapshotService";
 export {
+    deleteCreditDashboardDailySnapshotsForAccount,
+    deleteCustomerPolicyTrendForScope,
+    deleteInactiveCustomerPolicyTrendRowsForScope,
+    deleteInsurancePolicyTrendForAccount,
+    prepareCreditSnapshotHistoryForRewriteWindow,
+    purgeCreditSnapshotsAfterInvoiceOrPaymentClear,
+} from "./credit-insurance/domain/creditSnapshotHistoryCleanup";
+export {
     getCapacityGapReport,
     getCreditDashboardSummary,
     getNoPolicyExposureReport,
@@ -211,13 +373,15 @@ export {
     getReportingCountdownOpenReport,
     getTermsBreachReport,
     getZeroLimitWarningReport,
-    isTermsBreachReasonFilter,
+    fetchAtRiskInvoiceInputsByCustomerMap,
     type CreditReportListOptions,
 } from "./credit-insurance/domain/creditInsuranceDashboardService";
 export {
+    enrichCustomerTopUpFields,
     getTopUpCoverReport,
     getTopUpExpiringReport,
 } from "./credit-insurance/domain/creditInsuranceTopUpDashboardService";
+export type { CustomerTopUpEnrichFields } from "./credit-insurance/domain/creditInsuranceTopUpDashboardService";
 export { getCustomerDashboardKpis } from "./credit-insurance/domain/customerDashboardKpisService";
 export {
     computeCustomerOutdatedDcl,
@@ -226,6 +390,7 @@ export {
 } from "./credit-insurance/domain/customerOutdatedDcl";
 export { computeTopUpDailyCostAggregate } from "./credit-insurance/domain/customerPolicyDailyCost";
 export {
+    computeCustomerUsageBarSegments,
     getCustomerPolicyTrendForCustomer,
     getCustomerPolicyUsageTrend,
     syncCustomerPolicyTrendSnapshotForAccount,
@@ -241,9 +406,34 @@ export {
     getNamedPolicyTrend,
 } from "./credit-insurance/domain/insurancePolicyTrendService";
 export { loadEffectiveInsuranceForCustomers } from "./credit-insurance/domain/loadEffectiveInsuranceForCustomers";
-export { resolveCustomerHeaderOpenArAmounts } from "./credit-insurance/domain/openReceivableByCustomerCurrency";
+export {
+    fetchCustomerHeaderOpenArSplitInAccountCurrency,
+    resolveCustomerHeaderOpenArAmounts,
+} from "./credit-insurance/domain/openReceivableByCustomerCurrency";
+export {
+    applyOpenArVatBasis,
+    computeOpenArVatBasisContribution,
+    OPEN_AR_VAT_BASIS_CUSTOMER_LINE_SQL,
+    OPEN_AR_VAT_BASIS_LINE_SQL,
+    type OpenArVatBasisInput,
+} from "./credit-insurance/domain/openArVatBasis";
+export {
+    accountVatBasisRefreshBullJobId,
+    enqueueAccountVatBasisRefresh,
+    getAccountVatBasisRefreshJobStatus,
+    listRunningAccountVatBasisRefreshAccountIds,
+    registerAccountVatBasisRefreshDispatch,
+    registerVatBasisRefreshBalances,
+    retryAccountVatBasisRefreshJob,
+    runAccountVatBasisRefreshJob,
+    startAccountVatBasisRefreshJob,
+    type AccountVatBasisRefreshJobView,
+    type AccountVatBasisRefreshStatus,
+    type VatBasisRefreshBalancesFn,
+} from "./credit-insurance/domain/accountVatBasisRefreshJob";
 export {
     isActiveTopUp,
+    loadActiveTopUpsByCustomerIdForAccount,
     resolveEffectiveApprovedLimit,
     resolveEffectiveApprovedLimitFromTopUpRows,
     resolveTopUpTotalsForAsOfDates,
@@ -251,6 +441,7 @@ export {
 export {
     isPrimaryPolicyAssignable,
     startOfTodayUtc,
+    toUtcDateOnly,
 } from "./credit-insurance/domain/shared/insurancePolicyLifecycle";
 export {
     deriveExcludedFromPolicy,
@@ -293,9 +484,25 @@ export {
     type PortfolioOverLimitGapSummary,
 } from "./credit-insurance/domain/shared/ctpOverLimitGapMetrics";
 export {
+    fetchLinkedCptCustomerDaySeries,
+    type FetchLinkedCptCustomerDaySeriesOptions,
+    type LinkedCptCustomerDayRow,
+} from "./credit-insurance/domain/linkedCptCustomerDaySeries";
+export { deriveCapacityAndOvershootFromLinkedCptDaySeries } from "./credit-insurance/domain/deriveCapacityAndOvershootFromLinkedCptDaySeries";
+export {
+    emptyTopUpDrawSection,
+    isTopUpCoverDay,
+    isTopUpDrawDay,
+    mapLinkedCptDaySeriesToTopUpDrawSection,
+    type PortfolioTopUpDrawCustomer,
+    type PortfolioTopUpDrawSection,
+} from "./credit-insurance/domain/topUpDrawFromLinkedCpt";
+export {
     fetchCapacityGapDaysPeriodCustomers,
     fetchCapacityGapDaysPeriodSummary,
     fetchCustomerTrailingOverLimitGapMetrics,
+    mapLinkedCptDaySeriesToCapacityGapCustomers,
+    summarizeCapacityGapFromLinkedCptDaySeries,
     type FetchCapacityGapDaysPeriodOptions,
 } from "./credit-insurance/domain/capacityGapDaysPeriod";
 export {
@@ -322,6 +529,7 @@ export {
     fetchCustomerTrailingStaleSlopeVolatilityMetrics,
     fetchStaleSlopeVolatilityPeriodCustomers,
     fetchStaleSlopeVolatilityPeriodSummary,
+    mapLinkedCptDaySeriesToStaleSlopeVolatilityCustomers,
     summarizePortfolioStaleSlopeVolatility,
     type CustomerStaleSlopeVolatilityRow,
     type FetchStaleSlopeVolatilityPeriodOptions,
@@ -354,6 +562,8 @@ export {
     fetchOvershootLimitCappedPeriodCustomers,
     fetchOvershootLimitCappedPeriodSummary,
     fetchOvershootRankingPeriodCustomers,
+    mapLinkedCptDaySeriesToOvershootLimitCappedCustomers,
+    summarizeOvershootFromLinkedCptDaySeries,
     type FetchOvershootLimitCappedPeriodOptions,
 } from "./credit-insurance/domain/overshootLimitCappedPeriod";
 export {
@@ -476,3 +686,56 @@ export {
     ensureCustomerCapacityGapStored,
     syncCreditInsuranceGapPipelineForCustomer,
 } from "./credit-insurance/domain/syncCreditInsuranceGapPipeline";
+export { syncInvoiceCapacityGapAmountsForCustomer } from "./credit-insurance/domain/syncInvoiceCapacityGapAmounts";
+export {
+    accountHasCreditInsurance,
+    createCreditPoolMembershipCache,
+    hydrateCreditPoolMembershipCacheForAccount,
+    isLinkedCreditChild,
+    listDescendantCustomerIds,
+    onParentCustomerIdChanged,
+    remirrorCreditPoolAfterPolicyMutation,
+    remirrorDescendantsFromRoot,
+    resolveCreditPoolMemberIds,
+    resolveCustomerCreditPoolRoot,
+    resolveTopUpOwnerCustomerId,
+    type CreditPoolMembershipCache,
+    type ParentCustomerCreditInheritanceOptions,
+} from "./credit-insurance/domain/parentCustomerCreditInheritance";
+export {
+    attributeAmountsToCreditPoolRoots,
+    attributeInvoiceCustomerIdsToCreditPoolRoots,
+    attributeListsToCreditPoolRoots,
+    attributePrismaInvoiceCustomersToCreditPoolRoots,
+    applyInvoiceReportCustomerIdScope,
+    creditPoolRootAttributionForCustomers,
+    expandCreditPoolRootsToMembers,
+    resolveCreditPoolRootsForMemberIds,
+    expandRootIdSetToPoolMembers,
+    resolveInvoiceReportCustomerIds,
+    type CreditPoolMemberAttribution,
+} from "./credit-insurance/domain/creditPoolInvoiceAttribution";
+export { syncCreditPoolPolicyTrendsAfterParentChange } from "./credit-insurance/domain/syncCreditPoolPolicyTrendsAfterParentChange";
+export { overlayPoolCapacityGapAndAtRiskOnTrends } from "./credit-insurance/domain/syncCreditPoolPolicyTrendsAfterParentChange";
+export {
+    assertCustomerHasNoChildren,
+    assertParentIsShell,
+    CreditPoolShellError,
+    customerIdsWithChildren,
+    SHELL_CUSTOMER_HAS_CHILDREN_NO_AR,
+    SHELL_PARENT_HAS_INVOICES_OR_PAYMENTS,
+} from "./credit-insurance/domain/creditPoolShellGuards";
+export {
+    computeCreditPoolDashboardRollup,
+    type CreditPoolDashboardKpis,
+    type CreditPoolDashboardMemberAr,
+    type CreditPoolDashboardPolicyFields,
+    type CreditPoolDashboardRollup,
+} from "./credit-insurance/domain/computeCreditPoolDashboardRollup";
+export { runCreditPoolParentChangeSideEffects } from "./credit-insurance/domain/runCreditPoolParentChangeSideEffects";
+export { rollupCreditPoolBreachToRoot } from "./credit-insurance/domain/rollupCreditPoolBreachToRoot";
+export {
+    rollupCreditPoolOpenArAfterMemberChange,
+    rollupCreditPoolOpenArToShell,
+    sumOpenArRollupFromMembers,
+} from "./credit-insurance/domain/rollupCreditPoolOpenArToRoot";

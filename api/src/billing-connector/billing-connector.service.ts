@@ -47,7 +47,8 @@ import {
     pullFiltersToPrismaJson,
     registerRunningSync,
     requestConnectorSyncCancel,
-    runInProcessSync,
+    runSyncWithPendingCustomerHistoryPolicy,
+    scheduleContinuePendingCustomerHistoryDrainForAccount,
     runPreviewSync,
     clearRunningSync,
     completePreviewJob,
@@ -60,6 +61,7 @@ import {
     createRunningExecution,
     createSyncProgressHeartbeat,
     finalizeSyncHistoryAfterRun,
+    isSyncAlreadyRunningError,
     markExecutionCancelled,
     listExecutionsForAccount,
     findLastSuccessfulExecutionForConnector,
@@ -67,6 +69,7 @@ import {
     sweepStaleRunning,
     syncHistoryExecutionToSummary,
     listMergedInProcessSyncRuns,
+    cancelInProcessSyncRun,
     createBillingConnectorMetricsSinkFromProm,
     resolveSyncExecutionStatus,
     resolveSyncErrorType,
@@ -83,6 +86,9 @@ import {
     DEFAULT_IMPORT_CACHE_TIME_ZONE,
     persistReconciledConnectorSyncMode,
     reconcileConnectorSyncMode,
+    recordBillingConnectorAuthFailure,
+    getIncompleteCustomerScopedHistoryProgress,
+    getPendingCustomerHistoryStatusSummary,
     type ClearBeforeImportEntity,
     type ImportCacheEntityType,
     type ConnectorSyncRunSummary,
@@ -96,7 +102,7 @@ import {
     resolveBackfillStartDateChange,
     resolveIncludeOlderOpenInvoicesChange,
     resolveMepBreachStartDateChange,
-    resolveSkipReportingBreachOnBackfillChange,
+    resolveReportingBreachStartDateChange,
 } from "./billing-connector-backfill-options";
 import { pickAccountLastSyncDate } from "./account-last-sync-date";
 import { recalculateCustomerAmounts } from "../customers/domain/recalculateCustomerAmounts";
@@ -112,7 +118,9 @@ import {
 import {
     bindCreditInsurancePrisma,
     clearInvoicePaidToleranceCache,
+    clearReportingBreachStartDateCache,
     enqueueRewriteForImport,
+    recomputeReportingBreachForAccount,
 } from "@archaser/credit-insurance-domain";
 
 const ADMIN_ACCOUNT_ID = 10013;
@@ -421,7 +429,6 @@ export class BillingConnectorApiService {
         id: number;
         account_id: number;
         provider: string;
-        status: string;
         base_url: string | null;
         auth_type: string;
         credentials_encrypted: string | null;
@@ -435,8 +442,8 @@ export class BillingConnectorApiService {
         backfill_start_date?: Date | null;
         time_zone?: string | null;
         mep_breach_start_date?: Date | null;
+        reporting_breach_start_date?: Date | null;
         include_older_open_invoices?: boolean;
-        skip_reporting_breach_on_backfill?: boolean;
         invoice_paid_tolerance?: number;
         pull_filters?: unknown;
         entity_sets?: unknown;
@@ -475,16 +482,69 @@ export class BillingConnectorApiService {
             connector.modified_at
         );
         const preset = cronToPreset(connector.sync_cron_expression);
-        const pendingArPostIngestCustomers =
-            await countPendingArPostIngestCustomers(connector.account_id, {
-                dbClient: this.db as never,
-            });
+        // Best-effort: missing table / DB blip must not 500 the config GET.
+        let pendingArPostIngestCustomers = 0;
+        try {
+            pendingArPostIngestCustomers =
+                await countPendingArPostIngestCustomers(connector.account_id, {
+                    dbClient: this.db as never,
+                });
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `[account ${connector.account_id}] Pending AR post-ingest count skipped: ${message}`
+            );
+        }
+
+        let pendingCustomerHistoryCount = 0;
+        let pendingCustomerHistoryIds: number[] = [];
+        let needsAttentionCustomerHistoryCount = 0;
+        let needsAttentionCustomerHistoryIds: number[] = [];
+        try {
+            const pendingHistory =
+                await getPendingCustomerHistoryStatusSummary(connector.id);
+            pendingCustomerHistoryCount = pendingHistory.pending_count;
+            pendingCustomerHistoryIds = pendingHistory.pending_customer_ids;
+            needsAttentionCustomerHistoryCount =
+                pendingHistory.needs_attention_count;
+            needsAttentionCustomerHistoryIds =
+                pendingHistory.needs_attention_customer_ids;
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `[account ${connector.account_id}] Pending customer history status skipped: ${message}`
+            );
+        }
+
+        // Prefer Mongo last SUCCESS; fall back to Prisma watermarks when Mongo
+        // is down / over quota (same pattern as listMergedInProcessSyncRuns).
+        let lastSyncAt: string | null = null;
+        try {
+            lastSyncAt =
+                watermarkFromSuccessfulExecution(
+                    await findLastSuccessfulExecutionForConnector(connector.id)
+                )?.toISOString() ?? null;
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `[account ${connector.account_id}] Mongo last SUCCESS for last_sync_at skipped: ${message}`
+            );
+        }
+        if (!lastSyncAt) {
+            lastSyncAt =
+                pickAccountLastSyncDate(
+                    parseEnabledEntities(connector.enabled_entities),
+                    connector.ConnectorSyncState ?? []
+                )?.toISOString() ?? null;
+        }
 
         return {
             id: connector.id,
             account_id: connector.account_id,
             provider: connector.provider,
-            status: connector.status,
             base_url: connector.base_url,
             auth_type: connector.auth_type,
             has_credentials: !!connector.credentials_encrypted,
@@ -505,10 +565,11 @@ export class BillingConnectorApiService {
             mep_breach_start_date: formatBackfillStartDateForApi(
                 connector.mep_breach_start_date
             ),
+            reporting_breach_start_date: formatBackfillStartDateForApi(
+                connector.reporting_breach_start_date
+            ),
             include_older_open_invoices:
                 connector.include_older_open_invoices ?? true,
-            skip_reporting_breach_on_backfill:
-                connector.skip_reporting_breach_on_backfill ?? false,
             invoice_paid_tolerance: connector.invoice_paid_tolerance ?? 0.2,
             pull_filters: pullFilterFields.pull_filters,
             effective_pull_filters: pullFilterFields.effective_pull_filters,
@@ -539,20 +600,18 @@ export class BillingConnectorApiService {
             modified_at: connector.modified_at.toISOString(),
             schedule_summary: describeSchedule(connector.sync_cron_expression),
             next_scheduled_sync_at_utc: nextScheduled?.toISOString() ?? null,
-            last_sync_at:
-                watermarkFromSuccessfulExecution(
-                    await findLastSuccessfulExecutionForConnector(connector.id)
-                )?.toISOString() ??
-                pickAccountLastSyncDate(
-                    parseEnabledEntities(connector.enabled_entities),
-                    connector.ConnectorSyncState ?? []
-                )?.toISOString() ??
-                null,
+            last_sync_at: lastSyncAt,
             schedule_preset: preset.schedule_preset,
             daily_time_utc: preset.daily_time_utc,
             weekly_day: preset.weekly_day,
             schedule_warning: null,
             pending_ar_post_ingest_customers: pendingArPostIngestCustomers,
+            pending_customer_history_count: pendingCustomerHistoryCount,
+            pending_customer_history_customer_ids: pendingCustomerHistoryIds,
+            needs_attention_customer_history_count:
+                needsAttentionCustomerHistoryCount,
+            needs_attention_customer_history_customer_ids:
+                needsAttentionCustomerHistoryIds,
             sync_states: (connector.ConnectorSyncState ?? []).map((state) => ({
                 entity_type: state.entity_type,
                 backfill_completed: state.backfill_completed,
@@ -571,7 +630,11 @@ export class BillingConnectorApiService {
         };
     }
 
-    async getConfig(user: JwtPayload, accountId: number) {
+    async getConfig(
+        user: JwtPayload,
+        accountId: number,
+        options?: { includeEntitySetCatalog?: boolean }
+    ) {
         await this.assertAccess(user, accountId, "view_billing_connector");
         const connector = await this.db.billingConnector.findUnique({
             where: { account_id: accountId },
@@ -587,8 +650,15 @@ export class BillingConnectorApiService {
         }
         const repairedSyncMode = await this.repairSyncModeIfNeeded(connector);
         connector.sync_mode = repairedSyncMode as typeof connector.sync_mode;
+        const config = await this.toPublicConfig(connector);
+        // Default omit the Priority $metadata name list — it can be thousands of
+        // strings and freezes the admin tab when polled. Load on demand via
+        // include_entity_set_catalog=1 or the refresh-entity-sets action.
+        if (!options?.includeEntitySetCatalog) {
+            config.entity_set_catalog = [];
+        }
         return serializeBigInt({
-            config: await this.toPublicConfig(connector),
+            config,
         });
     }
 
@@ -664,6 +734,9 @@ export class BillingConnectorApiService {
         if (body.auth_type != null) data.auth_type = body.auth_type;
         if (typeof body.sync_enabled === "boolean") {
             data.sync_enabled = body.sync_enabled;
+            if (body.sync_enabled === true) {
+                data.consecutive_auth_failures = 0;
+            }
         }
         if (typeof body.sync_cron_expression === "string") {
             data.sync_cron_expression = body.sync_cron_expression;
@@ -768,6 +841,32 @@ export class BillingConnectorApiService {
                 code: mepBreachStartDateChange.code,
             });
         }
+        let reportingBreachStartDateChange;
+        try {
+            reportingBreachStartDateChange = resolveReportingBreachStartDateChange({
+                existingStartDate: existing?.reporting_breach_start_date,
+                nextInput:
+                    body.reporting_breach_start_date === undefined
+                        ? undefined
+                        : (body.reporting_breach_start_date as string | null),
+                requireOnOmit: !existing,
+            });
+        } catch (error: unknown) {
+            const err = error as { code?: string; message?: string };
+            if (err?.code === "INVALID_REPORTING_BREACH_START_DATE") {
+                throw new BadRequestException({
+                    error: err.message ?? "Invalid reporting_breach_start_date",
+                    code: err.code,
+                });
+            }
+            throw error;
+        }
+        if (!reportingBreachStartDateChange.ok) {
+            throw new BadRequestException({
+                error: reportingBreachStartDateChange.message,
+                code: reportingBreachStartDateChange.code,
+            });
+        }
         const includeOlderChange = resolveIncludeOlderOpenInvoicesChange({
             backfillStartedAt: existing?.backfill_started_at,
             existingValue: existing?.include_older_open_invoices,
@@ -782,31 +881,18 @@ export class BillingConnectorApiService {
                 code: includeOlderChange.code,
             });
         }
-        const skipBreachChange = resolveSkipReportingBreachOnBackfillChange({
-            backfillStartedAt: existing?.backfill_started_at,
-            existingValue: existing?.skip_reporting_breach_on_backfill,
-            nextInput:
-                body.skip_reporting_breach_on_backfill === undefined
-                    ? undefined
-                    : Boolean(body.skip_reporting_breach_on_backfill),
-        });
-        if (!skipBreachChange.ok) {
-            throw new ConflictException({
-                error: skipBreachChange.message,
-                code: skipBreachChange.code,
-            });
-        }
         if (startDateChange.value !== undefined) {
             data.backfill_start_date = startDateChange.value;
         }
         if (mepBreachStartDateChange.value !== undefined) {
             data.mep_breach_start_date = mepBreachStartDateChange.value;
         }
+        if (reportingBreachStartDateChange.value !== undefined) {
+            data.reporting_breach_start_date =
+                reportingBreachStartDateChange.value;
+        }
         if (includeOlderChange.value !== undefined) {
             data.include_older_open_invoices = includeOlderChange.value;
-        }
-        if (skipBreachChange.value !== undefined) {
-            data.skip_reporting_breach_on_backfill = skipBreachChange.value;
         }
         if (body.invoice_paid_tolerance !== undefined) {
             try {
@@ -844,6 +930,7 @@ export class BillingConnectorApiService {
         let extensionPatch;
         try {
             extensionPatch = resolveExtensionAttachmentInput({
+                accountId,
                 extension_key:
                     body.extension_key === undefined
                         ? undefined
@@ -856,11 +943,7 @@ export class BillingConnectorApiService {
             });
         } catch (error: unknown) {
             const err = error as { code?: string; message?: string };
-            if (
-                err?.code === "UNKNOWN_EXTENSION_KEY" ||
-                err?.code === "INVALID_EXTENSION_CONFIG" ||
-                err?.code === "EXTENSION_KEY_REQUIRED"
-            ) {
+            if (err?.code === "INVALID_EXTENSION_CONFIG") {
                 throw new BadRequestException({
                     error: err.message ?? "Invalid extension attachment",
                     code: err.code,
@@ -954,10 +1037,6 @@ export class BillingConnectorApiService {
                           includeOlderChange.value !== undefined
                               ? includeOlderChange.value
                               : true,
-                      skip_reporting_breach_on_backfill:
-                          skipBreachChange.value !== undefined
-                              ? skipBreachChange.value
-                              : false,
                       ...(nextEntitySets
                           ? {
                                 entity_sets:
@@ -977,8 +1056,30 @@ export class BillingConnectorApiService {
         if (data.invoice_paid_tolerance !== undefined) {
             clearInvoicePaidToleranceCache(accountId);
         }
+        const reportingBreachRecomputeStarted =
+            reportingBreachStartDateChange.changed === true;
+        if (reportingBreachRecomputeStarted) {
+            clearReportingBreachStartDateCache(accountId);
+            bindCreditInsurancePrisma(this.db as never);
+            void recomputeReportingBreachForAccount(
+                accountId,
+                this.db as never
+            ).catch((error: unknown) => {
+                console.error(
+                    "[billing-connector] reporting breach recompute failed",
+                    {
+                        accountId,
+                        message:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                    }
+                );
+            });
+        }
         return serializeBigInt({
             config: await this.toPublicConfig(connector),
+            reporting_breach_recompute_started: reportingBreachRecomputeStarted,
         });
     }
 
@@ -1042,9 +1143,18 @@ export class BillingConnectorApiService {
                     last_connection_error: result.ok
                         ? null
                         : result.error ?? "Connection failed",
+                    ...(result.ok
+                        ? { consecutive_auth_failures: 0 }
+                        : {}),
                     modified_at: new Date(),
                 },
             });
+            if (!result.ok) {
+                await recordBillingConnectorAuthFailure({
+                    prisma: this.db,
+                    connectorId: connector.id,
+                });
+            }
         }
         return {
             success: result.ok,
@@ -1207,20 +1317,45 @@ export class BillingConnectorApiService {
         }
 
         // Start backfill only — Resume / incremental ignore clear options.
-        const isResumeBackfill =
+        // Account-wide Resume (partial ConnectorSyncState) drops body customer_id.
+        // Incomplete isolated customer-history progress restores the same
+        // customer_id so Resume/Start never widens to the whole account.
+        const isResumeAccountBackfill =
             mode === "backfill" &&
             this.connectorHasPartialBackfillProgress(
                 connector.ConnectorSyncState,
                 parseEnabledEntities(connector.enabled_entities)
             );
+        const incompleteCustomerHistory =
+            mode === "backfill" && !isResumeAccountBackfill
+                ? await getIncompleteCustomerScopedHistoryProgress(connector.id)
+                : null;
         const clearBeforeImport =
-            mode === "backfill" && !isResumeBackfill
+            mode === "backfill" && !isResumeAccountBackfill
                 ? parseClearBeforeImport(body?.clear_before_import)
                 : [];
-        const customerId =
-            mode === "backfill" && !isResumeBackfill
+        let customerId =
+            mode === "backfill" && !isResumeAccountBackfill
                 ? parseCustomerIdForClearBeforeImport(body?.customer_id)
                 : null;
+        if (
+            mode === "backfill" &&
+            !isResumeAccountBackfill &&
+            customerId == null &&
+            incompleteCustomerHistory != null
+        ) {
+            customerId = incompleteCustomerHistory.customer_id;
+        }
+        if (
+            customerId != null &&
+            incompleteCustomerHistory != null &&
+            customerId !== incompleteCustomerHistory.customer_id
+        ) {
+            this.logger.log(
+                `[account ${accountId}] Replacing incomplete customer-history progress ` +
+                    `customer_id=${incompleteCustomerHistory.customer_id} with customer_id=${customerId}`
+            );
+        }
         let customerScopeForCache = "all";
         if (customerId != null) {
             const customer = await resolveAccountCustomerById({
@@ -1285,6 +1420,42 @@ export class BillingConnectorApiService {
         }
         const syncMode = mode === "backfill" ? "BACKFILL" : "INCREMENTAL";
         const trigger = mode === "backfill" ? "backfill" : "manual";
+        try {
+            await createRunningExecution({
+                executionId,
+                accountId,
+                connectorId: connector.id,
+                provider: connector.provider,
+                trigger: trigger as "backfill" | "manual",
+                syncMode,
+                startedAt,
+            });
+        } catch (error) {
+            if (isSyncAlreadyRunningError(error)) {
+                this.logger.log(
+                    `[account ${accountId}] Skipping manual sync — another sync is already RUNNING ${JSON.stringify(
+                        {
+                            event: "billing_connector_sync_skipped_already_running",
+                            accountId,
+                            connectorId: connector.id,
+                            provider: connector.provider,
+                            trigger,
+                            existingExecutionId: error.existingExecutionId,
+                            attemptedExecutionId: executionId,
+                        }
+                    )}`
+                );
+                throw new ConflictException({
+                    error: "A sync is already running for this account",
+                    code: "SYNC_IN_PROGRESS",
+                });
+            }
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.error(
+                `[account ${accountId}] Failed to create sync history stub ${executionId}: ${message}`
+            );
+        }
         const runningSummary: ConnectorSyncRunSummary = {
             id: executionId,
             trigger,
@@ -1303,10 +1474,11 @@ export class BillingConnectorApiService {
                 mep_breach_start_date: formatBackfillStartDateForApi(
                     connector.mep_breach_start_date
                 ),
+                reporting_breach_start_date: formatBackfillStartDateForApi(
+                    connector.reporting_breach_start_date
+                ),
                 include_older_open_invoices:
                     connector.include_older_open_invoices ?? true,
-                skip_reporting_breach_on_backfill:
-                    connector.skip_reporting_breach_on_backfill ?? false,
             },
             cutover_summary: null,
         };
@@ -1318,23 +1490,6 @@ export class BillingConnectorApiService {
             trigger,
         });
         upsertSyncRun(accountId, runningSummary);
-        try {
-            await createRunningExecution({
-                executionId,
-                accountId,
-                connectorId: connector.id,
-                provider: connector.provider,
-                trigger: trigger as "backfill" | "manual",
-                syncMode,
-                startedAt,
-            });
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : String(error);
-            this.logger.error(
-                `[account ${accountId}] Failed to create sync history stub ${executionId}: ${message}`
-            );
-        }
         const onLog = (message: string) => {
             this.logger.log(`[account ${accountId}] ${message}`);
         };
@@ -1517,7 +1672,7 @@ export class BillingConnectorApiService {
         } = params;
         try {
             const heartbeat = createSyncProgressHeartbeat(executionId);
-            const result = await runInProcessSync({
+            const result = await runSyncWithPendingCustomerHistoryPolicy({
                 prisma: this.db,
                 accountId,
                 trigger,
@@ -1761,17 +1916,22 @@ export class BillingConnectorApiService {
             }
         } finally {
             clearRunningSync(accountId);
+            if (mode === "incremental") {
+                void scheduleContinuePendingCustomerHistoryDrainForAccount({
+                    prisma: this.db,
+                    accountId,
+                    onLog,
+                    executionId,
+                });
+            }
         }
     }
 
     async cancelSync(user: JwtPayload, accountId: number) {
         await this.assertAccess(user, accountId, "manage_billing_connector");
         const running = getRunningSync(accountId);
-        if (!running) {
-            return { result: { cancelled: false, execution_id: null } };
-        }
-        const cancelledAt = new Date();
-        if (running.mode === "preview") {
+        if (running?.mode === "preview") {
+            const cancelledAt = new Date();
             completePreviewJob({
                 accountId,
                 executionId: running.executionId,
@@ -1805,38 +1965,12 @@ export class BillingConnectorApiService {
                 },
             };
         }
-        requestConnectorSyncCancel(running.executionId);
-        const existing = listSyncRuns(accountId).find(
-            (run: ConnectorSyncRunSummary) => run.id === running.executionId
-        );
-        if (existing) {
-            const startedMs = new Date(existing.started_at).getTime();
-            upsertSyncRun(accountId, {
-                ...existing,
-                status: "TIMEOUT",
-                completed_at: cancelledAt.toISOString(),
-                duration_seconds: Math.max(
-                    1,
-                    Math.round((cancelledAt.getTime() - startedMs) / 1000)
-                ),
-                error_message: "Sync stopped by operator",
-                error_type: "cancelled",
-            });
-        }
-        try {
-            await markExecutionCancelled(running.executionId, {
-                errorMessage: "Sync stopped by operator",
-            });
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : String(error);
-            this.logger.error(
-                `[account ${accountId}] Failed to mark sync history cancelled ${running.executionId}: ${message}`
-            );
-        }
-        return {
-            result: { cancelled: true, execution_id: running.executionId },
-        };
+        // Handles Nest-owned runs and worker/cron Mongo RUNNING orphans.
+        const result = await cancelInProcessSyncRun({
+            accountId,
+            onError: (message) => this.logger.error(message),
+        });
+        return { result };
     }
 
     async listSyncRuns(user: JwtPayload, accountId: number, limitRaw?: string) {
@@ -1853,8 +1987,22 @@ export class BillingConnectorApiService {
     async listSyncHistory(user: JwtPayload, accountId: number) {
         await this.assertAccess(user, accountId, "view_billing_connector");
         try {
-            await sweepStaleRunning({ accountId, olderThanHours: 2 });
-            const docs = await listExecutionsForAccount(accountId);
+            try {
+                await sweepStaleRunning({ accountId, olderThanHours: 2 });
+            } catch (sweepError) {
+                // Writes may be blocked (e.g. Atlas space quota). Still return
+                // history from reads so the UI keeps working.
+                const sweepMessage =
+                    sweepError instanceof Error
+                        ? sweepError.message
+                        : String(sweepError);
+                this.logger.warn(
+                    `[account ${accountId}] Stale RUNNING sweep skipped: ${sweepMessage}`
+                );
+            }
+            const docs = await listExecutionsForAccount(accountId, {
+                limit: 50,
+            });
             return {
                 runs: docs.map(syncHistoryExecutionToSummary),
             };
@@ -2022,8 +2170,9 @@ export class BillingConnectorApiService {
                     backfill_records_pulled: 0,
                     backfill_last_checkpoint_at: null,
                     backfill_total_records: null,
-                    last_max_updated_at: null,
-                    last_successful_run_at: null,
+                    // Keep last_successful_run_at / last_max_updated_at — Reset
+                    // unlocks cutover options and backfill progress; it does not
+                    // mean "never synced".
                     last_attempt_at: null,
                     last_error: null,
                 },
@@ -2043,8 +2192,10 @@ export class BillingConnectorApiService {
                 backfill_records_pulled: 0,
                 backfill_last_checkpoint_at: null,
                 backfill_total_records: null,
-                last_max_updated_at: null,
-                last_successful_run_at: null,
+                // Keep last_successful_run_at / last_max_updated_at — Reset unlocks
+                // cutover options and backfill progress; it does not mean "never
+                // synced". Header last-sync and incremental watermarks stay until
+                // the next successful run updates them.
                 last_attempt_at: null,
                 last_error: null,
             },

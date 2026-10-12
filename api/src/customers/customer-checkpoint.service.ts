@@ -17,6 +17,7 @@ import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
 import {
     bindCreditInsurancePrisma,
+    enqueueAsOfRewrite,
     syncCustomerInsuranceFields,
 } from "@archaser/credit-insurance-domain";
 import { DatabaseService } from "../database/database.service";
@@ -459,7 +460,10 @@ export class CustomerCheckpointService implements OnModuleInit {
         user: JwtPayload,
         customerId: number
     ): Promise<CustomerCheckpointRestoreSummary> {
-        await this.assertCheckpointAccess(user, customerId);
+        const { accountId } = await this.assertCheckpointAccess(
+            user,
+            customerId
+        );
 
         const checkpoint = await this.db.customerCheckpoint.findUnique({
             where: { customer_id: customerId },
@@ -480,6 +484,18 @@ export class CustomerCheckpointService implements OnModuleInit {
                 `[CustomerCheckpoint] skipping ${legacyPaymentsSkipped} legacy payments row(s) for customer ${customerId}`
             );
         }
+
+        const existingTopUpEarliest = await this.db.customerTopUp.aggregate({
+            where: { customer_id: customerId },
+            _min: { start_date: true },
+        });
+        const restoredTopUpEarliest = earliestTopUpStartDate(
+            rowsFor(payload, "customerTopUps")
+        );
+        const rewriteFromDate = earlierDate(
+            existingTopUpEarliest._min.start_date,
+            restoredTopUpEarliest
+        );
 
         await this.db.$transaction(
             async (tx) => {
@@ -522,9 +538,50 @@ export class CustomerCheckpointService implements OnModuleInit {
         await recalculateCustomerAmounts([customerId], this.db);
         await syncCustomerInsuranceFields(customerId);
 
+        if (rewriteFromDate) {
+            await enqueueAsOfRewrite({
+                accountId,
+                customerIds: [customerId],
+                fromDate: rewriteFromDate,
+                toDate: new Date(),
+            });
+        }
+
         return {
             restoredAt: new Date().toISOString(),
             rowCounts: countsFor(payload),
         };
     }
+}
+
+/** Earliest `start_date` among checkpoint top-up rows (UTC date-only). */
+function earliestTopUpStartDate(rows: JsonRow[]): Date | null {
+    let earliest: Date | null = null;
+    for (const row of rows) {
+        const raw = row.start_date;
+        if (raw == null) {
+            continue;
+        }
+        const date =
+            raw instanceof Date
+                ? raw
+                : new Date(typeof raw === "string" ? raw : String(raw));
+        if (Number.isNaN(date.getTime())) {
+            continue;
+        }
+        if (!earliest || date < earliest) {
+            earliest = date;
+        }
+    }
+    return earliest;
+}
+
+function earlierDate(a: Date | null, b: Date | null): Date | null {
+    if (!a) {
+        return b;
+    }
+    if (!b) {
+        return a;
+    }
+    return a <= b ? a : b;
 }

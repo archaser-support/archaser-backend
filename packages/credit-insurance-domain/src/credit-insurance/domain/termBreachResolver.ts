@@ -1,10 +1,11 @@
+import { applyOpenArVatBasis } from "./openArVatBasis";
 import { prisma } from "../domain-db";
 import {
     hasActiveLinkedPolicy,
-    isUncoveredExposureCustomer,
+    isAtRiskExposureCustomer,
     isFullOpenArAtRiskCustomer,
-    uncoveredExposureFieldsFromPolicyLink,
-    type UncoveredExposureFields,
+    atRiskExposureFieldsFromPolicyLink,
+    type AtRiskExposureFields,
 } from "./policyExclusion";
 import { invoiceHasTermsBreachFlag } from "./customerPolicyTrendTermsBreachByReason";
 import { shouldSetReportingBreach } from "./invoiceInsuranceFields";
@@ -14,9 +15,8 @@ export type TermBreachInvoiceRow = {
     outstanding: number;
     inCapacityGap?: boolean;
     capacityGapAmount?: number;
+    /** Used with reporting-breach start date (gate on target reporting date). */
     targetReportingDate?: Date | null;
-    /** Needed to apply the reporting-breach start date gate on recompute. */
-    invoiceDate?: Date | null;
     reportingBreach?: boolean;
     ctvPaymentTerm?: boolean;
     ctvCustomerOverdueMep?: boolean;
@@ -24,7 +24,7 @@ export type TermBreachInvoiceRow = {
     ctvInvoiceAfterPolicyEnd?: boolean;
 };
 
-export type PolicyRowForUncoveredExposure = {
+export type PolicyRowForAtRiskExposure = {
     insurance_policy_id: number | null;
     is_active?: boolean;
     policy_exclusion_reason?: string | null;
@@ -58,7 +58,6 @@ export function invoiceHasTermsBreachForKpi(
         asOf,
         undefined,
         {
-            invoiceDate: invoice.invoiceDate ?? null,
             reportingBreachStartDate: options?.reportingBreachStartDate ?? null,
         }
     );
@@ -98,17 +97,17 @@ export function sumFlagBasedTermsBreachOutstanding(
 }
 
 /**
- * Customer-level terms breach: uncovered → full open AR; else flag-based sum.
+ * Customer-level terms breach: at-risk cohort → full open AR; else flag-based sum.
  */
 export function resolveCustomerTermsBreachOutstanding(args: {
-    uncovered: boolean;
+    atRiskCohort: boolean;
     totalOpenAr: number;
     invoices: TermBreachInvoiceRow[];
     asOf: Date;
     excludeCapacityGapInvoices?: boolean;
     reportingBreachStartDate?: Date | null;
 }): number {
-    if (args.uncovered) {
+    if (args.atRiskCohort) {
         return Math.max(0, args.totalOpenAr);
     }
     return sumFlagBasedTermsBreachOutstanding(args.invoices, args.asOf, {
@@ -117,43 +116,43 @@ export function resolveCustomerTermsBreachOutstanding(args: {
     });
 }
 
-/** Portfolio Terms Breach card/chart: uncovered customers contribute zero. */
+/** Portfolio Terms Breach card/chart: at-risk customers contribute zero. */
 export function resolvePortfolioTermsBreachContribution(args: {
-    uncovered: boolean;
+    atRiskCohort: boolean;
     flagBasedAmount: number;
 }): number {
-    if (args.uncovered) {
+    if (args.atRiskCohort) {
         return 0;
     }
     return Math.max(0, args.flagBasedAmount);
 }
 
-export function resolveUncoveredExposureFromPolicyRows(
-    policyRows: PolicyRowForUncoveredExposure[],
+export function resolveAtRiskExposureFromPolicyRows(
+    policyRows: PolicyRowForAtRiskExposure[],
     policyId?: number | null
 ): boolean {
-    return isUncoveredExposureCustomer(
-        uncoveredExposureFieldsFromPolicyRows(policyRows, policyId)
+    return isAtRiskExposureCustomer(
+        atRiskExposureFieldsFromPolicyRows(policyRows, policyId)
     );
 }
 
 /** Full-AR at-risk: no policy rows, no linked policy, or pending-review only. */
 export function resolveFullOpenArAtRiskFromPolicyRows(
-    policyRows: PolicyRowForUncoveredExposure[],
+    policyRows: PolicyRowForAtRiskExposure[],
     policyId?: number | null
 ): boolean {
     if (policyRows.length === 0) {
         return true;
     }
     return isFullOpenArAtRiskCustomer(
-        uncoveredExposureFieldsFromPolicyRows(policyRows, policyId)
+        atRiskExposureFieldsFromPolicyRows(policyRows, policyId)
     );
 }
 
-export function uncoveredExposureFieldsFromPolicyRows(
-    policyRows: PolicyRowForUncoveredExposure[],
+export function atRiskExposureFieldsFromPolicyRows(
+    policyRows: PolicyRowForAtRiskExposure[],
     policyId?: number | null
-): UncoveredExposureFields {
+): AtRiskExposureFields {
     if (policyRows.length === 0) {
         return { hasLinkedPolicy: false, exclusionReason: null };
     }
@@ -164,7 +163,7 @@ export function uncoveredExposureFieldsFromPolicyRows(
               policyRows[0]
             : policyRows.find((row) => row.is_active) ?? policyRows[0];
 
-    return uncoveredExposureFieldsFromPolicyLink({
+    return atRiskExposureFieldsFromPolicyLink({
         insurancePolicyId: scopedRow?.insurance_policy_id,
         exclusionReason: scopedRow?.policy_exclusion_reason,
     });
@@ -174,6 +173,7 @@ export type PortfolioTermsBreachInvoiceRow = {
     outstanding_debt: number | null;
     customer_outstanding_debt: number | null;
     amount?: number | null;
+    amount_without_vat?: number | null;
     reporting_breach: boolean;
     ctv_payment_term: boolean;
     ctv_customer_overdue_mep: boolean;
@@ -181,16 +181,27 @@ export type PortfolioTermsBreachInvoiceRow = {
     ctv_invoice_after_policy_end: boolean;
 };
 
-function lineOutstandingFromInvoiceRow(row: PortfolioTermsBreachInvoiceRow): number {
+function lineOutstandingFromInvoiceRow(
+    row: PortfolioTermsBreachInvoiceRow,
+    amountsIncludeVat = true
+): number {
     const debt = Number(row.outstanding_debt ?? 0);
-    if (debt !== 0) {
-        return Math.max(0, debt);
-    }
-    return Math.max(0, Number(row.customer_outstanding_debt ?? 0));
+    const gross =
+        debt !== 0
+            ? Math.max(0, debt)
+            : Math.max(0, Number(row.customer_outstanding_debt ?? 0));
+    return Math.max(
+        0,
+        applyOpenArVatBasis(amountsIncludeVat, gross, {
+            amount: row.amount ?? null,
+            amount_without_vat: row.amount_without_vat ?? null,
+        })
+    );
 }
 
 export function aggregatePortfolioTermsBreachFromInvoices(
-    invoices: PortfolioTermsBreachInvoiceRow[]
+    invoices: PortfolioTermsBreachInvoiceRow[],
+    amountsIncludeVat = true
 ): {
     invoiceCount: number;
     totalAmount: number;
@@ -206,7 +217,10 @@ export function aggregatePortfolioTermsBreachFromInvoices(
     };
 
     for (const invoice of invoices) {
-        totalAmount += lineOutstandingFromInvoiceRow(invoice);
+        totalAmount += lineOutstandingFromInvoiceRow(
+            invoice,
+            amountsIncludeVat
+        );
         if (invoice.reporting_breach) {
             countByReason.reportingBreach += 1;
         }
@@ -231,8 +245,8 @@ export function aggregatePortfolioTermsBreachFromInvoices(
     };
 }
 
-/** Active-policy uncovered customers for notification suppression. */
-export async function fetchUncoveredCustomerIdsForAccount(
+/** Active-policy at-risk customers for notification suppression. */
+export async function fetchAtRiskCustomerIdsForAccount(
     accountId: number
 ): Promise<Set<number>> {
     const rows = await prisma.customer.findMany({
@@ -250,19 +264,19 @@ export async function fetchUncoveredCustomerIdsForAccount(
         },
     });
 
-    const uncovered = new Set<number>();
+    const atRiskIds = new Set<number>();
     for (const row of rows) {
         const policy = row.CustomerPolicy[0];
         if (
-            isUncoveredExposureCustomer({
+            isAtRiskExposureCustomer({
                 hasLinkedPolicy: hasActiveLinkedPolicy(
                     policy?.insurance_policy_id
                 ),
                 exclusionReason: policy?.policy_exclusion_reason,
             })
         ) {
-            uncovered.add(row.id);
+            atRiskIds.add(row.id);
         }
     }
-    return uncovered;
+    return atRiskIds;
 }

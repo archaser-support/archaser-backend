@@ -2,7 +2,12 @@ import { listRunningSyncAccountIds } from "@archaser/billing-connector";
 import type { PrismaClient } from "@prisma/client";
 
 import { jobLog } from "../logging/jobLog";
+import { FrozenAccountMongoUnavailableError } from "./frozenAccountMongoUnavailableError";
 import { sweepStaleProcessingImportJobs } from "./sweepStaleProcessingImportJobs";
+
+/** Keep in sync with ACCOUNT_BACKGROUND_JOB_KIND in credit-insurance-domain. */
+const JOB_KIND_CREDIT_ASOF_BACKFILL = "credit_asof_backfill";
+const JOB_KIND_VAT_BASIS_REFRESH = "vat_basis_refresh";
 
 export type FrozenAccountResolverDeps = {
     prisma: PrismaClient;
@@ -26,8 +31,17 @@ async function queryAsOfBackfillFrozenAccountIds(
 ): Promise<number[]> {
     const rows = await prisma.$queryRaw<Array<{ account_id: number }>>`
         SELECT DISTINCT account_id
-        FROM "CreditAsOfBackfillJob"
-        WHERE status IN ('running', 'paused')
+        FROM "AccountBackgroundJob"
+        WHERE (
+            (
+                job_kind = ${JOB_KIND_CREDIT_ASOF_BACKFILL}
+                AND status IN ('running', 'paused')
+            )
+            OR (
+                job_kind = ${JOB_KIND_VAT_BASIS_REFRESH}
+                AND status = 'running'
+            )
+        )
     `;
     return rows.map((row) => row.account_id);
 }
@@ -45,14 +59,14 @@ async function queryRunningSyncAccountIds(
     } catch (error) {
         jobLog(
             "frozen-account",
-            "warn",
-            "Mongo RUNNING account lookup failed; Postgres-only freeze",
+            "error",
+            "Mongo RUNNING account lookup failed; refusing Postgres-only freeze",
             {
                 error:
                     error instanceof Error ? error.message : String(error),
             }
         );
-        return [];
+        throw new FrozenAccountMongoUnavailableError(error);
     }
 }
 

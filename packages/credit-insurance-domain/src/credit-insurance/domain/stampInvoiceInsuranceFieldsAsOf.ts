@@ -3,7 +3,14 @@ import type { invoice_status } from "@prisma/client";
 import type { DbClient } from "../domain-db";
 import { prisma } from "../domain-db";
 
-import { resolveCreatedOverdueMepByInvoiceId } from "./createdOverdueMepAtInvoiceDate";
+import { toCreatedOverdueMepCauseArrays } from "./bulkInvoiceUpdates";
+import {
+    buildCreatedOverdueMepCauseColumns,
+    loadInvoiceNumbersById,
+    resolveCreatedOverdueMepDetailsByInvoiceId,
+    type CreatedOverdueMepCauseColumns,
+    type CreatedOverdueMepResolution,
+} from "./createdOverdueMepAtInvoiceDate";
 import { resolveMepBreachStartDate } from "./resolveMepBreachStartDate";
 import { loadEffectiveInsuranceForCustomers } from "./loadEffectiveInsuranceForCustomers";
 import {
@@ -20,7 +27,7 @@ export type InvoiceInsuranceAsOfStamp = {
     asOf: Date;
 };
 
-type StampWriteRow = {
+type StampWriteRow = CreatedOverdueMepCauseColumns & {
     id: number;
     policyIdToSet: number | null;
     payment_term: number | null;
@@ -64,6 +71,8 @@ async function bulkWriteInsuranceAsOfStamps(
         const ctvCustomerOverdueMeps = chunk.map(
             (row) => row.ctv_customer_overdue_mep
         );
+        const { causeNumbers, causeDueDates, causeOutstandings, daysPastMeps } =
+            toCreatedOverdueMepCauseArrays(chunk);
         const ctvCustomerExcluded = chunk.map(
             (row) => row.ctv_customer_excluded_from_policy
         );
@@ -83,6 +92,14 @@ async function bulkWriteInsuranceAsOfStamps(
                 reporting_breach = data.reporting_breach,
                 ctv_payment_term = data.ctv_payment_term,
                 ctv_customer_overdue_mep = data.ctv_customer_overdue_mep,
+                ctv_customer_overdue_mep_cause_invoice_number =
+                    data.ctv_customer_overdue_mep_cause_invoice_number,
+                ctv_customer_overdue_mep_cause_due_date =
+                    data.ctv_customer_overdue_mep_cause_due_date::date,
+                ctv_customer_overdue_mep_cause_outstanding =
+                    data.ctv_customer_overdue_mep_cause_outstanding,
+                ctv_customer_overdue_mep_days_past =
+                    data.ctv_customer_overdue_mep_days_past,
                 ctv_customer_excluded_from_policy =
                     data.ctv_customer_excluded_from_policy,
                 ctv_outdated_dcl = data.ctv_outdated_dcl,
@@ -100,6 +117,14 @@ async function bulkWriteInsuranceAsOfStamps(
                     UNNEST(${ctvPaymentTerms}::boolean[]) AS ctv_payment_term,
                     UNNEST(${ctvCustomerOverdueMeps}::boolean[])
                         AS ctv_customer_overdue_mep,
+                    UNNEST(${causeNumbers}::text[])
+                        AS ctv_customer_overdue_mep_cause_invoice_number,
+                    UNNEST(${causeDueDates}::text[])
+                        AS ctv_customer_overdue_mep_cause_due_date,
+                    UNNEST(${causeOutstandings}::float8[])
+                        AS ctv_customer_overdue_mep_cause_outstanding,
+                    UNNEST(${daysPastMeps}::int[])
+                        AS ctv_customer_overdue_mep_days_past,
                     UNNEST(${ctvCustomerExcluded}::boolean[])
                         AS ctv_customer_excluded_from_policy,
                     UNNEST(${ctvOutdatedDcls}::boolean[]) AS ctv_outdated_dcl,
@@ -217,7 +242,7 @@ export async function stampInvoicesInsuranceFieldsAsOf(
     const policyById = new Map(policies.map((p) => [p.id, p]));
 
     // One open-AR ledger load per customer (not per invoice).
-    const overdueMepByInvoiceId = new Map<number, boolean>();
+    const overdueMepByInvoiceId = new Map<number, CreatedOverdueMepResolution>();
     const invoicesByCustomer = new Map<number, typeof invoices>();
     for (const inv of invoices) {
         if (inv.customer_id == null) continue;
@@ -231,7 +256,7 @@ export async function stampInvoicesInsuranceFieldsAsOf(
         const accountId = customerInvoices.find((i) => i.account_id != null)
             ?.account_id;
         if (accountId == null) continue;
-        const byId = await resolveCreatedOverdueMepByInvoiceId({
+        const byId = await resolveCreatedOverdueMepDetailsByInvoiceId({
             accountId,
             customerId,
             invoices: customerInvoices
@@ -254,6 +279,12 @@ export async function stampInvoicesInsuranceFieldsAsOf(
             overdueMepByInvoiceId.set(invoiceId, flagged);
         }
     }
+    const causeNumbers = await loadInvoiceNumbersById(
+        Array.from(overdueMepByInvoiceId.values())
+            .map((row) => row.causeInvoiceId)
+            .filter((id): id is number => id != null),
+        db
+    );
 
     const writes: StampWriteRow[] = [];
     for (const inv of invoices) {
@@ -296,7 +327,7 @@ export async function stampInvoicesInsuranceFieldsAsOf(
             invoice_date: inv.invoice_date,
             invoice_amount: inv.amount,
             customer_overdue_mep_at_invoice_date:
-                overdueMepByInvoiceId.get(inv.id) ?? false,
+                overdueMepByInvoiceId.get(inv.id)?.flagged ?? false,
             mep_breach_start_date: mepBreachStartDate,
             customer: insuranceCtx,
             policy: policy?.end_date
@@ -323,6 +354,11 @@ export async function stampInvoicesInsuranceFieldsAsOf(
             reporting_breach: insRow.reporting_breach,
             ctv_payment_term: insRow.ctv_payment_term,
             ctv_customer_overdue_mep: termsSnapshot.ctv_customer_overdue_mep,
+            ...buildCreatedOverdueMepCauseColumns(
+                termsSnapshot.ctv_customer_overdue_mep,
+                overdueMepByInvoiceId.get(inv.id),
+                causeNumbers
+            ),
             ctv_customer_excluded_from_policy:
                 termsSnapshot.ctv_customer_excluded_from_policy,
             ctv_outdated_dcl: termsSnapshot.ctv_outdated_dcl,

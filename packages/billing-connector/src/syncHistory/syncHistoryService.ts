@@ -3,6 +3,7 @@ import { createMemorySyncHistoryStore } from "./memoryStore";
 import { mongooseSyncHistoryStore } from "./mongooseStore";
 import { applyPostIngestDrainProgressToEntityStats } from "./postIngestDrainEntityStats";
 import { notifyOnSyncFailure } from "../notify";
+import { maybeRunPostSyncCtpCatchUp } from "../credit/postSyncCtpCatchUp";
 import {
     defaultSinceDate,
     HEARTBEAT_INTERVAL_SECONDS,
@@ -10,6 +11,10 @@ import {
     STALE_RUNNING_HOURS,
     type SyncHistoryStore,
 } from "./store";
+import {
+    isSyncAlreadyRunningError,
+    SyncAlreadyRunningError,
+} from "./syncAlreadyRunningError";
 import type {
     CompleteExecutionInput,
     CreateRunningExecutionInput,
@@ -142,6 +147,15 @@ export async function finalizeAwaitingPostIngestDrainExecutions(
                     executionId: execution.execution_id,
                     completedAt: new Date(),
                 }).catch(() => undefined);
+            } else if (options?.prisma) {
+                await maybeRunPostSyncCtpCatchUp({
+                    prisma: options.prisma,
+                    accountId: execution.account_id,
+                    mode: execution.sync_mode,
+                    status: "SUCCESS",
+                    onLog: options.onLog,
+                    onError: options.onError,
+                });
             }
         }
     }
@@ -219,6 +233,11 @@ export {
     HISTORY_WINDOW_DAYS,
     STALE_RUNNING_HOURS,
     defaultSinceDate,
+};
+
+export {
+    isSyncAlreadyRunningError,
+    SyncAlreadyRunningError,
 };
 
 export type {

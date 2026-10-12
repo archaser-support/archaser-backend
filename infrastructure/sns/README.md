@@ -5,17 +5,35 @@ This directory contains the infrastructure setup for integrating AWS SNS with Gr
 ## Architecture
 
 ```
-Grafana Alert → Webhook → API Gateway → Lambda
+Grafana Alert → Webhook → API Gateway → Lambda (infrastructure/sns/lambda/)
                                           ↓
-                              ┌───────────┴───────────┐
-                              │                       │
-                           SES Email              SNS Topic
-                         (HTML Template)              ↓
-                                            ┌────────┴────────┐
-                                            │                 │
-                                         Slack           Other Subscribers
-                                    (AWS Chatbot)        (SMS, Lambda, etc.)
+                    ┌─────────────────────┼─────────────────────┐
+                    │                     │                     │
+                 SES Email            SNS Topic           ClickUp Chat
+               (HTML Template)            ↓                (ARchaser)
+                                    Slack / others
+                                          +
+                            GET /api/alert-details (Nest AlertDetailsModule)
 ```
+
+### Lambda source layout
+
+Real Lambda code lives in `infrastructure/sns/lambda/` (not inline in CloudFormation):
+
+| File | Role |
+|------|------|
+| `handler.js` | Webhook entry: cooldown, SES, SNS, ClickUp |
+| `resolveAlertType.js` | Maps alert → `/api/alert-details?type=` via `annotations.alert_details_type`, then UID/name normalize |
+| `fetchAlertDetails.js` | Calls Nest alert-details API |
+| `grafanaLinks.js` | Drilldown host/slug rewrite |
+| `emailTemplates.js` | HTML/plain email + ClickUp post |
+| `clickupChat.js` | Chat intent builder |
+
+`deploy.sh` runs `package-lambda.sh` (zips `lambda/` → `dist/alert-webhook.zip`) then `aws lambda update-function-code`. CloudFormation keeps a stub ZipFile so stack create/update stays valid before the upload.
+
+Prefer Grafana rule annotation `alert_details_type: "<type>"` (see `grafana/provisioning/alerting/rules-*.yaml`). Fallback: normalize rule UID / alertname.
+
+ClickUp Chat is additive. Email and Slack stay on. Empty `CLICKUP_CHAT_TOKEN` or `CLICKUP_CHAT_CHANNEL_ID` skips Chat (`clickupStatus: skipped_unconfigured`).
 
 ## Features
 
@@ -23,6 +41,7 @@ Grafana Alert → Webhook → API Gateway → Lambda
 - ✅ **SNS Fan-out** - Easy integration with Slack, SMS, and other channels
 - ✅ **Custom Formatting** - Full control over email design
 - ✅ **Plain Text Fallback** - For email clients that don't support HTML
+- ✅ **Alert details enrichment** - Nest `AlertDetailsModule` at `/api/alert-details`
 
 ---
 
@@ -82,6 +101,13 @@ This sends sample "firing" and "resolved" alerts to verify:
 - Lambda processes the alert correctly
 - HTML email is sent via SES
 - Message is published to SNS
+- Response includes `clickupStatus` (`skipped_unconfigured` until ClickUp params are set)
+
+After ClickUp token and ARchaser channel id are set on the stack:
+
+```bash
+CLICKUP_EXPECT=posted ./test-alerts.sh
+```
 
 ### Manual Testing with cURL
 
@@ -101,7 +127,7 @@ curl -X POST "YOUR_WEBHOOK_URL" \
         "summary": "Test alert from manual cURL",
         "description": "This is a test to verify the integration works"
       },
-      "generatorURL": "https://grafana.archaser.com"
+      "generatorURL": "https://grafana.portal.archaser.com"
     }],
     "groupLabels": { "alertname": "TestAlert" }
   }'
@@ -209,20 +235,13 @@ Add or remove fields in the alert details section:
 
 ### Deploying Template Changes
 
-After modifying the template, update the stack:
+After editing files under `lambda/`, redeploy with the script (packages + uploads code):
 
 ```bash
-aws cloudformation update-stack \
-  --stack-name archaser-alert-sns \
-  --template-body file://cloudformation-sns.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region eu-north-1
-
-# Wait for update to complete
-aws cloudformation wait stack-update-complete \
-  --stack-name archaser-alert-sns \
-  --region eu-north-1
+./deploy.sh production   # or staging
 ```
+
+CloudFormation alone only ships a stub handler — `deploy.sh` must run `update-function-code` for real email/ClickUp behavior.
 
 ---
 
@@ -280,6 +299,12 @@ See [SLACK_INTEGRATION.md](./SLACK_INTEGRATION.md) for detailed Slack setup inst
 2. Verify the JSON payload format matches Grafana's alert format
 3. Check CloudWatch logs for detailed error messages
 
+### ClickUp Chat not appearing
+
+1. Confirm `CLICKUP_CHAT_TOKEN` and `CLICKUP_CHAT_CHANNEL_ID` are set on the Lambda (ARchaser channel, not Customers)
+2. Check the webhook JSON for `clickupStatus` (`skipped_unconfigured`, `skipped_resolved_digest`, `posted`, or `failed`)
+3. `failed` still returns HTTP 200 so Grafana does not retry and duplicate email — see CloudWatch for `clickupError` (the token is never logged)
+
 ### SNS messages not reaching Slack
 
 1. Verify AWS Chatbot is configured correctly
@@ -293,12 +318,57 @@ See [SLACK_INTEGRATION.md](./SLACK_INTEGRATION.md) for detailed Slack setup inst
 | File | Description |
 |------|-------------|
 | `cloudformation-sns.yaml` | Main infrastructure template with HTML email support |
+| `clickup-chat-intent.js` | Pure Chat skip/post classifier and markdown body (no HTTP) |
 | `deploy.sh` | Deployment script |
 | `test-alerts.sh` | Test script for verifying integration |
 | `SLACK_INTEGRATION.md` | Slack setup guide |
 | `README.md` | This file |
 
 ---
+
+## ClickUp Chat (ARchaser)
+
+Production Grafana alerts post as ordinary Chat **messages** (markdown, not tasks, not Posts) in the existing **ARchaser** channel. No @mentions and no assignees. Staging Grafana stays on the silent contact point and must not hit this webhook.
+
+### CloudFormation / Lambda keys
+
+Set these on the stack (do not put tokens in git). Agents do not read local dotenv files.
+
+| Parameter / env | Description |
+|-----------------|-------------|
+| `ClickUpChatToken` / `CLICKUP_CHAT_TOKEN` | NoEcho Chat write token. Empty skips Chat. |
+| `ClickUpChatChannelId` / `CLICKUP_CHAT_CHANNEL_ID` | ARchaser channel id (not Customers). Empty skips Chat. |
+| `ClickUpChatWorkspaceId` / `CLICKUP_CHAT_WORKSPACE_ID` | Optional workspace id. If empty, the Lambda uses the ARchaser workspace `25708732`. |
+| `ClickUpChatEnabled` / `CLICKUP_CHAT_ENABLED` | Optional toggle. Empty means on when token and channel are both set. |
+
+Example stack update (paste the token yourself; do not commit it):
+
+```bash
+aws cloudformation update-stack \
+  --stack-name archaser-alert-sns \
+  --template-body file://cloudformation-sns.yaml \
+  --parameters \
+    ParameterKey=Environment,UsePreviousValue=true \
+    ParameterKey=AlertEmailAddress,UsePreviousValue=true \
+    ParameterKey=ClickUpChatToken,ParameterValue='YOUR_TOKEN' \
+    ParameterKey=ClickUpChatChannelId,ParameterValue='YOUR_ARCHASER_CHANNEL_ID' \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region eu-north-1
+```
+
+`deploy.sh` also forwards `CLICKUP_CHAT_TOKEN`, `CLICKUP_CHAT_CHANNEL_ID`, and `CLICKUP_CHAT_WORKSPACE_ID` when those variables are already set in the shell.
+
+### How to test
+
+1. Update the production alert stack with token and ARchaser channel id. Recreate/update the Lambda.
+2. `CLICKUP_EXPECT=posted ./test-alerts.sh` — critical firing: email + Slack as today **and** one markdown Chat line in ARchaser. No @mention.
+3. Critical resolved: cleared Chat message (`✅` / `[RESOLVED]`) plus resolved email. Firing cooldown does not block this.
+4. Digest firing (three high/medium alerts): **one** ARchaser digest message listing all three, plus digest email.
+5. Digest resolved: **no** new ARchaser message (`clickupStatus: skipped_resolved_digest`); email may still send.
+6. Confirm staging Grafana still does not page; nothing new in ARchaser from staging.
+7. With token unset (or a bad token): critical firing still emails; Chat is `skipped_unconfigured` or `failed`; webhook 200.
+
+ClickUp HTTP failures are logged (never the token) as `clickupStatus: failed` and optional `clickupError`. Email and SNS still succeed.
 
 ## Environment Variables
 
@@ -307,3 +377,8 @@ See [SLACK_INTEGRATION.md](./SLACK_INTEGRATION.md) for detailed Slack setup inst
 | `GRAFANA_SNS_WEBHOOK_URL` | Webhook URL for Grafana | (required) |
 | `ALERT_EMAIL` | Email recipient | nilotpal@archaser.com |
 | `SES_FROM_ADDRESS` | SES verified sender | alerts@archaser.com |
+| `CLICKUP_CHAT_TOKEN` | ClickUp Chat token (NoEcho). Empty skips Chat. | (empty) |
+| `CLICKUP_CHAT_CHANNEL_ID` | ARchaser Chat channel id. Empty skips Chat. | (empty) |
+| `CLICKUP_CHAT_WORKSPACE_ID` | Optional ClickUp workspace id | (empty; Lambda falls back to `25708732`) |
+| `CLICKUP_CHAT_ENABLED` | Optional Chat toggle; empty means on when token and channel are set | (empty) |
+| `CLICKUP_EXPECT` | `test-alerts.sh` expected `clickupStatus` for post intents | `skipped_unconfigured` |

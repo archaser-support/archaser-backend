@@ -17,6 +17,8 @@ export type AsOfLedgerInvoiceRow = {
     dueDate: Date | null;
     amount: number | null;
     customerAmount: number | null;
+    amountWithoutVat: number | null;
+    customerAmountWithoutVat: number | null;
     customerCurrency: string | null;
     reportingBreach: boolean;
     ctvPaymentTerm: boolean;
@@ -27,6 +29,7 @@ export type AsOfLedgerInvoiceRow = {
     capacityGapAmount: number;
     actualReportingDate: Date | null;
     status: string;
+    mepIgnored: boolean;
 };
 
 export type AsOfLedgerPaymentRow = {
@@ -41,6 +44,8 @@ export type AsOfOpenInvoiceLedger = {
     accountId: number;
     rangeToDate: Date;
     openAmountTolerance: number;
+    /** Account.amounts_include_vat stamped onto derived as-of lines. */
+    amountsIncludeVat: boolean;
     invoices: AsOfLedgerInvoiceRow[];
     paymentsByInvoiceId: Map<number, AsOfLedgerPaymentRow[]>;
 };
@@ -53,6 +58,8 @@ type AsOfLedgerInvoiceSqlRow = {
     due_date: Date | null;
     amount: number | null;
     customer_amount: number | null;
+    amount_without_vat: number | null;
+    customer_amount_without_vat: number | null;
     customer_currency: string | null;
     reporting_breach: boolean;
     ctv_payment_term: boolean;
@@ -63,6 +70,7 @@ type AsOfLedgerInvoiceSqlRow = {
     capacity_gap_amount: number | null;
     actual_reporting_date: Date | null;
     status: string;
+    mep_ignored: boolean;
 };
 
 type AsOfLedgerPaymentSqlRow = {
@@ -82,6 +90,14 @@ function mapLedgerInvoiceRow(row: AsOfLedgerInvoiceSqlRow): AsOfLedgerInvoiceRow
         amount: row.amount != null ? Number(row.amount) : null,
         customerAmount:
             row.customer_amount != null ? Number(row.customer_amount) : null,
+        amountWithoutVat:
+            row.amount_without_vat != null
+                ? Number(row.amount_without_vat)
+                : null,
+        customerAmountWithoutVat:
+            row.customer_amount_without_vat != null
+                ? Number(row.customer_amount_without_vat)
+                : null,
         customerCurrency: row.customer_currency,
         reportingBreach: Boolean(row.reporting_breach),
         ctvPaymentTerm: Boolean(row.ctv_payment_term),
@@ -92,6 +108,7 @@ function mapLedgerInvoiceRow(row: AsOfLedgerInvoiceSqlRow): AsOfLedgerInvoiceRow
         capacityGapAmount: Number(row.capacity_gap_amount ?? 0),
         actualReportingDate: row.actual_reporting_date,
         status: row.status,
+        mepIgnored: Boolean(row.mep_ignored),
     };
 }
 
@@ -150,6 +167,8 @@ export async function loadAsOfOpenInvoiceLedgerRange(
             i.due_date,
             i.amount,
             i.customer_amount,
+            i.amount_without_vat,
+            i.customer_amount_without_vat,
             i.customer_currency,
             COALESCE(i.reporting_breach, false) AS reporting_breach,
             COALESCE(i.ctv_payment_term, false) AS ctv_payment_term,
@@ -159,7 +178,8 @@ export async function loadAsOfOpenInvoiceLedgerRange(
             COALESCE(i.in_capacity_gap, false) AS in_capacity_gap,
             COALESCE(i.capacity_gap_amount, 0)::float AS capacity_gap_amount,
             i.actual_reporting_date,
-            i.status::text AS status
+            i.status::text AS status,
+            COALESCE(i.mep_ignored, false) AS mep_ignored
         FROM "Invoice" i
         INNER JOIN "Customer" c ON c.id = i.customer_id
         WHERE ${where}
@@ -199,11 +219,16 @@ export async function loadAsOfOpenInvoiceLedgerRange(
         accountId,
         db
     );
+    const account = await db.account.findUnique({
+        where: { id: accountId },
+        select: { amounts_include_vat: true },
+    });
 
     return {
         accountId,
         rangeToDate: rangeAsOf,
         openAmountTolerance,
+        amountsIncludeVat: account?.amounts_include_vat !== false,
         invoices: invoiceRows.map(mapLedgerInvoiceRow),
         paymentsByInvoiceId,
     };
@@ -248,7 +273,8 @@ export function aggregateLedgerPaymentsOnOrBefore(
 function buildAsOfLineFromLedgerInvoice(
     invoice: AsOfLedgerInvoiceRow,
     aggregate: LedgerPaymentAggregate,
-    openAmountTolerance: number
+    openAmountTolerance: number,
+    amountsIncludeVat: boolean
 ): AsOfOpenInvoiceLine {
     return {
         invoiceId: invoice.invoiceId,
@@ -258,6 +284,9 @@ function buildAsOfLineFromLedgerInvoice(
         dueDate: invoice.dueDate,
         amount: invoice.amount,
         customerAmount: invoice.customerAmount,
+        amountWithoutVat: invoice.amountWithoutVat,
+        customerAmountWithoutVat: invoice.customerAmountWithoutVat,
+        amountsIncludeVat,
         customerCurrency: invoice.customerCurrency,
         paymentsOnOrBeforeAsOf: aggregate.paidAmount,
         paymentsCustomerOnOrBeforeAsOf: aggregate.paidCustomerAmount,
@@ -272,6 +301,7 @@ function buildAsOfLineFromLedgerInvoice(
         lastPaymentDate: aggregate.lastPaymentDate,
         liveClosed: invoice.status === "Paid",
         openAmountTolerance,
+        mepIgnored: invoice.mepIgnored,
     };
 }
 
@@ -314,7 +344,8 @@ export function deriveAsOfOpenInvoiceCandidatesFromLedger(
             buildAsOfLineFromLedgerInvoice(
                 invoice,
                 aggregate,
-                ledger.openAmountTolerance
+                ledger.openAmountTolerance,
+                ledger.amountsIncludeVat
             )
         );
     }

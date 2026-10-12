@@ -1,21 +1,34 @@
 import {
     BadRequestException,
+    ConflictException,
+    ForbiddenException,
     Injectable,
     NotFoundException,
+    ServiceUnavailableException,
 } from "@nestjs/common";
 import {
     Prisma,
     type customer_limit_type,
+    type customer_policy_status,
     type CustomerPolicy,
 } from "@prisma/client";
 import {
+    AdminBackfillBlockingRewriteError,
+    applyDatedCustomerPolicyUnassign,
+    closeCustomerPolicyVersionsFromDate,
+    DatedCustomerPolicyUnassignError,
     deriveExcludedFromPolicy,
     ensureCustomerCapacityGapStored,
     freezeCustomerPolicyGapOnDeactivation,
     isAllowedPolicyExclusionReason,
+    isLinkedCreditChild,
     isPrimaryPolicyAssignable,
     normalizePolicyExclusionReason,
+    remirrorCreditPoolAfterPolicyMutation,
+    rewriteCustomerAsOfRange,
+    startOfTodayUtc,
     syncCustomerInsuranceFields,
+    toUtcDateOnly,
 } from "@archaser/credit-insurance-domain";
 import { DatabaseService } from "../database/database.service";
 import {
@@ -50,6 +63,7 @@ export const CUSTOMER_POLICY_BODY_KEYS = [
     "credit_score_input_date",
     "active_customer_since",
     "outdated_dcl",
+    "policy_change_start_date",
     "confirm_policy_switch",
 ] as const;
 
@@ -70,6 +84,8 @@ export type CustomerPolicyTabPayload = {
     credit_score_input_date: Date | null;
     active_customer_since: Date | null;
     outdated_dcl: boolean;
+    /** Required on create/version/switch; null when omitted (validated later). */
+    policy_change_start_date: Date | null;
     confirmPolicySwitch: boolean;
     explicitExclusionReason: boolean;
 };
@@ -98,7 +114,17 @@ function parseOptionalDate(value: unknown, field: string): Date | null {
     if (isBlank(value)) {
         return null;
     }
-    const date = new Date(String(value));
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return toUtcDateOnly(value);
+    }
+    const raw = String(value).trim();
+    const ymd = raw.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+        throw new BadRequestException({
+            error: `${field} must be a valid date (YYYY-MM-DD)`,
+        });
+    }
+    const date = toUtcDateOnly(ymd);
     if (Number.isNaN(date.getTime())) {
         throw new BadRequestException({
             error: `${field} must be a valid date`,
@@ -214,6 +240,10 @@ export function parseCustomerPolicyTabPayload(
             "active_customer_since"
         ),
         outdated_dcl: Boolean(body.outdated_dcl),
+        policy_change_start_date: parseOptionalDate(
+            body.policy_change_start_date,
+            "policy_change_start_date"
+        ),
         confirmPolicySwitch: body.confirm_policy_switch === true,
         explicitExclusionReason: body.policy_exclusion_reason !== undefined,
     };
@@ -286,8 +316,11 @@ function buildPolicyWriteData(
         registration_fee_percent: unknown;
         currency: string | null;
     },
-    userId: string
+    userId: string,
+    policyChangeStartDate: Date,
+    status: Extract<customer_policy_status, "active" | "pending">
 ): Record<string, unknown> {
+    const isActive = status === "active";
     return {
         insurance_policy_id: payload.insurancePolicyId,
         customer_number_policy: payload.customer_number_policy,
@@ -311,6 +344,9 @@ function buildPolicyWriteData(
         outdated_dcl: payload.outdated_dcl,
         cost_percent: pricing.cost_percent,
         registration_fee_percent: pricing.registration_fee_percent,
+        policy_change_start_date: policyChangeStartDate,
+        status,
+        is_active: isActive,
         modified_by: userId,
     };
 }
@@ -320,17 +356,36 @@ export class CustomerPolicyService {
     constructor(private readonly db: DatabaseService) {}
 
     /**
-     * Policies-tab save path: create, switch, clear, or copy-on-write patch.
+     * Policies-tab save path: create, switch, clear, copy-on-write patch, or
+     * schedule a single pending future change (no rewrite until activation).
      */
     async applyFromPoliciesTabSave(args: {
         customerId: number;
         accountId: number;
         userId: string;
         body: Record<string, unknown>;
-    }): Promise<"noop" | "create" | "patch" | "version" | "switch" | "clear"> {
+    }): Promise<
+        | "noop"
+        | "create"
+        | "patch"
+        | "version"
+        | "switch"
+        | "clear"
+        | "pending"
+        | "unassign"
+    > {
         if (!hasPolicyPayloadInBody(args.body)) {
             return "noop";
         }
+
+        if (await isLinkedCreditChild(args.customerId, this.db)) {
+            throw new ForbiddenException({
+                error: "Customer policy can only be edited on the credit pool root",
+                code: "LINKED_CHILD_POLICY_LOCKED",
+            });
+        }
+
+        await this.assertNoPendingPolicyChange(args.customerId);
 
         const payload = parseCustomerPolicyTabPayload(args.body);
         const activeRow = await this.db.customerPolicy.findFirst({
@@ -347,9 +402,10 @@ export class CustomerPolicyService {
             if (activeRow == null) {
                 return "noop";
             }
-            await this.clearActivePolicy(args.customerId, activeRow.id, args.userId);
-            await this.runPostSaveSync(args.customerId, payload);
-            return "clear";
+            throw new BadRequestException({
+                error: "Use Remove policy to unassign. Clearing the insurance policy on Save is not supported.",
+                code: "POLICY_UNASSIGN_REQUIRES_REMOVE",
+            });
         }
 
         if (nextPolicyId == null) {
@@ -361,7 +417,10 @@ export class CustomerPolicyService {
             insurancePolicyId: nextPolicyId,
         };
 
-        await this.assertPolicyAssignable(nextPolicyId, args.accountId);
+        const insurancePolicy = await this.assertPolicyAssignable(
+            nextPolicyId,
+            args.accountId
+        );
 
         if (effectivePayload.limit_type == null) {
             throw new BadRequestException({
@@ -372,22 +431,74 @@ export class CustomerPolicyService {
         assertZeroLimitDateWhenRequired(effectivePayload);
 
         const pricing = await this.loadPolicyPricing(nextPolicyId, args.accountId);
-        const writeData = buildPolicyWriteData(
-            effectivePayload,
-            pricing,
-            args.userId
+        const { changeDate, isFuture } = this.resolvePolicyChangeStartDate(
+            effectivePayload.policy_change_start_date,
+            insurancePolicy.start_date
         );
 
-        if (activeRow == null) {
+        if (isFuture) {
+            if (activeRow != null) {
+                const beforeSnapshot = rowToVersioningSnapshot(activeRow);
+                const afterSnapshot =
+                    payloadToVersioningSnapshot(effectivePayload);
+                if (
+                    !hasMeaningfulCustomerPolicyFieldChange(
+                        beforeSnapshot,
+                        afterSnapshot
+                    )
+                ) {
+                    return "noop";
+                }
+            }
+            const writeData = buildPolicyWriteData(
+                effectivePayload,
+                pricing,
+                args.userId,
+                changeDate,
+                "pending"
+            );
             await this.db.customerPolicy.create({
                 data: {
                     customer_id: args.customerId,
-                    is_active: true,
                     created_by: args.userId,
                     ...writeData,
                 } as never,
             });
+            // Pending must not alter live insurance fields or enqueue rewrite.
+            await this.remirrorPoolAfterMutation(args);
+            return "pending";
+        }
+
+        if (activeRow == null) {
+            const writeData = buildPolicyWriteData(
+                effectivePayload,
+                pricing,
+                args.userId,
+                changeDate,
+                "active"
+            );
+            await this.db.$transaction(async (tx) => {
+                await closeCustomerPolicyVersionsFromDate({
+                    db: tx,
+                    customerId: args.customerId,
+                    fromDate: changeDate,
+                    modifiedBy: args.userId,
+                });
+                await tx.customerPolicy.create({
+                    data: {
+                        customer_id: args.customerId,
+                        created_by: args.userId,
+                        ...writeData,
+                    } as never,
+                });
+            });
             await this.runPostSaveSync(args.customerId, effectivePayload);
+            await this.rewriteFromChangeDate(
+                args.accountId,
+                args.customerId,
+                changeDate
+            );
+            await this.remirrorPoolAfterMutation(args);
             return "create";
         }
 
@@ -398,26 +509,40 @@ export class CustomerPolicyService {
                     code: "CONFIRM_POLICY_SWITCH_REQUIRED",
                 });
             }
+            const writeData = buildPolicyWriteData(
+                effectivePayload,
+                pricing,
+                args.userId,
+                changeDate,
+                "active"
+            );
             await freezeCustomerPolicyGapOnDeactivation(
                 args.customerId,
                 activeRow.id,
                 this.db
             );
             await this.db.$transaction(async (tx) => {
-                await tx.customerPolicy.updateMany({
-                    where: { customer_id: args.customerId, is_active: true },
-                    data: { is_active: false, modified_by: args.userId },
+                await closeCustomerPolicyVersionsFromDate({
+                    db: tx,
+                    customerId: args.customerId,
+                    fromDate: changeDate,
+                    modifiedBy: args.userId,
                 });
                 await tx.customerPolicy.create({
                     data: {
                         customer_id: args.customerId,
-                        is_active: true,
                         created_by: args.userId,
                         ...writeData,
                     } as never,
                 });
             });
             await this.runPostSaveSync(args.customerId, effectivePayload);
+            await this.rewriteFromChangeDate(
+                args.accountId,
+                args.customerId,
+                changeDate
+            );
+            await this.remirrorPoolAfterMutation(args);
             return "switch";
         }
 
@@ -427,20 +552,29 @@ export class CustomerPolicyService {
             return "noop";
         }
 
+        const writeData = buildPolicyWriteData(
+            effectivePayload,
+            pricing,
+            args.userId,
+            changeDate,
+            "active"
+        );
+
         await freezeCustomerPolicyGapOnDeactivation(
             args.customerId,
             activeRow.id,
             this.db
         );
         await this.db.$transaction(async (tx) => {
-            await tx.customerPolicy.update({
-                where: { id: activeRow.id },
-                data: { is_active: false, modified_by: args.userId },
+            await closeCustomerPolicyVersionsFromDate({
+                db: tx,
+                customerId: args.customerId,
+                fromDate: changeDate,
+                modifiedBy: args.userId,
             });
             await tx.customerPolicy.create({
                 data: {
                     customer_id: args.customerId,
-                    is_active: true,
                     created_by: args.userId,
                     approved_limit_currency: activeRow.approved_limit_currency,
                     ...writeData,
@@ -448,29 +582,216 @@ export class CustomerPolicyService {
             });
         });
         await this.runPostSaveSync(args.customerId, effectivePayload);
+        await this.rewriteFromChangeDate(
+            args.accountId,
+            args.customerId,
+            changeDate
+        );
+        await this.remirrorPoolAfterMutation(args);
         return "version";
     }
 
-    private async clearActivePolicy(
-        customerId: number,
-        activeRowId: number,
-        userId: string
-    ): Promise<void> {
-        await freezeCustomerPolicyGapOnDeactivation(
-            customerId,
-            activeRowId,
-            this.db
-        );
-        await this.db.customerPolicy.updateMany({
-            where: { customer_id: customerId, is_active: true },
-            data: { is_active: false, modified_by: userId },
+    /**
+     * Policies-tab Remove policy: past/today applies run-off; a future date
+     * creates the single pending null-policy change (no rewrite until cron).
+     */
+    async applyUnassignFromPoliciesTab(args: {
+        customerId: number;
+        accountId: number;
+        userId: string;
+        unassignDate: unknown;
+    }): Promise<{ customerPolicyId: number }> {
+        try {
+            return await applyDatedCustomerPolicyUnassign({
+                customerId: args.customerId,
+                accountId: args.accountId,
+                userId: args.userId,
+                unassignDate:
+                    args.unassignDate == null
+                        ? null
+                        : parseOptionalDate(args.unassignDate, "unassign_date"),
+                dbClient: this.db,
+            });
+        } catch (error) {
+            this.rethrowUnassignError(error);
+        }
+    }
+
+    /**
+     * Soft-cancel the single pending future policy change (status → inactive).
+     * Unlocks Policies-tab saves; row remains in history. No rewrite.
+     */
+    async cancelPendingPolicyChange(args: {
+        customerId: number;
+        accountId: number;
+        userId: string;
+    }): Promise<{ id: number }> {
+        if (await isLinkedCreditChild(args.customerId, this.db)) {
+            throw new ForbiddenException({
+                error: "Customer policy can only be edited on the credit pool root",
+                code: "LINKED_CHILD_POLICY_LOCKED",
+            });
+        }
+        const pending = await this.db.customerPolicy.findFirst({
+            where: { customer_id: args.customerId, status: "pending" },
+            select: { id: true, policy_change_start_date: true },
         });
+        if (!pending) {
+            throw new NotFoundException({
+                error: "No pending policy change to cancel",
+                code: "PENDING_POLICY_CHANGE_NOT_FOUND",
+            });
+        }
+        await this.db.customerPolicy.update({
+            where: { id: pending.id },
+            data: {
+                status: "inactive",
+                is_active: false,
+                // Voided (end = start): never effective, never a Removed row.
+                policy_change_end_date: pending.policy_change_start_date,
+                modified_by: args.userId,
+            },
+        });
+        await this.remirrorPoolAfterMutation({
+            customerId: args.customerId,
+            accountId: args.accountId,
+            userId: args.userId,
+        });
+        return { id: pending.id };
+    }
+
+    private rethrowUnassignError(error: unknown): never {
+        if (error instanceof DatedCustomerPolicyUnassignError) {
+            switch (error.code) {
+                case "LINKED_CHILD_POLICY_LOCKED":
+                    throw new ForbiddenException({
+                        error: error.message,
+                        code: error.code,
+                    });
+                case "PENDING_POLICY_CHANGE_EXISTS":
+                    throw new ConflictException({
+                        error: error.message,
+                        code: error.code,
+                    });
+                case "NO_ACTIVE_POLICY":
+                    throw new NotFoundException({
+                        error: error.message,
+                        code: error.code,
+                    });
+                default:
+                    throw new BadRequestException({
+                        error: error.message,
+                        code: error.code,
+                    });
+            }
+        }
+        if (
+            error instanceof AdminBackfillBlockingRewriteError ||
+            (error instanceof Error &&
+                error.name === "AdminBackfillBlockingRewriteError")
+        ) {
+            throw new ConflictException({
+                error: error instanceof Error ? error.message : String(error),
+                code: "CREDIT_ASOF_BACKFILL_IN_PROGRESS",
+            });
+        }
+        throw error;
+    }
+
+    private async remirrorPoolAfterMutation(args: {
+        customerId: number;
+        accountId: number;
+        userId: string;
+    }): Promise<void> {
+        await remirrorCreditPoolAfterPolicyMutation(
+            args.customerId,
+            args.accountId,
+            { dbClient: this.db, userId: args.userId }
+        );
+    }
+
+    private async assertNoPendingPolicyChange(
+        customerId: number
+    ): Promise<void> {
+        const pending = await this.db.customerPolicy.findFirst({
+            where: { customer_id: customerId, status: "pending" },
+            select: { id: true, policy_change_start_date: true },
+        });
+        if (pending) {
+            throw new ConflictException({
+                error: "A pending policy change exists. Cancel it before making further Policies changes.",
+                code: "PENDING_POLICY_CHANGE_EXISTS",
+            });
+        }
+    }
+
+    private resolvePolicyChangeStartDate(
+        value: Date | null,
+        insurancePolicyStartDate: Date
+    ): { changeDate: Date; isFuture: boolean } {
+        if (value == null) {
+            throw new BadRequestException({
+                error: "policy_change_start_date is required",
+                code: "POLICY_CHANGE_START_DATE_REQUIRED",
+            });
+        }
+        const changeDate = toUtcDateOnly(value);
+        const todayUtc = startOfTodayUtc();
+        const policyStart = toUtcDateOnly(insurancePolicyStartDate);
+
+        if (changeDate.getTime() < policyStart.getTime()) {
+            throw new BadRequestException({
+                error: "policy_change_start_date must be on or after the insurance policy start date",
+                code: "POLICY_CHANGE_START_DATE_BEFORE_POLICY_START",
+            });
+        }
+        return {
+            changeDate,
+            isFuture: changeDate.getTime() > todayUtc.getTime(),
+        };
+    }
+
+    private async rewriteFromChangeDate(
+        accountId: number,
+        customerId: number,
+        policyChangeStartDate: Date
+    ): Promise<void> {
+        // Option B: await CPT rewrite in-request; dashboard stays on overnight tip/drain.
+        try {
+            await rewriteCustomerAsOfRange(
+                {
+                    accountId,
+                    customerIds: [customerId],
+                    fromDate: policyChangeStartDate,
+                    toDate: new Date(),
+                },
+                { dbClient: this.db }
+            );
+        } catch (error) {
+            if (
+                error instanceof AdminBackfillBlockingRewriteError ||
+                (error instanceof Error &&
+                    error.name === "AdminBackfillBlockingRewriteError")
+            ) {
+                throw new ConflictException({
+                    error: error.message,
+                    code: "CREDIT_ASOF_BACKFILL_IN_PROGRESS",
+                });
+            }
+            throw new ServiceUnavailableException({
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "Failed to update customer policy trend history",
+                code: "CUSTOMER_POLICY_TREND_REWRITE_FAILED",
+            });
+        }
     }
 
     private async assertPolicyAssignable(
         policyId: number,
         accountId: number
-    ): Promise<void> {
+    ): Promise<{ id: number; start_date: Date }> {
         const policy = await this.db.insurancePolicy.findFirst({
             where: { id: policyId, account_id: accountId },
             select: {
@@ -500,6 +821,7 @@ export class CustomerPolicyService {
                 error: "Insurance policy is not assignable",
             });
         }
+        return { id: policy.id, start_date: policy.start_date };
     }
 
     private async loadPolicyPricing(policyId: number, accountId: number) {

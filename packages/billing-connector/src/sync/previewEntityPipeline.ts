@@ -28,8 +28,11 @@ export const PREVIEW_SAMPLE_TOP = 50;
 const PREVIEW_PAYMENT_SAMPLE_TOP = 10;
 /** Keep Payment preview from hanging for the full 180s Priority timeout. */
 const PREVIEW_PAYMENT_TIMEOUT_SECONDS = 45;
-/** Prefer newest payments first so Priority can stop after $top without a full scan. */
+/** Prefer newest document dates first so Priority can stop after $top without a full scan.
+ * Keep FNCDATE here even when live watermark is RECONDATE — IDG `$orderby=RECONDATE desc`
+ * often times out on Priority; preview only needs a representative sample. */
 const PREVIEW_PAYMENT_ORDER_BY = "FNCDATE desc";
+const PREVIEW_PAYMENT_DEFAULT_DATE_FIELD = "FNCDATE";
 
 /** Same entity order as staged live sync (Customer → Payment → Invoice → Contact). */
 export const PREVIEW_ENTITY_ORDER: ImportType[] = [...STAGED_ENTITY_ORDER];
@@ -51,12 +54,21 @@ export interface PreviewEntityResult {
  * Date cutover for preview samples — same role as live backfill
  * `createdOnOrAfter` / preferredDateField. Uses `gt` to match stored Invoice
  * filters and the Priority Postman shape for this account.
+ *
+ * Customer / Contact: never — CUSTOMERS / CUSTPERSONNEL have no UDATE, and
+ * live sync scopes them via pull_filters only (not a date window).
  */
 export function previewCutoverDateOData(params: {
     importType: ImportType;
     backfillStartDate: Date | string | null | undefined;
     pullDateField?: string | null;
 }): string | null {
+    if (
+        params.importType === "Customer" ||
+        params.importType === "Contact"
+    ) {
+        return null;
+    }
     const raw = params.backfillStartDate;
     if (raw == null) {
         return null;
@@ -75,12 +87,9 @@ export function previewCutoverDateOData(params: {
             ? "FNCDATE"
             : params.importType === "Invoice"
               ? "IVDATE"
-              : params.importType === "Customer" ||
-                  params.importType === "Contact"
-                ? "UDATE"
-                : null;
+              : null;
     const field = preferred || defaultField;
-    if (!field) {
+    if (!field || field.toUpperCase() === "UDATE") {
         return null;
     }
     // Match account 10149 Invoice / Postman literals (+03:00 Israel offset).

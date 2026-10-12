@@ -2,16 +2,28 @@ import { randomUUID } from "crypto";
 import type { PrismaClient } from "@prisma/client";
 import { isConnectorDue } from "./billingConnectorSchedule";
 import {
-    runInProcessSync,
+    clearBillingConnectorAuthFailures,
+    recordBillingConnectorAuthFailure,
+} from "./billingConnectorAuthCircuitBreaker";
+import {
     type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
 } from "../sync/runInProcessSync";
 import {
+    runSyncWithPendingCustomerHistoryPolicy,
+    scheduleContinuePendingCustomerHistoryDrainForAccount,
+} from "../sync/runSyncWithPendingCustomerHistoryPolicy";
+import {
     createRunningExecution,
     createSyncProgressHeartbeat,
+    isSyncAlreadyRunningError,
     sweepStaleRunning,
 } from "../syncHistory";
 import { finalizeSyncHistoryAfterRun } from "../syncHistory/finalizeSyncHistoryAfterRun";
+import {
+    resolveSyncErrorType,
+    resolveSyncExecutionStatus,
+} from "../observability/statusAndErrorType";
 
 const MAX_CONNECTORS_PER_RUN = Number.parseInt(
     process.env.BILLING_CONNECTOR_MAX_CONNECTORS_PER_RUN ?? "5",
@@ -64,14 +76,14 @@ export async function syncDueBillingConnectors(
     let failed = 0;
     const skippedFrozenAccountIds = new Set<number>();
 
-    const runSync = options?.runSync ?? runInProcessSync;
+    const runSync =
+        options?.runSync ?? runSyncWithPendingCustomerHistoryPolicy;
     const createExecutionId = options?.createExecutionId ?? randomUUID;
     const now = options?.now ?? new Date();
 
     const connectors = await prisma.billingConnector.findMany({
         where: {
             sync_enabled: true,
-            status: "Active",
         },
         orderBy: [{ sync_mode: "asc" }, { modified_at: "asc" }],
         take: MAX_CONNECTORS_PER_RUN,
@@ -120,8 +132,24 @@ export async function syncDueBillingConnectors(
                 syncMode: connector.sync_mode,
                 startedAt,
             });
-        } catch {
-            // History write must not block the sync (same as Nest accept path).
+        } catch (error) {
+            if (isSyncAlreadyRunningError(error)) {
+                skipped += 1;
+                const payload = {
+                    event: "billing_connector_sync_skipped_already_running",
+                    accountId: connector.account_id,
+                    connectorId: connector.id,
+                    provider: connector.provider,
+                    trigger: "scheduled",
+                    existingExecutionId: error.existingExecutionId,
+                    attemptedExecutionId: executionId,
+                };
+                options?.onLog?.(
+                    `[account ${connector.account_id}] Skipping scheduled sync — another sync is already RUNNING ${JSON.stringify(payload)}`
+                );
+                continue;
+            }
+            // Other history write failures must not block the sync (same as Nest accept path).
         }
 
         try {
@@ -131,6 +159,10 @@ export async function syncDueBillingConnectors(
                 accountId: connector.account_id,
                 trigger: "scheduled",
                 executionId,
+                mode:
+                    connector.sync_mode === "BACKFILL"
+                        ? "backfill"
+                        : "incremental",
                 onLog: options?.onLog,
                 observability: options?.observability,
                 onProgress: (patch) => {
@@ -150,6 +182,41 @@ export async function syncDueBillingConnectors(
                 );
             } catch {
                 // Best-effort history complete.
+            }
+
+            try {
+                const status = resolveSyncExecutionStatus(result);
+                const errorType = resolveSyncErrorType(result, status);
+                if (status === "SUCCESS") {
+                    await clearBillingConnectorAuthFailures({
+                        prisma,
+                        connectorId: connector.id,
+                    });
+                } else if (errorType === "auth") {
+                    const breaker = await recordBillingConnectorAuthFailure({
+                        prisma,
+                        connectorId: connector.id,
+                    });
+                    if (breaker.syncDisabled) {
+                        options?.onLog?.(
+                            `[account ${connector.account_id}] Auth circuit breaker tripped (${breaker.consecutiveAuthFailures} failures); sync_enabled set to false`
+                        );
+                    }
+                }
+                // Portfolio Generate start runs inside the in-process sync (`_ctp` progress step).
+            } catch {
+                // Circuit breaker must not fail the cron batch.
+            }
+
+            // D12: after incremental + enqueue, continue draining without
+            // holding this cron tick on multi-hour customer history.
+            if (connector.sync_mode === "INCREMENTAL") {
+                void scheduleContinuePendingCustomerHistoryDrainForAccount({
+                    prisma,
+                    accountId: connector.account_id,
+                    onLog: options?.onLog,
+                    executionId,
+                });
             }
         } catch (error) {
             failed += 1;

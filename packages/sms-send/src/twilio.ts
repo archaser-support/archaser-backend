@@ -4,6 +4,7 @@ import {
     SmsVendorCreds,
     TwilioClientFactory,
 } from "./types";
+import { resolveTwilioStatusCallback } from "./twilio-webhook";
 
 /**
  * Parity with historical SMSVendorService.sendViaTwilio
@@ -43,8 +44,9 @@ export async function sendViaTwilio(
             from: vendor.phone_number || from,
             to,
         };
-        if (vendor.webhook_url) {
-            messageParams.statusCallback = vendor.webhook_url;
+        const statusCallback = resolveTwilioStatusCallback(vendor.webhook_url);
+        if (statusCallback) {
+            messageParams.statusCallback = statusCallback;
         }
         const message = await client.messages.create(messageParams);
         return {
@@ -61,4 +63,24 @@ export async function sendViaTwilio(
             vendorId: vendor.id,
         };
     }
+}
+
+export async function fetchTwilioMessageStatus(
+    vendor: Pick<SmsVendorCreds, "account_sid" | "auth_token">,
+    messageSid: string
+): Promise<{
+    status: string;
+    errorCode: number | null;
+    errorMessage: string | null;
+} | null> {
+    if (!vendor.account_sid || !vendor.auth_token || !messageSid) {
+        return null;
+    }
+    const client = twilio(vendor.account_sid, vendor.auth_token);
+    const msg = await client.messages(messageSid).fetch();
+    return {
+        status: String(msg.status || ""),
+        errorCode: msg.errorCode ?? null,
+        errorMessage: msg.errorMessage ?? null,
+    };
 }

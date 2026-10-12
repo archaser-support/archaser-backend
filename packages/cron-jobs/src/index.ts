@@ -18,7 +18,15 @@ export {
 export { computeCustomerOverdueMetrics } from "./computeCustomerOverdueMetrics";
 export { closeZeroOutstandingDebtInvoices } from "./closeZeroOutstandingDebtInvoices";
 export { fixClosedCollectionData } from "./fixClosedCollectionData";
+export {
+    findStaleRollupMismatches,
+    reconcileStaleCustomerRollups,
+    RECONCILE_STALE_ROLLUPS_BATCH_SIZE,
+    type StaleRollupMismatch,
+    type FindStaleRollupMismatchesOptions,
+} from "./reconcileStaleCustomerRollups";
 export { checkInforuSmsStatus } from "./inforuSmsStatusCheck";
+export { checkTwilioSmsStatus } from "./twilioSmsStatusCheck";
 export {
     applyActivityContactDelivery,
     type ActivityContactDeliveryOutcome,
@@ -81,6 +89,7 @@ export {
     isAccountFrozen,
     type FrozenAccountResolverDeps,
 } from "./accountFreeze/frozenAccountResolver";
+export { FrozenAccountMongoUnavailableError } from "./accountFreeze/frozenAccountMongoUnavailableError";
 export {
     STALE_IMPORT_JOB_ERROR_MESSAGE,
     STALE_IMPORT_JOB_IDLE_HOURS,
@@ -99,6 +108,13 @@ export {
     registerCronFrozenAccountMetrics,
     type CronFrozenAccountMetrics,
 } from "./accountFreeze/frozenAccountMetrics";
+export { createCategoryChangeActivity } from "./activities/createCategoryChangeActivity";
+export { createPromiseToPayScheduledActivities } from "./activities/createPromiseToPayScheduledActivities";
+export {
+    getRawTemplateContent,
+    processTemplateContent,
+    type ProcessTemplateContentArgs,
+} from "./templates/processTemplateContent";
 export {
     beginCronFrozenAccountGuard,
     partitionByFrozenAccount,
@@ -109,3 +125,9 @@ export {
     getDefaultCronFrozenAccountMetrics,
     setDefaultCronFrozenAccountMetrics,
 } from "./accountFreeze/defaultCronFrozenAccountMetrics";
+export {
+    DEMO_DISABLED_OUTREACH_REASON,
+    accountAllowsCustomerOutreach,
+    accountAllowsImportCatalog,
+    isStagingDeploy,
+} from "./demoAccountPolicy";

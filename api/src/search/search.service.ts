@@ -1,19 +1,10 @@
 import { Injectable } from "@nestjs/common";
+import { appendIntIdStringContainsOr } from "@archaser/database";
 import { AccessScopeService } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
+import { formatMoneyIso } from "../common/format-money.util";
 import { serializeBigInt } from "../common/serialize-bigint";
 import { DatabaseService } from "../database/database.service";
-
-function formatAmountWithoutSymbol(
-    amount: number,
-    locale: string = "en-US"
-): string {
-    const hasDecimalPlaces = Math.abs(amount % 1) > 0.0001;
-    return new Intl.NumberFormat(locale, {
-        minimumFractionDigits: hasDecimalPlaces ? 2 : 0,
-        maximumFractionDigits: hasDecimalPlaces ? 2 : 0,
-    }).format(amount);
-}
 
 function calculateRelevanceScore(
     primaryText: string,
@@ -89,27 +80,35 @@ export class SearchService {
             accountId
         );
 
-        const [customers, invoices, contacts, disputes] = await Promise.all([
-            this.searchCustomers(
-                trimmedSearch,
-                accountId,
-                ownerFilter,
-                buFilter
-            ),
-            this.searchInvoices(
-                trimmedSearch,
-                accountId,
-                ownerFilter,
-                buFilter
-            ),
-            this.searchContacts(trimmedSearch, accountId),
-            this.searchDisputes(
-                trimmedSearch,
-                accountId,
-                ownerFilter,
-                buFilter
-            ),
-        ]);
+        const [account, customers, invoices, contacts, disputes] =
+            await Promise.all([
+                this.db.account.findUnique({
+                    where: { id: accountId },
+                    select: { currency: true },
+                }),
+                this.searchCustomers(
+                    trimmedSearch,
+                    accountId,
+                    ownerFilter,
+                    buFilter
+                ),
+                this.searchInvoices(
+                    trimmedSearch,
+                    accountId,
+                    ownerFilter,
+                    buFilter
+                ),
+                this.searchContacts(trimmedSearch, accountId),
+                this.searchDisputes(
+                    trimmedSearch,
+                    accountId,
+                    ownerFilter,
+                    buFilter
+                ),
+            ]);
+
+        const accountCurrency =
+            (account?.currency && String(account.currency).trim()) || "USD";
 
         const countsByType = {
             customer: customers.length,
@@ -125,9 +124,12 @@ export class SearchService {
                     trimmedSearch,
                     c.customer_number
                 );
+                const overdueCurrency =
+                    c.customer_due_currency1 || accountCurrency;
                 const formattedOverdueAmount = c.total_invoices_overdue
-                    ? formatAmountWithoutSymbol(
+                    ? formatMoneyIso(
                           Number(c.total_invoices_overdue),
+                          overdueCurrency,
                           "en-US"
                       )
                     : null;
@@ -156,8 +158,13 @@ export class SearchService {
                     trimmedSearch,
                     inv.customer_name || ""
                 );
+                const invoiceCurrency = inv.currency || accountCurrency;
                 const formattedAmount = inv.amount
-                    ? formatAmountWithoutSymbol(Number(inv.amount), "en-US")
+                    ? formatMoneyIso(
+                          Number(inv.amount),
+                          invoiceCurrency,
+                          "en-US"
+                      )
                     : null;
                 const invoiceDate = inv.invoice_date
                     ? new Date(inv.invoice_date).toLocaleDateString("en-US", {
@@ -314,6 +321,7 @@ export class SearchService {
                 type: true,
                 collection_status: true,
                 total_invoices_overdue: true,
+                customer_due_currency1: true,
                 parent_customer_id: true,
                 Person: {
                     select: {
@@ -367,6 +375,7 @@ export class SearchService {
                 type: customer.type,
                 collection_status: customer.collection_status,
                 total_invoices_overdue: customer.total_invoices_overdue,
+                customer_due_currency1: customer.customer_due_currency1,
                 parent_customer_id: customer.parent_customer_id,
                 parent_customer_name: parentCustomerName,
                 current_category:
@@ -393,11 +402,14 @@ export class SearchService {
             conditions.push({ Customer: buFilter });
         }
 
-        const isNumeric = !isNaN(parseInt(searchTerm, 10));
         const searchConditions: Record<string, unknown>[] = [];
-        if (isNumeric) {
-            searchConditions.push({ id: parseInt(searchTerm, 10) });
-        }
+        await appendIntIdStringContainsOr(
+            searchConditions,
+            this.db,
+            "Invoice",
+            searchTerm,
+            { accountId }
+        );
         searchConditions.push({
             invoice_number: {
                 contains: searchTerm,
@@ -448,6 +460,7 @@ export class SearchService {
                 invoice_number: true,
                 customer_id: true,
                 amount: true,
+                customer_currency: true,
                 invoice_date: true,
                 status: true,
                 Customer: {
@@ -473,6 +486,7 @@ export class SearchService {
             invoice_number: invoice.invoice_number,
             customer_id: invoice.customer_id,
             amount: invoice.amount,
+            currency: invoice.customer_currency,
             invoice_date: invoice.invoice_date,
             status_name: invoice.status || "",
             customer_name:
@@ -573,9 +587,14 @@ export class SearchService {
         buFilter: Record<string, unknown>
     ) {
         const disputeSearchConditions: Record<string, unknown>[] = [];
-        if (!isNaN(parseInt(searchTerm, 10))) {
-            disputeSearchConditions.push({ id: parseInt(searchTerm, 10) });
-        }
+        // CustomerDispute has no account_id; id text match is refined by the
+        // Customer account filters on the findMany below.
+        await appendIntIdStringContainsOr(
+            disputeSearchConditions,
+            this.db,
+            "CustomerDispute",
+            searchTerm
+        );
         disputeSearchConditions.push({
             Customer: {
                 account_id: accountId,

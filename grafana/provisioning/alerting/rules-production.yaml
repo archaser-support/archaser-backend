@@ -135,8 +135,9 @@ groups:
         execErrState: Error
         for: 5m
         annotations:
-          summary: "Stuck activities detected"
-          description: "Activities with SCHEDULED status have passed their schedule_time by more than 2 hours. Check Activity Workflow Manager cron job."
+          alert_details_type: "stuck_activities"
+          summary: "Stuck activities detected ({{ $values.A.Value }})"
+          description: "SCHEDULED system-generated activities are more than 2 hours past schedule_time. Email lists account/customer/activity IDs. Check Activity Workflow Manager Phase 1 (send due activities)."
         labels:
           severity: high
           type: activities
@@ -179,8 +180,9 @@ groups:
         execErrState: Error
         for: 30m
         annotations:
+          alert_details_type: "no_system_activities_24h"
           summary: 'No system-generated activities created in over {{ $values.B.Value }} hours'
-          description: "The system has not created any automated activities in more than 24 hours. Check Activity Workflow Manager and Process Automated Collection Periods cron jobs."
+          description: "No automated activities created in >24h. Email includes last system activity and last runs of Activity Workflow Manager / Process Automated Collection Periods."
         labels:
           severity: high
           type: activities
@@ -222,8 +224,9 @@ groups:
         execErrState: Error
         for: 10m
         annotations:
-          summary: "Cron jobs are overdue"
-          description: "Cron jobs have not run when they were scheduled. Check cron manager for issues."
+          alert_details_type: "cron_jobs_overdue"
+          summary: "Cron jobs are overdue ({{ $values.A.Value }})"
+          description: "Active cron jobs are 5+ minutes past next_run_at. Email lists overdue job names, last/next run, and failure counts."
         labels:
           severity: medium
           type: cron
@@ -265,8 +268,9 @@ groups:
         execErrState: Error
         for: 5m
         annotations:
-          summary: "Cron jobs have not run in 24 hours"
-          description: "Some cron jobs have not executed in the last 24 hours. This may indicate cron manager issues."
+          alert_details_type: "cron_jobs_not_run_24h"
+          summary: "Cron jobs have not run in 24 hours ({{ $values.A.Value }})"
+          description: "Active cron jobs have last_run_at older than 24h (or never). Email lists job names, last/next run, and failure counts."
         labels:
           severity: high
           type: cron
@@ -314,6 +318,138 @@ groups:
           severity: high
           type: cron
 
+      - uid: bullmq-cron-queue-waiting-prod
+        title: Worker Cron Queue Waiting High
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_bullmq_queue_waiting{instance="Production",queue="cron"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 5
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          alert_details_type: "bullmq_cron_queue_backlog"
+          summary: "Main cron BullMQ waiting jobs high ({{ $values.A.Value }})"
+          description: "Worker cron queue waiting count stayed above 5 for 10m. Email lists waiting/active/failed plus sample waiting job ids."
+        labels:
+          severity: medium
+          type: cron
+
+      - uid: bullmq-backfill-queue-waiting-prod
+        title: Worker Backfill Queue Waiting High
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_bullmq_queue_waiting{instance="Production",queue="credit_asof_backfill"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 20
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          alert_details_type: "bullmq_backfill_queue_backlog"
+          summary: "Credit as-of backfill BullMQ waiting jobs high ({{ $values.A.Value }})"
+          description: "Backfill queue waiting count stayed above 20 for 10m. Email lists waiting/active/failed plus sample waiting job ids."
+        labels:
+          severity: medium
+          type: cron
+
+      - uid: bullmq-vat-queue-waiting-prod
+        title: Worker VAT Queue Waiting High
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_bullmq_queue_waiting{instance="Production",queue="account_vat_basis_refresh"}
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 10
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          alert_details_type: "bullmq_vat_queue_backlog"
+          summary: "VAT basis refresh BullMQ waiting jobs high ({{ $values.A.Value }})"
+          description: "VAT refresh queue waiting count stayed above 10 for 10m. Email lists waiting/active/failed plus sample waiting job ids."
+        labels:
+          severity: medium
+          type: cron
+
       # ============================================================
       # High Priority Alerts - Collection Periods
       # ============================================================
@@ -354,8 +490,9 @@ groups:
         execErrState: Error
         for: 30m
         annotations:
-          summary: "Automated periods have no scheduled activities"
-          description: "Automated collection periods exist without any scheduled activities for over 24 hours."
+          alert_details_type: "periods_without_activities"
+          summary: "Automated periods have no scheduled activities ({{ $values.A.Value }})"
+          description: "Open Automated periods with next_activity_date null/stale (>24h) and no SCHEDULED automated activity. Email lists accounts/customers plus likely_cause."
         labels:
           severity: high
           type: collection
@@ -397,8 +534,9 @@ groups:
         execErrState: Error
         for: 15m
         annotations:
-          summary: "Collection periods have overdue activity creation"
-          description: "Collection periods with create_next_activity=true have passed their next_activity_date."
+          alert_details_type: "overdue_activity_creation"
+          summary: "Collection periods have overdue activity creation ({{ $values.A.Value }} periods)"
+          description: "create_next_activity=true and next_activity_date is in the past. Email includes affected accounts/customers plus likely_cause (import freeze, no active user, credit-only, stuck no contacts, or workflow backlog). Check Activity Workflow Manager cron; drilldown panel Overdue Activity Creation."
         labels:
           severity: high
           type: collection
@@ -440,8 +578,9 @@ groups:
         execErrState: Error
         for: 1h
         annotations:
-          summary: "Collection periods stuck due to no contacts"
-          description: "Automated collection periods cannot proceed because customers have no valid contacts."
+          alert_details_type: "automation_stuck_no_contacts"
+          summary: "Collection periods stuck due to no contacts ({{ $values.A.Value }})"
+          description: "Customers with automation_stuck_no_contacts=true. Email lists account/customer/open period. Add valid contacts then clear the stuck flag."
         labels:
           severity: medium
           type: collection
@@ -486,8 +625,9 @@ groups:
         execErrState: Error
         for: 30m
         annotations:
-          summary: "High number of emails bounced in the last 24 hours"
-          description: "High number of email bounces detected. Check email service configuration and contact data quality."
+          alert_details_type: "high_email_bounces"
+          summary: "High number of emails bounced in the last 24 hours ({{ $values.A.Value }})"
+          description: "Email activities with status BOUNCED in the last 24h. Email lists account/customer/activity. Check addresses and SMTP/SES reputation."
         labels:
           severity: medium
           type: email
@@ -529,8 +669,9 @@ groups:
         execErrState: Error
         for: 30m
         annotations:
-          summary: "High number of SMS failures in the last 24 hours"
-          description: "High number of SMS failures detected. Check SMS vendor configuration."
+          alert_details_type: "high_sms_failures"
+          summary: "High number of SMS failures in the last 24 hours ({{ $values.A.Value }})"
+          description: "SMS activities with status FAILED in the last 24h. Email lists account/customer/activity. Check SMS vendor config and mobile numbers."
         labels:
           severity: medium
           type: sms
@@ -582,7 +723,7 @@ groups:
           type: errors
 
   # ============================================================
-  # Billing Connector — Production
+  # Billing Connector — Production (parity with staging alerts 1–11)
   # ============================================================
   - orgId: 1
     name: Billing Connector - Production
@@ -599,7 +740,7 @@ groups:
               to: 0
             datasourceUid: Prometheus
             model:
-              expr: increase(archaser_billing_connector_errors_total{instance="Production", error_type="auth"}[1h])
+              expr: sum(increase(archaser_billing_connector_errors_total{instance="Production", error_type="auth"}[1h])) or vector(0)
               instant: true
               refId: A
           - refId: C
@@ -627,7 +768,7 @@ groups:
         for: 5m
         annotations:
           summary: Repeated ERP authentication failures
-          description: Priority/auth errors exceeded threshold. Check credentials on affected accounts.
+          description: "Priority/auth errors exceeded threshold. Check credentials on affected accounts. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production — filter Loki by account_id."
         labels:
           severity: critical
           type: billing_connector
@@ -642,7 +783,7 @@ groups:
               to: 0
             datasourceUid: Prometheus
             model:
-              expr: archaser_billing_connector_connectors_in_error{instance="Production"}
+              expr: sum(archaser_billing_connector_connectors_in_error{instance="Production", nest_service="archaser-api"}) or vector(0)
               instant: true
               refId: A
           - refId: C
@@ -670,9 +811,396 @@ groups:
         for: 10m
         annotations:
           summary: One or more billing connectors in Error status
-          description: Connector circuit breaker or connection failure. Admin Account Details → Billing integration.
+          description: "Connector circuit breaker or connection failure. Admin Account Details → Billing integration. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
         labels:
           severity: critical
+          type: billing_connector
+
+      - uid: bc-stale-incremental-prod
+        title: Billing Connector No Incremental Success 24h
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_billing_connector_stale_incremental_count{instance="Production", nest_service="archaser-api"} or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: Incremental connector(s) without success in 24h
+          description: "Check schedule, Loki finish lines, and Mongo sync history. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: high
+          type: billing_connector
+
+      - uid: bc-incr-failed-prod
+        title: Billing Connector Incremental FAILED or TIMEOUT
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: 'sum(increase(archaser_billing_connector_sync_total{instance="Production", sync_mode="INCREMENTAL", status=~"FAILED|TIMEOUT"}[1h])) or vector(0)'
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: Incremental sync FAILED or TIMEOUT
+          description: "Inspect Loki finish/error lines and error_type. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: high
+          type: billing_connector
+
+      - uid: bc-backfill-stale-prod
+        title: Billing Connector Backfill Checkpoint Stale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: (time() - archaser_billing_connector_last_checkpoint_timestamp{instance="Production", nest_service="archaser-api"}) or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 86400
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 30m
+        annotations:
+          summary: Active backfill checkpoint older than 24h
+          description: "Resume or reset backfill; check worker/cron Sync Billing Connectors. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-stale-running-prod
+        title: Billing Connector Stale RUNNING
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_billing_connector_stale_running_count{instance="Production", nest_service="archaser-api"} or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: Stale RUNNING sync execution(s) in Mongo
+          description: "collection connector_sync_executions. Sweeper should TIMEOUT; check MONGODB_URI on API. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-partial-storm-prod
+        title: Billing Connector Incremental PARTIAL Storm
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 21600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: sum(increase(archaser_billing_connector_sync_total{instance="Production", sync_mode="INCREMENTAL", status="PARTIAL"}[6h])) or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 2
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: Repeated incremental PARTIAL syncs
+          description: "Partial imports often mean mapping/validation issues. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-rate-limit-5xx-prod
+        title: Billing Connector rate_limit or 5xx Spike
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: 'sum(increase(archaser_billing_connector_errors_total{instance="Production", error_type=~"rate_limit|5xx"}[1h])) or vector(0)'
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 10
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: ERP rate_limit or 5xx error spike
+          description: "Backoff / Priority health. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-import-validation-prod
+        title: Billing Connector import_validation Spike
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: sum(increase(archaser_billing_connector_errors_total{instance="Production", error_type="import_validation"}[1h])) or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 50
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: Import validation error spike
+          description: "Review field mappings / required fields. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-import-jobs-stuck-prod
+        title: Billing Connector Import Jobs Stuck
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_import_jobs_stuck{instance="Production", nest_service="archaser-api", source="billing_connector"} or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: Stuck billing_connector import jobs
+          description: "ImportJob pending/processing >1h with metadata.source=billing_connector. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
+          type: billing_connector
+
+      - uid: bc-sync-unmapped-prod
+        title: Billing Connector Sync Enabled Unmapped
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: Prometheus
+            model:
+              expr: archaser_billing_connector_sync_enabled_unmapped_count{instance="Production", nest_service="archaser-api"} or vector(0)
+              instant: true
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+              refId: C
+              type: classic_conditions
+        noDataState: NoData
+        execErrState: Error
+        for: 30m
+        annotations:
+          summary: Sync-enabled connector(s) with incomplete mappings
+          description: "Complete required field mappings before relying on sync. Dashboard: https://grafana.portal.archaser.com/d/archaser-billing-connector-prod/billing-connector-production"
+        labels:
+          severity: warning
           type: billing_connector
 
   # ============================================================
@@ -722,7 +1250,7 @@ groups:
         for: 1m
         annotations:
           summary: PostgreSQL FATAL or PANIC in server logs
-          description: "One or more FATAL/PANIC lines in RDS Postgres logs (last 5m). Open dashboard: /d/archaser-postgres-logs-prod/postgres-logs-production"
+          description: "One or more FATAL/PANIC lines in RDS Postgres logs (last 5m). Open dashboard: https://grafana.portal.archaser.com/d/archaser-postgres-logs-prod/postgres-logs-production"
         labels:
           severity: critical
           type: database
@@ -767,7 +1295,7 @@ groups:
         for: 5m
         annotations:
           summary: Elevated PostgreSQL ERROR volume
-          description: "More than 20 ERROR-severity lines in RDS Postgres logs over 10m. Investigate /d/archaser-postgres-logs-prod/postgres-logs-production"
+          description: "More than 20 ERROR-severity lines in RDS Postgres logs over 10m. Investigate https://grafana.portal.archaser.com/d/archaser-postgres-logs-prod/postgres-logs-production"
         labels:
           severity: high
           type: database

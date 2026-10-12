@@ -6,10 +6,13 @@ import {
 } from "@archaser/billing-connector";
 import {
     bindCreditInsurancePrisma,
+    activateDueInsurancePolicyRevisions,
+    activateDuePendingCustomerPolicies,
     drainAsOfRewriteQueue,
     syncAllCustomerPolicyGapAmounts,
     takeCreditDashboardDailySnapshots,
     takeCustomerPolicyTrendSnapshots,
+    takeInsurancePolicyTrendRollups,
     takeInsurancePolicyTrendSnapshots,
 } from "@archaser/credit-insurance-domain";
 import { drainArPostIngestRetryQueue, countPendingArPostIngestCustomers } from "./credit/arPostIngestRetryQueue";
@@ -18,6 +21,7 @@ import { computeCustomerOverdueMetrics } from "./computeCustomerOverdueMetrics";
 import { closeZeroOutstandingDebtInvoices } from "./closeZeroOutstandingDebtInvoices";
 import { fixClosedCollectionData } from "./fixClosedCollectionData";
 import { checkInforuSmsStatus } from "./inforuSmsStatusCheck";
+import { checkTwilioSmsStatus } from "./twilioSmsStatusCheck";
 import { moveCollectionToNextCategory } from "./moveCollectionToNextCategory";
 import { handleOverdueInvoices } from "./handleOverdueInvoices";
 import { executeScheduledReports } from "./executeScheduledReports";
@@ -25,6 +29,7 @@ import { processNotificationRules } from "./processNotificationRules";
 import { processDueNotifications } from "./processDueNotifications";
 import { processAutomatedCollectionPeriods } from "./processAutomatedCollectionPeriods";
 import { activityWorkflowManager } from "./activityWorkflowManager";
+import { reconcileStaleCustomerRollups } from "./reconcileStaleCustomerRollups";
 import { beginCronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 
 export type CronJobResult = {
@@ -150,6 +155,55 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
     timed("Customer Policy Trend Daily Snapshot", async () => {
         bindCreditInsurancePrisma(prisma);
 
+        // Insurance Policy revisions first: their customer push skips customers
+        // that still have a pending Customer Policy, so a customer revision
+        // activating today keeps its scheduled values instead of being
+        // overlaid by the policy push.
+        let policyRevisionActivation:
+            | Awaited<ReturnType<typeof activateDueInsurancePolicyRevisions>>
+            | undefined;
+        let policyRevisionActivationError: Error | undefined;
+        try {
+            policyRevisionActivation =
+                await activateDueInsurancePolicyRevisions();
+            if (
+                policyRevisionActivation.failures > 0 ||
+                policyRevisionActivation.rewriteEnqueueFailures > 0
+            ) {
+                policyRevisionActivationError = new Error(
+                    `Pending insurance policy revision activation: ${policyRevisionActivation.activated} activated, ${policyRevisionActivation.failures} failures, ${policyRevisionActivation.rewriteEnqueueFailures} as-of rewrite enqueue failures`
+                );
+            }
+        } catch (error: unknown) {
+            policyRevisionActivationError =
+                error instanceof Error
+                    ? error
+                    : new Error(
+                          "Pending insurance policy revision activation failed"
+                      );
+        }
+
+        // Activate due pending customer policies before today's tip + drain so
+        // the tip reflects newly activated limits and rewrite covers from the
+        // change date.
+        let pendingActivation:
+            | Awaited<ReturnType<typeof activateDuePendingCustomerPolicies>>
+            | undefined;
+        let pendingActivationError: Error | undefined;
+        try {
+            pendingActivation = await activateDuePendingCustomerPolicies();
+            if (pendingActivation.failures > 0) {
+                pendingActivationError = new Error(
+                    `Pending policy activation: ${pendingActivation.activated} activated, ${pendingActivation.failures} failures`
+                );
+            }
+        } catch (error: unknown) {
+            pendingActivationError =
+                error instanceof Error
+                    ? error
+                    : new Error("Pending customer policy activation failed");
+        }
+
         let todayResult:
             | Awaited<ReturnType<typeof takeCustomerPolicyTrendSnapshots>>
             | undefined;
@@ -162,6 +216,23 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
                 error instanceof Error
                     ? error
                     : new Error("Customer policy trend snapshot cron failed");
+        }
+
+        let policyRollup:
+            | Awaited<ReturnType<typeof takeInsurancePolicyTrendRollups>>
+            | undefined;
+        let policyRollupError: Error | undefined;
+        if (todayResult) {
+            try {
+                policyRollup = await takeInsurancePolicyTrendRollups({
+                    gapFilledAccounts: todayResult.gapFilledAccounts,
+                });
+            } catch (error: unknown) {
+                policyRollupError =
+                    error instanceof Error
+                        ? error
+                        : new Error("Insurance policy trend roll-up failed");
+            }
         }
 
         let drainError: Error | undefined;
@@ -196,11 +267,13 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
                         accountId,
                         countPendingForAccount:
                             countPendingArPostIngestCustomers,
+                        prisma,
                     });
                 },
             });
             await finalizeAwaitingPostIngestDrainExecutions({
                 countPendingForAccount: countPendingArPostIngestCustomers,
+                prisma,
             });
             if (retryResult.failures > 0) {
                 retryError = new Error(
@@ -214,19 +287,33 @@ const customerPolicyTrendDailySnapshot: Handler = (prisma) =>
                     : new Error("AR post-ingest retry drain failed");
         }
 
-        if (todayError) {
-            throw todayError;
+        const stepErrors = [
+            todayError,
+            policyRollupError,
+            policyRevisionActivationError,
+            pendingActivationError,
+            drainError,
+            retryError,
+        ].filter((error): error is Error => error != null);
+        if (stepErrors.length === 1) {
+            throw stepErrors[0];
         }
-        if (drainError) {
-            throw drainError;
-        }
-        if (retryError) {
-            throw retryError;
+        if (stepErrors.length > 1) {
+            throw new Error(
+                `Customer policy trend cron: ${stepErrors.length} steps failed — ${stepErrors
+                    .map((error) => error.message)
+                    .join("; ")}`
+            );
         }
 
         return {
-            message: `Customer policy trend snapshots: ${todayResult!.rowsUpserted} rows across ${todayResult!.accountsProcessed} accounts; AR post-ingest retries: ${retryResult?.itemsProcessed ?? 0}`,
-            summary: todayResult,
+            message: `Customer policy trend snapshots: ${todayResult!.rowsUpserted} rows across ${todayResult!.accountsProcessed} accounts; policy revisions activated: ${policyRevisionActivation?.activated ?? 0}; pending activated: ${pendingActivation?.activated ?? 0}; AR post-ingest retries: ${retryResult?.itemsProcessed ?? 0}`,
+            summary: {
+                ...todayResult,
+                policyRollup,
+                policyRevisionActivation,
+                pendingActivation,
+            },
         };
     });
 
@@ -299,7 +386,14 @@ const inforuSmsStatus: Handler = async (prisma) => {
         prisma,
         "Inforu SMS Status Check"
     );
-    return checkInforuSmsStatus(prisma, freeze);
+    const inforu = await checkInforuSmsStatus(prisma, freeze);
+    const twilio = await checkTwilioSmsStatus(prisma, freeze);
+    return {
+        success: inforu.success && twilio.success,
+        message: `Inforu: ${inforu.message}. Twilio: ${twilio.message}`,
+        summary: { inforu: inforu.summary, twilio: twilio.summary },
+        durationMs: inforu.durationMs + twilio.durationMs,
+    };
 };
 
 const moveCollectionCategory: Handler = async (prisma) => {
@@ -382,6 +476,20 @@ const activityWorkflow: Handler = async (prisma) => {
     return activityWorkflowManager(prisma, { freeze });
 };
 
+const reconcileStaleRollups: Handler = async (prisma) => {
+    const freeze = await beginCronFrozenAccountGuard(
+        prisma,
+        "Reconcile Stale Customer Rollups"
+    );
+    const result = await reconcileStaleCustomerRollups(prisma, freeze);
+    return {
+        success: result.success,
+        message: result.message,
+        summary: result.summary,
+        durationMs: result.durationMs,
+    };
+};
+
 /**
  * Cron handler registry.
  *
@@ -411,6 +519,7 @@ const HANDLERS: Record<string, Handler> = {
     "Process Due Notifications": dueNotifications,
     "Process Automated Collection Periods": processAutomatedPeriods,
     "Activity Workflow Manager": activityWorkflow,
+    "Reconcile Stale Customer Rollups": reconcileStaleRollups,
 };
 
 /** CronJob names still owned by the Next cron path / pending Nest port. */

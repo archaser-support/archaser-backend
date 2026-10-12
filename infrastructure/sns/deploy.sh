@@ -9,6 +9,37 @@ STACK_NAME="archaser-alert-sns"
 REGION="${AWS_REGION:-eu-north-1}"
 ENVIRONMENT="${ENVIRONMENT:-production}"
 ALERT_EMAIL="${ALERT_EMAIL:-nilotpal@archaser.com}"
+# grafana.archaser.com serves the Next app — never use it for alert links.
+# Match exact host only; *grafana.archaser.com* also hits portal/staging.
+_grafana_host="$(printf '%s' "${GRAFANA_BASE_URL:-}" | sed -E 's|^https?://||; s|/.*||' | tr '[:upper:]' '[:lower:]')"
+case "${_grafana_host}" in
+    grafana.archaser.com|www.grafana.archaser.com|grafana.production.archaser.com)
+        echo "WARNING: GRAFANA_BASE_URL=${GRAFANA_BASE_URL} is invalid; using environment default."
+        GRAFANA_BASE_URL=""
+        ;;
+esac
+unset _grafana_host
+if [ -z "${GRAFANA_BASE_URL:-}" ]; then
+    if [ "$ENVIRONMENT" = "staging" ]; then
+        GRAFANA_BASE_URL="https://grafana.staging.archaser.com"
+    else
+        GRAFANA_BASE_URL="https://grafana.portal.archaser.com"
+    fi
+fi
+CLICKUP_CHAT_PARAMS=()
+if [ -n "${CLICKUP_CHAT_TOKEN:-}" ]; then
+    CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatToken,ParameterValue=${CLICKUP_CHAT_TOKEN}")
+fi
+if [ -n "${CLICKUP_CHAT_CHANNEL_ID:-}" ]; then
+    CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatChannelId,ParameterValue=${CLICKUP_CHAT_CHANNEL_ID}")
+fi
+if [ -n "${CLICKUP_CHAT_WORKSPACE_ID:-}" ]; then
+    CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatWorkspaceId,ParameterValue=${CLICKUP_CHAT_WORKSPACE_ID}")
+fi
+if [ -n "${CLICKUP_CHAT_ENABLED:-}" ]; then
+    CLICKUP_CHAT_PARAMS+=("ParameterKey=ClickUpChatEnabled,ParameterValue=${CLICKUP_CHAT_ENABLED}")
+fi
+CLICKUP_CHAT_PARAMS+=("ParameterKey=GrafanaBaseUrl,ParameterValue=${GRAFANA_BASE_URL}")
 
 echo "========================================="
 echo "ARChaser SNS Alert Infrastructure Setup"
@@ -19,6 +50,12 @@ echo "  Stack Name:  $STACK_NAME"
 echo "  Region:      $REGION"
 echo "  Environment: $ENVIRONMENT"
 echo "  Alert Email: $ALERT_EMAIL"
+echo "  Grafana URL: $GRAFANA_BASE_URL"
+if [ -n "${CLICKUP_CHAT_TOKEN:-}" ] && [ -n "${CLICKUP_CHAT_CHANNEL_ID:-}" ]; then
+    echo "  ClickUp Chat: configured (token not printed)"
+else
+    echo "  ClickUp Chat: skipped until token and channel id are set"
+fi
 echo ""
 
 # Check if AWS CLI is installed
@@ -26,6 +63,13 @@ if ! command -v aws &> /dev/null; then
     echo "❌ Error: AWS CLI is not installed. Please install it first."
     exit 1
 fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+chmod +x ./package-lambda.sh
+./package-lambda.sh
+ZIP_PATH="$SCRIPT_DIR/dist/alert-webhook.zip"
+FUNCTION_NAME="archaser-alert-webhook-${ENVIRONMENT}"
 
 # Check if the stack already exists
 STACK_EXISTS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION 2>/dev/null || echo "false")
@@ -38,6 +82,7 @@ if [ "$STACK_EXISTS" != "false" ]; then
         --parameters \
             ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
             ParameterKey=AlertEmailAddress,ParameterValue=$ALERT_EMAIL \
+            ${CLICKUP_CHAT_PARAMS[@]+"${CLICKUP_CHAT_PARAMS[@]}"} \
         --capabilities CAPABILITY_NAMED_IAM \
         --region $REGION || true
     
@@ -51,6 +96,7 @@ else
         --parameters \
             ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
             ParameterKey=AlertEmailAddress,ParameterValue=$ALERT_EMAIL \
+            ${CLICKUP_CHAT_PARAMS[@]+"${CLICKUP_CHAT_PARAMS[@]}"} \
         --capabilities CAPABILITY_NAMED_IAM \
         --region $REGION
     
@@ -58,6 +104,19 @@ else
     aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $REGION
 fi
 
+echo ""
+echo "📤 Uploading Lambda package to $FUNCTION_NAME ..."
+aws lambda update-function-code \
+    --function-name "$FUNCTION_NAME" \
+    --zip-file "fileb://$ZIP_PATH" \
+    --region "$REGION" \
+    >/dev/null
+
+aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME" --region "$REGION" 2>/dev/null \
+  || aws lambda wait function-updated --function-name "$FUNCTION_NAME" --region "$REGION" 2>/dev/null \
+  || true
+
+echo "✅ Lambda code updated"
 echo ""
 echo "✅ Stack deployment complete!"
 echo ""

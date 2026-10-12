@@ -14,14 +14,18 @@ import {
     requestConnectorSyncCancel,
 } from "./connectorSyncCancelRegistry";
 import {
-    runInProcessSync,
     type RunInProcessSyncOptions,
     type RunInProcessSyncResult,
 } from "./runInProcessSync";
 import {
+    runSyncWithPendingCustomerHistoryPolicy,
+    scheduleContinuePendingCustomerHistoryDrainForAccount,
+} from "./runSyncWithPendingCustomerHistoryPolicy";
+import {
     createRunningExecution,
     createSyncProgressHeartbeat,
     finalizeSyncHistoryAfterRun,
+    isSyncAlreadyRunningError,
     listExecutionsForAccount,
     markExecutionCancelled,
     sweepStaleRunning,
@@ -32,6 +36,10 @@ import {
     resolveSyncExecutionStatus,
 } from "../observability/statusAndErrorType";
 import { notifyOnSyncFailure } from "../notify";
+import {
+    clearBillingConnectorAuthFailures,
+    recordBillingConnectorAuthFailure,
+} from "../services/billingConnectorAuthCircuitBreaker";
 
 export type RegisterAcceptedInProcessSyncParams = {
     accountId: number;
@@ -77,6 +85,10 @@ export async function createInProcessSyncHistoryStub(params: {
             startedAt: params.startedAt,
         });
     } catch (error) {
+        // Uniqueness conflict must abort accept (caller skips ingest).
+        if (isSyncAlreadyRunningError(error)) {
+            throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         params.onError?.(
             `[account ${params.accountId}] Failed to create sync history stub ${params.executionId}: ${message}`
@@ -122,7 +134,7 @@ export async function runAcceptedInProcessSync(
     } = params;
     try {
         const heartbeat = createSyncProgressHeartbeat(executionId);
-        const result = await runInProcessSync({
+        const result = await runSyncWithPendingCustomerHistoryPolicy({
             prisma,
             accountId,
             trigger,
@@ -142,6 +154,7 @@ export async function runAcceptedInProcessSync(
             ...runOptions,
         });
         await finalizeAcceptedInProcessSyncRun({
+            prisma,
             accountId,
             executionId,
             mode,
@@ -198,10 +211,19 @@ export async function runAcceptedInProcessSync(
         }).catch(() => undefined);
     } finally {
         clearRunningSync(accountId);
+        if (mode === "incremental") {
+            void scheduleContinuePendingCustomerHistoryDrainForAccount({
+                prisma,
+                accountId,
+                onLog,
+                executionId,
+            });
+        }
     }
 }
 
 async function finalizeAcceptedInProcessSyncRun(params: {
+    prisma: PrismaClient;
     accountId: number;
     executionId: string;
     mode: string;
@@ -211,6 +233,7 @@ async function finalizeAcceptedInProcessSyncRun(params: {
     onError?: (message: string) => void;
 }): Promise<void> {
     const {
+        prisma,
         accountId,
         executionId,
         mode,
@@ -270,6 +293,44 @@ async function finalizeAcceptedInProcessSyncRun(params: {
             completedAt,
         }).catch(() => undefined);
     }
+
+    if (!result.postIngestDeferred) {
+        try {
+            const connector = await prisma.billingConnector.findUnique({
+                where: { account_id: accountId },
+                select: { id: true },
+            });
+            if (connector) {
+                if (status === "SUCCESS") {
+                    await clearBillingConnectorAuthFailures({
+                        prisma,
+                        connectorId: connector.id,
+                    });
+                } else if (errorType === "auth") {
+                    const breaker = await recordBillingConnectorAuthFailure({
+                        prisma,
+                        connectorId: connector.id,
+                    });
+                    if (breaker.syncDisabled) {
+                        onLog(
+                            `Auth circuit breaker tripped (${breaker.consecutiveAuthFailures} failures); sync_enabled set to false`
+                        );
+                    }
+                }
+            }
+        } catch (breakerError) {
+            const message =
+                breakerError instanceof Error
+                    ? breakerError.message
+                    : String(breakerError);
+            onError?.(
+                `[account ${accountId}] Auth circuit breaker update failed: ${message}`
+            );
+        }
+        // Portfolio Generate start runs as a live `_ctp` tail step inside the sync while
+        // RUNNING (Backfill progress). Deferred post-ingest still runs it from
+        // finalizeAwaitingPostIngestDrainExecutions after SUCCESS.
+    }
 }
 
 export async function cancelInProcessSyncRun(params: {
@@ -287,6 +348,7 @@ export async function cancelInProcessSyncRun(params: {
                 return { cancelled: false, execution_id: null };
             }
             const cancelledAt = new Date();
+            requestConnectorSyncCancel(orphan.execution_id);
             await markExecutionCancelled(orphan.execution_id, {
                 errorMessage: "Sync stopped by operator",
             });
@@ -365,16 +427,13 @@ export async function listMergedInProcessSyncRuns(
         });
         const byId = new Map(memoryRuns.map((run) => [run.id, run]));
 
-        // Live RUNNING: only trust Mongo when it matches the in-process worker
-        // (otherwise stale after restart). Prefer in-memory progress over Mongo
-        // heartbeats (flushed ~60s) so the panel does not show stale zeros.
+        // Live RUNNING from Mongo: always surface so Admin can Stop cron/worker
+        // owned runs (Nest has no in-process registry entry for those). When
+        // this process owns the execution, prefer in-memory progress over Mongo
+        // heartbeats (flushed ~60s) so the panel does not flash stale zeros.
         const activeFromMongo = mongoRuns
             .filter((doc) => doc.status === "RUNNING")
-            .map(syncHistoryExecutionToSummary)
-            .filter(
-                (run) =>
-                    inProcess != null && run.id === inProcess.executionId
-            );
+            .map(syncHistoryExecutionToSummary);
         for (const run of activeFromMongo) {
             const existing = byId.get(run.id);
             if (
@@ -384,14 +443,26 @@ export async function listMergedInProcessSyncRuns(
             ) {
                 continue;
             }
-            byId.set(run.id, {
-                ...run,
-                ...(existing ?? {}),
-                cutover_options:
-                    existing?.cutover_options ?? run.cutover_options,
-                cutover_summary:
-                    existing?.cutover_summary ?? run.cutover_summary,
-            });
+            const ownedHere =
+                inProcess != null && run.id === inProcess.executionId;
+            if (ownedHere && existing) {
+                byId.set(run.id, {
+                    ...run,
+                    ...existing,
+                    cutover_options:
+                        existing.cutover_options ?? run.cutover_options,
+                    cutover_summary:
+                        existing.cutover_summary ?? run.cutover_summary,
+                });
+            } else {
+                byId.set(run.id, {
+                    ...run,
+                    cutover_options:
+                        existing?.cutover_options ?? run.cutover_options,
+                    cutover_summary:
+                        existing?.cutover_summary ?? run.cutover_summary,
+                });
+            }
         }
 
         // Finished runs: hydrate from Mongo so the progress step panel survives
@@ -427,8 +498,20 @@ export async function listDurableSyncHistoryRuns(
     onError?: (message: string) => void
 ): Promise<ConnectorSyncRunSummary[]> {
     try {
-        await sweepStaleRunning({ accountId, olderThanHours: 2 });
-        const docs = await listExecutionsForAccount(accountId);
+        try {
+            await sweepStaleRunning({ accountId, olderThanHours: 2 });
+        } catch (sweepError) {
+            // Writes may be blocked (e.g. Atlas space quota). Still return
+            // history from reads so the UI keeps working.
+            const sweepMessage =
+                sweepError instanceof Error
+                    ? sweepError.message
+                    : String(sweepError);
+            onError?.(
+                `[account ${accountId}] Stale RUNNING sweep skipped: ${sweepMessage}`
+            );
+        }
+        const docs = await listExecutionsForAccount(accountId, { limit: 50 });
         return docs.map(syncHistoryExecutionToSummary);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { BillingConnectorApiService } from "../src/billing-connector/billing-connector.service";
 import {
     ACCOUNT_10149_EXTENSION_KEY,
+    SAMPLE_NOOP_EXTENSION_KEY,
     allEnabledEntitiesPreviewPassed,
 } from "@archaser/billing-connector";
 import { resetConnectorSyncCancelRegistryForTests } from "../../packages/billing-connector/src/sync/connectorSyncCancelRegistry";
@@ -75,7 +76,6 @@ function connectorRow(overrides: Record<string, unknown> = {}) {
         id: 1,
         account_id: 42,
         provider: "PRIORITY",
-        status: "ACTIVE",
         base_url: "https://erp.example.com",
         auth_type: "API_KEY",
         credentials_encrypted: "enc",
@@ -88,7 +88,7 @@ function connectorRow(overrides: Record<string, unknown> = {}) {
         backfill_started_at: null,
         backfill_start_date: null,
         include_older_open_invoices: true,
-        skip_reporting_breach_on_backfill: false,
+        reporting_breach_start_date: null,
         invoice_paid_tolerance: 0.2,
         pull_filters: {},
         entity_sets: {},
@@ -163,7 +163,7 @@ describe("billing connector Nest API", () => {
                     sync_mode: "BACKFILL",
                     backfill_start_date: null,
                     include_older_open_invoices: true,
-                    skip_reporting_breach_on_backfill: false,
+                    reporting_breach_start_date: null,
                 }),
             },
         };
@@ -177,53 +177,6 @@ describe("billing connector Nest API", () => {
             service.runSync(user(42), 42, "backfill")
         ).rejects.toBeInstanceOf(BadRequestException);
         expect(billingConnector.runInProcessSync).not.toHaveBeenCalled();
-    });
-
-    it("starts backfill in the background and returns RUNNING immediately", async () => {
-        let resolveSync: ((value: unknown) => void) | undefined;
-        billingConnector.runInProcessSync.mockReturnValue(
-            new Promise((resolve) => {
-                resolveSync = resolve;
-            })
-        );
-        const db = {
-            billingConnector: {
-                findUnique: jest.fn().mockResolvedValue({
-                    id: 1,
-                    account_id: 42,
-                    enabled_entities: ["Customer"],
-                    preview_passes: {},
-                    backfill_started_at: new Date("2026-08-01T00:00:00.000Z"),
-                    sync_mode: "INCREMENTAL",
-                    backfill_start_date: null,
-                    include_older_open_invoices: true,
-                    skip_reporting_breach_on_backfill: false,
-                }),
-                update: jest.fn().mockResolvedValue({}),
-            },
-        };
-        const service = new BillingConnectorApiService(
-            db as never,
-            accessScope(42, true) as never,
-            mockCronQueue() as never,
-            mockMetrics() as never
-        );
-        const result = await service.runSync(user(42), 42, "backfill");
-        expect(result.result.status).toBe("RUNNING");
-        expect(result.result.accepted).toBe(true);
-        expect(result.result.execution_id).toEqual(expect.any(String));
-        await Promise.resolve();
-        expect(billingConnector.runInProcessSync).toHaveBeenCalled();
-        expect(db.billingConnector.update).not.toHaveBeenCalled();
-        resolveSync?.({
-            ok: true,
-            cancelled: false,
-            accountId: 42,
-            provider: "PRIORITY",
-            stats: {},
-            entity_stats: {},
-            message: "ok",
-        });
     });
 
     it("sets backfill_started_at on the first accepted backfill run", async () => {
@@ -252,7 +205,7 @@ describe("billing connector Nest API", () => {
                     sync_mode: "BACKFILL",
                     backfill_start_date: null,
                     include_older_open_invoices: true,
-                    skip_reporting_breach_on_backfill: false,
+                    reporting_breach_start_date: null,
                 }),
                 update: jest.fn().mockResolvedValue({}),
             },
@@ -331,9 +284,10 @@ describe("billing connector Nest API", () => {
         expect(result.config.extension_config).toEqual({});
     });
 
-    it("persists a registered extension_key on upsert and returns it", async () => {
-        const existing = connectorRow();
+    it("persists the matching account extension_key on upsert and returns it", async () => {
+        const existing = connectorRow({ account_id: 10149 });
         const updated = connectorRow({
+            account_id: 10149,
             extension_key: ACCOUNT_10149_EXTENSION_KEY,
             extension_config: {},
         });
@@ -343,12 +297,12 @@ describe("billing connector Nest API", () => {
         });
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never,
+            accessScope(10149, true) as never,
             mockCronQueue() as never,
             mockMetrics() as never
         );
-        const result = await service.upsertConfig(user(42), 42, {
-            extension_key: ACCOUNT_10149_EXTENSION_KEY,
+        const result = await service.upsertConfig(user(10149), 10149, {
+            extension_key: null,
             extension_config: {},
         });
         expect(db.billingConnector.update).toHaveBeenCalledWith(
@@ -363,9 +317,9 @@ describe("billing connector Nest API", () => {
         expect(result.config.extension_config).toEqual({});
     });
 
-    it("clears extension_key when upsert sends null", async () => {
+    it("clears a non-matching extension_key when no account extension exists", async () => {
         const existing = connectorRow({
-            extension_key: ACCOUNT_10149_EXTENSION_KEY,
+            extension_key: SAMPLE_NOOP_EXTENSION_KEY,
             extension_config: {},
         });
         const updated = connectorRow({
@@ -383,8 +337,8 @@ describe("billing connector Nest API", () => {
             mockMetrics() as never
         );
         const result = await service.upsertConfig(user(42), 42, {
-            extension_key: null,
-            extension_config: null,
+            extension_key: SAMPLE_NOOP_EXTENSION_KEY,
+            extension_config: {},
         });
         expect(db.billingConnector.update).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -398,25 +352,39 @@ describe("billing connector Nest API", () => {
         expect(result.config.extension_config).toBeNull();
     });
 
-    it("rejects an unknown extension_key on upsert", async () => {
-        const db = {
-            billingConnector: {
-                findUnique: jest.fn().mockResolvedValue(connectorRow()),
-                update: jest.fn(),
-            },
-        };
+    it("replaces a non-matching key with the account extension on upsert", async () => {
+        const existing = connectorRow({
+            account_id: 10149,
+            extension_key: SAMPLE_NOOP_EXTENSION_KEY,
+            extension_config: { keep: false },
+        });
+        const updated = connectorRow({
+            account_id: 10149,
+            extension_key: ACCOUNT_10149_EXTENSION_KEY,
+            extension_config: {},
+        });
+        const db = billingConnectorDb({
+            findUnique: jest.fn().mockResolvedValue(existing),
+            update: jest.fn().mockResolvedValue(updated),
+        });
         const service = new BillingConnectorApiService(
             db as never,
-            accessScope(42, true) as never,
+            accessScope(10149, true) as never,
             mockCronQueue() as never,
             mockMetrics() as never
         );
-        await expect(
-            service.upsertConfig(user(42), 42, {
-                extension_key: "not_a_real_extension",
+        const result = await service.upsertConfig(user(10149), 10149, {
+            extension_key: SAMPLE_NOOP_EXTENSION_KEY,
+        });
+        expect(db.billingConnector.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    extension_key: ACCOUNT_10149_EXTENSION_KEY,
+                    extension_config: {},
+                }),
             })
-        ).rejects.toBeInstanceOf(BadRequestException);
-        expect(db.billingConnector.update).not.toHaveBeenCalled();
+        );
+        expect(result.config.extension_key).toBe(ACCOUNT_10149_EXTENSION_KEY);
     });
 });
 

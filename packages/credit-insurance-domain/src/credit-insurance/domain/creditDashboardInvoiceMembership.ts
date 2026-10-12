@@ -10,7 +10,8 @@ import { addDays, startOfDay } from "date-fns";
 
 import { prisma } from "../domain-db";
 
-const TERMS_BREACH_OR: Prisma.InvoiceWhereInput[] = [
+/** Shared OR of invoice terms-breach flags (ViewBased + leaves reports). */
+export const TERMS_BREACH_OR: Prisma.InvoiceWhereInput[] = [
     { reporting_breach: true },
     { ctv_payment_term: true },
     { ctv_customer_overdue_mep: true },
@@ -29,6 +30,9 @@ export const TERMS_BREACH_REASON_FIELDS = [
 export type TermsBreachReasonField =
     (typeof TERMS_BREACH_REASON_FIELDS)[number];
 
+/** Alias kept for leaves / public API callers. */
+export type TermsBreachReasonFilter = TermsBreachReasonField;
+
 export function isTermsBreachReasonField(
     value: string | null | undefined
 ): value is TermsBreachReasonField {
@@ -38,13 +42,37 @@ export function isTermsBreachReasonField(
     );
 }
 
+/** Alias kept for leaves / public API callers. */
+export function isTermsBreachReasonFilter(
+    value: string | null | undefined
+): value is TermsBreachReasonFilter {
+    return isTermsBreachReasonField(value);
+}
+
 export interface CreditInvoiceMembershipOptions {
     policyId?: number;
     customerId?: number;
+    /**
+     * Preferred over `customerId` when set (shell-root drill-down expands to
+     * pool members via {@link resolveInvoiceReportCustomerIds}).
+     */
+    customerIds?: readonly number[];
     termsBreachReason?: string | null;
     termsOverdueOnly?: boolean;
     /** Reporting countdown window; loaded from account when omitted. */
     windowDays?: number;
+}
+
+function invoiceCustomerScopeWhere(
+    options: Pick<CreditInvoiceMembershipOptions, "customerId" | "customerIds">
+): Prisma.InvoiceWhereInput {
+    if (options.customerIds != null && options.customerIds.length > 0) {
+        return { customer_id: { in: [...options.customerIds] } };
+    }
+    if (options.customerId != null) {
+        return { customer_id: options.customerId };
+    }
+    return {};
 }
 
 /** Base terms-breach membership (no search, no BU). */
@@ -69,9 +97,7 @@ export function termsBreachMembershipWhere(
         amount: { gte: 0 },
         Customer: { isNot: null },
         ...(options.policyId != null ? { policy_id: options.policyId } : {}),
-        ...(options.customerId != null
-            ? { customer_id: options.customerId }
-            : {}),
+        ...invoiceCustomerScopeWhere(options),
     };
 }
 
@@ -81,7 +107,7 @@ export function reportingCountdownMembershipWhere(
     windowDays: number,
     options: Pick<
         CreditInvoiceMembershipOptions,
-        "policyId" | "customerId"
+        "policyId" | "customerId" | "customerIds"
     > = {}
 ): Prisma.InvoiceWhereInput {
     const today = startOfDay(new Date());
@@ -95,9 +121,7 @@ export function reportingCountdownMembershipWhere(
         // Credit notes (amount < 0) stay out of reporting countdown.
         amount: { gte: 0 },
         ...(options.policyId != null ? { policy_id: options.policyId } : {}),
-        ...(options.customerId != null
-            ? { customer_id: options.customerId }
-            : {}),
+        ...invoiceCustomerScopeWhere(options),
     };
 }
 
@@ -106,7 +130,7 @@ export function reportedInvoicesMembershipWhere(
     accountId: number,
     options: Pick<
         CreditInvoiceMembershipOptions,
-        "policyId" | "customerId"
+        "policyId" | "customerId" | "customerIds"
     > = {}
 ): Prisma.InvoiceWhereInput {
     return {
@@ -114,9 +138,7 @@ export function reportedInvoicesMembershipWhere(
         actual_reporting_date: { not: null },
         Customer: { isNot: null },
         ...(options.policyId != null ? { policy_id: options.policyId } : {}),
-        ...(options.customerId != null
-            ? { customer_id: options.customerId }
-            : {}),
+        ...invoiceCustomerScopeWhere(options),
     };
 }
 

@@ -34,6 +34,8 @@ import {
 import { PAYMENT_ALWAYS_SELECT_SOURCES } from "./prioritySelectFields";
 import {
     expandPaymentFncPatNameOrFilters,
+    stripFieldFromPullFilterOData,
+    stripUdateFromPullFilterOData,
 } from "../services/billingConnectorPullFilterCompile";
 import {
     discoverPriorityFields,
@@ -150,6 +152,18 @@ function dateLeIso(date: Date): string {
     return date.toISOString();
 }
 
+/**
+ * Priority Edm.DateTimeOffset rejects bare `YYYY-MM-DD` in $filter
+ * ("Invalid DateTimeOffset format … expected yyyy-mm-ddThh:mm:ss+hh:mm").
+ * Expand unquoted date-only bounds (common in pull_filters floors) to Zulu ISO.
+ */
+function expandBareODataDateLiterals(filter: string): string {
+    return filter.replace(
+        /(\b(?:ge|gt|le|lt)\s+)(\d{4}-\d{2}-\d{2})(?!T)/gi,
+        (_match, op: string, day: string) => `${op}${day}T00:00:00.000Z`
+    );
+}
+
 function columnSampleCacheKey(
     entity: ImportType,
     entitySet?: string | null,
@@ -219,6 +233,31 @@ export class PriorityProviderClient implements BillingProviderClient {
             throw new Error(`Unsupported entity: ${entity}`);
         }
 
+        // CUSTOMERS / CUSTPERSONNEL have no UDATE — drop it before column
+        // sample and $filter. Contact also drops CUSTOMERS-only fields
+        // (CTYPE2NAME etc.); date floors belong on Invoice / Payment windows.
+        if (entity === "Customer" || entity === "Contact") {
+            let filter = options.filter ?? null;
+            if (odataFilterFieldNames(filter).includes("UDATE")) {
+                filter = stripUdateFromPullFilterOData(filter);
+            }
+            if (entity === "Contact") {
+                for (const field of [
+                    "CTYPE2NAME",
+                    "CTYPE2CODE",
+                    "CDES",
+                    "CUSTDES",
+                ]) {
+                    if (odataFilterFieldNames(filter).includes(field)) {
+                        filter = stripFieldFromPullFilterOData(filter, field);
+                    }
+                }
+            }
+            if (filter !== options.filter) {
+                options = { ...options, filter };
+            }
+        }
+
         const pageSizeRequested =
             options.pageSize ?? PRIORITY_RATE_LIMITS.recommendedPageSize;
         const isIdgPayment =
@@ -253,9 +292,9 @@ export class PriorityProviderClient implements BillingProviderClient {
         }
         const columns = columnNameSet(columnList);
         const endpoint = getPriorityEntityEndpoint(entity);
-        // Prefer FNCDATE for IDG payments — matches the date window and matches
-        // the sample query that Priority can answer. FNCNUM keyset + date filter
-        // often 502s after ~2 minutes on idigital.
+        // Prefer FNCDATE for IDG $orderby — Priority serves it; RECONDATE lead
+        // order often 502s after ~2 minutes. Account 10149 still windows on
+        // RECONDATE via preferredDateField / extension resolvePullDateField.
         const preferredOrderBy = isIdgPayment
             ? "FNCDATE"
             : endpoint.defaultOrderBy;
@@ -339,10 +378,10 @@ export class PriorityProviderClient implements BillingProviderClient {
                 ? (options.overlapMinutes ?? 0)
                 : 0;
         // Always AND the watermark / cutover date bound — even when pull_filters
-        // already mention the date field (e.g. FNCDATE gt backfill floor). Skipping
+        // already mention the date field (e.g. RECONDATE gt backfill floor). Skipping
         // here made INCREMENTAL re-scan from the static floor instead of since.
-        // Also cap dateField ≤ now so future-dated document dates (common on
-        // Payment FNCDATE) are not crawled after the lower bound.
+        // Also cap dateField ≤ now so future-dated values are not crawled after
+        // the lower bound (important when the window field is FNCDATE).
         const nowIso = dateLeIso(new Date());
         const dateFilter =
             dateField && dateBound
@@ -358,7 +397,7 @@ export class PriorityProviderClient implements BillingProviderClient {
             keysetFilter
         );
         if (combinedFilter) {
-            params.$filter = combinedFilter;
+            params.$filter = expandBareODataDateLiterals(combinedFilter);
         }
 
         const url = `${collectionUrl}?${buildQueryString(params)}`;
@@ -471,6 +510,18 @@ export class PriorityProviderClient implements BillingProviderClient {
             filter: sampleFilter,
         });
         if (!sampled.ok) {
+            const tableName = entitySet?.trim() ||
+                (isPriorityEntityImportType(entity)
+                    ? getPriorityEntityEndpoint(entity).path
+                    : entity);
+            if (sampled.statusCode === 404) {
+                throw new Error(
+                    `Priority table not found (HTTP 404) for ${entity} ` +
+                        `(${tableName}). Enable that form for API in Priority ` +
+                        `(Limited Access / API Forms), or pick the correct ` +
+                        `table under entity sets.`
+                );
+            }
             const filterPreview = (options?.filter ?? "").slice(0, 280);
             this.config.onLog?.(
                 `[column-sample] entity=${entity} entitySet=${entitySet?.trim() || "default"} failed: ${sampled.error ?? "unknown"} filterLen=${(options?.filter ?? "").length} filterPreview=${filterPreview} — using fallback columns`
@@ -520,6 +571,14 @@ export class PriorityProviderClient implements BillingProviderClient {
             names.add(name);
         }
         for (const name of DATE_FIELD_FALLBACKS) {
+            // CUSTOMERS / CUSTPERSONNEL often lack UDATE — inventing it here
+            // puts UDATE into $select after a failed column sample and 400s the pull.
+            if (
+                name === "UDATE" &&
+                (entity === "Customer" || entity === "Contact")
+            ) {
+                continue;
+            }
             names.add(name);
         }
         for (const name of KEYSET_TIE_BREAKER_FIELDS) {
@@ -590,11 +649,21 @@ export class PriorityProviderClient implements BillingProviderClient {
             const body = await response.text().catch(() => "");
             const summary = summarizePriorityHttpErrorBody(response.status, body);
             this.config.onLog?.(
-                `Priority HTTP ${response.status} after ${elapsedMs}ms: ${summary}`
+                `Priority HTTP ${response.status} after ${elapsedMs}ms: ${summary} url=${url.slice(0, 400)}`
             );
-            const error = new Error(
-                `Priority returned ${response.status}: ${summary}`
-            ) as Error & { statusCode?: number };
+            let message = `Priority returned ${response.status}: ${summary}`;
+            if (response.status === 404) {
+                const tableMatch = url.match(
+                    /\/([A-Za-z_][A-Za-z0-9_]*)(?:\?|$)/
+                );
+                const table = tableMatch?.[1];
+                message += table
+                    ? ` — table ${table} was not found. Enable it for API in Priority, or change the Contact/entity-set table name.`
+                    : ` — OData path not found. Enable the form for API in Priority, or change the entity-set table name.`;
+            }
+            const error = new Error(message) as Error & {
+                statusCode?: number;
+            };
             error.statusCode = response.status;
             throw error;
         }

@@ -1,21 +1,49 @@
 import {
     BadRequestException,
+    ConflictException,
     ForbiddenException,
     Injectable,
+    Logger,
     NotFoundException,
+    ServiceUnavailableException,
 } from "@nestjs/common";
 import {
     AccessScopeService,
     AccessUserInfo,
 } from "../auth/access-scope.service";
 import { JwtPayload } from "../auth/auth.service";
+import {
+    applyCollectionPeriodCategoryChange,
+    revertCategoryAfterLastDisputeClosed,
+} from "../common/collection-period-category.util";
 import { serializeBigInt } from "../common/serialize-bigint";
 import {
     bindCreditInsurancePrisma,
-    enqueueAsOfRewrite,
+    enrichCustomerTopUpFields,
+    AdminBackfillBlockingRewriteError,
+    CreditPoolParentHistoryConflictError,
+    computeCreditPoolDashboardRollup,
     ensureCustomerCapacityGapStored,
+    fetchAtRiskInvoiceInputsByCustomerMap,
+    getCreditAsOfBackfillJobStatus,
+    getCreditPoolParentHistoryJobStatus,
+    isLinkedCreditChild,
+    listDescendantCustomerIds,
+    onParentCustomerIdChanged,
+    resolveCustomerCreditPoolRoot,
     resolveCustomerHeaderOpenArAmounts,
+    assertParentIsShell,
+    CreditPoolShellError,
+    resolveEffectiveApprovedLimit,
+    rewriteCustomerAsOfRange,
 } from "@archaser/credit-insurance-domain";
+import {
+    createPromiseToPayScheduledActivities,
+    DEMO_DISABLED_OUTREACH_REASON,
+    accountAllowsCustomerOutreach,
+    getRawTemplateContent,
+    processTemplateContent,
+} from "@archaser/cron-jobs";
 import { DatabaseService } from "../database/database.service";
 import {
     CustomerPolicyService,
@@ -25,7 +53,18 @@ import {
     applyCustomerNameUpdate,
     buildCustomerUncheckedUpdateData,
 } from "./customer-update.mapper";
+import {
+    buildClaimCountsByCustomer,
+    buildCollectionAggregatedData,
+    buildCreditAggregatedBlock,
+    customerDisplayNameFromParts,
+    type AggregatedDataChildInput,
+} from "./domain/customerAggregatedData";
 import { SystemEmailService } from "../email/system-email.service";
+import {
+    pickDisputeOutreachContact,
+    toDisputeResolutionI18nPlaceholder,
+} from "./dispute-resolution.util";
 
 export type CustomersListQuery = {
     page?: string;
@@ -192,6 +231,8 @@ const ACTIVITY_TYPES = [
 
 @Injectable()
 export class CustomersService {
+    private readonly logger = new Logger(CustomersService.name);
+
     constructor(
         private readonly db: DatabaseService,
         private readonly accessScope: AccessScopeService,
@@ -462,7 +503,25 @@ export class CustomersService {
                         username: true,
                     },
                 },
-                ParentCustomer: true,
+                ParentCustomer: {
+                    select: {
+                        id: true,
+                        customer_number: true,
+                        type: true,
+                        Person: {
+                            select: {
+                                first_name: true,
+                                last_name: true,
+                                full_name: true,
+                            },
+                        },
+                        Company: { select: { name: true } },
+                    },
+                },
+                // Detail tabs (Aggregated Data) gate on ChildCustomers.length.
+                ChildCustomers: {
+                    select: { id: true },
+                },
                 // The Log Activity promise-to-pay picker derives its selectable
                 // window and per-cycle cap from these two account settings.
                 Account: {
@@ -508,10 +567,10 @@ export class CustomersService {
         // tab decides the customer has no linked policy.
         const { CustomerPolicy: customerPolicies, ...rest } = customer;
 
-        // `total_ar` is derived, not stored: live open Due/Overdue receivables in
-        // account currency, falling back to the denormalized due + overdue rollups.
-        // The header's Total AR card reads it straight off this payload, so without
-        // it the card renders 0 even when the customer has open invoices.
+        // Header Due / Overdue / Total AR share one live invoice split (account
+        // currency + FX), including invoice counts and dual-currency buckets.
+        // Empty live open set ⇒ zero (not denormalized rollups). Denormalized
+        // fallback only when live cannot run (e.g. missing account currency).
         const account = await this.db.account.findUnique({
             where: { id: accountId },
             select: { currency: true, has_credit_insurance: true },
@@ -524,21 +583,216 @@ export class CustomersService {
             dbClient: this.db,
         });
 
+        const activeCustomerPolicy =
+            customerPolicies.find((policy) => policy.is_active) ?? null;
+        const pendingCustomerPolicy =
+            customerPolicies.find((policy) => policy.status === "pending") ??
+            null;
+        const topUpFields = await enrichCustomerTopUpFields(
+            id,
+            accountId,
+            {
+                approved_limit: activeCustomerPolicy?.approved_limit ?? null,
+                approved_limit_currency:
+                    activeCustomerPolicy?.approved_limit_currency ?? null,
+                outdated_dcl: activeCustomerPolicy?.outdated_dcl ?? false,
+                excluded_from_policy:
+                    activeCustomerPolicy?.excluded_from_policy ?? false,
+            }
+        );
+
+        // Credit pool: any member past MEP → every member shows the banner
+        // (stored contagion may lag briefly; OR live across the pool).
+        let overdueBlock = rest.overdue_block === true;
+        const hasCreditInsurance =
+            rest.Account?.has_credit_insurance ??
+            account?.has_credit_insurance ??
+            false;
+        if (hasCreditInsurance) {
+            const { resolveCreditPoolMemberIds } = await import(
+                "@archaser/credit-insurance-domain"
+            );
+            const pool = await resolveCreditPoolMemberIds(
+                id,
+                accountId,
+                this.db
+            );
+            if (pool.memberIds.length > 1) {
+                const blockedMember = await this.db.customer.findFirst({
+                    where: {
+                        id: { in: [...pool.memberIds] },
+                        overdue_block: true,
+                    },
+                    select: { id: true },
+                });
+                overdueBlock = blockedMember != null;
+            }
+        }
+
         return serializeBigInt({
             ...rest,
+            overdue_block: overdueBlock,
             ...headerAr,
+            ...topUpFields,
             Account: {
                 ...rest.Account,
                 currency: rest.Account?.currency ?? account?.currency ?? null,
-                has_credit_insurance:
-                    rest.Account?.has_credit_insurance ??
-                    account?.has_credit_insurance ??
-                    false,
+                has_credit_insurance: hasCreditInsurance,
             },
             customerPolicies,
-            activeCustomerPolicy:
-                customerPolicies.find((policy) => policy.is_active) ?? null,
+            activeCustomerPolicy,
+            pendingCustomerPolicy,
         });
+    }
+
+    async create(user: JwtPayload, body: Record<string, unknown>) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const accountId = this.accessScope.getEffectiveAccountId(userInfo);
+        const effectiveUserId = this.accessScope.getEffectiveUserId(userInfo);
+
+        const customerNumber =
+            body.customer_number != null
+                ? String(body.customer_number).trim()
+                : "";
+        if (!customerNumber) {
+            throw new BadRequestException({
+                error: "customer_number is required",
+            });
+        }
+
+        const typeRaw = String(body.type ?? "Company");
+        const type = typeRaw === "Person" ? "Person" : "Company";
+
+        const companyIdRaw = body.company_id;
+        const companyId =
+            companyIdRaw === null ||
+            companyIdRaw === undefined ||
+            companyIdRaw === ""
+                ? null
+                : Number(companyIdRaw);
+        if (type === "Company") {
+            if (companyId == null || !Number.isFinite(companyId)) {
+                throw new BadRequestException({
+                    error: "company_id is required",
+                });
+            }
+            const company = await this.db.company.findUnique({
+                where: { id: companyId },
+                select: { id: true },
+            });
+            if (!company) {
+                throw new BadRequestException({
+                    error: "Company not found",
+                });
+            }
+        }
+
+        const existingNumber = await this.db.customer.findFirst({
+            where: {
+                account_id: accountId,
+                customer_number: customerNumber,
+            },
+            select: { id: true },
+        });
+        if (existingNumber) {
+            throw new ConflictException({
+                error: "customer_number already exists",
+                code: "CUSTOMER_NUMBER_EXISTS",
+            });
+        }
+
+        const mapped = buildCustomerUncheckedUpdateData({
+            ...body,
+            customer_number: customerNumber,
+        });
+
+        const parentCustomerId =
+            mapped.parent_customer_id === undefined
+                ? null
+                : ((mapped.parent_customer_id as number | null) ?? null);
+        if (parentCustomerId != null) {
+            try {
+                await assertParentIsShell(parentCustomerId, this.db);
+            } catch (error) {
+                if (error instanceof CreditPoolShellError) {
+                    throw new BadRequestException({
+                        code: error.code,
+                        error: error.message,
+                    });
+                }
+                throw error;
+            }
+        }
+
+        const created = await this.db.customer.create({
+            data: {
+                account_id: accountId,
+                type,
+                company_id: type === "Company" ? companyId : null,
+                customer_number: customerNumber,
+                collection_status:
+                    (mapped.collection_status as
+                        | "Active"
+                        | "Inactive"
+                        | undefined) ?? "Inactive",
+                address_line1:
+                    (mapped.address_line1 as string | null | undefined) ?? null,
+                address_line2:
+                    (mapped.address_line2 as string | null | undefined) ?? null,
+                postal_code:
+                    (mapped.postal_code as string | null | undefined) ?? null,
+                city: (mapped.city as string | null | undefined) ?? null,
+                phone: (mapped.phone as string | null | undefined) ?? null,
+                ...(mapped.language != null
+                    ? { language: mapped.language as never }
+                    : {}),
+                first_activity_delay_days:
+                    (mapped.first_activity_delay_days as
+                        | number
+                        | null
+                        | undefined) ?? null,
+                country_id:
+                    (mapped.country_id as number | null | undefined) ?? null,
+                state_id:
+                    (mapped.state_id as number | null | undefined) ?? null,
+                business_unit_id:
+                    (mapped.business_unit_id as number | null | undefined) ??
+                    null,
+                parent_customer_id: parentCustomerId,
+                created_by: effectiveUserId,
+                modified_by: effectiveUserId,
+            },
+        });
+
+        if (parentCustomerId != null) {
+            try {
+                await onParentCustomerIdChanged({
+                    accountId,
+                    customerId: created.id,
+                    previousParentId: null,
+                    nextParentId: parentCustomerId,
+                    userId: effectiveUserId,
+                    dbClient: this.db,
+                });
+            } catch (error) {
+                await this.db.customer.delete({ where: { id: created.id } });
+                if (error instanceof AdminBackfillBlockingRewriteError) {
+                    throw await this.conflictWhenCreditAsOfBackfillRunning(
+                        accountId,
+                        error.message
+                    );
+                }
+                throw new ServiceUnavailableException({
+                    code: "PARENT_CREDIT_POOL_SYNC_FAILED",
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : "Parent credit pool sync failed",
+                });
+            }
+        }
+
+        return this.getById(user, created.id);
     }
 
     async update(user: JwtPayload, id: number, body: Record<string, unknown>) {
@@ -561,10 +815,129 @@ export class CustomersService {
         const policyPayloadPresent = hasPolicyPayloadInBody(body);
         const customerUpdateData = buildCustomerUncheckedUpdateData(body);
 
+        const parentLinkChanging = Object.prototype.hasOwnProperty.call(
+            customerUpdateData,
+            "parent_customer_id"
+        );
+        let previousParentId: number | null = null;
+        let creditHistoryRefresh: Record<string, unknown> | null = null;
+        let creditHistoryRefreshKind: "parent_pool_history" | null = null;
+        if (parentLinkChanging) {
+            const before = await this.db.customer.findUnique({
+                where: { id },
+                select: { parent_customer_id: true },
+            });
+            previousParentId = before?.parent_customer_id ?? null;
+            const nextParentId =
+                (customerUpdateData.parent_customer_id as number | null) ??
+                null;
+            if (nextParentId != null) {
+                try {
+                    await assertParentIsShell(nextParentId, this.db);
+                } catch (error) {
+                    if (error instanceof CreditPoolShellError) {
+                        throw new BadRequestException({
+                            code: error.code,
+                            error: error.message,
+                        });
+                    }
+                    throw error;
+                }
+            }
+        }
+
         await this.db.customer.update({
             where: { id },
             data: customerUpdateData,
         });
+
+        if (parentLinkChanging) {
+            const nextParentId =
+                (customerUpdateData.parent_customer_id as number | null) ??
+                null;
+            if (previousParentId !== nextParentId) {
+                const syncStartedMs = Date.now();
+                try {
+                    const parentChange = await onParentCustomerIdChanged({
+                        accountId,
+                        customerId: id,
+                        previousParentId,
+                        nextParentId,
+                        userId: effectiveUserId,
+                        dbClient: this.db,
+                    });
+                    if (parentChange.asyncHistoryJob != null) {
+                        creditHistoryRefresh = parentChange.asyncHistoryJob as unknown as Record<
+                            string,
+                            unknown
+                        >;
+                        creditHistoryRefreshKind = "parent_pool_history";
+                    }
+                } catch (error) {
+                    console.error("[ParentCustomerCredit] update sync failed", {
+                        customerId: id,
+                        accountId,
+                        previousParentId,
+                        nextParentId,
+                        elapsedMs: Date.now() - syncStartedMs,
+                        errorName: error instanceof Error ? error.name : null,
+                        errorMessage:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                        isAdminBackfillBlocking:
+                            error instanceof AdminBackfillBlockingRewriteError,
+                    });
+                    // Fail the whole save: restore prior parent link and remirror.
+                    await this.db.customer.update({
+                        where: { id },
+                        data: { parent_customer_id: previousParentId },
+                    });
+                    try {
+                        await onParentCustomerIdChanged({
+                            accountId,
+                            customerId: id,
+                            previousParentId: nextParentId,
+                            nextParentId: previousParentId,
+                            userId: effectiveUserId,
+                            dbClient: this.db,
+                        });
+                    } catch (rollbackError) {
+                        console.error(
+                            "[ParentCustomerCredit] rollback remirror failed",
+                            {
+                                customerId: id,
+                                previousParentId,
+                                nextParentId,
+                                rollbackError:
+                                    rollbackError instanceof Error
+                                        ? rollbackError.message
+                                        : String(rollbackError),
+                            }
+                        );
+                    }
+                    if (
+                        error instanceof AdminBackfillBlockingRewriteError ||
+                        error instanceof CreditPoolParentHistoryConflictError ||
+                        (error instanceof Error &&
+                            error.name ===
+                                "CreditPoolParentHistoryConflictError")
+                    ) {
+                        throw await this.conflictWhenCreditAsOfBackfillRunning(
+                            accountId,
+                            error.message
+                        );
+                    }
+                    throw new ServiceUnavailableException({
+                        code: "PARENT_CREDIT_POOL_SYNC_FAILED",
+                        error:
+                            error instanceof Error
+                                ? error.message
+                                : "Parent credit pool sync failed",
+                    });
+                }
+            }
+        }
 
         await applyCustomerNameUpdate(
             this.db,
@@ -574,14 +947,66 @@ export class CustomersService {
         );
 
         if (policyPayloadPresent) {
-            await this.customerPolicy.applyFromPoliciesTabSave({
-                customerId: id,
-                accountId,
-                userId: effectiveUserId,
-                body,
-            });
+            // General-tab PUTs always echo policy fields. After linking (or while
+            // already linked), inheritance owns the child's policy — applying the
+            // body would overwrite the remirror and trip LINKED_CHILD_POLICY_LOCKED.
+            const linkedChild = await isLinkedCreditChild(id, this.db);
+            if (!linkedChild) {
+                await this.customerPolicy.applyFromPoliciesTabSave({
+                    customerId: id,
+                    accountId,
+                    userId: effectiveUserId,
+                    body,
+                });
+            }
         }
 
+        return serializeBigInt({
+            ...(await this.getById(user, id)),
+            ...(creditHistoryRefresh != null
+                ? {
+                      creditHistoryRefresh,
+                      ...(creditHistoryRefreshKind != null
+                          ? { creditHistoryRefreshKind }
+                          : {}),
+                  }
+                : {}),
+        });
+    }
+
+    /**
+     * Cancel the customer's single pending future policy change (soft inactive).
+     * Unlocks Policies-tab saves; no rewrite.
+     */
+    async cancelPendingPolicyChange(user: JwtPayload, id: number) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const { accountId, effectiveUserId } =
+            await this.assertCustomerInAccount(userInfo, id);
+        await this.customerPolicy.cancelPendingPolicyChange({
+            customerId: id,
+            accountId,
+            userId: effectiveUserId,
+        });
+        return this.getById(user, id);
+    }
+
+    /**
+     * Remove the active insurance policy from a required UTC unassign date.
+     */
+    async unassignPolicy(
+        user: JwtPayload,
+        id: number,
+        body: Record<string, unknown>
+    ) {
+        const userInfo = await this.accessScope.resolveUserInfo(user);
+        const { accountId, effectiveUserId } =
+            await this.assertCustomerInAccount(userInfo, id);
+        await this.customerPolicy.applyUnassignFromPoliciesTab({
+            customerId: id,
+            accountId,
+            userId: effectiveUserId,
+            unassignDate: body.unassign_date,
+        });
         return this.getById(user, id);
     }
 
@@ -620,6 +1045,10 @@ export class CustomersService {
         const filterType = query.filter_type;
 
         const andClause: Record<string, unknown>[] = [{ customer_id: id }];
+        // Cancelled sequence steps keep their future schedule_time, so ordering
+        // the feed by schedule_time buried freshly logged PTP/dispute rows under
+        // a pile of superseded reminders. Hide cancelled by default; cursor by id.
+        andClause.push({ status: { not: "CANCELLED" } });
         if (lastId) {
             andClause.push({ id: { lt: BigInt(lastId) } });
         }
@@ -629,7 +1058,9 @@ export class CustomersService {
 
         const activities = await this.db.activity.findMany({
             where: { AND: andClause } as never,
-            orderBy: [{ schedule_time: "desc" }, { id: "desc" }],
+            // id DESC matches creation order and the last_id cursor used by the
+            // timeline infinite scroll (schedule_time DESC + id cursor skipped rows).
+            orderBy: [{ id: "desc" }],
             take: limit,
         });
 
@@ -949,6 +1380,13 @@ export class CustomersService {
         const { accountId, effectiveUserId } =
             await this.assertCustomerInAccount(userInfo, id);
 
+        if (await isLinkedCreditChild(id, this.db)) {
+            throw new ForbiddenException({
+                error: "Top-ups can only be created on the credit pool root customer",
+                code: "LINKED_CHILD_TOP_UP_LOCKED",
+            });
+        }
+
         const insurancePolicyId = Number(body.insurancePolicyId);
         if (!Number.isInteger(insurancePolicyId) || insurancePolicyId <= 0) {
             throw new BadRequestException({
@@ -1005,7 +1443,11 @@ export class CustomersService {
 
         const policy = await this.db.insurancePolicy.findFirst({
             where: { id: insurancePolicyId, account_id: accountId },
-            select: { id: true, policy_kind: true },
+            select: {
+                id: true,
+                policy_kind: true,
+                allow_concurrent_top_ups: true,
+            },
         });
         if (!policy) {
             throw new NotFoundException({
@@ -1016,6 +1458,25 @@ export class CustomersService {
             throw new BadRequestException({
                 error: "Insurance policy is not a top-up policy",
             });
+        }
+
+        if (policy.allow_concurrent_top_ups === false) {
+            const overlapping = await this.db.customerTopUp.findFirst({
+                where: {
+                    customer_id: id,
+                    insurance_policy_id: insurancePolicyId,
+                    cancelled_at: null,
+                    start_date: { lte: endDate },
+                    end_date: { gte: startDate },
+                },
+                select: { id: true },
+            });
+            if (overlapping) {
+                throw new ConflictException({
+                    error: "This top-up overlaps an existing top-up for the same product. Concurrent top-ups are not allowed for this policy.",
+                    code: "TOP_UP_DATE_OVERLAP",
+                });
+            }
         }
 
         const topUp = await this.db.customerTopUp.create({
@@ -1034,12 +1495,7 @@ export class CustomersService {
                 modified_by: effectiveUserId,
             } as never,
         });
-        await enqueueAsOfRewrite({
-            accountId,
-            customerIds: [id],
-            fromDate: startDate,
-            toDate: new Date(),
-        });
+        await this.rewriteCustomerCptFromDate(accountId, id, startDate);
         await ensureCustomerCapacityGapStored(id);
 
         return serializeBigInt(topUp);
@@ -1055,6 +1511,13 @@ export class CustomersService {
             userInfo,
             id
         );
+
+        if (await isLinkedCreditChild(id, this.db)) {
+            throw new ForbiddenException({
+                error: "Top-ups can only be managed on the credit pool root customer",
+                code: "LINKED_CHILD_TOP_UP_LOCKED",
+            });
+        }
 
         const topUp = await this.db.customerTopUp.findFirst({
             where: { id: topUpId, customer_id: id },
@@ -1074,15 +1537,100 @@ export class CustomersService {
                 modified_by: effectiveUserId,
             } as never,
         });
-        await enqueueAsOfRewrite({
+        await this.rewriteCustomerCptFromDate(
             accountId,
-            customerIds: [id],
-            fromDate: cancelled.start_date,
-            toDate: new Date(),
-        });
+            id,
+            cancelled.start_date
+        );
         await ensureCustomerCapacityGapStored(id);
 
         return serializeBigInt(cancelled);
+    }
+
+    /**
+     * Option B: await CPT rewrite in-request for interactive top-up writes.
+     * Dashboard snapshots stay on overnight tip / queue drain.
+     */
+    private async conflictWhenCreditAsOfBackfillRunning(
+        accountId: number,
+        message: string
+    ): Promise<ConflictException> {
+        let creditHistoryRefresh: Record<string, unknown> | null = null;
+        let creditHistoryRefreshKind:
+            | "parent_pool_history"
+            | "asof_backfill"
+            | null = null;
+        try {
+            const parentHistory = await getCreditPoolParentHistoryJobStatus(
+                accountId,
+                { dbClient: this.db }
+            );
+            if (
+                parentHistory.status === "running" ||
+                parentHistory.status === "paused" ||
+                parentHistory.status === "syncing"
+            ) {
+                creditHistoryRefresh =
+                    parentHistory as unknown as Record<string, unknown>;
+                creditHistoryRefreshKind = "parent_pool_history";
+            } else {
+                const generate = await getCreditAsOfBackfillJobStatus(
+                    accountId,
+                    { dbClient: this.db }
+                );
+                creditHistoryRefresh =
+                    generate as unknown as Record<string, unknown>;
+                creditHistoryRefreshKind = "asof_backfill";
+            }
+        } catch {
+            // Status is best-effort for the progress dialog seed.
+        }
+        return new ConflictException({
+            code: "CREDIT_ASOF_BACKFILL_IN_PROGRESS",
+            error: message,
+            ...(creditHistoryRefresh != null
+                ? {
+                      creditHistoryRefresh,
+                      creditHistoryRefreshKind,
+                  }
+                : {}),
+        });
+    }
+
+    private async rewriteCustomerCptFromDate(
+        accountId: number,
+        customerId: number,
+        fromDate: Date
+    ): Promise<void> {
+        try {
+            await rewriteCustomerAsOfRange(
+                {
+                    accountId,
+                    customerIds: [customerId],
+                    fromDate,
+                    toDate: new Date(),
+                },
+                { dbClient: this.db }
+            );
+        } catch (error) {
+            if (
+                error instanceof AdminBackfillBlockingRewriteError ||
+                (error instanceof Error &&
+                    error.name === "AdminBackfillBlockingRewriteError")
+            ) {
+                throw await this.conflictWhenCreditAsOfBackfillRunning(
+                    accountId,
+                    error.message
+                );
+            }
+            throw new ServiceUnavailableException({
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "Failed to update customer policy trend history",
+                code: "CUSTOMER_POLICY_TREND_REWRITE_FAILED",
+            });
+        }
     }
 
     async stuckActivities(user: JwtPayload, id: number) {
@@ -1117,7 +1665,11 @@ export class CustomersService {
     private async openCollectionPeriod(customerId: number) {
         return this.db.customerCollectionPeriod.findFirst({
             where: { customer_id: customerId, period_end_date: null },
-            select: { id: true, promise_to_pay_count: true },
+            select: {
+                id: true,
+                promise_to_pay_count: true,
+                current_category: true,
+            },
             orderBy: { id: "desc" },
         });
     }
@@ -1411,10 +1963,43 @@ export class CustomersService {
                     where: { id: collectionPeriod.id },
                     data: periodUpdate as never,
                 });
+                if (callOutcome === "open_dispute") {
+                    await applyCollectionPeriodCategoryChange(tx as never, {
+                        collectionPeriodId: collectionPeriod.id,
+                        customerId: id,
+                        accountId,
+                        currentCategory: collectionPeriod.current_category,
+                        nextCategory: "Dispute",
+                        userId: effectiveUserId,
+                        isManual: false,
+                    });
+                } else if (callOutcome === "promise_to_pay") {
+                    await applyCollectionPeriodCategoryChange(tx as never, {
+                        collectionPeriodId: collectionPeriod.id,
+                        customerId: id,
+                        accountId,
+                        currentCategory: collectionPeriod.current_category,
+                        nextCategory: "Promise_to_pay",
+                        userId: effectiveUserId,
+                        isManual: false,
+                    });
+                }
             }
 
             return { activity, disputeId: dispute?.id ?? null };
         });
+
+        if (callOutcome === "promise_to_pay" && collectionPeriod?.id) {
+            try {
+                await createPromiseToPayScheduledActivities(this.db as never, {
+                    collectionPeriodId: collectionPeriod.id,
+                    userId: effectiveUserId,
+                });
+            } catch {
+                // Category + logged call already persisted; scheduling failure
+                // should not roll back the user-visible promise.
+            }
+        }
 
         return serializeBigInt({
             ok: true,
@@ -1456,6 +2041,14 @@ export class CustomersService {
             throw new BadRequestException({ error: "Email body is required" });
         }
 
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: { is_demo: true } as never,
+        });
+        const allowsOutreach = accountAllowsCustomerOutreach(
+            (account as { is_demo?: boolean } | null)?.is_demo === true
+        );
+
         const contacts = await this.db.contact.findMany({
             where: {
                 id: {
@@ -1474,6 +2067,44 @@ export class CustomersService {
         }
 
         const now = new Date();
+
+        if (!allowsOutreach) {
+            const activity = await this.db.$transaction(async (tx) => {
+                const created = await tx.activity.create({
+                    data: {
+                        customer_id: id,
+                        account_id: accountId,
+                        type: "Email",
+                        status: "FAILED",
+                        title: subject.trim(),
+                        content: emailBody.trim(),
+                        schedule_time: now,
+                        created_by: effectiveUserId,
+                    } as never,
+                });
+
+                await tx.activityContact.createMany({
+                    data: contacts.map((contact) => ({
+                        activity_id: created.id,
+                        contact_id: contact.id,
+                        communication_channel: "Email",
+                        status: "Failed",
+                        failure_reason: DEMO_DISABLED_OUTREACH_REASON,
+                        failed_at: now,
+                        created_by: effectiveUserId,
+                    })) as never,
+                });
+
+                return created;
+            });
+
+            throw new BadRequestException({
+                error: DEMO_DISABLED_OUTREACH_REASON,
+                code: "DEMO_DISABLED",
+                activity: serializeBigInt(activity),
+            });
+        }
+
         const activity = await this.db.$transaction(async (tx) => {
             const created = await tx.activity.create({
                 data: {
@@ -1552,6 +2183,11 @@ export class CustomersService {
             body.dispute_comment ??
             body.comment ??
             null;
+        const commentText =
+            typeof resolutionComment === "string"
+                ? resolutionComment.trim()
+                : "";
+        const hasResolutionComment = commentText.length > 0;
 
         const data: Record<string, unknown> = {};
         switch (op) {
@@ -1559,12 +2195,16 @@ export class CustomersService {
             case "resolve-dispute":
                 data.dispute_status = "Resolved";
                 data.dispute_resolution = body.dispute_resolution || "Accepted";
-                data.resolution_comment = resolutionComment;
+                if (hasResolutionComment) {
+                    data.resolution_comment = commentText;
+                }
                 data.closed_at = new Date();
                 break;
             case "update-resolution":
                 data.dispute_resolution = body.dispute_resolution || "Accepted";
-                data.resolution_comment = resolutionComment;
+                if (hasResolutionComment) {
+                    data.resolution_comment = commentText;
+                }
                 break;
             case "cancel":
             case "cancel-dispute":
@@ -1572,7 +2212,9 @@ export class CustomersService {
                 if (body.dispute_resolution != null) {
                     data.dispute_resolution = body.dispute_resolution;
                 }
-                data.resolution_comment = resolutionComment;
+                if (hasResolutionComment) {
+                    data.resolution_comment = commentText;
+                }
                 data.closed_at = new Date();
                 break;
             case "assign":
@@ -1623,48 +2265,484 @@ export class CustomersService {
             }
         }
 
-        const updated = await this.db.customerDispute.update({
-            where: { id: disputeId },
-            data: data as never,
-        });
-
+        const userName = await this.actingUserName(effectiveUserId);
         const userComment =
             typeof body.user_comment === "string"
                 ? body.user_comment.trim()
                 : "";
-        if (
+        const resolutionValue =
+            (typeof data.dispute_resolution === "string"
+                ? data.dispute_resolution
+                : null) ||
+            (typeof body.dispute_resolution === "string"
+                ? body.dispute_resolution
+                : null) ||
+            dispute.dispute_resolution ||
+            "Accepted";
+        const commentForActivity = toDisputeResolutionI18nPlaceholder(
+            commentText ||
+                (typeof dispute.resolution_comment === "string"
+                    ? dispute.resolution_comment.trim()
+                    : "")
+        );
+        const resolutionI18n = `{{disputes.values.status_${String(resolutionValue).toLowerCase()}}}`;
+
+        const disputeActivityContent = (
+            statusI18n: string,
+            includeComment: boolean
+        ): string => {
+            const rows = [
+                `<span class="activity-label-primary">{{disputes.fields.resolution}}:</span> <span class="activity-value">${resolutionI18n}</span>`,
+            ];
+            if (includeComment && commentForActivity) {
+                rows.push(
+                    `<span class="activity-label-primary">{{activities.fields.resolution_comment}}:</span> <span class="activity-value">${commentForActivity.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`
+                );
+            }
+            rows.push(
+                `<span class="activity-label-primary">{{disputes.fields.status}}:</span> <span class="activity-value">${statusI18n}</span>`
+            );
+            return `\n                ${rows.join("\n            <br>\n                ")}\n            `;
+        };
+
+        let activityTitle: string | null = null;
+        const activityTitleParams: Record<string, unknown> = {
+            userId: effectiveUserId,
+            ...(userName ? { userName } : {}),
+            disputeId: String(disputeId),
+        };
+        let activityContent: string | null = null;
+
+        if (op === "resolve" || op === "resolve-dispute") {
+            activityTitle = "{{disputes.fields.resolved}}";
+            activityTitleParams.resolution = resolutionI18n;
+            activityContent = disputeActivityContent(
+                "{{disputes.values.dispute_status_resolved}}",
+                true
+            );
+        } else if (op === "update-resolution") {
+            activityTitle = "{{disputes.fields.resolution_updated}}";
+            activityTitleParams.resolution = resolutionI18n;
+            activityContent = disputeActivityContent(
+                "{{disputes.values.dispute_status_awaiting_update}}",
+                true
+            );
+        } else if (op === "cancel" || op === "cancel-dispute") {
+            activityTitle = "{{disputes.fields.cancelled}}";
+            activityContent = disputeActivityContent(
+                "{{disputes.values.dispute_status_cancelled}}",
+                true
+            );
+        } else if (
             (op === "assign" || op === "assign-user") &&
             userComment.length > 0
         ) {
-            const period = await this.db.customerCollectionPeriod.findFirst({
-                where: {
-                    customer_id: id,
-                    period_end_date: null,
-                },
-                select: { id: true },
-                orderBy: { id: "desc" },
+            activityTitle = "{{disputes.fields.assigned}}";
+            activityTitleParams.assigneeId =
+                data.owner_id ?? dispute.owner_id ?? null;
+            activityContent = userComment;
+        }
+
+        const updated = await this.db.$transaction(async (tx) => {
+            const next = await tx.customerDispute.update({
+                where: { id: disputeId },
+                data: data as never,
             });
-            await this.db.activity.create({
-                data: {
-                    customer_id: id,
-                    account_id: accountId,
-                    type: "Internal",
-                    status: "COMPLETED",
-                    title: "Dispute assigned",
-                    content: userComment,
-                    schedule_time: new Date(),
-                    collection_period_id:
-                        dispute.customer_collection_period_id ??
-                        period?.id ??
-                        null,
-                    created_by: effectiveUserId,
-                    modified_by: effectiveUserId,
-                    system_generated: false,
-                } as never,
-            });
+
+            if (
+                op === "resolve" ||
+                op === "resolve-dispute" ||
+                op === "cancel" ||
+                op === "cancel-dispute" ||
+                data.dispute_status === "Resolved" ||
+                data.dispute_status === "Cancelled"
+            ) {
+                await revertCategoryAfterLastDisputeClosed(tx as never, {
+                    customerId: id,
+                    accountId,
+                    userId: effectiveUserId,
+                    excludeDisputeId: disputeId,
+                });
+            }
+
+            if (activityTitle) {
+                const period =
+                    dispute.customer_collection_period_id != null
+                        ? { id: dispute.customer_collection_period_id }
+                        : await tx.customerCollectionPeriod.findFirst({
+                              where: {
+                                  customer_id: id,
+                                  period_end_date: null,
+                              },
+                              select: { id: true },
+                              orderBy: { id: "desc" },
+                          });
+                const now = new Date();
+                await tx.activity.create({
+                    data: {
+                        customer_id: id,
+                        account_id: accountId,
+                        type: "Dispute",
+                        status: "COMPLETED",
+                        title: activityTitle,
+                        title_params: activityTitleParams,
+                        content: activityContent,
+                        collection_period_id: period?.id ?? null,
+                        schedule_time: now,
+                        actual_delivery_time: now,
+                        created_by: effectiveUserId,
+                        modified_by: effectiveUserId,
+                        system_generated: false,
+                    } as never,
+                });
+            }
+
+            return next;
+        });
+
+        if (
+            op === "resolve" ||
+            op === "resolve-dispute" ||
+            op === "cancel" ||
+            op === "cancel-dispute"
+        ) {
+            const emailResolution =
+                op === "cancel" || op === "cancel-dispute"
+                    ? typeof data.dispute_resolution === "string"
+                        ? data.dispute_resolution
+                        : typeof body.dispute_resolution === "string"
+                          ? body.dispute_resolution
+                          : "Cancelled"
+                    : resolutionValue;
+            try {
+                await this.sendDisputeResolutionEmail({
+                    customerId: id,
+                    accountId,
+                    disputeId,
+                    effectiveUserId,
+                    userName,
+                    resolutionValue: emailResolution,
+                    collectionPeriodId:
+                        dispute.customer_collection_period_id ?? null,
+                    contactEmail: dispute.contact_email,
+                    contactFirstName: dispute.contact_first_name,
+                    contactLastName: dispute.contact_last_name,
+                    contactMobile: dispute.contact_mobile,
+                });
+            } catch (err) {
+                this.logger.warn(
+                    `Dispute resolution email failed for dispute ${disputeId}: ${
+                        err instanceof Error ? err.message : String(err)
+                    }`
+                );
+            }
         }
 
         return serializeBigInt(updated);
+    }
+
+    /**
+     * Sends the customer-facing Dispute template matched by
+     * `dispute_resolution`, and records an Email activity on the timeline.
+     * Missing template / contact email is a no-op (resolve still succeeds).
+     */
+    private async sendDisputeResolutionEmail(args: {
+        customerId: number;
+        accountId: number;
+        disputeId: number;
+        effectiveUserId: string;
+        userName: string | null;
+        resolutionValue: string;
+        collectionPeriodId: number | null;
+        contactEmail: string | null;
+        contactFirstName: string | null;
+        contactLastName: string | null;
+        contactMobile: string | null;
+    }) {
+        const customerContacts = await this.db.contact.findMany({
+            where: { customer_id: args.customerId },
+            select: {
+                id: true,
+                first_name: true,
+                last_name: true,
+                email: true,
+                mobile: true,
+                phone: true,
+                role: true,
+                receives_standard_reminder: true,
+            },
+        });
+        const customerRow = await this.db.customer.findFirst({
+            where: { id: args.customerId },
+            select: { email: true },
+        });
+        const recipient = pickDisputeOutreachContact({
+            disputeEmail: args.contactEmail,
+            disputeFirstName: args.contactFirstName,
+            disputeLastName: args.contactLastName,
+            disputeMobile: args.contactMobile,
+            contacts: customerContacts,
+            customerEmail: customerRow?.email,
+        });
+        const toEmail = recipient?.email?.trim();
+        if (!toEmail || !recipient) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: no contact email`
+            );
+            return;
+        }
+
+        const templateInclude = {
+            ActivityTemplateLanguage: true,
+        } as const;
+        const templateSelect = {
+            where: {
+                category: "Dispute" as const,
+                dispute_resolution: args.resolutionValue as never,
+                active: true,
+            },
+            include: templateInclude,
+            orderBy: { id: "asc" as const },
+        };
+
+        let template = await this.db.activitiesTemplate.findFirst({
+            ...templateSelect,
+            where: {
+                ...templateSelect.where,
+                account_id: args.accountId,
+            },
+        });
+        if (!template) {
+            template = await this.db.activitiesTemplate.findFirst({
+                ...templateSelect,
+                where: {
+                    ...templateSelect.where,
+                    master_template: true,
+                },
+            });
+        }
+        if (!template) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: no Dispute template for resolution ${args.resolutionValue}`
+            );
+            return;
+        }
+
+        const customer = await this.db.customer.findFirst({
+            where: { id: args.customerId, account_id: args.accountId },
+            select: {
+                id: true,
+                type: true,
+                customer_uuid: true,
+                language: true,
+                Person: { select: { first_name: true } },
+                Company: { select: { name: true } },
+            },
+        });
+        if (!customer?.customer_uuid) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: customer not found`
+            );
+            return;
+        }
+
+        const account = await this.db.account.findUnique({
+            where: { id: args.accountId },
+            select: {
+                id: true,
+                name: true,
+                logo: true,
+                sub_domain: true,
+                email_from_name: true,
+                email_from: true,
+                is_demo: true,
+            } as never,
+        });
+        if (!account) {
+            return;
+        }
+
+        const accountRow = account as {
+            id: number;
+            name: string | null;
+            logo: string | null;
+            sub_domain: string | null;
+            email_from_name: string | null;
+            email_from: string | null;
+            is_demo?: boolean;
+        };
+        const allowsOutreach = accountAllowsCustomerOutreach(
+            accountRow.is_demo === true
+        );
+
+        const language = customer.language || "English";
+        let raw = getRawTemplateContent(
+            {
+                activity_type: "Email",
+                ActivitiesTemplate: template,
+            },
+            language
+        );
+        if (!raw.content?.trim() && language !== "English") {
+            raw = getRawTemplateContent(
+                {
+                    activity_type: "Email",
+                    ActivitiesTemplate: template,
+                },
+                "English"
+            );
+        }
+        if (!raw.subject?.trim() || !raw.content?.trim()) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: empty template content`
+            );
+            return;
+        }
+
+        const contactMatch = recipient.id
+            ? customerContacts.find((contact) => contact.id === recipient.id)
+            : customerContacts.find(
+                  (contact) =>
+                      contact.email?.trim().toLowerCase() ===
+                      toEmail.toLowerCase()
+              );
+
+        const contact = {
+            id: contactMatch?.id ?? recipient.id ?? undefined,
+            first_name: recipient.first_name,
+            last_name: recipient.last_name,
+            email: toEmail,
+            mobile: recipient.mobile,
+            phone: recipient.phone,
+            role: recipient.role,
+        };
+
+        const accountForTemplate = {
+            id: accountRow.id,
+            name: accountRow.name,
+            logo: accountRow.logo,
+            sub_domain: accountRow.sub_domain,
+        };
+        const customerForTemplate = {
+            type: customer.type as "Person" | "Company",
+            customer_uuid: customer.customer_uuid,
+            language: customer.language,
+            Person: customer.Person,
+            Company: customer.Company,
+        };
+
+        const emailSubject = processTemplateContent({
+            content: raw.subject,
+            account: accountForTemplate,
+            customer: customerForTemplate,
+            contact,
+        });
+        const emailHtml = processTemplateContent({
+            content: raw.content,
+            account: accountForTemplate,
+            customer: customerForTemplate,
+            contact,
+        });
+        if (!emailSubject.trim() || !emailHtml.trim()) {
+            return;
+        }
+
+        const resolutionI18n = `{{disputes.values.status_${String(args.resolutionValue).toLowerCase()}}}`;
+        const now = new Date();
+        const periodId =
+            args.collectionPeriodId ??
+            (
+                await this.db.customerCollectionPeriod.findFirst({
+                    where: {
+                        customer_id: args.customerId,
+                        period_end_date: null,
+                    },
+                    select: { id: true },
+                    orderBy: { id: "desc" },
+                })
+            )?.id ??
+            null;
+
+        const activity = await this.db.$transaction(async (tx) => {
+            const created = await tx.activity.create({
+                data: {
+                    customer_id: args.customerId,
+                    account_id: args.accountId,
+                    type: "Email",
+                    status: allowsOutreach ? "SENT" : "FAILED",
+                    title: "{{activities.fields.activity_dispute_resolution_email_sent}}",
+                    title_params: {
+                        userId: args.effectiveUserId,
+                        ...(args.userName ? { userName: args.userName } : {}),
+                        resolution: resolutionI18n,
+                        disputeId: String(args.disputeId),
+                    },
+                    content: emailHtml,
+                    email: toEmail,
+                    contact_id: contactMatch?.id ?? null,
+                    activity_template: template.id,
+                    collection_period_id: periodId,
+                    schedule_time: now,
+                    actual_delivery_time: allowsOutreach ? now : null,
+                    last_sent_time: allowsOutreach ? now : null,
+                    created_by: args.effectiveUserId,
+                    modified_by: args.effectiveUserId,
+                    system_generated: true,
+                } as never,
+            });
+
+            if (contactMatch?.id) {
+                await tx.activityContact.create({
+                    data: {
+                        activity_id: created.id,
+                        contact_id: contactMatch.id,
+                        communication_channel: "Email",
+                        status: allowsOutreach ? "Sent" : "Failed",
+                        ...(allowsOutreach
+                            ? { sent_at: now }
+                            : {
+                                  failure_reason:
+                                      DEMO_DISABLED_OUTREACH_REASON,
+                                  failed_at: now,
+                              }),
+                        created_by: args.effectiveUserId,
+                    } as never,
+                });
+            }
+
+            return created;
+        });
+
+        if (!allowsOutreach) {
+            this.logger.warn(
+                `Skipping dispute resolution email for dispute ${args.disputeId}: ${DEMO_DISABLED_OUTREACH_REASON}`
+            );
+            return;
+        }
+
+        const fromName =
+            accountRow.email_from_name?.trim() ||
+            accountRow.name?.trim() ||
+            "ARchaser";
+        try {
+            await this.systemEmail.sendHtmlEmail({
+                toEmail,
+                subject: emailSubject,
+                html: emailHtml,
+                fromName,
+                replyToEmail: accountRow.email_from?.trim() || undefined,
+                logContext: {
+                    accountId: args.accountId,
+                    userId: args.effectiveUserId,
+                },
+            });
+        } catch (err) {
+            this.logger.warn(
+                `SMTP send failed for dispute ${args.disputeId} activity ${activity.id}: ${
+                    err instanceof Error ? err.message : String(err)
+                }`
+            );
+        }
     }
 
     async searchCustomers(
@@ -1896,43 +2974,370 @@ export class CustomersService {
         const accountId = this.accessScope.getEffectiveAccountId(userInfo);
         const customer = await this.db.customer.findFirst({
             where: { id: customerId, account_id: accountId },
-            select: {
-                id: true,
-                total_due_amount: true,
-                total_overdue_amount: true,
-                no_of_due_invoices: true,
-                number_of_overdue_invoices: true,
-            },
+            select: { id: true },
         });
         if (!customer) {
             throw new NotFoundException({ error: "Customer not found" });
         }
-        const childCount = await this.db.customer.count({
-            where: { parent_customer_id: customerId },
+
+        const directChildren = await this.db.customer.findMany({
+            where: { parent_customer_id: customerId, account_id: accountId },
+            select: {
+                id: true,
+                customer_number: true,
+                type: true,
+                total_due_amount: true,
+                total_overdue_amount: true,
+                no_of_due_invoices: true,
+                number_of_overdue_invoices: true,
+                customer_due_amount1: true,
+                customer_due_currency1: true,
+                customer_due_amount2: true,
+                customer_due_currency2: true,
+                customer_overdue_amount1: true,
+                customer_overdue_currency1: true,
+                customer_overdue_amount2: true,
+                customer_overdue_currency2: true,
+                Person: {
+                    select: {
+                        first_name: true,
+                        last_name: true,
+                        full_name: true,
+                    },
+                },
+                Company: { select: { name: true } },
+            },
+            orderBy: { id: "asc" },
         });
-        if (childCount === 0) {
+
+        if (directChildren.length === 0) {
             throw new NotFoundException({
                 error: "Customer has no child customers",
                 code: "NO_CHILD_CUSTOMERS",
             });
         }
-        const children = await this.db.customer.aggregate({
-            where: { parent_customer_id: customerId, account_id: accountId },
-            _sum: {
-                total_due_amount: true,
-                total_overdue_amount: true,
-                no_of_due_invoices: true,
-                number_of_overdue_invoices: true,
+
+        const account = await this.db.account.findUnique({
+            where: { id: accountId },
+            select: {
+                currency: true,
+                has_credit_insurance: true,
+                has_collection: true,
             },
-            _count: { _all: true },
         });
-        return serializeBigInt({
+        const hasCreditInsurance = account?.has_credit_insurance === true;
+        const hasCollection = account?.has_collection !== false;
+        const accountCurrency = account?.currency ?? "USD";
+
+        const childInputs: AggregatedDataChildInput[] = directChildren.map(
+            (child) => ({
+                id: child.id,
+                customer_number: child.customer_number,
+                type: child.type,
+                name: customerDisplayNameFromParts({
+                    companyName: child.Company?.name,
+                    personFullName: child.Person?.full_name,
+                    personFirstName: child.Person?.first_name,
+                    personLastName: child.Person?.last_name,
+                    customerNumber: child.customer_number,
+                }),
+                total_due_amount: child.total_due_amount,
+                total_overdue_amount: child.total_overdue_amount,
+                no_of_due_invoices: child.no_of_due_invoices,
+                number_of_overdue_invoices: child.number_of_overdue_invoices,
+                customer_due_amount1: child.customer_due_amount1,
+                customer_due_currency1: child.customer_due_currency1,
+                customer_due_amount2: child.customer_due_amount2,
+                customer_due_currency2: child.customer_due_currency2,
+                customer_overdue_amount1: child.customer_overdue_amount1,
+                customer_overdue_currency1: child.customer_overdue_currency1,
+                customer_overdue_amount2: child.customer_overdue_amount2,
+                customer_overdue_currency2: child.customer_overdue_currency2,
+            })
+        );
+
+        const childIds = childInputs.map((c) => c.id);
+        let paidExtras: {
+            total_paid_amount?: number | null;
+            customer_total_paid_amount1?: number | null;
+            customer_total_paid_amount2?: number | null;
+            total_collection_periods?: number | null;
+            active_collection_periods?: number | null;
+            id?: number;
+        } = {};
+
+        if (hasCollection) {
+            const [storedAgg, collectionPeriods, paymentGroups] =
+                await Promise.all([
+                    this.db.customerAggregatedData.findUnique({
+                        where: { customer_id: customerId },
+                        select: { id: true },
+                    }),
+                    this.db.customerCollectionPeriod.findMany({
+                        where: { customer_id: { in: childIds } },
+                        select: { id: true, period_end_date: true },
+                    }),
+                    this.db.invoicePayment.groupBy({
+                        by: ["customer_currency"],
+                        where: {
+                            customer_id: { in: childIds },
+                            invoice_id: { gt: 0 },
+                        },
+                        _sum: {
+                            amount: true,
+                            customer_amount: true,
+                        },
+                    }),
+                ]);
+
+            let totalPaid = 0;
+            const paidByCurrency = new Map<string, number>();
+            for (const row of paymentGroups) {
+                totalPaid += Number(row._sum.amount ?? 0) || 0;
+                const currency = row.customer_currency?.trim();
+                const customerAmount = Number(row._sum.customer_amount ?? 0);
+                if (currency && Number.isFinite(customerAmount) && customerAmount) {
+                    paidByCurrency.set(
+                        currency,
+                        (paidByCurrency.get(currency) || 0) + customerAmount
+                    );
+                }
+            }
+            const paidSorted = Array.from(paidByCurrency.entries()).sort(
+                (a, b) => b[1] - a[1]
+            );
+            paidExtras = {
+                id: storedAgg?.id ?? 0,
+                total_paid_amount: totalPaid,
+                customer_total_paid_amount1: paidSorted[0]?.[1] ?? null,
+                customer_total_paid_amount2: paidSorted[1]?.[1] ?? null,
+                total_collection_periods: collectionPeriods.length,
+                active_collection_periods: collectionPeriods.filter(
+                    (p) => p.period_end_date == null
+                ).length,
+            };
+        }
+
+        const collection = buildCollectionAggregatedData(
             customerId,
-            childCount: children._count._all,
-            totalDueAmount: children._sum.total_due_amount ?? 0,
-            totalOverdueAmount: children._sum.total_overdue_amount ?? 0,
-            dueInvoiceCount: children._sum.no_of_due_invoices ?? 0,
-            overdueInvoiceCount: children._sum.number_of_overdue_invoices ?? 0,
+            childInputs,
+            paidExtras
+        );
+
+        let credit: ReturnType<typeof buildCreditAggregatedBlock> | null = null;
+        if (hasCreditInsurance) {
+            // Dashboard / shell UI scope: local subtree ∩ viewer BU/owner permissions.
+            // Domain/CDP still use the full top-root pool elsewhere.
+            const rootCustomerId = await resolveCustomerCreditPoolRoot(
+                customerId,
+                this.db
+            );
+            const localDescendants = await listDescendantCustomerIds(
+                customerId,
+                accountId,
+                this.db
+            );
+            const localCandidateIds = [customerId, ...localDescendants];
+            const accessParts =
+                await this.accessScope.buildCustomerAccessWhere(userInfo);
+            const members = await this.db.customer.findMany({
+                where: {
+                    AND: [
+                        { id: { in: localCandidateIds } },
+                        ...accessParts,
+                    ],
+                },
+                select: {
+                    id: true,
+                    customer_number: true,
+                    type: true,
+                    parent_customer_id: true,
+                    total_due_amount: true,
+                    total_overdue_amount: true,
+                    no_of_due_invoices: true,
+                    number_of_overdue_invoices: true,
+                    oldest_invoice_overdue_date: true,
+                    oldest_invoice_overdue_date_all: true,
+                    Person: {
+                        select: {
+                            first_name: true,
+                            last_name: true,
+                            full_name: true,
+                        },
+                    },
+                    Company: { select: { name: true } },
+                },
+                orderBy: { id: "asc" },
+            });
+            const memberIds = members.map((m) => m.id);
+
+            const atRiskInvoicesByCustomer =
+                await fetchAtRiskInvoiceInputsByCustomerMap(accountId, {
+                    customerIds: memberIds,
+                });
+
+            const activePolicy = await this.db.customerPolicy.findFirst({
+                where: {
+                    customer_id: rootCustomerId,
+                    is_active: true,
+                },
+                select: {
+                    approved_limit: true,
+                    approved_limit_currency: true,
+                    outdated_dcl: true,
+                    excluded_from_policy: true,
+                    insurance_policy_id: true,
+                    capacity_gap_amount: true,
+                    uninsured_amount: true,
+                    capacity_gap_amount1: true,
+                    capacity_gap_currency1: true,
+                    capacity_gap_amount2: true,
+                    capacity_gap_currency2: true,
+                    uninsured_amount1: true,
+                    uninsured_currency1: true,
+                    uninsured_amount2: true,
+                    uninsured_currency2: true,
+                },
+            });
+
+            let effectiveLimit: number | null = null;
+            if (activePolicy) {
+                const resolved = await resolveEffectiveApprovedLimit(
+                    rootCustomerId,
+                    {
+                        baseApprovedLimit: activePolicy.approved_limit,
+                        baseApprovedLimitCurrency:
+                            activePolicy.approved_limit_currency,
+                        outdatedDcl: activePolicy.outdated_dcl ?? false,
+                        excludedFromPolicy:
+                            activePolicy.excluded_from_policy ?? false,
+                        parentPrimaryPolicyId:
+                            activePolicy.insurance_policy_id ?? undefined,
+                    }
+                );
+                effectiveLimit =
+                    resolved.effectiveApprovedLimit != null
+                        ? Number(resolved.effectiveApprovedLimit)
+                        : activePolicy.approved_limit != null
+                          ? Number(activePolicy.approved_limit)
+                          : null;
+            }
+
+            const poolRollup = computeCreditPoolDashboardRollup({
+                viewerCustomerId: customerId,
+                rootCustomerId,
+                members,
+                rootPolicy: activePolicy
+                    ? {
+                          approved_limit:
+                              activePolicy.approved_limit != null
+                                  ? Number(activePolicy.approved_limit)
+                                  : null,
+                          approved_limit_currency:
+                              activePolicy.approved_limit_currency ?? null,
+                          capacity_gap_amount:
+                              activePolicy.capacity_gap_amount != null
+                                  ? Number(activePolicy.capacity_gap_amount)
+                                  : null,
+                          uninsured_amount:
+                              activePolicy.uninsured_amount != null
+                                  ? Number(activePolicy.uninsured_amount)
+                                  : null,
+                          capacity_gap_amount1:
+                              activePolicy.capacity_gap_amount1 != null
+                                  ? Number(activePolicy.capacity_gap_amount1)
+                                  : null,
+                          capacity_gap_currency1:
+                              activePolicy.capacity_gap_currency1 ?? null,
+                          capacity_gap_amount2:
+                              activePolicy.capacity_gap_amount2 != null
+                                  ? Number(activePolicy.capacity_gap_amount2)
+                                  : null,
+                          capacity_gap_currency2:
+                              activePolicy.capacity_gap_currency2 ?? null,
+                          uninsured_amount1:
+                              activePolicy.uninsured_amount1 != null
+                                  ? Number(activePolicy.uninsured_amount1)
+                                  : null,
+                          uninsured_currency1:
+                              activePolicy.uninsured_currency1 ?? null,
+                          uninsured_amount2:
+                              activePolicy.uninsured_amount2 != null
+                                  ? Number(activePolicy.uninsured_amount2)
+                                  : null,
+                          uninsured_currency2:
+                              activePolicy.uninsured_currency2 ?? null,
+                      }
+                    : null,
+                effectiveLimit,
+                atRiskInvoicesByCustomer,
+            });
+
+            const claims =
+                memberIds.length === 0
+                    ? []
+                    : await this.db.claim.findMany({
+                          where: {
+                              account_id: accountId,
+                              customer_id: { in: memberIds },
+                          },
+                          select: { customer_id: true, status: true },
+                      });
+            const claimCounts = buildClaimCountsByCustomer(
+                claims.map((c) => ({
+                    customer_id: c.customer_id,
+                    status: String(c.status),
+                }))
+            );
+
+            credit = buildCreditAggregatedBlock(
+                poolRollup.kpis,
+                // Members table = local descendants only (never the shell parent
+                // whose Dashboard is open). Pool KPI rollups above still include
+                // the viewing node when it has AR/claims.
+                members
+                    .filter((m) => m.id !== customerId)
+                    .map((m) => ({
+                        id: m.id,
+                        customer_number: m.customer_number,
+                        type: m.type,
+                        parent_customer_id: m.parent_customer_id,
+                        name: customerDisplayNameFromParts({
+                            companyName: m.Company?.name,
+                            personFullName: m.Person?.full_name,
+                            personFirstName: m.Person?.first_name,
+                            personLastName: m.Person?.last_name,
+                            customerNumber: m.customer_number,
+                        }),
+                        total_due_amount: m.total_due_amount,
+                        total_overdue_amount: m.total_overdue_amount,
+                        no_of_due_invoices: m.no_of_due_invoices,
+                        number_of_overdue_invoices: m.number_of_overdue_invoices,
+                        oldest_invoice_overdue_date_all:
+                            m.oldest_invoice_overdue_date_all,
+                        oldest_invoice_overdue_date:
+                            m.oldest_invoice_overdue_date,
+                        capacity_gap_amount:
+                            poolRollup.capacityGapByCustomer.get(m.id) ?? 0,
+                        at_risk_exposure:
+                            poolRollup.atRiskByCustomer.get(m.id) ?? 0,
+                    })),
+                claimCounts
+            );
+        }
+
+        return serializeBigInt({
+            aggregatedData: collection.aggregatedData,
+            childCustomers: collection.childCustomers,
+            totalDueAmount: collection.totalDueAmount,
+            accountCurrency,
+            customerTotalDueAmount1: collection.customerTotalDueAmount1,
+            customerTotalDueCurrency1: collection.customerTotalDueCurrency1,
+            customerTotalDueAmount2: collection.customerTotalDueAmount2,
+            customerTotalDueCurrency2: collection.customerTotalDueCurrency2,
+            has_collection: hasCollection,
+            has_credit_insurance: hasCreditInsurance,
+            credit,
         });
     }
 }

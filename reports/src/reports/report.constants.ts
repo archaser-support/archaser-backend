@@ -7,12 +7,14 @@ export const MODEL_NAME_MAP: Record<string, string> = {
     Activity: "activity",
     Dispute: "customerDispute",
     CustomerCollectionPeriod: "customerCollectionPeriod",
+    CustomerPolicy: "customerPolicy",
     CustomerBanks: "customerBanks",
     AccountBankAccounts: "accountBankAccounts",
     Person: "person",
     Company: "company",
     User: "user",
     BusinessUnit: "businessUnit",
+    Claim: "claim",
 };
 
 /** Context → primary report table for entity-list execute. */
@@ -150,6 +152,7 @@ export const RELATION_FROM_PRIMARY: Record<
         User: "Owner",
         Owner: "Owner",
         CustomerCollectionPeriod: "CustomerCollectionPeriod",
+        CustomerPolicy: "CustomerPolicy",
         Company: "Company",
         Person: "Person",
         Country: "Country",
@@ -157,11 +160,18 @@ export const RELATION_FROM_PRIMARY: Record<
         ParentCustomer: "ParentCustomer",
         Invoice: "Invoice",
         InvoicePayment: "InvoicePayment",
+        Claim: "Claim",
     },
     Invoice: {
         Customer: "Customer",
         BusinessUnit: "BusinessUnit",
         User: "User",
+        InsurancePolicy: "InsurancePolicy",
+        Claim: "Claim",
+    },
+    Claim: {
+        Invoice: "Invoice",
+        Customer: "Customer",
         InsurancePolicy: "InsurancePolicy",
     },
     Contact: {
@@ -189,6 +199,10 @@ export const RELATION_FROM_PRIMARY: Record<
     },
     CustomerCollectionPeriod: {
         Customer: "Customer",
+    },
+    CustomerPolicy: {
+        Customer: "Customer",
+        InsurancePolicy: "InsurancePolicy",
     },
     InvoicePayment: {
         Invoice: "Invoice",

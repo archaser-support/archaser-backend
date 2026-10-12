@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { formatMoneyIso } from "../format-money.util";
 import { getFieldOutputKey } from "../report.constants";
 import {
     getDirectFieldReferences,
@@ -221,15 +222,16 @@ function formatFormulaValue(
         if (formula.format === "currency") {
             return {
                 raw,
-                formatted: new Intl.NumberFormat(locale, {
-                    style: "currency",
-                    currency: resolveCurrency(
+                formatted: formatMoneyIso(
+                    raw,
+                    resolveCurrency(
                         row,
                         formula.currencySource,
                         fields,
                         accountCurrency
                     ),
-                }).format(raw),
+                    locale
+                ),
             };
         }
         if (formula.format === "percentage") {
@@ -266,6 +268,24 @@ function formatFormulaValue(
     } catch {
         return { raw, formatted: String(raw) };
     }
+}
+
+export function formatAggregatedFormulaValue(
+    value: number,
+    formula: ReportFormula,
+    sampleRow: Record<string, unknown>,
+    fields: FormulaField[],
+    locale: string,
+    accountCurrency: string
+): string | null {
+    return formatFormulaValue(
+        new Prisma.Decimal(value),
+        formula,
+        sampleRow,
+        fields,
+        locale,
+        accountCurrency
+    ).formatted;
 }
 
 export function mergeFormulaOperandFieldsIntoConfig<

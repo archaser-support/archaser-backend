@@ -1,6 +1,20 @@
 # Staging Nest stack on the API EC2 (api.staging.archaser.com).
-# Redis is docker-internal. Nest ports bind 127.0.0.1 for host nginx.
+# Redis + Mongo are docker-internal (no host publish). Nest ports bind 127.0.0.1 for host nginx.
 # Public TLS is nginx on the host — see nginx/archaser-staging-api.conf.
+#
+# Always use project name archaser-backend-staging (same as deploy-backend-docker.sh):
+#   docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml …
+# Running without -p from ~/api creates a conflicting project named "api".
+#
+# Mongo is compose-local (fresh volume; not Atlas). One Mongo serves both envs:
+#   staging DB  → archaser_staging
+#   production DB → archaser  (production Nest joins network archaser-mongo-shared)
+# Compose overrides MONGODB_URI on api / worker / connectors to
+# mongodb://mongo:27017/archaser_staging.
+# On the EC2 host, also set Nest .env (deploy validates DB path) to the same URI, then:
+#   docker compose -p archaser-backend-staging -f docker-compose.backend.staging.yml up -d
+#   cd grafana && ./start-staging.sh   # refresh Mongo datasource for Grafana
+# Database path must remain /archaser_staging (not /archaser).
 services:
   redis:
     image: redis:7-alpine
@@ -14,6 +28,28 @@ services:
       timeout: 3s
       retries: 5
 
+  mongo:
+    image: mongo:7
+    volumes:
+      - archaser-mongo-staging-data:/data/db
+    networks:
+      - default
+      - archaser-mongo-shared
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mongosh",
+          "--quiet",
+          "--eval",
+          "db.adminCommand({ ping: 1 }).ok",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
   api:
     image: node:20-bookworm-slim
     working_dir: /workspace
@@ -22,6 +58,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
       NEST_PORT: 3010
       PORT: 3010
       SERVICE_NAME: archaser-api-staging
@@ -30,6 +67,7 @@ services:
       NEST_AUTH_SUCCESS_REDIRECT: "https://staging.archaser.com/login"
       NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
       REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/archaser_staging
       BULLMQ_ENABLED: "true"
       BULLMQ_QUEUE: archaser-cron
       SMS_SERVICE_URL: http://sms:3004
@@ -50,6 +88,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      mongo:
+        condition: service_healthy
       sms:
         condition: service_started
     restart: unless-stopped
@@ -62,8 +102,12 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
+      SERVICE_NAME: archaser-worker-staging
       WORKER_PORT: 3003
+      NEST_PUBLIC_URL: "https://api.staging.archaser.com"
       REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/archaser_staging
       BULLMQ_QUEUE: archaser-cron
       CONNECTION_LIMIT_WORKER: 5
       SMS_SERVICE_URL: http://sms:3004
@@ -81,6 +125,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      mongo:
+        condition: service_healthy
       sms:
         condition: service_started
     restart: unless-stopped
@@ -93,8 +139,10 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
       SMS_PORT: 3004
       CONNECTION_LIMIT_SMS: 5
+      NEST_PUBLIC_URL: "https://api.staging.archaser.com"
       NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
       NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
     volumes:
@@ -111,10 +159,12 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
       CONNECTORS_PORT: 3005
       # Path flip enabled on staging nginx — connectors owns sync schedules (D72).
       ENABLE_CONNECTORS_SYNC_WORKERS: "true"
       REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/archaser_staging
       NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
       NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
     volumes:
@@ -123,6 +173,8 @@ services:
       - "127.0.0.1:3005:3005"
     depends_on:
       redis:
+        condition: service_healthy
+      mongo:
         condition: service_healthy
     restart: unless-stopped
 
@@ -134,6 +186,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      APP_ENV: staging
       REPORTS_PORT: 3006
       NEXT_PUBLIC_BASE_URL: "https://staging.archaser.com"
       NEST_CORS_ORIGINS: "https://staging.archaser.com,https://www.staging.archaser.com,https://api.staging.archaser.com,https://staging.d2nb6pdzevzjzz.amplifyapp.com,https://main.d2nb6pdzevzjzz.amplifyapp.com,http://localhost:3000,http://localhost:3001"
@@ -145,3 +198,9 @@ services:
 
 volumes:
   archaser-redis-staging-data:
+  archaser-mongo-staging-data:
+
+networks:
+  # Shared with production Nest (same Mongo, DB path /archaser).
+  archaser-mongo-shared:
+    name: archaser-mongo-shared

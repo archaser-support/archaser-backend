@@ -11,6 +11,10 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { sendViaVendor } from "@archaser/sms-send";
+import {
+    DEMO_DISABLED_OUTREACH_REASON,
+    accountAllowsCustomerOutreach,
+} from "./demoAccountPolicy";
 import { selectPragmaticChannel } from "./communication/selectPragmaticChannel";
 import { handleActivityEmailSendFailure } from "./email/activityEmailSendFailure";
 import { resolveAccountEmailSender } from "./email/accountSender";
@@ -26,6 +30,7 @@ import {
     processTemplateContent,
 } from "./templates/processTemplateContent";
 import { getSystemUserId } from "./users/getSystemUserId";
+import { currentAutomatedCycleStartedAt } from "./activities/currentAutomatedCycle";
 import type { CronFrozenAccountGuard } from "./accountFreeze/cronFrozenAccountGuard";
 
 const BATCH_SIZE = 50;
@@ -216,6 +221,7 @@ async function sendDueActivities(
                     sms_from_name: true,
                     sms_fallback_enabled: true,
                     intelligent_channel_selection_enabled: true,
+                    is_demo: true,
                 },
             },
             ActivitiesSequence: {
@@ -306,13 +312,69 @@ async function processActivity(
     );
 
     if (pendingContacts.length === 0) {
-        // No pending contacts - mark activity as SENT
+        // No recipients to send — mark FAILED (not SENT). Treating this as
+        // success previously hid broken schedules (0 ActivityContact rows)
+        // and could unblock duplicate next-step creation.
         await prisma.activity.update({
             where: { id: activity.id },
             data: {
-                status: "SENT",
+                status: "FAILED",
                 modified_at: new Date(),
             },
+        });
+        jobLog("activityWorkflowManager", "warn", "no pending contacts", {
+            activityId: activity.id,
+            accountId: activity.Account?.id,
+            reason: "No contacts to send",
+        });
+        if (String(activity.type) === "SMS") {
+            stats.smsFailed += 1;
+        } else {
+            stats.emailFailed += 1;
+        }
+        return;
+    }
+
+    // Staging Demo OFF: skip SMTP/SMS vendors; mark contacts Failed with
+    // a stable reason so timelines stay visible without delivery.
+    if (
+        !accountAllowsCustomerOutreach(activity.Account?.is_demo === true)
+    ) {
+        const now = new Date();
+        await prisma.$transaction(async (tx) => {
+            await tx.activity.update({
+                where: { id: activity.id },
+                data: {
+                    status: "FAILED",
+                    modified_at: now,
+                },
+            });
+            await Promise.all(
+                pendingContacts.map((ac: { id: number }) =>
+                    tx.activityContact.update({
+                        where: { id: ac.id },
+                        data: {
+                            status: "Failed",
+                            failure_reason: DEMO_DISABLED_OUTREACH_REASON,
+                            failed_at: now,
+                            modified_at: now,
+                        },
+                    })
+                )
+            );
+        });
+
+        const channel = String(activity.type || "");
+        if (channel === "SMS") {
+            stats.smsFailed += pendingContacts.length;
+        } else {
+            stats.emailFailed += pendingContacts.length;
+        }
+        jobLog("activityWorkflowManager", "info", "demo outreach blocked", {
+            activityId: activity.id,
+            accountId: activity.Account?.id,
+            contacts: pendingContacts.length,
+            reason: DEMO_DISABLED_OUTREACH_REASON,
         });
         return;
     }
@@ -398,6 +460,73 @@ async function processActivity(
 /**
  * Process SMS activity: resolve vendor and send via sendViaVendor
  */
+function resolveSmsBody(
+    activity: any,
+    account: any,
+    customer: any,
+    contact: any
+): string {
+    let smsRawContent = activity.content || "Reminder";
+    if (activity.system_generated && activity.ActivitiesSequence) {
+        const smsTemplate = getRawTemplateContent(
+            {
+                ...activity.ActivitiesSequence,
+                activity_type: "SMS",
+            },
+            customer.language
+        );
+        if (smsTemplate.content) {
+            smsRawContent = smsTemplate.content;
+        }
+    }
+
+    return processTemplateContent({
+        content: smsRawContent,
+        account: {
+            id: account.id,
+            name: account.name,
+            logo: account.logo,
+            sub_domain: account.sub_domain,
+        },
+        customer: {
+            type: customer.type as "Person" | "Company",
+            customer_uuid: customer.customer_uuid,
+            language: customer.language,
+            Person: customer.Person,
+            Company: customer.Company
+                ? { name: customer.Company.name || "" }
+                : null,
+        },
+        contact: { ...contact, id: contact.id },
+        invoice: activity.Invoice ?? undefined,
+    });
+}
+
+async function resolveSmsFromNumber(
+    prisma: PrismaClient,
+    vendorId: number,
+    countryId: number | null,
+    fallback: string
+): Promise<{ from: string; phoneNumber: string | null }> {
+    if (countryId) {
+        const mapping = await prisma.countrySMSVendor.findFirst({
+            where: {
+                country_id: countryId,
+                vendor_id: vendorId,
+                is_active: true,
+            },
+            select: { phone_number: true },
+        });
+        if (mapping?.phone_number) {
+            return {
+                from: mapping.phone_number,
+                phoneNumber: mapping.phone_number,
+            };
+        }
+    }
+    return { from: fallback, phoneNumber: null };
+}
+
 async function processSmsActivity(
     prisma: PrismaClient,
     activity: any,
@@ -485,9 +614,19 @@ async function processSmsActivity(
 
         // Send SMS via vendor
         try {
-            const smsFromName =
-                account.sms_from_name || "ARchaser";
-            const smsBody = activity.content || "Reminder";
+            const smsFromName = account.sms_from_name || "ARchaser";
+            const smsFrom = await resolveSmsFromNumber(
+                prisma,
+                vendor!.id,
+                countryId,
+                smsFromName
+            );
+            const smsBody = resolveSmsBody(
+                activity,
+                account,
+                customer,
+                contact
+            );
 
             // Convert vendor to SmsVendorCreds (handle Decimal type)
             const vendorCreds = {
@@ -498,7 +637,7 @@ async function processSmsActivity(
                 account_sid: vendor!.account_sid,
                 auth_token: vendor!.auth_token,
                 webhook_url: vendor!.webhook_url,
-                phone_number: null,
+                phone_number: smsFrom.phoneNumber,
                 cost_per_sms: vendor!.cost_per_sms
                     ? parseFloat(vendor!.cost_per_sms.toString())
                     : null,
@@ -507,7 +646,7 @@ async function processSmsActivity(
             const result = await sendViaVendor(
                 vendorCreds,
                 contact.mobile,
-                smsFromName,
+                smsFrom.from,
                 smsBody
             );
 
@@ -562,13 +701,27 @@ async function processSmsActivity(
             : sentCount === 0
               ? "FAILED"
               : "SENT";
+    const now = new Date();
+    const step =
+        activity.ActivitiesSequence?.step ??
+        (activity.title_params as { step?: number } | null)?.step;
 
     await prisma.activity.update({
         where: { id: activity.id },
         data: {
             status: finalStatus,
-            modified_at: new Date(),
-            ...(sentCount > 0 ? { actual_delivery_time: new Date() } : {}),
+            modified_at: now,
+            ...(sentCount > 0 ? { actual_delivery_time: now } : {}),
+            ...(finalStatus === "SENT"
+                ? {
+                      title: "{{activities.fields.activity_automated_step_sent}}",
+                      title_params: {
+                          step,
+                          contacts: sentCount,
+                          time: now.toISOString(),
+                      },
+                  }
+                : {}),
         },
     });
 }
@@ -825,8 +978,6 @@ async function attemptEmailToSmsFallback(
         account,
         customer,
         countryId,
-        accountForTemplate,
-        customerForTemplate,
     } = ctx;
 
     if (
@@ -853,34 +1004,20 @@ async function attemptEmailToSmsFallback(
         return false;
     }
 
-    let smsRawContent = activity.content || "Reminder";
-    if (activity.system_generated && activity.ActivitiesSequence) {
-        const smsTemplate = getRawTemplateContent(
-            {
-                ...activity.ActivitiesSequence,
-                activity_type: "SMS",
-            },
-            customer.language
-        );
-        if (smsTemplate.content) {
-            smsRawContent = smsTemplate.content;
-        }
-    }
-
-    const smsBody = processTemplateContent({
-        content: smsRawContent,
-        account: accountForTemplate,
-        customer: {
-            ...customerForTemplate,
-            Company: customerForTemplate.Company
-                ? { name: customerForTemplate.Company.name || "" }
-                : null,
-        },
-        contact: { ...contact, id: contact.id },
-        invoice: activity.Invoice ?? undefined,
-    });
+    const smsBody = resolveSmsBody(
+        { ...activity, system_generated: activity.system_generated },
+        account,
+        customer,
+        contact
+    );
 
     const smsFromName = account.sms_from_name || "ARchaser";
+    const smsFrom = await resolveSmsFromNumber(
+        prisma,
+        vendor.id,
+        countryId,
+        smsFromName
+    );
     const vendorCreds = {
         id: vendor.id,
         provider: vendor.provider,
@@ -889,7 +1026,7 @@ async function attemptEmailToSmsFallback(
         account_sid: vendor.account_sid,
         auth_token: vendor.auth_token,
         webhook_url: vendor.webhook_url,
-        phone_number: null,
+        phone_number: smsFrom.phoneNumber,
         cost_per_sms: vendor.cost_per_sms
             ? parseFloat(vendor.cost_per_sms.toString())
             : null,
@@ -899,7 +1036,7 @@ async function attemptEmailToSmsFallback(
         const result = await sendViaVendor(
             vendorCreds,
             contact.mobile,
-            smsFromName,
+            smsFrom.from,
             smsBody
         );
 
@@ -1227,6 +1364,61 @@ async function processCollectionPeriodForNextActivity(
         return;
     }
 
+    // Same-cycle only: a previous Automated pass on this period (then Agent,
+    // then Automated again) still has delivered step rows that must not block.
+    const cycleStartedAt = await currentAutomatedCycleStartedAt(
+        prisma,
+        period.id
+    );
+    const inCurrentCycle = cycleStartedAt
+        ? { created_at: { gte: cycleStartedAt } }
+        : {};
+    const [existingForStep, pendingScheduled] = await Promise.all([
+        prisma.activity.findFirst({
+            where: {
+                collection_period_id: period.id,
+                status: { not: "CANCELLED" },
+                ...inCurrentCycle,
+                ActivitiesSequence: {
+                    category: "Automated",
+                    step: nextStep,
+                },
+            },
+            select: { id: true, status: true },
+        }),
+        prisma.activity.findFirst({
+            where: {
+                collection_period_id: period.id,
+                status: "SCHEDULED",
+                ...inCurrentCycle,
+                ActivitiesSequence: { category: "Automated" },
+            },
+            select: { id: true, status: true },
+        }),
+    ]);
+    const blockingActivity = existingForStep ?? pendingScheduled;
+    if (blockingActivity) {
+        await prisma.customerCollectionPeriod.update({
+            where: { id: period.id },
+            data: {
+                create_next_activity: false,
+                modified_at: new Date(),
+            },
+        });
+        jobLog(
+            "activityWorkflowManager",
+            "info",
+            "skip duplicate automated step",
+            {
+                periodId: period.id,
+                nextStep,
+                existingActivityId: blockingActivity.id,
+                existingStatus: blockingActivity.status,
+            }
+        );
+        return;
+    }
+
     // Get contacts for activity
     const mainContacts = await prisma.contact.findMany({
         where: { customer_id: customer.id },
@@ -1270,10 +1462,19 @@ async function processCollectionPeriodForNextActivity(
     });
 
     if (contacts.length === 0) {
-        await prisma.customer.update({
-            where: { id: customer.id },
-            data: { automation_stuck_no_contacts: true },
-        });
+        await prisma.$transaction([
+            prisma.customer.update({
+                where: { id: customer.id },
+                data: { automation_stuck_no_contacts: true },
+            }),
+            prisma.customerCollectionPeriod.update({
+                where: { id: period.id },
+                data: {
+                    create_next_activity: false,
+                    modified_at: new Date(),
+                },
+            }),
+        ]);
         return;
     }
 

@@ -8,6 +8,7 @@ import {
     getFrozenAccountIds,
     isAccountFrozen,
 } from "../src/accountFreeze/frozenAccountResolver";
+import { FrozenAccountMongoUnavailableError } from "../src/accountFreeze/frozenAccountMongoUnavailableError";
 import {
     logFrozenAccountSkips,
     reportFrozenAccountSkips,
@@ -30,7 +31,7 @@ function mockPrisma(queryResults: {
                     account_id,
                 }));
             }
-            if (sql.includes('"CreditAsOfBackfillJob"')) {
+            if (sql.includes('"AccountBackgroundJob"')) {
                 return (queryResults.backfill ?? []).map((account_id) => ({
                     account_id,
                 }));
@@ -61,7 +62,7 @@ describe("getFrozenAccountIds", () => {
         expect([...frozen]).toEqual([101]);
     });
 
-    it("includes account with CreditAsOfBackfillJob running or paused", async () => {
+    it("includes account with AccountBackgroundJob running or paused", async () => {
         process.env.MONGODB_URI = "mongodb://test";
         const frozen = await getFrozenAccountIds({
             prisma: mockPrisma({ backfill: [202] }),
@@ -117,15 +118,16 @@ describe("getFrozenAccountIds", () => {
         expect([...frozen].sort((a, b) => a - b)).toEqual([505, 506]);
     });
 
-    it("returns Postgres-only frozen accounts when Mongo lookup fails", async () => {
+    it("fails when Mongo lookup fails and MONGODB_URI is set", async () => {
         process.env.MONGODB_URI = "mongodb://test";
-        const frozen = await getFrozenAccountIds({
-            prisma: mockPrisma({ import: [606] }),
-            listRunningSyncAccountIds: async () => {
-                throw new Error("Mongo unavailable");
-            },
-        });
-        expect([...frozen]).toEqual([606]);
+        await expect(
+            getFrozenAccountIds({
+                prisma: mockPrisma({ import: [606] }),
+                listRunningSyncAccountIds: async () => {
+                    throw new Error("Mongo unavailable");
+                },
+            })
+        ).rejects.toBeInstanceOf(FrozenAccountMongoUnavailableError);
     });
 });
 
@@ -165,7 +167,7 @@ describe("SyncHistoryStore.listRunningAccountIds", () => {
         await store.createRunning({
             executionId: "run-b",
             connectorId: 2,
-            accountId: 10,
+            accountId: 15,
             provider: "PRIORITY",
             trigger: "manual",
             syncMode: "backfill",
@@ -181,7 +183,7 @@ describe("SyncHistoryStore.listRunningAccountIds", () => {
         await store.completeIfRunning("run-c", { status: "SUCCESS" });
 
         const accountIds = await store.listRunningAccountIds();
-        expect(accountIds.sort((a, b) => a - b)).toEqual([10]);
+        expect(accountIds.sort((a, b) => a - b)).toEqual([10, 15]);
     });
 });
 

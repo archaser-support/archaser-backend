@@ -1,22 +1,25 @@
 import type { PrismaClient } from "@prisma/client";
 import {
+    assertParentIsShell,
+    CreditPoolShellError,
+    customerIdsWithChildren,
+    onParentCustomerIdChanged,
+} from "@archaser/credit-insurance-domain";
+import {
     mapErpRecord,
     parseErpDateOnly,
     parseMappingRules,
     type MappingRule,
 } from "../utils/connectorFieldUtils";
-import { appendBatchImportIssue } from "./aggregateEntityImportStats";
 import { applyMaturedDeferredPayments } from "./applyMaturedDeferredPayments";
 import { commitOps, lastWinsByKey } from "./bulkWrite";
 import { importPayments } from "./importPaymentService";
 import { normalizeInvoiceImportInput } from "./normalizeInvoiceImportInput";
 import { toPaymentInput } from "./normalizePaymentInput";
-import {
-    formatImportIssueMessage,
-    validateConnectorLiveImportRow,
-} from "./validateConnectorLiveImportRow";
+import { validateConnectorLiveImportRow } from "./validateConnectorLiveImportRow";
 import { sortInvoicesForImport } from "./sortInvoicesForImport";
 import { linkOrphanedCreditNotes } from "../invoice/linkOrphanedCreditNotes";
+import { resolveInvoicePaymentCloseDates } from "../invoice/invoicePaymentCloseDates";
 import type { BillingAccountExtension } from "../extensions/types";
 
 export type ImportEntityType = "Customer" | "Contact" | "Invoice" | "Payment";
@@ -41,12 +44,16 @@ export interface EntityImportBatchResult {
     errors: string[];
     cancelled?: boolean;
     rowResults?: EntityImportRowResult[];
+    /**
+     * Customer import only: Archaser rows inserted in this batch (not updates).
+     * Used to enqueue pending-history on INCREMENTAL sync.
+     */
+    createdCustomers?: Array<{ id: number; customer_number: string }>;
 }
 
 export interface EntityImportBatchOptions {
     /** Billing-connector live sync only — skip incomplete invoice/payment rows. */
     enforceMandatoryFields?: boolean;
-    skipReportingBreach?: boolean;
     /**
      * When true, skip deferred-payment maturity after this invoice batch.
      * Connector staged sync sets this and runs maturity once after all
@@ -56,14 +63,6 @@ export interface EntityImportBatchOptions {
     onLog?: (message: string) => void;
     shouldCancel?: () => boolean;
     extension?: BillingAccountExtension;
-}
-
-export function shouldSkipReportingBreachOnConnectorWrite(params: {
-    syncMode: "BACKFILL" | "INCREMENTAL" | "backfill" | "incremental";
-    skipReportingBreachOnBackfill: boolean;
-}): boolean {
-    const mode = String(params.syncMode).toUpperCase();
-    return mode === "BACKFILL" && params.skipReportingBreachOnBackfill === true;
 }
 
 export function extractMaxUpdatedAt(
@@ -478,6 +477,17 @@ async function importCustomerBatch(
             createdByNumber.set(customer.customer_number, customer.id);
         }
     }
+    result.createdCustomers = createdCustomers
+        .filter(
+            (
+                customer
+            ): customer is { id: number; customer_number: string } =>
+                Boolean(customer.customer_number)
+        )
+        .map((customer) => ({
+            id: customer.id,
+            customer_number: customer.customer_number,
+        }));
     if (updates.length > 0) {
         await commitOps(
             prisma,
@@ -567,16 +577,96 @@ async function importCustomerBatch(
         }
 
         if (parentUpdates.length > 0) {
-            await commitOps(
-                prisma,
-                parentUpdates.map((update) =>
-                    prisma.customer.update({
+            const previousParents = await prisma.customer.findMany({
+                where: {
+                    id: { in: parentUpdates.map((update) => update.id) },
+                },
+                select: { id: true, parent_customer_id: true },
+            });
+            const previousParentById = new Map(
+                previousParents.map((row) => [
+                    row.id,
+                    row.parent_customer_id ?? null,
+                ])
+            );
+
+            const allowedParentUpdates: typeof parentUpdates = [];
+            for (const update of parentUpdates) {
+                try {
+                    await assertParentIsShell(update.parentId, prisma);
+                    allowedParentUpdates.push(update);
+                } catch (error) {
+                    const message =
+                        error instanceof CreditPoolShellError
+                            ? error.message
+                            : "Parent customer must be a shell (no invoices/payments)";
+                    warn(
+                        `parent:shell:${update.parentId}`,
+                        `Customer ${update.id}: ${message}; parent left unchanged`
+                    );
+                }
+            }
+
+            if (allowedParentUpdates.length > 0) {
+                // Per-customer FK write + sync (fail-closed like API): on effect
+                // failure restore previous parent and remirror; do not leave a
+                // linked FK with stale mirrors / CTP.
+                for (const update of allowedParentUpdates) {
+                    const previousParentId =
+                        previousParentById.get(update.id) ?? null;
+                    if (previousParentId === update.parentId) {
+                        continue;
+                    }
+                    await prisma.customer.update({
                         where: { id: update.id },
                         data: { parent_customer_id: update.parentId },
                         select: { id: true },
-                    })
-                )
-            );
+                    });
+                    try {
+                        await onParentCustomerIdChanged({
+                            accountId,
+                            customerId: update.id,
+                            previousParentId,
+                            nextParentId: update.parentId,
+                            dbClient: prisma,
+                            skipInsuranceSync: true,
+                        });
+                    } catch (error) {
+                        await prisma.customer.update({
+                            where: { id: update.id },
+                            data: { parent_customer_id: previousParentId },
+                            select: { id: true },
+                        });
+                        try {
+                            await onParentCustomerIdChanged({
+                                accountId,
+                                customerId: update.id,
+                                previousParentId: update.parentId,
+                                nextParentId: previousParentId,
+                                dbClient: prisma,
+                                skipInsuranceSync: true,
+                            });
+                        } catch (rollbackError) {
+                            warn(
+                                `parent:rollback:${update.id}`,
+                                `Customer ${update.id}: parent sync failed and rollback remirror also failed (${
+                                    rollbackError instanceof Error
+                                        ? rollbackError.message
+                                        : String(rollbackError)
+                                })`
+                            );
+                        }
+                        warn(
+                            `parent:sync:${update.id}`,
+                            `Customer ${update.id}: parent sync failed (${
+                                error instanceof Error
+                                    ? error.message
+                                    : String(error)
+                            }); parent left unchanged`
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -974,6 +1064,10 @@ async function importInvoiceBatch(
             customerByNumber.set(customer.customer_number, customer.id);
         }
     }
+    const parentsWithChildren = await customerIdsWithChildren(
+        [...customerByNumber.values()],
+        prisma
+    );
     const existingByNumber = new Map<string, number>();
     const existingStatusByNumber = new Map<string, string>();
     for (const invoice of existingInvoices) {
@@ -1016,6 +1110,24 @@ async function importInvoiceBatch(
             continue;
         }
 
+        if (parentsWithChildren.has(customerId)) {
+            const message =
+                "Customers with children cannot have invoices or payments";
+            result.failed += 1;
+            result.errors.push(message);
+            options?.onLog?.(`Invoice ${invoiceNumber} failed: ${message}`);
+            for (const row of valid) {
+                if (str(row.invoice_number) === invoiceNumber) {
+                    rowResults[row.index] = {
+                        index: row.index,
+                        success: false,
+                        error: message,
+                    };
+                }
+            }
+            continue;
+        }
+
         const amount = invoice.amount ?? 0;
         const customerAmount = invoice.customer_amount ?? amount;
         const currency = str(invoice.customer_currency) || "USD";
@@ -1033,7 +1145,16 @@ async function importInvoiceBatch(
         const customerOutstanding = customerNetAmount - customerTotalPaid;
         const existingId = existingByNumber.get(invoiceNumber) ?? null;
         const importStatus = resolveImportedInvoiceStatus(invoice.status);
+        const existingStatus = existingId
+            ? existingStatusByNumber.get(invoiceNumber)
+            : undefined;
+        const writingPaidStatus =
+            existingId == null
+                ? importStatus === "Paid"
+                : (!existingStatus || existingStatus === "Open") &&
+                  importStatus === "Paid";
 
+        // Explicit ERP fields only — never copy user-owned mep_ignored.
         const data: Record<string, unknown> = {
             invoice_number: invoiceNumber,
             account_id: accountId,
@@ -1050,17 +1171,38 @@ async function importInvoiceBatch(
             credit_for_invoice_number:
                 invoice.credit_for_invoice_number ?? null,
             custom_code1: invoice.custom_code1 ?? null,
-            ...(options?.skipReportingBreach === true
-                ? { reporting_breach: false }
-                : {}),
             invoice_date: parseErpDateOnly(invoice.invoice_date) ?? now,
             due_date: parseErpDateOnly(invoice.due_date),
             modified_by: userId || null,
             modified_at: now,
         };
 
+        if (invoice.amount_without_vat !== undefined) {
+            data.amount_without_vat = invoice.amount_without_vat;
+        }
+        if (invoice.vat_amount !== undefined) {
+            data.vat_amount = invoice.vat_amount;
+        }
+        if (invoice.customer_amount_without_vat !== undefined) {
+            data.customer_amount_without_vat =
+                invoice.customer_amount_without_vat;
+        }
+        if (invoice.customer_vat_amount !== undefined) {
+            data.customer_vat_amount = invoice.customer_vat_amount;
+        }
+        if (writingPaidStatus) {
+            // Payments may not be linked yet on create; D6 uses modifiedAt day.
+            // Later payment link/recalc refreshes from MAX(payment_date).
+            const dates = resolveInvoicePaymentCloseDates({
+                status: "Paid",
+                paymentDates: [],
+                modifiedAt: now,
+            });
+            data.last_payment_date = dates.last_payment_date;
+            data.close_date = dates.close_date;
+        }
+
         if (existingId != null) {
-            const existingStatus = existingStatusByNumber.get(invoiceNumber);
             // Promote Open (legacy import default) to Due; never overwrite Paid/Overdue/etc.
             if (!existingStatus || existingStatus === "Open") {
                 data.status = importStatus;

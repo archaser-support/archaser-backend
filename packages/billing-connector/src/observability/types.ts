@@ -24,7 +24,14 @@ export interface SyncResultForStatus {
     };
     entity_stats?: Record<
         string,
-        { pulled: number; success: number; failed: number; skipped: number }
+        {
+            pulled: number;
+            success: number;
+            failed: number;
+            skipped: number;
+            status?: "running" | "done" | "failed" | "queued";
+            sample_errors?: string[];
+        }
     >;
 }
 
@@ -64,6 +71,7 @@ export interface BillingConnectorSyncLogFields {
     sync_execution_id: string | null;
     execution_id: string | null;
     entity_type?: string | null;
+    customer_id?: number | null;
     duration_seconds?: number;
     entity_stats?: string;
     message?: string;

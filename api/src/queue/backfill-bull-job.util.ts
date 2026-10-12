@@ -66,6 +66,36 @@ export async function forceRemoveCreditAsOfBackfillBullJob(
 export async function requeueCreditAsOfBackfillBullJob(
     queue: Queue,
     jobId: string,
+    accountId: number,
+    options?: { replaceActive?: boolean }
+): Promise<Job> {
+    const existing = await queue.getJob(jobId);
+    if (existing && options?.replaceActive !== true) {
+        const priorState = await existing.getState();
+        if (priorState === "active") {
+            return existing;
+        }
+    }
+    const removal = await forceRemoveCreditAsOfBackfillBullJob(queue, jobId);
+    if (!removal.removed) {
+        throw new Error(
+            `Could not replace BullMQ job ${jobId} (${removal.priorState ?? "unknown"}): ${removal.note ?? "remove failed"}`
+        );
+    }
+    return queue.add(
+        "credit-asof-backfill",
+        { accountId },
+        {
+            jobId,
+            removeOnComplete: 100,
+            removeOnFail: 200,
+        }
+    );
+}
+
+export async function requeueAccountVatBasisRefreshBullJob(
+    queue: Queue,
+    jobId: string,
     accountId: number
 ): Promise<Job> {
     const removal = await forceRemoveCreditAsOfBackfillBullJob(queue, jobId);
@@ -75,7 +105,7 @@ export async function requeueCreditAsOfBackfillBullJob(
         );
     }
     return queue.add(
-        "credit-asof-backfill",
+        "account-vat-basis-refresh",
         { accountId },
         {
             jobId,

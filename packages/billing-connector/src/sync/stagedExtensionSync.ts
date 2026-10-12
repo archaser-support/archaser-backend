@@ -26,9 +26,13 @@ import {
     type ImportCacheSyncMode,
 } from "../importCache";
 import { applyMaturedDeferredPayments } from "../import/applyMaturedDeferredPayments";
-import { recalculateCustomerAmountsViaHost } from "../customers/recalculateCustomerAmountsHost";
+import {
+    assertCustomerRollupHostLoadable,
+    recalculateCustomerAmountsViaHost,
+} from "../customers/recalculateCustomerAmountsHost";
 import {
     BALANCES_ENTITY_STATS_KEY,
+    CTP_ENTITY_STATS_KEY,
     MATURITY_ENTITY_STATS_KEY,
     PENDING_CLOSES_ENTITY_STATS_KEY,
     PROCESS_OVERDUE_ENTITY_STATS_KEY,
@@ -39,10 +43,23 @@ import {
     type TailStepDetail,
     type TailStepState,
 } from "./connectorSyncRuntime";
+import { maybeRunPostSyncCtpCatchUp } from "../credit/postSyncCtpCatchUp";
 import {
     type ArPostIngestHostFn,
     type ConnectorPostIngestDeferOptions,
 } from "../credit/arPostIngestHost";
+import {
+    clearCustomerScopedHistoryProgress,
+    ensureCustomerScopedHistoryProgressOwner,
+    getCustomerScopedHistoryProgress,
+    isCustomerScopedHistoryComplete,
+    upsertCustomerScopedEntityCheckpoint,
+    type CustomerScopedHistoryProgressStore,
+} from "./customerScopedHistoryProgress";
+import {
+    enqueuePendingCustomerHistoryForCreates,
+    type PendingCustomerHistoryQueueStore,
+} from "./pendingCustomerHistoryQueue";
 import { runInlineArPostIngestTailSteps } from "./arPostIngestTailSteps";
 import {
     runProcessOverdueTailStep,
@@ -78,8 +95,8 @@ export const STAGED_ENTITY_ORDER: ExtensionEntityType[] = [
 ];
 
 /**
- * Max keyset pages per entity per window. At recommendedPageSize 500 this is
- * 2.5M rows — raised from 200 (100k) after Payment backfills exhausted early.
+ * Max keyset pages per entity per window. At recommendedPageSize 1000 this is
+ * 5M rows — raised from 200 (100k) after Payment backfills exhausted early.
  */
 const MAX_ENTITY_PAGES_PER_WINDOW = 5_000;
 
@@ -114,7 +131,6 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
     windows: ExtensionSyncWindow[];
     dryRun?: boolean;
     userId?: string;
-    skipReportingBreach?: boolean;
     importBatch?: ImportBatchFn;
     onLog?: (message: string) => void;
     /** Live pulled/imported counts for GET /sync-runs polling. */
@@ -167,6 +183,16 @@ export interface RunStagedExtensionSyncOptions extends ConnectorPostIngestDeferO
      * rows for that customer after pull.
      */
     runtimeCustomerNumber?: string | null;
+    /**
+     * Start backfill only: Archaser customer_id paired with
+     * {@link runtimeCustomerNumber}. When set, page cursors land in the
+     * isolated customer-history progress store — not ConnectorSyncState.
+     */
+    scopedCustomerId?: number | null;
+    /** Override isolated progress store (tests). */
+    customerScopedHistoryProgressStore?: CustomerScopedHistoryProgressStore;
+    /** Override pending-history queue store (tests). */
+    pendingCustomerHistoryQueueStore?: PendingCustomerHistoryQueueStore;
     /** Stored BillingConnector.entity_sets — overrides TOTARPAY / etc. */
     entitySets?: unknown;
     /** Per-entity mapping pull_date_field (admin pick). */
@@ -247,11 +273,31 @@ function emptyPaymentLinkProgress(): PaymentLinkProgress {
     };
 }
 
+/**
+ * Client-side window guard after OData pull. Prefer UDATE when present; IDG
+ * payment feeds often omit it, so fall back to recon/document date fields
+ * (RECONDATE / FNCDATE / …). Missing all dates: include only when the window
+ * has no end (open-ended incremental) — same as before.
+ */
+function recordWindowTimestamp(record: Record<string, unknown>): unknown {
+    return (
+        record.UDATE ??
+        record.udate ??
+        record.updated_at ??
+        record.RECONDATE ??
+        record.FNCDATE ??
+        record.BALDATE ??
+        record.PAYDATE ??
+        record.IVDATE ??
+        record.CURDATE
+    );
+}
+
 function recordInWindow(
     record: Record<string, unknown>,
     window: ExtensionSyncWindow
 ): boolean {
-    const raw = record.UDATE ?? record.udate ?? record.updated_at;
+    const raw = recordWindowTimestamp(record);
     if (!raw) {
         // No timestamp — include when window is open-ended on the high side.
         return window.end == null;
@@ -314,6 +360,7 @@ function clipSyncStateText(value: string | null | undefined): string | null {
 async function checkpointEntityPage(params: {
     prisma: PrismaClient;
     connectorId: number;
+    accountId: number;
     entityType: ExtensionEntityType;
     pulled: number;
     nextCursor: string | null;
@@ -322,6 +369,15 @@ async function checkpointEntityPage(params: {
     pageComplete: boolean;
     pageSize: number;
     providerTotalCount?: number;
+    /**
+     * When set, persist cursors only on the isolated customer-history store.
+     * Account ConnectorSyncState (including last_max_updated_at) is untouched.
+     */
+    customerScope?: {
+        customerId: number;
+        customerNumber: string;
+        store?: CustomerScopedHistoryProgressStore;
+    } | null;
 }): Promise<void> {
     const now = new Date();
     const nextCursor = clipSyncStateText(params.nextCursor);
@@ -336,6 +392,26 @@ async function checkpointEntityPage(params: {
                     params.pulled + params.pageSize,
                     params.pulled + 1
                 ));
+
+    if (params.customerScope) {
+        await upsertCustomerScopedEntityCheckpoint(
+            {
+                connectorId: params.connectorId,
+                accountId: params.accountId,
+                customerId: params.customerScope.customerId,
+                customerNumber: params.customerScope.customerNumber,
+                entityType: params.entityType,
+                backfillCursor: nextCursor,
+                backfillRecordsPulled: params.pulled,
+                backfillTotalRecords: backfill_total_records,
+                pageComplete: params.pageComplete,
+                lastError,
+            },
+            params.customerScope.store
+        );
+        return;
+    }
+
     await params.prisma.connectorSyncState.upsert({
         where: {
             connector_id_entity_type: {
@@ -385,6 +461,33 @@ function bumpImported(
     stats.importErrors += failed;
 }
 
+async function maybeEnqueuePendingHistoryForCustomerCreates(params: {
+    entityType: ExtensionEntityType;
+    importResult: EntityImportBatchResult;
+    options: RunStagedExtensionSyncOptions;
+    log: (message: string) => void;
+}): Promise<void> {
+    if (params.entityType !== "Customer") {
+        return;
+    }
+    const created = params.importResult.createdCustomers ?? [];
+    if (created.length === 0) {
+        return;
+    }
+    const syncMode =
+        params.options.syncMode === "INCREMENTAL" ? "INCREMENTAL" : "BACKFILL";
+    await enqueuePendingCustomerHistoryForCreates({
+        connectorId: params.options.connectorId,
+        accountId: params.options.accountId,
+        syncMode,
+        provider: params.options.providerLabel ?? "UNKNOWN",
+        createdCustomers: created,
+        executionId: params.options.executionId,
+        onLog: params.log,
+        store: params.options.pendingCustomerHistoryQueueStore,
+    });
+}
+
 async function finalizeCustomerBalances(
     customerIds: Set<number>,
     prisma: PrismaClient,
@@ -401,9 +504,9 @@ async function finalizeCustomerBalances(
         | undefined,
     log: (message: string) => void,
     setStep?: (key: TailStepKey, state: TailStepState) => void
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
     if (customerIds.size === 0) {
-        return;
+        return { ok: true };
     }
     const ids = Array.from(customerIds);
     const total = ids.length;
@@ -457,17 +560,20 @@ async function finalizeCustomerBalances(
                 total,
             },
         });
+        return { ok: true };
     } catch (error) {
         const message =
             error instanceof Error
                 ? error.message
                 : "Customer amount recalculation failed";
         log(`Customer amount recalculation failed: ${message}`);
+        // Keep stats + return failure — never soft-complete SUCCESS after this.
         setStep?.(BALANCES_ENTITY_STATS_KEY, {
             status: "failed",
             total,
             error: message,
         });
+        return { ok: false, error: message };
     }
 }
 
@@ -480,6 +586,10 @@ async function finalizeCustomerBalances(
 export async function runStagedExtensionSync(
     options: RunStagedExtensionSyncOptions
 ): Promise<RunStagedExtensionSyncResult> {
+    // Same gate as legacy sync: refuse work if rollup refresh cannot load.
+    if (!options.onCustomerBalancesFinal) {
+        assertCustomerRollupHostLoadable();
+    }
     const stats = emptyStats();
     const paymentLink = emptyPaymentLinkProgress();
     const windows: StagedWindowOutcome[] = [];
@@ -499,6 +609,38 @@ export async function runStagedExtensionSync(
     const cacheCustomerScope = normalizeImportCacheCustomerScope(
         options.runtimeCustomerNumber
     );
+    const scopedCustomerNumber =
+        typeof options.runtimeCustomerNumber === "string"
+            ? options.runtimeCustomerNumber.trim()
+            : "";
+    const scopedCustomerId =
+        typeof options.scopedCustomerId === "number" &&
+        Number.isFinite(options.scopedCustomerId) &&
+        options.scopedCustomerId > 0
+            ? Math.trunc(options.scopedCustomerId)
+            : null;
+    const customerScope =
+        !dryRun &&
+        scopedCustomerId != null &&
+        scopedCustomerNumber.length > 0
+            ? {
+                  customerId: scopedCustomerId,
+                  customerNumber: scopedCustomerNumber,
+                  store: options.customerScopedHistoryProgressStore,
+              }
+            : null;
+    if (customerScope) {
+        await ensureCustomerScopedHistoryProgressOwner({
+            connectorId: options.connectorId,
+            accountId: options.accountId,
+            customerId: customerScope.customerId,
+            customerNumber: customerScope.customerNumber,
+            store: customerScope.store,
+        });
+        log(
+            `Customer-scoped history progress isolated for customer_id=${customerScope.customerId} number=${customerScope.customerNumber}`
+        );
+    }
     const flushEntityImportCache = async (entityType: ExtensionEntityType) => {
         if (dryRun) {
             return;
@@ -630,9 +772,80 @@ export async function runStagedExtensionSync(
     const paymentAffectedCustomerIds = new Set<number>();
     /** Reconciled payment-feed IVNUMs queued during Payment transform for virtual close. */
     const pendingInvoiceCloses = new Set<string>();
-    /** ERP CURDATE per queued IVNUM — payment date for its virtual close. */
+    /** ERP RECONDATE per queued IVNUM — payment date for its virtual close. */
     const pendingInvoiceCloseDates = new Map<string, Date>();
     let invoicePostIngestRan = false;
+    let accountMaturityRan = false;
+
+    const runAccountMaturityPass = async (reason: string): Promise<void> => {
+        if (dryRun || accountMaturityRan) {
+            return;
+        }
+        setActiveStep(MATURITY_ENTITY_STATS_KEY, "linking");
+        paymentLink.paymentLinkStatus = "running";
+        paymentLink.paymentLinkError = undefined;
+        paymentLink.paymentsLinked = 0;
+        paymentLink.paymentsStillDeferred = 0;
+        paymentLink.paymentsLinkTotal = 0;
+        emitProgress();
+        try {
+            const maturityStarted = Date.now();
+            const maturityResult = await applyMaturedDeferredPayments(
+                options.prisma,
+                options.accountId,
+                new Date(),
+                undefined,
+                {
+                    userId: options.userId,
+                    onProgress: ({ linked, totalCandidates, detail }) => {
+                        paymentLink.paymentLinkStatus = "running";
+                        paymentLink.paymentsLinked = linked;
+                        paymentLink.paymentsLinkTotal = totalCandidates;
+                        paymentLink.paymentsStillDeferred = Math.max(
+                            0,
+                            totalCandidates - linked
+                        );
+                        paymentLink.paymentLinkDetail = detail;
+                        emitProgress();
+                    },
+                }
+            );
+            accountMaturityRan = true;
+            for (const id of maturityResult.affectedCustomerIds) {
+                arAffectedCustomerIds.add(id);
+            }
+            for (const id of maturityResult.affectedInvoiceIds) {
+                arAffectedInvoiceIds.add(id);
+            }
+            paymentLink.paymentLinkStatus = "done";
+            paymentLink.paymentLinkDetail = undefined;
+            paymentLink.paymentsLinked = maturityResult.matured;
+            paymentLink.paymentsStillDeferred =
+                maturityResult.deferredRemaining;
+            paymentLink.paymentsLinkTotal = maturityResult.totalCandidates;
+            if (activeStep === MATURITY_ENTITY_STATS_KEY) {
+                activeStep = null;
+                activeStepDetail = null;
+            }
+            emitProgress();
+            log(
+                `${reason} maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
+            );
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Deferred payment maturity failed";
+            paymentLink.paymentLinkStatus = "failed";
+            paymentLink.paymentLinkError = message;
+            if (activeStep === MATURITY_ENTITY_STATS_KEY) {
+                activeStep = null;
+                activeStepDetail = null;
+            }
+            emitProgress();
+            log(`${reason} maturity failed: ${message}`);
+        }
+    };
 
     const flushExtensionPendingCloses = async (label: string) => {
         if (
@@ -735,10 +948,13 @@ export async function runStagedExtensionSync(
         invoiceEntityIds: number[];
         paymentEntityIds: number[];
         runMaturity: boolean;
+        runReplay?: boolean;
+        runProcessOverdue?: boolean;
     }): Promise<void> => {
         // Nest wires onProcessOverdueCustomers as its own step; skip overdue inside
         // runInlineArPostIngestTailSteps (separateOverdueStep) and run it here first.
         if (
+            args.runProcessOverdue !== false &&
             options.onProcessOverdueCustomers &&
             args.customerIds.length > 0
         ) {
@@ -764,6 +980,8 @@ export async function runStagedExtensionSync(
             separateOverdueStep: Boolean(options.onProcessOverdueCustomers),
             onProcessOverdueCustomers: options.onProcessOverdueCustomers,
             runMaturity: args.runMaturity,
+            runReplay: args.runReplay,
+            runProcessOverdue: args.runProcessOverdue,
             importType:
                 args.invoiceEntityIds.length > 0 ? "Invoice" : "Payment",
         });
@@ -772,39 +990,80 @@ export async function runStagedExtensionSync(
     const finishWithBalances = async (
         result: RunStagedExtensionSyncResult
     ): Promise<RunStagedExtensionSyncResult> => {
+        let finished = result;
         try {
-            if (!dryRun && !result.cancelled) {
+            if (!dryRun && !finished.cancelled) {
                 await flushExtensionPendingCloses("finalize");
                 if (pendingInvoiceCloses.size > 0) {
                     log(
                         `Extension pending invoice closes still missing after finalize: ${pendingInvoiceCloses.size} (${Array.from(pendingInvoiceCloses).slice(0, 20).join(", ")}${pendingInvoiceCloses.size > 20 ? ", …" : ""})`
                     );
                 }
-                // Payment-only (or Invoice-not-orchestrated) fallback: same
-                // orchestrator as post-Invoice, including deferred maturity.
-                // Skip when Invoice already ran post-ingest in this sync.
-                if (
-                    !invoicePostIngestRan &&
-                    paymentAffectedCustomerIds.size > 0
-                ) {
-                    await runArTailWithProgress({
-                        customerIds: Array.from(paymentAffectedCustomerIds),
-                        invoiceEntityIds: [],
-                        paymentEntityIds: Array.from(arAffectedPaymentIds),
-                        runMaturity: true,
-                    });
+                // Already-linked future cash matures on payment_date even when
+                // this run imported 0 Invoice/Payment rows. Skip a second pass
+                // when Invoice already ran maturity; skip account-wide work on
+                // isolated customer-history drains.
+                if (!customerScope) {
+                    await runAccountMaturityPass("sync finalize");
                 }
-                await finalizeCustomerBalances(
+                // Payment-only (or Invoice-not-orchestrated) fallback: same
+                // orchestrator as post-Invoice. Skip when Invoice already ran
+                // post-ingest in this sync. Maturity already ran above / on Invoice.
+                if (!invoicePostIngestRan) {
+                    if (paymentAffectedCustomerIds.size > 0) {
+                        await runArTailWithProgress({
+                            customerIds: Array.from(paymentAffectedCustomerIds),
+                            invoiceEntityIds: [],
+                            paymentEntityIds: Array.from(arAffectedPaymentIds),
+                            runMaturity: false,
+                        });
+                    }
+                    const liveOnlyCustomerIds = Array.from(
+                        arAffectedCustomerIds
+                    ).filter((id) => !paymentAffectedCustomerIds.has(id));
+                    if (liveOnlyCustomerIds.length > 0) {
+                        await runArTailWithProgress({
+                            customerIds: liveOnlyCustomerIds,
+                            invoiceEntityIds: Array.from(arAffectedInvoiceIds),
+                            paymentEntityIds: [],
+                            runMaturity: false,
+                            runReplay: false,
+                            runProcessOverdue: false,
+                        });
+                    }
+                }
+                const balances = await finalizeCustomerBalances(
                     arAffectedCustomerIds,
                     options.prisma,
                     options.onCustomerBalancesFinal,
                     log,
                     setTailStep
                 );
+                if (!balances.ok) {
+                    finished = {
+                        ...finished,
+                        ok: false,
+                        error: finished.error ?? balances.error,
+                    };
+                }
+                if (finished.ok && !finished.cancelled) {
+                    await maybeRunPostSyncCtpCatchUp({
+                        prisma: options.prisma,
+                        accountId: options.accountId,
+                        mode:
+                            cacheSyncMode === "INCREMENTAL"
+                                ? "incremental"
+                                : "backfill",
+                        status: "SUCCESS",
+                        onLog: log,
+                        onStep: (state) =>
+                            setTailStep(CTP_ENTITY_STATS_KEY, state),
+                    });
+                }
             }
             // Empty pulls still need status=done so the progress panel does not
             // leave Invoice/Payment as Waiting after settle/AR finished.
-            if (result.ok && !result.cancelled) {
+            if (finished.ok && !finished.cancelled) {
                 for (const entityType of options.enabledEntities) {
                     if (
                         isEntityPipelineStatusKey(entityType) &&
@@ -813,9 +1072,29 @@ export async function runStagedExtensionSync(
                         entityStatuses[entityType] = "done";
                     }
                 }
+                if (customerScope) {
+                    const isolated = await getCustomerScopedHistoryProgress(
+                        options.connectorId,
+                        customerScope.store
+                    );
+                    if (
+                        isCustomerScopedHistoryComplete(
+                            isolated,
+                            options.enabledEntities
+                        )
+                    ) {
+                        await clearCustomerScopedHistoryProgress(
+                            options.connectorId,
+                            customerScope.store
+                        );
+                        log(
+                            `Cleared isolated customer-history progress for customer_id=${customerScope.customerId}`
+                        );
+                    }
+                }
             }
             return {
-                ...result,
+                ...finished,
                 // Refresh after balances / late AR tail so finish logs include them.
                 stats: resultStats(),
                 invoicePostIngestRan,
@@ -826,24 +1105,17 @@ export async function runStagedExtensionSync(
         }
     };
 
-    const flushEntityImportCacheOrAbort = async (
+    const flushEntityImportCacheBestEffort = async (
         entityType: ExtensionEntityType
-    ): Promise<RunStagedExtensionSyncResult | null> => {
+    ): Promise<void> => {
         try {
             await flushEntityImportCache(entityType);
-            return null;
         } catch (err) {
+            // Best-effort: ERP import already succeeded. Mongo full / write
+            // errors must not fail the sync (cache is a reference only).
             const message =
                 err instanceof Error ? err.message : String(err);
             log(`Import cache save failed for ${entityType}: ${message}`);
-            stats.importErrors += 1;
-            return finishWithBalances({
-                ok: false,
-                windows,
-                previewBatch,
-                stats: resultStats(),
-                error: `Import cache save failed for ${entityType}: ${message}`,
-            });
         }
     };
 
@@ -936,8 +1208,6 @@ export async function runStagedExtensionSync(
                             null,
                             options.userId,
                             {
-                                skipReportingBreach:
-                                    options.skipReportingBreach === true,
                                 skipDeferredPaymentMaturity:
                                     entityType === "Invoice",
                                 onLog: options.onLog,
@@ -967,6 +1237,12 @@ export async function runStagedExtensionSync(
                                 }
                             }
                         }
+                        await maybeEnqueuePendingHistoryForCustomerCreates({
+                            entityType,
+                            importResult,
+                            options,
+                            log,
+                        });
                         bumpImported(
                             stats,
                             entityType,
@@ -982,6 +1258,7 @@ export async function runStagedExtensionSync(
                     await checkpointEntityPage({
                         prisma: options.prisma,
                         connectorId: options.connectorId,
+                        accountId: options.accountId,
                         entityType,
                         pulled: cachedRows.length,
                         nextCursor: null,
@@ -996,11 +1273,13 @@ export async function runStagedExtensionSync(
                         pageComplete: true,
                         pageSize: cachedRows.length || 1,
                         providerTotalCount: cachedRows.length,
+                        customerScope,
                     });
                 } else if (!dryRun) {
                     await checkpointEntityPage({
                         prisma: options.prisma,
                         connectorId: options.connectorId,
+                        accountId: options.accountId,
                         entityType,
                         pulled: 0,
                         nextCursor: null,
@@ -1009,80 +1288,13 @@ export async function runStagedExtensionSync(
                         pageComplete: true,
                         pageSize: 1,
                         providerTotalCount: 0,
+                        customerScope,
                     });
                 }
                 emitProgress();
 
                 if (!dryRun && entityType === "Invoice") {
-                    setActiveStep(MATURITY_ENTITY_STATS_KEY, "linking");
-                    paymentLink.paymentLinkStatus = "running";
-                    paymentLink.paymentLinkError = undefined;
-                    paymentLink.paymentsLinked = 0;
-                    paymentLink.paymentsStillDeferred = 0;
-                    paymentLink.paymentsLinkTotal = 0;
-                    emitProgress();
-                    try {
-                        const maturityStarted = Date.now();
-                        const maturityResult =
-                            await applyMaturedDeferredPayments(
-                                options.prisma,
-                                options.accountId,
-                                new Date(),
-                                undefined,
-                                {
-                                    userId: options.userId,
-                                    onProgress: ({
-                                        linked,
-                                        totalCandidates,
-                                        detail,
-                                    }) => {
-                                        paymentLink.paymentLinkStatus =
-                                            "running";
-                                        paymentLink.paymentsLinked = linked;
-                                        paymentLink.paymentsLinkTotal =
-                                            totalCandidates;
-                                        paymentLink.paymentsStillDeferred =
-                                            Math.max(
-                                                0,
-                                                totalCandidates - linked
-                                            );
-                                        paymentLink.paymentLinkDetail = detail;
-                                        emitProgress();
-                                    },
-                                }
-                            );
-                        for (const id of maturityResult.affectedCustomerIds) {
-                            arAffectedCustomerIds.add(id);
-                        }
-                        paymentLink.paymentLinkStatus = "done";
-                        paymentLink.paymentLinkDetail = undefined;
-                        paymentLink.paymentsLinked = maturityResult.matured;
-                        paymentLink.paymentsStillDeferred =
-                            maturityResult.deferredRemaining;
-                        paymentLink.paymentsLinkTotal =
-                            maturityResult.totalCandidates;
-                        if (activeStep === MATURITY_ENTITY_STATS_KEY) {
-                            activeStep = null;
-                            activeStepDetail = null;
-                        }
-                        emitProgress();
-                        log(
-                            `Invoice entity maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
-                        );
-                    } catch (error) {
-                        const message =
-                            error instanceof Error
-                                ? error.message
-                                : "Deferred payment maturity failed";
-                        paymentLink.paymentLinkStatus = "failed";
-                        paymentLink.paymentLinkError = message;
-                        if (activeStep === MATURITY_ENTITY_STATS_KEY) {
-                            activeStep = null;
-                            activeStepDetail = null;
-                        }
-                        emitProgress();
-                        log(`Invoice entity maturity failed: ${message}`);
-                    }
+                    await runAccountMaturityPass("Invoice entity");
 
                     if (pendingInvoiceCloses.size > 0) {
                         await flushExtensionPendingCloses("after Invoice");
@@ -1113,36 +1325,54 @@ export async function runStagedExtensionSync(
 
             let afterKey: string | null = null;
             if (!dryRun) {
-                const syncState =
-                    await options.prisma.connectorSyncState.findFirst({
-                        where: {
-                            connector_id: options.connectorId,
-                            entity_type: entityType,
-                        },
-                    });
-                afterKey = syncState?.backfill_cursor ?? null;
-                // Clear completion before sampling/pull so the UI stays on
-                // Running until every page for this entity is fetched. Otherwise
-                // a prior-run backfill_completed + first live page looks "Done".
-                // Also zero pulled/total so the counter does not flash the
-                // previous run's "N imported" during column sampling.
-                // Incremental must NOT clear completion — a Stop mid-run would
-                // leave entities incomplete and demote the connector to Backfill.
-                if (
-                    syncState?.backfill_completed &&
-                    cacheSyncMode !== "INCREMENTAL"
-                ) {
-                    await options.prisma.connectorSyncState.update({
-                        where: { id: syncState.id },
-                        data: {
-                            backfill_completed: false,
-                            backfill_completed_at: null,
-                            backfill_records_pulled: 0,
-                            backfill_total_records: null,
-                            backfill_cursor: null,
-                        },
-                    });
-                    afterKey = null;
+                if (customerScope) {
+                    const isolated = await getCustomerScopedHistoryProgress(
+                        options.connectorId,
+                        customerScope.store
+                    );
+                    const entityProgress =
+                        isolated?.customer_id === customerScope.customerId
+                            ? isolated.entities[entityType]
+                            : undefined;
+                    if (entityProgress?.backfill_completed) {
+                        log(
+                            `Skipping ${entityType}: already complete for customer-scoped history (customer_id=${customerScope.customerId})`
+                        );
+                        continue;
+                    }
+                    afterKey = entityProgress?.backfill_cursor ?? null;
+                } else {
+                    const syncState =
+                        await options.prisma.connectorSyncState.findFirst({
+                            where: {
+                                connector_id: options.connectorId,
+                                entity_type: entityType,
+                            },
+                        });
+                    afterKey = syncState?.backfill_cursor ?? null;
+                    // Clear completion before sampling/pull so the UI stays on
+                    // Running until every page for this entity is fetched. Otherwise
+                    // a prior-run backfill_completed + first live page looks "Done".
+                    // Also zero pulled/total so the counter does not flash the
+                    // previous run's "N imported" during column sampling.
+                    // Incremental must NOT clear completion — a Stop mid-run would
+                    // leave entities incomplete and demote the connector to Backfill.
+                    if (
+                        syncState?.backfill_completed &&
+                        cacheSyncMode !== "INCREMENTAL"
+                    ) {
+                        await options.prisma.connectorSyncState.update({
+                            where: { id: syncState.id },
+                            data: {
+                                backfill_completed: false,
+                                backfill_completed_at: null,
+                                backfill_records_pulled: 0,
+                                backfill_total_records: null,
+                                backfill_cursor: null,
+                            },
+                        });
+                        afterKey = null;
+                    }
                 }
             }
 
@@ -1158,10 +1388,6 @@ export async function runStagedExtensionSync(
                 entityType === "Invoice" || entityType === "Payment";
             const applyDateWindow =
                 Boolean(windowCutover) && usesDatePull;
-            const scopedCustomerNumber =
-                typeof options.runtimeCustomerNumber === "string"
-                    ? options.runtimeCustomerNumber.trim()
-                    : "";
             const scopeToCustomer = scopedCustomerNumber.length > 0;
             const additionalCustomerNumbers =
                 scopeToCustomer &&
@@ -1331,7 +1557,17 @@ export async function runStagedExtensionSync(
                             ? windowCutover
                             : null,
                         preferredDateField: usesDatePull
-                            ? options.dateFieldByType?.get(entityType) ?? null
+                            ? (typeof options.extension.resolvePullDateField ===
+                              "function"
+                                  ? options.extension.resolvePullDateField({
+                                        entityType,
+                                        entitySet,
+                                        extension_config:
+                                            options.extensionConfig,
+                                    })
+                                  : null) ??
+                              options.dateFieldByType?.get(entityType) ??
+                              null
                             : null,
                         overlapMinutes: options.overlapMinutes,
                         afterKey,
@@ -1354,7 +1590,12 @@ export async function runStagedExtensionSync(
                         select: odataSelectFieldsFromMapping({
                             mappingRules: rules,
                             extraFields: [
-                                "UDATE",
+                                // CUSTOMERS / CUSTPERSONNEL often lack UDATE —
+                                // requesting it in $select returns Priority 400.
+                                ...(entityType === "Customer" ||
+                                entityType === "Contact"
+                                    ? []
+                                    : ["UDATE"]),
                                 ...(typeof options.extension
                                     .extraSelectFields === "function"
                                     ? options.extension.extraSelectFields({
@@ -1583,8 +1824,6 @@ export async function runStagedExtensionSync(
                             null,
                             options.userId,
                             {
-                                skipReportingBreach:
-                                    options.skipReportingBreach === true,
                                 skipDeferredPaymentMaturity:
                                     entityType === "Invoice",
                                 onLog: options.onLog,
@@ -1628,6 +1867,12 @@ export async function runStagedExtensionSync(
                                 }
                             }
                         }
+                        await maybeEnqueuePendingHistoryForCustomerCreates({
+                            entityType,
+                            importResult,
+                            options,
+                            log,
+                        });
                         if (importResult.failed > 0) {
                             const sampleErrors = importResult.errors
                                 .slice(0, 3)
@@ -1646,6 +1891,7 @@ export async function runStagedExtensionSync(
                             await checkpointEntityPage({
                                 prisma: options.prisma,
                                 connectorId: options.connectorId,
+                                accountId: options.accountId,
                                 entityType,
                                 pulled: (stats as Record<string, number>)[
                                     processedKey(entityType)
@@ -1659,6 +1905,7 @@ export async function runStagedExtensionSync(
                                 pageComplete: false,
                                 pageSize: entityPageSize,
                                 providerTotalCount: page.totalCount,
+                                customerScope,
                             });
                             log(
                                 `Stopped by operator during ${entityType} import`
@@ -1687,6 +1934,7 @@ export async function runStagedExtensionSync(
                     await checkpointEntityPage({
                         prisma: options.prisma,
                         connectorId: options.connectorId,
+                        accountId: options.accountId,
                         entityType,
                         pulled: (stats as Record<string, number>)[
                             processedKey(entityType)
@@ -1700,6 +1948,7 @@ export async function runStagedExtensionSync(
                         pageComplete: exhausted,
                         pageSize: entityPageSize,
                         providerTotalCount: page.totalCount,
+                        customerScope,
                     });
                 }
 
@@ -1731,71 +1980,7 @@ export async function runStagedExtensionSync(
             // Maturity once after all Invoice pages (not per page) so paging
             // stays fast; deferred payments from Payment-first ingest link here.
             if (!dryRun && entityType === "Invoice") {
-                setActiveStep(MATURITY_ENTITY_STATS_KEY, "linking");
-                paymentLink.paymentLinkStatus = "running";
-                paymentLink.paymentLinkError = undefined;
-                paymentLink.paymentsLinked = 0;
-                paymentLink.paymentsStillDeferred = 0;
-                paymentLink.paymentsLinkTotal = 0;
-                emitProgress();
-                try {
-                    const maturityStarted = Date.now();
-                    const maturityResult = await applyMaturedDeferredPayments(
-                        options.prisma,
-                        options.accountId,
-                        new Date(),
-                        undefined,
-                        {
-                            userId: options.userId,
-                            onProgress: ({
-                                linked,
-                                totalCandidates,
-                                detail,
-                            }) => {
-                                paymentLink.paymentLinkStatus = "running";
-                                paymentLink.paymentsLinked = linked;
-                                paymentLink.paymentsLinkTotal = totalCandidates;
-                                paymentLink.paymentsStillDeferred = Math.max(
-                                    0,
-                                    totalCandidates - linked
-                                );
-                                paymentLink.paymentLinkDetail = detail;
-                                emitProgress();
-                            },
-                        }
-                    );
-                    for (const id of maturityResult.affectedCustomerIds) {
-                        arAffectedCustomerIds.add(id);
-                    }
-                    paymentLink.paymentLinkStatus = "done";
-                    paymentLink.paymentLinkDetail = undefined;
-                    paymentLink.paymentsLinked = maturityResult.matured;
-                    paymentLink.paymentsStillDeferred =
-                        maturityResult.deferredRemaining;
-                    paymentLink.paymentsLinkTotal =
-                        maturityResult.totalCandidates;
-                    if (activeStep === MATURITY_ENTITY_STATS_KEY) {
-                        activeStep = null;
-                        activeStepDetail = null;
-                    }
-                    emitProgress();
-                    log(
-                        `Invoice entity maturity: ${maturityResult.matured} matured, ${maturityResult.deferredRemaining} still deferred in ${Date.now() - maturityStarted}ms`
-                    );
-                } catch (error) {
-                    const message =
-                        error instanceof Error
-                            ? error.message
-                            : "Deferred payment maturity failed";
-                    paymentLink.paymentLinkStatus = "failed";
-                    paymentLink.paymentLinkError = message;
-                    if (activeStep === MATURITY_ENTITY_STATS_KEY) {
-                        activeStep = null;
-                        activeStepDetail = null;
-                    }
-                    emitProgress();
-                    log(`Invoice entity maturity failed: ${message}`);
-                }
+                await runAccountMaturityPass("Invoice entity");
 
                 if (pendingInvoiceCloses.size > 0) {
                     await flushExtensionPendingCloses("after Invoice");
@@ -1813,12 +1998,7 @@ export async function runStagedExtensionSync(
 
             // Write once after the entity finishes all windows for this run.
             if (isLastWindow) {
-                const cacheAbort = await flushEntityImportCacheOrAbort(
-                    entityType
-                );
-                if (cacheAbort) {
-                    return cacheAbort;
-                }
+                await flushEntityImportCacheBestEffort(entityType);
             }
         }
 

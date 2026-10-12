@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { customerIdsWithChildren } from "@archaser/credit-insurance-domain";
 import { collectPaymentReferenceAliases } from "../payment/connectorPaymentSynthetics";
 import { recalculateInvoicesFromLinkedPayments } from "../invoice/linkDeferredPaymentAndRecalc";
 import { parseErpDateOnly } from "../utils/connectorFieldUtils";
@@ -14,6 +15,10 @@ import {
     isTracedPaymentRow,
     tracePaymentImport,
 } from "./paymentImportTrace";
+import {
+    sameMoneyAmount,
+    toMoneyNumber,
+} from "../payment/moneyNumber";
 
 export interface ImportPaymentResult {
     index: number;
@@ -77,9 +82,15 @@ function sameCalendarDay(a: Date, b: Date): boolean {
     return a.toISOString().slice(0, 10) === b.toISOString().slice(0, 10);
 }
 
-/** InvoicePayment amounts are Postgres Real (float32); ERP values are JS float64. */
-function sameRealAmount(existing: number, next: number): boolean {
-    return existing === next || Math.fround(existing) === Math.fround(next);
+function mapExistingPaymentRow<T extends {
+    amount: unknown;
+    customer_amount: unknown;
+}>(row: T): T & { amount: number; customer_amount: number } {
+    return {
+        ...row,
+        amount: toMoneyNumber(row.amount),
+        customer_amount: toMoneyNumber(row.customer_amount),
+    };
 }
 
 function isUnchangedPayment(
@@ -99,8 +110,8 @@ function isUnchangedPayment(
     const nextInvoiceNumber = next.invoice_number.trim();
     const sameLink = existing.invoice_id === next.invoice_id;
     return (
-        sameRealAmount(existing.amount, next.amount) &&
-        sameRealAmount(existing.customer_amount, next.customer_amount) &&
+        sameMoneyAmount(existing.amount, next.amount) &&
+        sameMoneyAmount(existing.customer_amount, next.customer_amount) &&
         existing.customer_currency === next.customer_currency &&
         sameCalendarDay(existing.payment_date, next.payment_date) &&
         existing.reference === next.reference &&
@@ -335,6 +346,7 @@ export async function importPayments(
     }
 
     const customerIds = [...new Set(winners.map((row) => row.customerId))];
+    const shellParents = await customerIdsWithChildren(customerIds, prisma);
     const invoiceNumbers = [
         ...new Set(
             winners
@@ -384,7 +396,7 @@ export async function importPayments(
                         },
                     });
                     for (const row of rows) {
-                        existingById.set(row.id, row);
+                        existingById.set(row.id, mapExistingPaymentRow(row));
                     }
                 }
             }
@@ -414,7 +426,7 @@ export async function importPayments(
                         },
                     });
                     for (const row of rows) {
-                        existingById.set(row.id, row);
+                        existingById.set(row.id, mapExistingPaymentRow(row));
                     }
                 }
             }
@@ -517,6 +529,15 @@ export async function importPayments(
     };
 
     for (const winner of winners) {
+        if (shellParents.has(winner.customerId)) {
+            results[winner.index] = {
+                index: winner.index,
+                success: false,
+                message:
+                    "Customers with children cannot have invoices or payments",
+            };
+            continue;
+        }
         const key = `${winner.customerId}::${winner.effectiveReference}`;
         const existingPayment = matchExistingPayment(
             existingByCustomer.get(winner.customerId) ?? [],
@@ -894,6 +915,16 @@ export async function importPayments(
         }
     }
 
+    const recalcInvoiceIds = [...invoiceIdsToRecalc.keys()];
+    console.error(
+        "[DEBUG-pay-recalc-42846] payment import calling invoice paid recalc",
+        {
+            invoiceCount: recalcInvoiceIds.length,
+            sampleInvoiceId0: recalcInvoiceIds[0] ?? null,
+            sampleInvoiceId1: recalcInvoiceIds[1] ?? null,
+            sampleInvoiceId2: recalcInvoiceIds[2] ?? null,
+        }
+    );
     await recalculateInvoicesFromLinkedPayments(prisma, invoiceIdsToRecalc);
 
     for (const row of prepared) {
