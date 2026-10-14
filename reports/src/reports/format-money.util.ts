@@ -5,7 +5,9 @@
 export function formatMoneyIso(
     amount: number,
     currency: string | null | undefined,
-    locale: string = "en-US"
+    locale: string = "en-US",
+    /** Fixed decimal places; omit for 2 when fractional, else 0. */
+    fractionDigits?: number
 ): string {
     const currencyCode =
         (currency && String(currency).trim().toUpperCase()) || "USD";
@@ -14,9 +16,10 @@ export function formatMoneyIso(
     let formattedAmount: string;
     try {
         const hasDecimalPlaces = Math.abs(safeAmount % 1) > 0.0001;
+        const digits = fractionDigits ?? (hasDecimalPlaces ? 2 : 0);
         formattedAmount = new Intl.NumberFormat(locale, {
-            minimumFractionDigits: hasDecimalPlaces ? 2 : 0,
-            maximumFractionDigits: hasDecimalPlaces ? 2 : 0,
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits,
         }).format(safeAmount);
     } catch {
         formattedAmount = String(safeAmount);

@@ -38,6 +38,11 @@ import { prepareDashboardActivityMarkers } from "./dashboard-activity-markers.ut
 import { prepareDashboardCreditCustomerMarkers } from "./dashboard-credit-customer-markers.util";
 import { prepareDashboardCreditInvoiceMarkers } from "./dashboard-credit-invoice-markers.util";
 import {
+    prepareDashboardActiveDynamicsMarkers,
+    prepareDashboardDisputeMarkers,
+    prepareDashboardPromiseMarkers,
+} from "./dashboard-drill-markers.util";
+import {
     formatMoneyIso,
     isMoneyFieldName,
     isMoneyMetadataType,
@@ -48,6 +53,7 @@ import {
     mergeLatestCustomerPolicyTrendSelect,
 } from "./report-customer-trend-fields.util";
 import {
+    CUSTOMER_POLICY_BACKED_REPORT_FIELDS,
     extractCustomerPolicyReportField,
     isCustomerPolicyBackedReportField,
     isCustomerPolicyFeeRateReportField,
@@ -108,13 +114,26 @@ import {
 } from "./report-datetime.util";
 import {
     applyGroupingAndAggregation,
+    attachRowCurrencyFields,
     buildAggregationTotals,
+    buildReportTotalsCells,
     compareSortValues,
     coerceToNumber,
     detectOneToManyRelationTable,
     getLegacyFieldOutputKey,
+    reportHasTotalsAggregation,
     reportNeedsGroupedExecution,
+    resolveTotalRowLabelKey,
+    type ReportTotals,
 } from "./report-grouping.util";
+
+/** Customer columns joined from another primary table that live on the active CustomerPolicy. */
+function isRelatedCustomerPolicyField(field: string): boolean {
+    return (
+        isCustomerPolicyFeeRateReportField(field) ||
+        CUSTOMER_POLICY_BACKED_REPORT_FIELDS.has(field)
+    );
+}
 
 type ReportConfig = {
     tables?: string[];
@@ -130,6 +149,9 @@ type ReportConfig = {
     sorting?: Array<{ field: string; direction?: string }>;
     grouping?: string[];
     formulas?: ReportFormula[];
+    /** UI only: interleaved field output keys and `formula:{id}`. */
+    columnOrder?: string[];
+    showTotalRow?: boolean;
 };
 
 type PrismaWhere = Record<string, unknown>;
@@ -137,6 +159,7 @@ type ExecuteReportResult = {
     data: Record<string, unknown>[];
     totalRecords: number;
     aggregationTotals?: Record<string, number>;
+    totals?: ReportTotals;
     formulaWarnings?: FormulaWarningSummary[];
 };
 
@@ -240,6 +263,48 @@ export class ReportExecutionService {
             skipSelectedUserOnActivity = prepared.skipsSelectedUserScope;
         }
 
+        let drillExtras: PrismaWhere | undefined;
+        let skipBodyBusinessUnitId = false;
+        if (primaryTable === "CustomerCollectionPeriod") {
+            const prepared = await prepareDashboardPromiseMarkers(filters, {
+                db: this.db,
+                accountId,
+                selectedUserId: body.selectedUserId,
+            });
+            filters = prepared.filters;
+            drillExtras = prepared.primaryWhereExtras;
+            skipBodyBusinessUnitId = prepared.skipBodyBusinessUnitId;
+        } else if (primaryTable === "Customer") {
+            let businessUnitFilter: PrismaWhere | undefined;
+            if (body.businessUnitId != null && body.businessUnitId > 0) {
+                const ids = [
+                    body.businessUnitId,
+                    ...(await this.access.getBusinessUnitHierarchy(
+                        body.businessUnitId
+                    )),
+                ];
+                businessUnitFilter = {
+                    business_unit_id: { in: ids },
+                };
+            }
+            const prepared = await prepareDashboardActiveDynamicsMarkers(
+                filters,
+                { businessUnitFilter }
+            );
+            filters = prepared.filters;
+            drillExtras = prepared.primaryWhereExtras;
+            skipBodyBusinessUnitId = prepared.skipBodyBusinessUnitId;
+        } else if (primaryTable === "Dispute") {
+            const prepared = await prepareDashboardDisputeMarkers(filters, {
+                db: this.db,
+                accountId,
+                selectedUserId: body.selectedUserId,
+            });
+            filters = prepared.filters;
+            drillExtras = prepared.primaryWhereExtras;
+            skipBodyBusinessUnitId = prepared.skipBodyBusinessUnitId;
+        }
+
         let creditCustomerExtras: PrismaWhere | undefined;
         let creditInvoiceExtras: PrismaWhere | undefined;
         let creditDashboardPolicyId: number | undefined;
@@ -297,7 +362,10 @@ export class ReportExecutionService {
             accountId,
             primaryTable,
             body,
-            { skipSelectedUserId: skipSelectedUserOnActivity }
+            {
+                skipSelectedUserId: skipSelectedUserOnActivity,
+                skipBodyBusinessUnitId,
+            }
         );
         const normalizedFilters = this.normalizeFilters(filters, primaryTable);
         const formulaFilterGuard = findFormulaFilterGuardFailure({
@@ -349,6 +417,7 @@ export class ReportExecutionService {
             nestedWhere,
             searchWhere,
             activityExtras,
+            drillExtras,
             creditCustomerExtras,
             creditInvoiceExtras
         );
@@ -669,6 +738,7 @@ export class ReportExecutionService {
 
         let resultRows = formulaResult.rows;
         let aggregationTotals: Record<string, number> | undefined;
+        let totals: ReportTotals | undefined;
 
         // Formula filters keep matching detail rows; grouping runs afterwards.
         if (hasFormulaFilters) {
@@ -676,6 +746,20 @@ export class ReportExecutionService {
                 resultRows,
                 formulaFilters
             );
+        }
+
+        // Aggregated reports always take the grouped full-fetch path, so the
+        // detail rows here are the whole filtered set (not the SQL page).
+        if (body.includeTotals === true && reportHasTotalsAggregation(config)) {
+            totals = {
+                cells: buildReportTotalsCells(resultRows, config, {
+                    locale,
+                    accountCurrency,
+                }),
+                labelKey: resolveTotalRowLabelKey(
+                    (report.report_config || {}) as ReportConfig
+                ),
+            };
         }
 
         if (needsGroupedExecution) {
@@ -745,6 +829,7 @@ export class ReportExecutionService {
             data: resultRows,
             totalRecords,
             ...(aggregationTotals ? { aggregationTotals } : {}),
+            ...(totals ? { totals } : {}),
             ...(formulaResult.warnings.length
                 ? { formulaWarnings: formulaResult.warnings }
                 : {}),
@@ -834,7 +919,10 @@ export class ReportExecutionService {
         accountId: number,
         primaryTable: string,
         body: ExecuteReportDto,
-        options: { skipSelectedUserId?: boolean } = {}
+        options: {
+            skipSelectedUserId?: boolean;
+            skipBodyBusinessUnitId?: boolean;
+        } = {}
     ): Promise<PrismaWhere> {
         const parts: PrismaWhere[] = [
             buildAccountScopeWhere(primaryTable, accountId),
@@ -873,7 +961,11 @@ export class ReportExecutionService {
             parts.push(nestedBu);
         }
 
-        if (body.businessUnitId != null && body.businessUnitId > 0) {
+        if (
+            body.businessUnitId != null &&
+            body.businessUnitId > 0 &&
+            !options.skipBodyBusinessUnitId
+        ) {
             const ids = [
                 body.businessUnitId,
                 ...(await this.access.getBusinessUnitHierarchy(
@@ -985,6 +1077,12 @@ export class ReportExecutionService {
         fields: Array<{ table: string; field: string }>
     ): Record<string, unknown> {
         const select: Record<string, unknown> = { id: true };
+        if (
+            primaryTable === "Invoice" ||
+            primaryTable === "InvoicePayment"
+        ) {
+            select.customer_currency = true;
+        }
         const relationMap = RELATION_FROM_PRIMARY[primaryTable] || {};
 
         // To-many joins (Customer→Invoice, Contact, …) load one sample row
@@ -1164,7 +1262,7 @@ export class ReportExecutionService {
             }
             if (
                 f.table === "Customer" &&
-                isCustomerPolicyFeeRateReportField(f.field)
+                isRelatedCustomerPolicyField(f.field)
             ) {
                 mergeActiveCustomerPolicySelect(ensureRelSelect(rel), [
                     f.field,
@@ -1982,14 +2080,26 @@ export class ReportExecutionService {
             }
             out[key] = value ?? null;
             const metadataType = resolveReportFieldType(f.table, f.field);
+            const displayCurrency = this.resolveRowDisplayCurrency(
+                row,
+                out,
+                accountCurrency
+            );
             out[`___formatted_${key}`] = this.formatValue(
                 value,
                 f.field,
                 locale,
                 timezone,
                 metadataType,
-                this.resolveRowDisplayCurrency(row, out, accountCurrency)
+                displayCurrency
             );
+            // Per-row currency for grouped money aggregations (mixed-currency check).
+            if (
+                isMoneyMetadataType(metadataType) ||
+                isMoneyFieldName(f.field)
+            ) {
+                out[`__currency_${key}`] = displayCurrency;
+            }
             // dispute_number aliases the primary key. Override display to
             // "DIS-000726" so formatValue's thousands separator does not turn
             // id 1726 into "1,726". Raw value stays numeric for sort/search.
@@ -2068,6 +2178,7 @@ export class ReportExecutionService {
                 }
             }
         }
+        attachRowCurrencyFields(out, row, primaryTable);
         return out;
     }
 
@@ -2213,7 +2324,7 @@ export class ReportExecutionService {
         }
         if (
             f.table === "Customer" &&
-            isCustomerPolicyFeeRateReportField(f.field)
+            isRelatedCustomerPolicyField(f.field)
         ) {
             return nested
                 ? extractCustomerPolicyReportField(

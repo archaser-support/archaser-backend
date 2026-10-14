@@ -9,6 +9,7 @@ export type FormulaAggregation = "SUM" | "AVG" | "MIN" | "MAX";
 export const MAX_FORMULAS_PER_REPORT = 10;
 export const MAX_FORMULA_EXPRESSION_LENGTH = 500;
 export const MAX_FORMULA_AST_DEPTH = 10;
+export const MAX_FORMULA_DECIMALS = 6;
 
 export interface ReportFormula {
     id: string;
@@ -19,6 +20,8 @@ export interface ReportFormula {
     aggregation?: FormulaAggregation;
     /** Not shown as a column; still usable in filters and other formulas. */
     hidden?: boolean;
+    /** Fixed decimal places; unset keeps the format default. */
+    decimals?: number;
 }
 
 export const FORMULA_OUTPUT_KEY_PREFIX = "formula:";
