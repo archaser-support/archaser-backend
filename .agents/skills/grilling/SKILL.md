@@ -7,9 +7,9 @@ Interview me relentlessly about every aspect of this plan until we reach a share
 
 If a question can be answered by exploring the codebase, explore the codebase instead of asking.
 
-## Question format (Plan Mode style)
+## Question format
 
-**Always use the `AskQuestion` tool** for each grilling question — same interaction pattern as Plan Mode. Do **not** list A/B/C options in chat prose; the tool renders the choices.
+Ask in the chat. Do **not** use the `AskQuestion` tool and do **not** switch to plan mode.
 
 ### One question at a time
 
@@ -17,7 +17,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
 - Wait for the user's answer before asking the next question.
 - Never batch multiple decisions in one message.
 
-### Structure each `AskQuestion` call
+### Structure each question
 
 1. **Title** — short session label (e.g. `Grill: SF OAuth Reconnect`).
 2. **Prompt** — 2–4 sentences of context, then the decision as a clear question.
@@ -27,9 +27,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
 4. **Recommendation** — put the recommended choice **first** in the options list and append ` (Recommended)` to its label. Also name the recommended number in the prompt (e.g. `Recommendation: 1`).
 5. **Other** — the tool always offers "Other"; use it for custom input. Do not duplicate "Other" in your option list.
 
-### When AskQuestion is unavailable (chat fallback)
-
-Use the same rules in prose: numbered `1.` / `2.` / `3.` options, then a line `**Recommendation:** {n} — …`.
+Write the options in the chat as a numbered list (`1.`, `2.`, `3.`), then a line `**Recommendation:** {n} — …`.
 
 ### After each answer
 
