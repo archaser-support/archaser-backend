@@ -22,6 +22,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Determine Environment & Directory
         id: env-name
         run: |
@@ -32,6 +35,25 @@ jobs:
           else
             echo "ENV=staging" >> $GITHUB_OUTPUT
           fi
+
+      # Public S3 JSON polled by Amplify UI (maintenance overlay). Skips if secrets unset.
+      - name: Configure AWS for deploy status
+        uses: aws-actions/configure-aws-credentials@v4
+        continue-on-error: true
+        with:
+          aws-access-key-id: ${{ secrets.DEPLOY_STATUS_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.DEPLOY_STATUS_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.DEPLOY_STATUS_AWS_REGION || 'eu-north-1' }}
+
+      - name: Set deploy status (on)
+        continue-on-error: true
+        env:
+          DEPLOY_STATUS_S3_BUCKET: ${{ secrets.DEPLOY_STATUS_S3_BUCKET }}
+          DEPLOY_STATUS_S3_PREFIX: ${{ secrets.DEPLOY_STATUS_S3_PREFIX }}
+        run: |
+          bash scripts/deployment/set-deploy-status.sh \
+            --env "${{ steps.env-name.outputs.ENV }}" \
+            --deploying true
 
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -56,3 +78,13 @@ jobs:
             git clean -fd
             bash scripts/deployment/deploy-backend-docker.sh --env ${{ steps.env-name.outputs.ENV }} --app-dir ${{ steps.env-name.outputs.APP_DIR }}
 
+      - name: Clear deploy status (off)
+        if: always()
+        continue-on-error: true
+        env:
+          DEPLOY_STATUS_S3_BUCKET: ${{ secrets.DEPLOY_STATUS_S3_BUCKET }}
+          DEPLOY_STATUS_S3_PREFIX: ${{ secrets.DEPLOY_STATUS_S3_PREFIX }}
+        run: |
+          bash scripts/deployment/set-deploy-status.sh \
+            --env "${{ steps.env-name.outputs.ENV }}" \
+            --deploying false
