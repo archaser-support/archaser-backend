@@ -83,6 +83,14 @@ if ! command -v aws >/dev/null 2>&1; then
     exit 0
 fi
 
+# Bucket alone is not enough — configure-aws-credentials must have succeeded
+# (DEPLOY_STATUS_AWS_ACCESS_KEY_ID / SECRET). Soft-skip so deploy is not blocked.
+if ! aws sts get-caller-identity >/dev/null 2>&1; then
+    echo "Warning: AWS credentials not available — skipping deploy-status upload." >&2
+    echo "  Set GitHub secrets DEPLOY_STATUS_AWS_ACCESS_KEY_ID and DEPLOY_STATUS_AWS_SECRET_ACCESS_KEY." >&2
+    exit 0
+fi
+
 UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
 RUN_ID="${GITHUB_RUN_ID:-}"
 RUN_URL=""

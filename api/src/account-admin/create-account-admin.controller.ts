@@ -2,6 +2,7 @@ import {
     Body,
     Controller,
     Delete,
+    ForbiddenException,
     Get,
     Param,
     Post,
@@ -139,6 +140,16 @@ export function createAccountAdminController(
             @Param("id") id: string,
             @Body() body: Record<string, unknown>
         ) {
+            if (entityType === "accounts") {
+                const accountId = this.service.parseId(entityType, id) as number;
+                // Master ARchaser admin account (10013) must never be deleted.
+                if (accountId === 10013) {
+                    throw new ForbiddenException(
+                        "Cannot delete the master ARchaser admin account"
+                    );
+                }
+                return { error: `Delete not supported for ${entityType}` };
+            }
             if (entityType !== "business-units") {
                 return { error: `Delete not supported for ${entityType}` };
             }

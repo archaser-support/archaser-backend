@@ -38,6 +38,7 @@ jobs:
 
       # Public S3 JSON polled by Amplify UI (maintenance overlay). Skips if secrets unset.
       - name: Configure AWS for deploy status
+        id: aws-deploy-status
         uses: aws-actions/configure-aws-credentials@v4
         continue-on-error: true
         with:
@@ -46,6 +47,7 @@ jobs:
           aws-region: ${{ secrets.DEPLOY_STATUS_AWS_REGION || 'eu-north-1' }}
 
       - name: Set deploy status (on)
+        if: steps.aws-deploy-status.outcome == 'success'
         continue-on-error: true
         env:
           DEPLOY_STATUS_S3_BUCKET: ${{ secrets.DEPLOY_STATUS_S3_BUCKET }}
@@ -79,7 +81,7 @@ jobs:
             bash scripts/deployment/deploy-backend-docker.sh --env ${{ steps.env-name.outputs.ENV }} --app-dir ${{ steps.env-name.outputs.APP_DIR }}
 
       - name: Clear deploy status (off)
-        if: always()
+        if: always() && steps.aws-deploy-status.outcome == 'success'
         continue-on-error: true
         env:
           DEPLOY_STATUS_S3_BUCKET: ${{ secrets.DEPLOY_STATUS_S3_BUCKET }}

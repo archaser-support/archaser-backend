@@ -6,8 +6,10 @@ This project uses [Husky](https://typicode.github.io/husky/) to enforce code qua
 
 The pre-commit hook automatically runs before each commit and performs:
 
-1. **Lint / format** (`npx lint-staged`) when installed
-2. **TypeScript type checking** (`npm run type-check`)
+1. **Malware / supply-chain guard** (`npm run check:malware`)
+   - Blocks root `api.js`, npm script hooks to `api.js`, and obfuscated config payloads
+2. **Lint / format** (`npx lint-staged`) when installed
+3. **TypeScript type checking** (`npm run type-check`)
    - Builds workspace libraries, then `tsc --noEmit` for Nest apps
    - Same shape as `.github/workflows/typecheck.yml`
 
@@ -41,6 +43,7 @@ You can run the same checks manually at any time:
 npm run pre-commit
 
 # Run individual checks
+npm run check:malware
 npm run type-check
 npm run test:unit
 npm run test:business-logic

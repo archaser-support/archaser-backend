@@ -407,26 +407,15 @@ export class ReportsService {
     async remove(user: JwtPayload, id: number) {
         const userInfo = await this.access.resolveUserInfo(user);
         const accountId = this.access.getEffectiveAccountId(userInfo);
-        const canManageSystem = this.access.isAdminAccount(userInfo.accountId);
         const existing = await this.db.report.findFirst({
             where: { id, account_id: accountId },
         });
         if (!existing) {
             throw new NotFoundException("Report not found");
         }
-        if (existing.is_system && !canManageSystem) {
+        // System reports cannot be deleted (including master account 10013).
+        if (existing.is_system) {
             throw new ForbiddenException("System reports cannot be deleted");
-        }
-        // Admin deleting a system report removes every account's copy (same
-        // unique_name), matching sync-system identity.
-        if (existing.is_system && canManageSystem) {
-            const result = await this.db.report.deleteMany({
-                where: {
-                    unique_name: existing.unique_name,
-                    is_system: true,
-                },
-            });
-            return { success: true, deletedCount: result.count };
         }
         await this.db.report.delete({ where: { id } });
         return { success: true };
