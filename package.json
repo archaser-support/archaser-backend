@@ -63,6 +63,8 @@
     "migrate:activity-keys": "npx tsx scripts/database/run-migration.ts",
     "migrate:activity-keys:dry": "npx tsx scripts/database/run-migration.ts --dry-run",
     "check:currency-fallbacks": "node scripts/check-currency-fallbacks.js",
+    "check:malware": "node scripts/check-malware.js",
+    "check:malware:staged": "node scripts/check-malware.js --staged",
     "update:rds-ip": "bash ./scripts/development/update-rds-ip.sh",
     "type-check": "node ./scripts/run-typecheck.cjs"
   },

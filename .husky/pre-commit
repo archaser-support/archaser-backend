@@ -12,6 +12,20 @@ log "━━━━━━━━━━━━━━━━━━━━━━━━━
 log "⚠️  All checks must pass - commit will be blocked on any failure"
 log ""
 
+# Step 0: Malware / supply-chain guard (full scan)
+log "🛡️  Checking for malware / supply-chain markers..."
+if ! npm run check:malware >&2; then
+    log ""
+    log "❌ Malware guard failed"
+    log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log "Suspicious files or npm script hooks detected. Fix before committing."
+    log "Re-run: npm run check:malware"
+    log ""
+    exit 1
+fi
+log "✅ Malware guard passed"
+log ""
+
 # Protect translation files - Only Ofir Amitai can modify
 eREMOTE_NAME="$1"
 
