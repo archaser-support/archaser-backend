@@ -1,4 +1,5 @@
 import { account10149Extension } from "./account_10149";
+import { account10151Extension } from "./account_10151";
 import { sampleNoopExtension } from "./sample_noop";
 import type {
     BillingAccountExtension,
@@ -7,6 +8,7 @@ import type {
 } from "./types";
 
 export { ACCOUNT_10149_EXTENSION_KEY } from "./account_10149";
+export { ACCOUNT_10151_EXTENSION_KEY } from "./account_10151";
 export { SAMPLE_NOOP_EXTENSION_KEY } from "./sample_noop";
 export type {
     BillingAccountExtension,
@@ -28,6 +30,7 @@ const EXTENSION_REGISTRY: ReadonlyMap<string, BillingAccountExtension> =
     new Map([
         [sampleNoopExtension.key, sampleNoopExtension],
         [account10149Extension.key, account10149Extension],
+        [account10151Extension.key, account10151Extension],
     ]);
 
 export function listRegisteredExtensionKeys(): string[] {

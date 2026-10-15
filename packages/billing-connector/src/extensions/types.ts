@@ -26,8 +26,14 @@ export interface ExtensionTransformContext {
     window: ExtensionSyncWindow;
     batch: ExtensionMappedBatch;
     extension_config: Record<string, unknown> | null;
-    /** When set, extension may write during transform (rare). */
-    prisma?: Pick<PrismaClient, "invoice" | "invoicePayment">;
+    /**
+     * When set, extension may read/write during transform (rare).
+     * Includes customer/company for demo-account name anonymization.
+     */
+    prisma?: Pick<
+        PrismaClient,
+        "invoice" | "invoicePayment" | "customer" | "company"
+    >;
     userId?: string;
     /** Preview / dry-run — no DB writes from the extension. */
     dryRun?: boolean;

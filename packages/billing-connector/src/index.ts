@@ -13,6 +13,7 @@ export {
 // ==============================
 export {
     ACCOUNT_10149_EXTENSION_KEY,
+    ACCOUNT_10151_EXTENSION_KEY,
     SAMPLE_NOOP_EXTENSION_KEY,
     listRegisteredExtensionKeys,
     getRegisteredExtension,
