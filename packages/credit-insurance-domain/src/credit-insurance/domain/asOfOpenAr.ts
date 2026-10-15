@@ -54,7 +54,8 @@ export const ASOF_OPEN_AMOUNT_TOLERANCE = INVOICE_PAID_TOLERANCE;
 /**
  * Payment-ledger open amount as of day D: original − payments on/before D.
  * Near-zero residue uses shared {@link isWithinPaidTolerance} (Billing Paid
- * leftover / CPT as-of open AR).
+ * leftover / CPT as-of open AR). A residue with the opposite sign of the
+ * original (overpaid invoice, over-refunded credit note) is settled, not open.
  */
 export function computeAsOfOpenAmount(
     original: number,
@@ -66,6 +67,9 @@ export function computeAsOfOpenAmount(
         return 0;
     }
     if (isWithinPaidTolerance(open, tolerance)) {
+        return 0;
+    }
+    if (Math.sign(open) === -Math.sign(Number(original))) {
         return 0;
     }
     return open;
