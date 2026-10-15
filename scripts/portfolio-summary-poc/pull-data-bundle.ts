@@ -15,7 +15,10 @@
  *
  * Usage:
  *   npx tsx --tsconfig api/tsconfig.json scripts/portfolio-summary-poc/pull-data-bundle.ts \
- *     --account 10149 --from 2026-04-01 --to 2026-09-30
+ *     --account 10149
+ *
+ * `--from` and `--to` are optional. When omitted, the range is the last 180
+ * days ending today.
  */
 import "dotenv/config";
 import * as fs from "fs";
@@ -38,7 +41,13 @@ import {
 import { InsuranceEntitiesService } from "../../api/src/credit-insurance/insurance-entities.service";
 import type { DatabaseService } from "../../api/src/database/database.service";
 
-export const BUNDLE_VERSION = 1;
+import {
+    buildCustomerInsights,
+    buildViolationReasonBreakdown,
+} from "./customer-insights";
+import { lastReportRange } from "./report-range";
+
+export const BUNDLE_VERSION = 3;
 const OUTPUT_DIR = path.resolve(
     __dirname,
     "../../.scratch/portfolio-summary-poc"
@@ -66,11 +75,12 @@ function isRealCalendarDate(ymd: string): boolean {
 
 function parseArgs(argv: string[]): CliArgs {
     const accountRaw = readFlag(argv, "--account");
-    const from = readFlag(argv, "--from");
-    const to = readFlag(argv, "--to");
-    if (!accountRaw || !from || !to) {
+    const defaults = lastReportRange();
+    const from = readFlag(argv, "--from") ?? defaults.from;
+    const to = readFlag(argv, "--to") ?? defaults.to;
+    if (!accountRaw) {
         throw new Error(
-            "Usage: --account <id> --from <YYYY-MM-DD> --to <YYYY-MM-DD>"
+            "Usage: --account <id> [--from YYYY-MM-DD] [--to YYYY-MM-DD]"
         );
     }
     const accountId = Number(accountRaw);
@@ -206,7 +216,8 @@ async function main() {
         const scope = {
             policyId: null,
             businessUnitId: null,
-            includeNoPolicyExposure: false,
+            // Match the dashboard default ("With excluded customers").
+            includeNoPolicyExposure: true,
             accessibleBusinessUnitIds: null,
             isAdmin: true,
         } as const;
@@ -239,6 +250,55 @@ async function main() {
             `[portfolio-summary-poc] policy summary: ${policySummary.summaries.length} policies`
         );
 
+        const primaryTerms = policySummary.summaries.find(
+            (entry) => entry.terms.policy_kind !== "TopUp"
+        )?.terms as
+            | {
+                  annual_credit_assessment_fee?: unknown;
+                  max_total_cover?: unknown;
+              }
+            | undefined;
+        const toFinite = (value: unknown) => {
+            const n = value == null ? NaN : Number(value);
+            return Number.isFinite(n) ? n : null;
+        };
+        const costs = health.costs as {
+            monthly?: Array<{
+                insuranceCost: number;
+                registrationFeeCost: number;
+            }>;
+        } | null;
+        const policyMaxPaymentTerm =
+            policySummary.summaries.find(
+                (row) => row.terms.max_payment_term != null
+            )?.terms.max_payment_term ?? null;
+        const customerInsights = await buildCustomerInsights(prisma, {
+            accountId: account.id,
+            from: health.from,
+            to: health.to,
+            annualCreditAssessmentFee: toFinite(
+                primaryTerms?.annual_credit_assessment_fee
+            ),
+            maxTotalCover: toFinite(primaryTerms?.max_total_cover),
+            costsInsurancePlusRegistration: costs?.monthly
+                ? costs.monthly.reduce(
+                      (total, month) =>
+                          total + month.insuranceCost + month.registrationFeeCost,
+                      0
+                  )
+                : null,
+            accountPolicyMaxPaymentTerm: policyMaxPaymentTerm,
+        });
+        const violationReasons = await buildViolationReasonBreakdown(prisma, {
+            accountId: account.id,
+            from: health.from,
+            to: health.to,
+            policyMaxPaymentTerm,
+        });
+        console.log(
+            `[portfolio-summary-poc] customer insights: ${customerInsights.invoiceCount} invoices, premium check diff ${customerInsights.premiumCheck.differencePct?.toFixed(2) ?? "n/a"}%, ${violationReasons.length} breach types, late deadlines ${customerInsights.actNow.lateDeadlines.invoiceCount}`
+        );
+
         const bundle = serializeBigInt({
             bundleVersion: BUNDLE_VERSION,
             generatedAt: new Date().toISOString(),
@@ -257,9 +317,12 @@ async function main() {
                 details: policySummary.summaries,
             },
             portfolioHealth: health.portfolioHealth,
-            noCoverage: health.noCoverage,
+            noCoverage: health.noCoverage
+                ? { ...health.noCoverage, violationReasons }
+                : { violationReasons },
             utilization: health.utilization,
             costs: health.costs,
+            customerInsights,
         });
 
         fs.mkdirSync(OUTPUT_DIR, { recursive: true });
