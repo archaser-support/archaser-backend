@@ -34,7 +34,7 @@ Single reference for the report builder, viewer, execution, dashboard report lis
 **`Report`** (Prisma): `name`, `unique_name` (unique per account), `description`, `report_config` (JSON), `context`, `is_system`, `is_default`, `is_public`, audit fields. Related: `ReportShare` (user or role, `view` / `edit`), `ReportSchedule`, `ReportExecution` (not written by the reports service today), `UserDefaultReport` (per user per context).
 
 - Visibility of definitions = same `account_id` only. `is_public` and shares are stored but **do not** filter list/get/execute.
-- System reports are per-account copies. Master account **10013** owns the catalog; `POST /api/reports/sync-system` pushes them to other accounts. Non-admins cannot edit system reports; only non-system reports can be deleted. System report names are stored in English (not translated).
+- System reports are per-account copies. Master account **10013** owns the catalog; `POST /api/reports/sync-system` pushes them to other accounts. Non-admins cannot edit or delete system reports. Admin (account **10013**) can delete a system report; that removes every account’s copy matched by `unique_name` + `is_system`. Non-system reports delete only the current account’s row. System report names are stored in English (not translated).
 
 **`report_config`** (`types/reports.ts`) — JSON only, no Prisma migration for config changes:
 
