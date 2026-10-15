@@ -18,8 +18,8 @@ instead of asking the user.
    services → UI → tests.
 3. **Identify decision branches** — scope, data model, idempotency, rollout,
    observability, product semantics, phase ordering.
-4. **Present decisions** using plan-mode format (below) — do not dump a long
-   prose Q&A list.
+4. **Present decisions in the chat** (below) — one question, then wait. Do not
+   open the plan-mode question card. Do not call `AskQuestion`.
 5. **After each answer**, append to the **Decision log** table and surface the
    next **dependent** decision only after its parent is locked.
 6. **Repeat** until no open branches remain or discovery-only gates are
@@ -27,10 +27,9 @@ instead of asking the user.
 7. End with **plan edits** — what sections to add/change based on locked
    decisions.
 
-## Present questions (plan-mode format)
+## Present questions in the chat
 
-Use the **AskQuestion** tool for product/architecture forks whenever it is
-available. Match the same structure Cursor uses in plan mode.
+Ask in the chat. Do **not** use the `AskQuestion` tool and do **not** switch to plan mode.
 
 ### Language — keep it simple
 
@@ -60,14 +59,11 @@ Write every question so a non-expert teammate could answer it in one read.
 > Example: yesterday we saved amount $100; today the ERP (Enterprise Resource
 > Planning) sends $120 for INV-9.
 
-### AskQuestion (one at a time)
+### One question at a time
 
-- **One question per turn** — a single `AskQuestion` call with exactly one
-  decision; wait for the user's answer before asking the next. Do not batch
-  multiple decisions in one turn.
-- **Title:** short plan name + `— Plan decisions` (e.g. `ERP Billing Connector — Plan decisions`).
-- **Question id:** `d{n}-topic-slug`, numbered in prompt (D1, D2, …).
-- **Prompt structure** (markdown inside the prompt string):
+- **One question per turn.** Write it in the chat, then wait for the answer. Do not batch multiple decisions in one turn.
+- **Heading:** `### D{n} — {Topic title}`
+- **Body:**
 
 ```text
 D{n} — {Topic title}
@@ -92,13 +88,7 @@ Example: {one concrete scenario that makes the choice clear}
   became invalid after a prior answer.
 - **Do not** ask the user to choose things already answerable from the codebase.
 
-### When AskQuestion is unavailable
-
-Render the same structure in chat:
-
-- `### D{n} — {Topic}` with the same prompt body.
-- Options as a numbered list (`1.`, `2.`, `3.`) with the recommended option
-  marked **(Recommended)** and a line `**Recommendation:** {n} — …`.
+- Options as a numbered list (`1.`, `2.`, `3.`) with the recommended option marked **(Recommended)**, then a line `**Recommendation:** {n} — …`.
 
 ## After answers — Decision log
 
@@ -116,7 +106,7 @@ Publish a table in the same format as implementation plans:
 ## Discovery-only items — outcome gates
 
 For decisions that depend on a spike or external API (not user preference), do
-**not** use AskQuestion. Use a **gate table** instead:
+**not** use a question card. Use a **gate table** instead:
 
 | Gate | If Yes | If No |
 |------|--------|-------|
@@ -136,13 +126,13 @@ block.
 
 ## Recommendations
 
-For every AskQuestion option set, the **(Recommended)** option must reflect the
+For every option set, the **(Recommended)** option must reflect the
 best answer given the codebase scan — not a neutral list. Briefly justify
 recommendations in the Decision log Rationale column after the user answers.
 
 ## Example (abbreviated)
 
-**AskQuestion prompt:**
+**Chat question:**
 
 ```text
 D3 — Same payment twice

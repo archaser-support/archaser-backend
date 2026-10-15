@@ -140,7 +140,7 @@ Before finalizing any implementation plan (initial draft or after user feedback)
 
 ### ❓ Clarifying & design questions (required format)
 
-When a decision is genuinely the user's to make — planning, grilling (`/grill-me`), ambiguous requirements, or trade-offs the codebase cannot resolve — **always** use the **`AskQuestion` tool** (same format as Plan mode). Do **not** list options as A/B/C bullets or numbered lists in chat.
+When a decision is genuinely the user's to make — planning, ambiguous requirements, or trade-offs the codebase cannot resolve — **always** use the **`AskQuestion` tool** (same format as Plan mode). Do **not** list options as A/B/C bullets or numbered lists in chat. `/grill-me` and `/grilling` are the exception: ask those in the chat.
 
 **Rules:**
 - **One question per turn** — wait for the answer before asking the next.
@@ -151,7 +151,7 @@ When a decision is genuinely the user's to make — planning, grilling (`/grill-
 - If the answer is discoverable by reading the codebase, **explore first** — only ask when still blocked on a product/design choice.
 - After the user answers, incorporate it into the plan, PRD, or next implementation step before continuing.
 
-**Grilling (`/grill-me`, `/grilling`):** same rules — one `AskQuestion` per turn, recommended option first, no multi-question dumps. Use **simple language** (everyday words, short sentences, concrete examples when abstract; expand every acronym with its full name); see `.agents/skills/grill-me/SKILL.md`.
+**Grilling (`/grill-me`, `/grilling`):** ask in the chat, one question per turn, recommended option first, no multi-question dumps, and do not use `AskQuestion`. Use **simple language** (everyday words, short sentences, concrete examples when abstract; expand every acronym with its full name); see `.agents/skills/grill-me/SKILL.md`.
 
 ### 📚 Rule Files
 All detailed rules are organized in `.cursor/rules/` directory for better maintainability and topic-specific reference.
