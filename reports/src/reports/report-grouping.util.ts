@@ -1,7 +1,7 @@
 import { getFieldOutputKey } from "./report.constants";
 import { getFormulaOutputKey, ReportFormula } from "./report-formula/types";
 import { formatAggregatedFormulaValue } from "./report-formula/formula-execution";
-import { formatMoneyIso } from "./format-money.util";
+import { formatMoneyIso, isMoneyFieldName } from "./format-money.util";
 
 export type AggregationType = "SUM" | "AVG" | "COUNT" | "MIN" | "MAX";
 
@@ -118,14 +118,11 @@ function extractAggregationSourceValue(
 
 function shouldFormatFieldAsCurrency(table: string, field: string): boolean {
     const lower = field.toLowerCase();
+    // Same money detection as body-row formatValue, minus Customer cost fields.
     return (
-        lower === "amount" ||
-        lower.endsWith("_amount") ||
-        lower.includes("amount") ||
-        lower === "outstanding_debt" ||
-        lower === "total_due" ||
-        lower === "approved_limit"
-    ) && !(table === "Customer" && lower.includes("cost"));
+        isMoneyFieldName(field) &&
+        !(table === "Customer" && lower.includes("cost"))
+    );
 }
 
 /** Customer-currency money (Invoice.customer_amount, …) — not account-currency amounts. */
@@ -562,9 +559,15 @@ export function resolveTotalRowLabelKey(
     return ordered.find((key) => !aggregatedKeys.has(key)) ?? null;
 }
 
+/** Match money amount digits: 2 when fractional, else 0. */
 function formatTotalNumber(value: number, locale: string): string {
     try {
-        return new Intl.NumberFormat(locale).format(value);
+        const hasDecimalPlaces = Math.abs(value % 1) > 0.0001;
+        const digits = hasDecimalPlaces ? 2 : 0;
+        return new Intl.NumberFormat(locale, {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits,
+        }).format(value);
     } catch {
         return String(value);
     }

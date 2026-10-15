@@ -295,9 +295,12 @@ export function formatAggregatedFormulaValue(
     locale: string,
     accountCurrency: string
 ): string | null {
+    // Aggregates (group rows + total row): default to 2 decimals when unset,
+    // so float SUM/AVG do not show up to 10 places.
+    const decimals = resolveFormulaDecimals(formula) ?? 2;
     return formatFormulaValue(
         new Prisma.Decimal(value),
-        formula,
+        { ...formula, decimals },
         sampleRow,
         fields,
         locale,
