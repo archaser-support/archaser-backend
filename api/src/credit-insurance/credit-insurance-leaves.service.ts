@@ -95,7 +95,7 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
     }
 
     async portfolioHealth(user: JwtPayload, query: Record<string, unknown>) {
-        const ctx = await this.access.authorize(user, query);
+        const ctx = await this.access.authorize(user, query, "portfolio-health");
         const policyId = this.parseOptionalPolicyId(query.policyId);
         await this.assertPolicyInAccount(ctx.accountId, policyId);
 
@@ -481,7 +481,7 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
     }
 
     async asOfBackfillStatus(user: JwtPayload, query: Record<string, unknown>) {
-        const ctx = await this.access.authorize(user, query);
+        const ctx = await this.access.authorize(user, query, "asof-backfill");
         const status = await getCreditAsOfBackfillJobStatus(ctx.accountId);
         return serializeBigInt(status);
     }
@@ -500,7 +500,7 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
         query: Record<string, unknown>,
         body: Record<string, unknown>
     ) {
-        const ctx = await this.access.authorize(user, query);
+        const ctx = await this.access.authorize(user, query, "asof-backfill");
         const mode = this.parseOptionalString(body.mode);
         const isRecent = mode === "recent";
 
@@ -542,13 +542,13 @@ export class CreditInsuranceLeavesService implements OnModuleInit {
     }
 
     async asOfBackfillPause(user: JwtPayload, query: Record<string, unknown>) {
-        const ctx = await this.access.authorize(user, query);
+        const ctx = await this.access.authorize(user, query, "asof-backfill");
         const status = await pauseCreditAsOfBackfillJob(ctx.accountId);
         return serializeBigInt(status);
     }
 
     async asOfBackfillRetry(user: JwtPayload, query: Record<string, unknown>) {
-        const ctx = await this.access.authorize(user, query);
+        const ctx = await this.access.authorize(user, query, "asof-backfill");
         try {
             const status = await retryCreditAsOfBackfillJob(ctx.accountId);
             return serializeBigInt(status);
