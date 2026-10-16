@@ -24,6 +24,12 @@ type ViewAsClaims = Pick<
     | "view_as_user_account_name"
 >;
 
+/**
+ * Must match frontend `getCookieName()` in `utils/authUtils.ts`.
+ * NextAuth writes `next-auth.session-token` (optional env suffix) — not `.v1`.
+ * A mismatch breaks cookie auth for EventSource (`/api/ws/notifications`),
+ * which cannot set an Authorization header.
+ */
 function sessionCookieName(): string {
     const baseUrl =
         process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXTAUTH_URL || "";
@@ -34,7 +40,30 @@ function sessionCookieName(): string {
         baseUrl.includes("staging.archaser.com");
     const prefix = isSecure ? "__Secure-" : "";
     const suffix = isStaging ? ".staging" : "";
-    return `${prefix}next-auth.session-token.v1${suffix}`;
+    return `${prefix}next-auth.session-token${suffix}`;
+}
+
+/** Primary name first; keep legacy `.v1` as a read fallback. */
+function sessionCookieNameCandidates(): string[] {
+    const primary = sessionCookieName();
+    const legacy = primary.includes("session-token.v1")
+        ? primary
+        : primary.replace("session-token", "session-token.v1");
+    return primary === legacy ? [primary] : [primary, legacy];
+}
+
+async function readSessionCookieToken(
+    req: DualAuthRequest,
+    secret: string
+): Promise<Record<string, unknown> | null> {
+    const typedReq = req as Parameters<typeof getToken>[0]["req"];
+    for (const cookieName of sessionCookieNameCandidates()) {
+        const token = await getToken({ req: typedReq, secret, cookieName });
+        if (token) {
+            return token as Record<string, unknown>;
+        }
+    }
+    return null;
 }
 
 function authSecret(config: ConfigService): string {
@@ -167,14 +196,8 @@ export class DualAuthGuard implements CanActivate {
     async canActivate(context: ExecutionContext): Promise<boolean> {
         const req = context.switchToHttp().getRequest<DualAuthRequest>();
         const secret = authSecret(this.configService);
-        const cookieToken = await getToken({
-            req: req as Parameters<typeof getToken>[0]["req"],
-            secret,
-            cookieName: sessionCookieName(),
-        });
-        const cookieViewAs = viewAsFromToken(
-            cookieToken as Record<string, unknown> | null
-        );
+        const cookieToken = await readSessionCookieToken(req, secret);
+        const cookieViewAs = viewAsFromToken(cookieToken);
         const headerViewAs = {
             ...viewAsFromQuery(req),
             ...viewAsFromHeaders(req),
