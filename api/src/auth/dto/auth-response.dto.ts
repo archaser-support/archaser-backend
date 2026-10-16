@@ -69,6 +69,13 @@ export class MeResponseDto {
 
     @ApiProperty({
         required: false,
+        description:
+            "When true, Portfolio Health is hidden for the account (view-as aware)",
+    })
+    hide_portfolio_health?: boolean;
+
+    @ApiProperty({
+        required: false,
         description: "Effective account demo flag (view-as aware)",
     })
     is_demo?: boolean;

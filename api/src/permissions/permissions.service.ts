@@ -50,6 +50,7 @@ export const ALL_PERMISSION_KEYS: string[] = [
     "view_operation_dashboard",
     "view_financial_dashboard",
     "view_credit_dashboard",
+    "view_portfolio_dashboard",
     "update_insurance_policy",
     "view_billing_connector",
     "manage_billing_connector",
@@ -128,6 +129,7 @@ const PERMISSIONS_BY_CATEGORY: Record<string, Record<string, string[]>> = {
             "view_operation_dashboard",
             "view_financial_dashboard",
             "view_credit_dashboard",
+            "view_portfolio_dashboard",
         ],
     },
 };
@@ -202,6 +204,7 @@ export class PermissionsService {
             select: {
                 has_collection: true,
                 has_credit_insurance: true,
+                hide_portfolio_health: true,
                 is_demo: true,
             } as never,
         });
@@ -209,6 +212,9 @@ export class PermissionsService {
         const hasCreditInsurance =
             (account as { has_credit_insurance?: boolean } | null)
                 ?.has_credit_insurance === true;
+        const hidePortfolioHealth =
+            (account as { hide_portfolio_health?: boolean } | null)
+                ?.hide_portfolio_health === true;
         const isCreditOnlyAccount =
             (account as { has_collection?: boolean } | null)
                 ?.has_collection === false && hasCreditInsurance;
@@ -219,12 +225,25 @@ export class PermissionsService {
         if (account && !hasCreditInsurance) {
             const creditOnly = new Set([
                 "view_credit_dashboard",
+                "view_portfolio_dashboard",
                 "update_insurance_policy",
             ]);
             allPermissions = allPermissions.filter((k) => !creditOnly.has(k));
             permissionsByCategory = this.filterCategoryKeys(
                 permissionsByCategory,
                 creditOnly
+            );
+        }
+
+        // Hide Portfolio Health: omit catalog key but keep RolePermission rows.
+        if (account && hasCreditInsurance && hidePortfolioHealth) {
+            const portfolioHidden = new Set(["view_portfolio_dashboard"]);
+            allPermissions = allPermissions.filter(
+                (k) => !portfolioHidden.has(k)
+            );
+            permissionsByCategory = this.filterCategoryKeys(
+                permissionsByCategory,
+                portfolioHidden
             );
         }
 
@@ -248,8 +267,12 @@ export class PermissionsService {
             });
             const dashboardPerms =
                 permissionsByCategory.analytics_reporting?.dashboards || [];
+            const creditOnlyDashboards = new Set([
+                "view_credit_dashboard",
+                "view_portfolio_dashboard",
+            ]);
             dashboardPerms.forEach((p) => {
-                if (p !== "view_credit_dashboard") {
+                if (!creditOnlyDashboards.has(p)) {
                     restrictedKeys.add(p);
                 }
             });

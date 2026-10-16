@@ -1,19 +1,19 @@
 # 02 — Frontend nav, route gates, and roles labels
 
-**Status:** ready-for-agent
+**Status:** done
 **Priority:** normal
 **Blocked by:** [01-permission-catalog-and-api](01-permission-catalog-and-api.md)
-**User stories:** 5, 6, 12, 13, 14, 15
+**User stories:** 5, 6, 12, 13, 14, 15, 18, 19
 **PRD:** `.cursor/plans/view-portfolio-dashboard-permission.prd.md`
 
 ## Deliverable
 
-Wire Portfolio Health nav, AppShell, and route accessibility to `view_portfolio_dashboard`. Keep Credit Dashboard on `view_credit_dashboard`. Add EN+HE roles labels for `view_portfolio_dashboard` as **View Portfolio Health** (and Hebrew equivalent). Prefer locale keys over hardcoded English fallbacks; add missing `view_credit_dashboard` locale entries in the same change if still absent. Do not change Operation / Financial dashboard gating.
+Wire Portfolio Health nav, AppShell, and route accessibility to `view_portfolio_dashboard` **and** account products: credit insurance on and `hide_portfolio_health` false. Keep Credit Dashboard on `view_credit_dashboard`. Add EN+HE roles labels for `view_portfolio_dashboard` as **View Portfolio Health**. Prefer locale keys over hardcoded English fallbacks; add missing `view_credit_dashboard` locale entries if still absent. Do not change Operation / Financial dashboard gating. Consume `hide_portfolio_health` from session/account products (wired in slice 01).
 
 ## How to test
 
-1. Sign in as System_Administrator (has both keys after slice 01): both Credit Dashboard and Portfolio Health appear; both pages load.
-2. Sign in as a role with only `view_credit_dashboard`: Credit Dashboard visible; Portfolio Health hidden; direct `/app/credit-portfolio-health` blocked or redirected.
-3. Sign in as a role with only `view_portfolio_dashboard`: Portfolio Health visible and loads; Credit Dashboard hidden.
-4. Open Settings → Roles on a credit-insurance account: see **View Portfolio Health** (EN) and Hebrew label when locale is HE; assign/revoke and confirm nav updates after refresh/session.
-5. Confirm Operation Dashboard still uses `view_operation_dashboard` unchanged.
+1. System_Administrator, hide off: both Credit Dashboard and Portfolio Health appear and load.
+2. Role with only `view_credit_dashboard`, hide off: Credit Dashboard visible; Portfolio Health hidden; direct `/app/credit-portfolio-health` blocked.
+3. Role with only `view_portfolio_dashboard`, hide off: Portfolio Health visible; Credit Dashboard hidden.
+4. Account with hide on (any role): Portfolio Health nav gone; direct URL blocked; Roles does not list View Portfolio Health.
+5. Settings → Roles (credit, hide off): EN/HE **View Portfolio Health**; Operation Dashboard still uses `view_operation_dashboard`.

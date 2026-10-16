@@ -26,7 +26,9 @@ export type CreditDashboardAccessContext = {
 
 export type CreditDashboardAccessMode =
     | "dashboard"
-    | "insurance-policy-trend";
+    | "insurance-policy-trend"
+    | "portfolio-health"
+    | "asof-backfill";
 
 @Injectable()
 export class CreditDashboardAccessService {
@@ -55,19 +57,15 @@ export class CreditDashboardAccessService {
             const selectedBusinessUnitId = this.parseBusinessUnitIdParam(
                 query.businessUnitId
             );
-            const [account, allowed, filterResult, accessibleBusinessUnitIds] =
+            const [account, filterResult, accessibleBusinessUnitIds] =
                 await Promise.all([
                     this.db.account.findUnique({
                         where: { id: accountId },
-                        select: { has_credit_insurance: true },
+                        select: {
+                            has_credit_insurance: true,
+                            hide_portfolio_health: true,
+                        },
                     }),
-                    mode === "insurance-policy-trend"
-                        ? this.hasInsurancePolicyTrendAccess(accountId, role)
-                        : this.accessScope.hasPermission(
-                              accountId,
-                              role,
-                              "view_credit_dashboard"
-                          ),
                     this.resolveDashboardBusinessUnitFilter({
                         userBusinessUnitId: userInfo.businessUnitId,
                         isAdmin,
@@ -86,6 +84,19 @@ export class CreditDashboardAccessService {
                 );
             }
 
+            const hidePortfolioHealth =
+                account.hide_portfolio_health === true;
+
+            if (mode === "portfolio-health" && hidePortfolioHealth) {
+                throw new ForbiddenException("Forbidden");
+            }
+
+            const allowed = await this.resolvePermissionAllowed(
+                accountId,
+                role,
+                mode,
+                hidePortfolioHealth
+            );
             if (!allowed) {
                 throw new ForbiddenException("Forbidden");
             }
@@ -107,6 +118,64 @@ export class CreditDashboardAccessService {
             }
             throw error;
         }
+    }
+
+    private async resolvePermissionAllowed(
+        accountId: number,
+        role: string,
+        mode: CreditDashboardAccessMode,
+        hidePortfolioHealth: boolean
+    ): Promise<boolean> {
+        switch (mode) {
+            case "insurance-policy-trend":
+                return this.hasInsurancePolicyTrendAccess(accountId, role);
+            case "portfolio-health":
+                return this.accessScope.hasPermission(
+                    accountId,
+                    role,
+                    "view_portfolio_dashboard"
+                );
+            case "asof-backfill":
+                return this.hasAsOfBackfillAccess(
+                    accountId,
+                    role,
+                    hidePortfolioHealth
+                );
+            case "dashboard":
+            default:
+                return this.accessScope.hasPermission(
+                    accountId,
+                    role,
+                    "view_credit_dashboard"
+                );
+        }
+    }
+
+    private async hasAsOfBackfillAccess(
+        accountId: number,
+        role: string,
+        hidePortfolioHealth: boolean
+    ): Promise<boolean> {
+        if (hidePortfolioHealth) {
+            return this.accessScope.hasPermission(
+                accountId,
+                role,
+                "view_credit_dashboard"
+            );
+        }
+        const [credit, portfolio] = await Promise.all([
+            this.accessScope.hasPermission(
+                accountId,
+                role,
+                "view_credit_dashboard"
+            ),
+            this.accessScope.hasPermission(
+                accountId,
+                role,
+                "view_portfolio_dashboard"
+            ),
+        ]);
+        return credit || portfolio;
     }
 
     private async hasInsurancePolicyTrendAccess(

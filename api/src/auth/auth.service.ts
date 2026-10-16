@@ -214,6 +214,7 @@ export class AuthService {
                 currency: true,
                 has_collection: true,
                 has_credit_insurance: true,
+                hide_portfolio_health: true,
                 is_demo: true,
             },
         });
@@ -253,6 +254,8 @@ export class AuthService {
             has_collection: effectiveAccount?.has_collection !== false,
             has_credit_insurance:
                 effectiveAccount?.has_credit_insurance === true,
+            hide_portfolio_health:
+                effectiveAccount?.hide_portfolio_health === true,
             is_demo: effectiveAccount?.is_demo === true,
             last_sync_date: lastSyncDate
                 ? lastSyncDate.toISOString()

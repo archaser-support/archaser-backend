@@ -69,6 +69,8 @@ model Account {
   sso_providers                          String?                         @db.VarChar(100)
   has_collection                         Boolean                         @default(true)
   has_credit_insurance                   Boolean                         @default(false)
+  /// When true, hide Portfolio Health (nav, Roles key, API) without disabling Credit Insurance.
+  hide_portfolio_health                  Boolean                         @default(false)
   /// Staging-only Demo account: unlocks customer outreach and import_* catalog when true.
   is_demo                                Boolean                         @default(false)
   enable_customer_checkpoints            Boolean                         @default(false)
